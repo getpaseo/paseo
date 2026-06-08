@@ -16,6 +16,8 @@ Two ways to install:
 - **Desktop app:** Settings → Integrations → Install
 - **Manual:** `npx skills add getpaseo/paseo`, this installs to `~/.agents/skills/` and sets up symlinks for each agent.
 
+When the desktop app finds installed Paseo skills, it keeps the bundled skills up to date on startup. If automatic update fails, use Settings → Integrations → Update or the manual command above.
+
 ## `/paseo`, Paseo Reference
 
 The foundational skill. Paseo reference for managing agents and worktrees. Load it when an agent needs to create agents, send them prompts, or manage worktrees.
@@ -68,15 +70,4 @@ The advisor gives a judgment. You decide what to do. The advisor prompt is analy
 ```
 /paseo-advisor did I miss anything in this migration plan?
 /paseo-advisor --provider claude/opus what is the UX risk in this flow?
-```
-
-## `/paseo-epic`, Epic Orchestration
-
-Heavy-ceremony orchestration for big work: research, planning, adversarial review, phased implementation, audit, and delivery. Use it when you say "epic", "long task", "build this end to end", or want a feature that runs all night.
-
-The plan file at `~/.paseo/plans/<slug>.md` is the source of truth. Default mode is conversational, with clarification and gates between phases. `--autopilot` runs through delivery without grills or gates. `--worktree` isolates the work in a new Paseo worktree.
-
-```
-/paseo-epic build the settings import/export flow end to end
-/paseo-epic --autopilot --worktree migrate the relay config UI overnight
 ```

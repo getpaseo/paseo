@@ -33,15 +33,15 @@ test.describe("Settings host page", () => {
     await expectHostConnectionsCard(page, port);
   });
 
-  test("orchestration section shows the inject MCP toggle", async ({ page }) => {
+  test("agents section shows the inject MCP toggle", async ({ page }) => {
     const serverId = getServerId();
 
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHost(page, serverId);
 
-    await openHostSection(page, serverId, "orchestration");
-    await expectSettingsHeader(page, "Orchestration");
+    await openHostSection(page, serverId, "agents");
+    await expectSettingsHeader(page, "Agents");
     await expectHostInjectMcpCard(page);
   });
 
@@ -56,15 +56,15 @@ test.describe("Settings host page", () => {
     await expectSettingsHeader(page, "Providers");
   });
 
-  test("daemon section shows the host label and restart/remove action cards", async ({ page }) => {
+  test("host section shows the host label and restart/remove action cards", async ({ page }) => {
     const serverId = getServerId();
 
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHost(page, serverId);
 
-    await openHostSection(page, serverId, "daemon");
-    await expectSettingsHeader(page, "Daemon");
+    await openHostSection(page, serverId, "host");
+    await expectSettingsHeader(page, "Host");
     await expectHostLabelDisplayed(page);
     await expectHostActionCards(page, serverId);
   });
@@ -75,14 +75,14 @@ test.describe("Settings host page", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHost(page, serverId);
-    await openHostSection(page, serverId, "daemon");
+    await openHostSection(page, serverId, "host");
 
     await expectHostLabelDisplayed(page);
     await clickEditHostLabel(page);
     await expectHostLabelEditMode(page, TEST_HOST_LABEL);
   });
 
-  test("daemon section does not render pair-device or daemon-lifecycle rows for a remote daemon", async ({
+  test("host section does not render pair-device or daemon-lifecycle rows for a remote daemon", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -90,7 +90,7 @@ test.describe("Settings host page", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHost(page, serverId);
-    await openHostSection(page, serverId, "daemon");
+    await openHostSection(page, serverId, "host");
 
     // TODO: add local-daemon fixture for positive Pair/Daemon coverage.
     await expectHostNoLocalOnlyRows(page);
@@ -113,7 +113,7 @@ test.describe("Settings host page", () => {
 
     await expectHostPageVisible(page, serverId);
     await expectSettingsHeader(page, "Connections");
-    await openHostSection(page, serverId, "daemon");
+    await openHostSection(page, serverId, "host");
     await expectHostLabelDisplayed(page);
     await expectHostActionCards(page, serverId);
   });

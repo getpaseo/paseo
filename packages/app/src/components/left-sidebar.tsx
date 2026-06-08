@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, Home, MessagesSquare, Settings, X } from "lucide-react-native";
+import { FolderPlus, Home, MessagesSquare, Plus, Search, Settings, X } from "lucide-react-native";
 import {
   type Dispatch,
   memo,
@@ -34,12 +34,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { SidebarGroupingSelector } from "@/components/sidebar/sidebar-grouping-selector";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
+import {
+  MOBILE_VISUAL_PANEL_AGENT,
+  MOBILE_VISUAL_PANEL_AGENT_LIST,
+  useSidebarAnimation,
+} from "@/contexts/sidebar-animation-context";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
@@ -47,6 +52,8 @@ import {
   type SidebarProjectEntry,
   useSidebarWorkspacesList,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import {
   MAX_SIDEBAR_WIDTH,
@@ -59,6 +66,7 @@ import { formatConnectionStatus } from "@/utils/daemons";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import {
   buildHostOpenProjectRoute,
+  buildHostNewWorkspaceRoute,
   buildHostSessionsRoute,
   buildSettingsRoute,
   mapPathnameToServer,
@@ -89,11 +97,13 @@ interface SidebarSharedProps {
   isInitialLoad: boolean;
   isRevalidating: boolean;
   isManualRefresh: boolean;
+  groupMode: SidebarGroupMode;
   collapsedProjectKeys: SidebarShortcutModel["collapsedProjectKeys"];
   shortcutIndexByWorkspaceKey: SidebarShortcutModel["shortcutIndexByWorkspaceKey"];
   toggleProjectCollapsed: SidebarShortcutModel["toggleProjectCollapsed"];
   handleRefresh: () => void;
   handleHostSelect: (nextServerId: string) => void;
+  handleNewWorkspaceNavigate: () => void;
   handleOpenProject: () => void;
   handleHome: () => void;
   handleSettings: () => void;
@@ -109,7 +119,7 @@ interface MobileSidebarProps extends SidebarSharedProps {
   insetsTop: number;
   insetsBottom: number;
   isOpen: boolean;
-  closeToAgent: () => void;
+  closeSidebar: () => void;
   handleViewMoreNavigate: () => void;
 }
 
@@ -192,6 +202,10 @@ export const LeftSidebar = memo(function LeftSidebar({
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
     useSidebarShortcutModel({ projects, isInitialLoad });
 
+  const groupMode = useSidebarViewStore((state) =>
+    activeServerId ? state.getGroupMode(activeServerId) : "project",
+  );
+
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const handleRefresh = useCallback(() => {
@@ -215,6 +229,11 @@ export const LeftSidebar = memo(function LeftSidebar({
   const handleOpenProjectDesktop = useCallback(() => {
     void openProjectPicker();
   }, [openProjectPicker]);
+
+  const handleNewWorkspaceNavigate = useCallback(() => {
+    if (!activeServerId) return;
+    router.push(buildHostNewWorkspaceRoute(activeServerId));
+  }, [activeServerId]);
 
   const handleSettingsMobile = useCallback(() => {
     showMobileAgent();
@@ -268,6 +287,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     isInitialLoad,
     isRevalidating,
     isManualRefresh,
+    groupMode,
     collapsedProjectKeys,
     shortcutIndexByWorkspaceKey,
     toggleProjectCollapsed,
@@ -283,7 +303,8 @@ export const LeftSidebar = memo(function LeftSidebar({
         insetsTop={insets.top}
         insetsBottom={insets.bottom}
         isOpen={isOpen}
-        closeToAgent={showMobileAgent}
+        closeSidebar={showMobileAgent}
+        handleNewWorkspaceNavigate={handleNewWorkspaceNavigate}
         handleOpenProject={handleOpenProjectMobile}
         handleHome={handleHomeMobile}
         handleSettings={handleSettingsMobile}
@@ -297,6 +318,7 @@ export const LeftSidebar = memo(function LeftSidebar({
       {...sharedProps}
       insetsTop={insets.top}
       isOpen={isOpen}
+      handleNewWorkspaceNavigate={handleNewWorkspaceNavigate}
       handleOpenProject={handleOpenProjectDesktop}
       handleHome={handleHomeDesktop}
       handleSettings={handleSettingsDesktop}
@@ -417,6 +439,21 @@ function AddProjectTooltipContent({
   );
 }
 
+function HeaderIconTooltipContent({
+  label,
+  shortcutKeys,
+}: {
+  label: string;
+  shortcutKeys?: ReturnType<typeof useShortcutKeys>;
+}) {
+  return (
+    <View style={styles.tooltipRow}>
+      <Text style={styles.tooltipText}>{label}</Text>
+      {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
+    </View>
+  );
+}
+
 function SidebarFooter({
   theme,
   activeServerId,
@@ -518,19 +555,21 @@ function MobileSidebar({
   isInitialLoad,
   isRevalidating,
   isManualRefresh,
+  groupMode,
   collapsedProjectKeys,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
   handleRefresh,
   handleHostSelect,
   renderHostOption,
+  handleNewWorkspaceNavigate,
   handleOpenProject,
   handleHome,
   handleSettings,
   insetsTop,
   insetsBottom,
   isOpen,
-  closeToAgent,
+  closeSidebar,
   handleViewMoreNavigate,
 }: MobileSidebarProps) {
   const pathname = usePathname();
@@ -542,6 +581,7 @@ function MobileSidebar({
     animateToOpen,
     animateToClose,
     isGesturing,
+    mobileVisualPanel,
     gestureAnimatingRef,
     closeGestureRef,
   } = useSidebarAnimation();
@@ -550,8 +590,8 @@ function MobileSidebar({
 
   const handleCloseFromGesture = useCallback(() => {
     gestureAnimatingRef.current = true;
-    closeToAgent();
-  }, [closeToAgent, gestureAnimatingRef]);
+    closeSidebar();
+  }, [closeSidebar, gestureAnimatingRef]);
 
   const handleViewMore = useCallback(() => {
     if (!activeServerId) {
@@ -559,26 +599,31 @@ function MobileSidebar({
     }
     translateX.value = -windowWidth;
     backdropOpacity.value = 0;
-    closeToAgent();
+    closeSidebar();
     handleViewMoreNavigate();
   }, [
     activeServerId,
     backdropOpacity,
-    closeToAgent,
+    closeSidebar,
     handleViewMoreNavigate,
     translateX,
     windowWidth,
   ]);
 
   const handleWorkspacePress = useCallback(() => {
-    closeToAgent();
-  }, [closeToAgent]);
+    closeSidebar();
+  }, [closeSidebar]);
+
+  const handleNewWorkspace = useCallback(() => {
+    closeSidebar();
+    handleNewWorkspaceNavigate();
+  }, [closeSidebar, handleNewWorkspaceNavigate]);
 
   const closeGesture = useMemo(
     () =>
       Gesture.Pan()
         .withRef(closeGestureRef)
-        .enabled(isOpen)
+        .enabled(true)
         .manualActivation(true)
         .onTouchesDown((event) => {
           const touch = event.changedTouches[0];
@@ -599,6 +644,11 @@ function MobileSidebar({
           const deltaY = touch.absoluteY - closeTouchStartY.value;
           const absDeltaX = Math.abs(deltaX);
           const absDeltaY = Math.abs(deltaY);
+
+          if (mobileVisualPanel.value !== MOBILE_VISUAL_PANEL_AGENT_LIST) {
+            stateManager.fail();
+            return;
+          }
 
           if (deltaX >= 10) {
             stateManager.fail();
@@ -629,9 +679,11 @@ function MobileSidebar({
           isGesturing.value = false;
           const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
           if (shouldClose) {
+            mobileVisualPanel.value = MOBILE_VISUAL_PANEL_AGENT;
             animateToClose();
             runOnJS(handleCloseFromGesture)();
           } else {
+            mobileVisualPanel.value = MOBILE_VISUAL_PANEL_AGENT_LIST;
             animateToOpen();
           }
         })
@@ -639,11 +691,11 @@ function MobileSidebar({
           isGesturing.value = false;
         }),
     [
-      isOpen,
       closeGestureRef,
       closeTouchStartX,
       closeTouchStartY,
       isGesturing,
+      mobileVisualPanel,
       windowWidth,
       translateX,
       backdropOpacity,
@@ -698,16 +750,22 @@ function MobileSidebar({
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
         <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
           <View style={styles.sidebarContent} pointerEvents="auto">
-            <SidebarHeaderRow
-              icon={MessagesSquare}
-              label="Sessions"
-              onPress={handleViewMore}
-              isActive={isSessionsActive}
-              testID="sidebar-sessions"
+            <View style={styles.sidebarHeaderRow}>
+              <SidebarHeaderRow
+                icon={MessagesSquare}
+                label="Sessions"
+                onPress={handleViewMore}
+                isActive={isSessionsActive}
+                testID="sidebar-sessions"
+              />
+            </View>
+            <WorkspacesSectionHeader
+              serverId={activeServerId}
+              onNewWorkspacePress={handleNewWorkspace}
             />
             <Pressable
               style={styles.mobileCloseButton}
-              onPress={closeToAgent}
+              onPress={closeSidebar}
               testID="sidebar-close"
               nativeID="sidebar-close"
               accessible
@@ -733,6 +791,7 @@ function MobileSidebar({
                 collapsedProjectKeys={collapsedProjectKeys}
                 onToggleProjectCollapsed={toggleProjectCollapsed}
                 shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                groupMode={groupMode}
                 projects={projects}
                 isRefreshing={isManualRefresh && isRevalidating}
                 onRefresh={handleRefresh}
@@ -777,12 +836,14 @@ function DesktopSidebar({
   isInitialLoad,
   isRevalidating,
   isManualRefresh,
+  groupMode,
   collapsedProjectKeys,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
   handleRefresh,
   handleHostSelect,
   renderHostOption,
+  handleNewWorkspaceNavigate,
   handleOpenProject,
   handleHome,
   handleSettings,
@@ -860,14 +921,20 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={paddingTopSpacerStyle} /> : null}
-          <SidebarHeaderRow
-            icon={MessagesSquare}
-            label="Sessions"
-            onPress={handleViewMore}
-            isActive={isSessionsActive}
-            testID="sidebar-sessions"
-          />
+          <View style={styles.sidebarHeaderRow}>
+            <SidebarHeaderRow
+              icon={MessagesSquare}
+              label="Sessions"
+              onPress={handleViewMore}
+              isActive={isSessionsActive}
+              testID="sidebar-sessions"
+            />
+          </View>
         </View>
+        <WorkspacesSectionHeader
+          serverId={activeServerId}
+          onNewWorkspacePress={handleNewWorkspaceNavigate}
+        />
 
         {isInitialLoad ? (
           <SidebarAgentListSkeleton />
@@ -877,6 +944,7 @@ function DesktopSidebar({
             collapsedProjectKeys={collapsedProjectKeys}
             onToggleProjectCollapsed={toggleProjectCollapsed}
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+            groupMode={groupMode}
             projects={projects}
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
@@ -911,6 +979,90 @@ function DesktopSidebar({
   );
 }
 
+function WorkspacesSectionHeader({
+  serverId,
+  onNewWorkspacePress,
+}: {
+  serverId: string | null;
+  onNewWorkspacePress: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const commandCenterKeys = useShortcutKeys("toggle-command-center");
+  const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
+  const searchButtonStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.workspacesHeaderIconButton,
+      (hovered || pressed) && styles.workspacesHeaderIconButtonHovered,
+    ],
+    [],
+  );
+
+  return (
+    <View style={styles.workspacesSectionHeader}>
+      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
+      <View style={styles.workspacesSectionActions}>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New workspace"
+              testID="sidebar-new-workspace"
+              style={searchButtonStyle}
+              onPress={onNewWorkspacePress}
+            >
+              {({ hovered, pressed }) => (
+                <Plus
+                  size={14}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
+            </Pressable>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <HeaderIconTooltipContent label="New workspace" />
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open command center"
+              testID="sidebar-command-center-search"
+              style={searchButtonStyle}
+              onPress={handleSearchPress}
+            >
+              {({ hovered, pressed }) => (
+                <Search
+                  size={14}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
+            </Pressable>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <HeaderIconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <View>
+              <SidebarGroupingSelector serverId={serverId} />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <HeaderIconTooltipContent label="Display preferences" />
+          </TooltipContent>
+        </Tooltip>
+      </View>
+    </View>
+  );
+}
+
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
@@ -932,6 +1084,39 @@ const staticStyles = RNStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
+  sidebarHeaderRow: {
+    position: "relative",
+  },
+  workspacesSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    paddingLeft: theme.spacing[2] + theme.spacing[3],
+    paddingRight: theme.spacing[4],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
+  workspacesSectionTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  workspacesSectionActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  workspacesHeaderIconButton: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  workspacesHeaderIconButtonHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
   sidebarContent: {
     flex: 1,
     minHeight: 0,

@@ -39,4 +39,13 @@ describe("providers snapshot query scope", () => {
       providers: ["codex"],
     });
   });
+
+  it("uses one query scope for Windows cwd values with either separator", () => {
+    expect(normalizeProvidersSnapshotCwd("C:\\Users\\Ezekiel Bulver\\project")).toBe(
+      "C:/Users/Ezekiel Bulver/project",
+    );
+    expect(providersSnapshotQueryKey("server-1", "C:\\Users\\Ezekiel Bulver\\project")).toEqual(
+      providersSnapshotQueryKey("server-1", "C:/Users/Ezekiel Bulver/project"),
+    );
+  });
 });

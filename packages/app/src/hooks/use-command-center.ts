@@ -20,6 +20,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { focusWithRetries } from "@/utils/web-focus";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
+import { isWeb } from "@/constants/platform";
 
 const EMPTY_AGENTS: AggregatedAgent[] = [];
 const EMPTY_ACTION_ITEMS: CommandCenterActionItem[] = [];
@@ -319,33 +320,25 @@ export function useCommandCenter() {
     }
   }, [activeIndex, items.length, open]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    const handler = (event: KeyboardEvent) => {
+  const handleKeyEvent = useCallback(
+    (key: string): boolean => {
+      if (!open) return false;
       const currentItems = itemsRef.current;
-      const key = event.key;
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") {
-        return;
-      }
 
       if (key === "Escape") {
-        event.preventDefault();
         handleCloseRef.current();
-        return;
+        return true;
       }
 
       if (key === "Enter") {
-        if (currentItems.length === 0) return;
-        event.preventDefault();
+        if (currentItems.length === 0) return false;
         const index = Math.max(0, Math.min(activeIndexRef.current, currentItems.length - 1));
         handleSelectItemRef.current(currentItems[index]);
-        return;
+        return true;
       }
 
       if (key === "ArrowDown" || key === "ArrowUp") {
-        if (currentItems.length === 0) return;
-        event.preventDefault();
+        if (currentItems.length === 0) return false;
         setActiveIndex((current) => {
           const delta = key === "ArrowDown" ? 1 : -1;
           const next = current + delta;
@@ -353,13 +346,35 @@ export function useCommandCenter() {
           if (next >= currentItems.length) return 0;
           return next;
         });
+        return true;
+      }
+
+      return false;
+    },
+    [open],
+  );
+
+  useEffect(() => {
+    if (!open || !isWeb) return;
+
+    const handler = (event: KeyboardEvent) => {
+      if (
+        event.key !== "ArrowDown" &&
+        event.key !== "ArrowUp" &&
+        event.key !== "Enter" &&
+        event.key !== "Escape"
+      ) {
+        return;
+      }
+      if (handleKeyEvent(event.key)) {
+        event.preventDefault();
       }
     };
 
     // react-native-web can stop propagation on key events, so listen in capture phase.
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [open]);
+  }, [open, handleKeyEvent]);
 
   return {
     open,
@@ -371,5 +386,6 @@ export function useCommandCenter() {
     items,
     handleClose,
     handleSelectItem,
+    handleKeyEvent,
   };
 }

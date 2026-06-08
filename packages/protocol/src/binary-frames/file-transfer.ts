@@ -14,6 +14,7 @@ export const FileBeginMetadataSchema = z.object({
   size: z.number().int().nonnegative(),
   encoding: z.enum(["utf-8", "binary"]),
   modifiedAt: z.string(),
+  fileName: z.string().optional(),
 });
 
 export interface FileBegin {

@@ -13,7 +13,6 @@ import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
-import { resolveDefaultAgentCreateConfig } from "./create-agent-mode.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
@@ -255,25 +254,33 @@ function buildSnapshotEntry(entry: ConfigureProviderEntry): ProviderSnapshotEntr
 }
 
 // Shared helper used by ~60 create_agent / update_agent / list_agents tests that
-// only need a "normal" provider catalog (claude, codex, opencode) and the
-// OpenCode resolveCreateConfig quirk: requestedMode="full-access" or an
-// unattended parent maps to build mode + auto_accept feature.
+// only need a "normal" provider catalog (claude, codex, opencode). OpenCode
+// create-config behavior delegates to the production provider client.
 //
 // NOTE: This is NOT a registry. It directly configures the public stub surface.
 // Per-test customization is done by overriding individual stub methods after
 // calling this helper.
-function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void {
+interface ConfigureOpenCodeProviderStubOptions {
+  customOpenCodeProvider?: AgentProvider;
+}
+
+function configureOpenCodeProviderStub(
+  stub: ProviderSnapshotManagerStub,
+  options: ConfigureOpenCodeProviderStubOptions = {},
+): void {
   const claudeModes: AgentMode[] = [
     { id: "default", label: "Default", description: "Ask first" },
     { id: "bypassPermissions", label: "Bypass", description: "No prompts", isUnattended: true },
   ];
   const codexModes: AgentMode[] = [
     { id: "default", label: "Default", description: "Default" },
-    { id: "auto", label: "Auto", description: "Auto", isUnattended: true },
+    { id: "auto", label: "Auto", description: "Auto" },
+    { id: "full-access", label: "Full Access", description: "No prompts", isUnattended: true },
   ];
   const opencodeModes: AgentMode[] = [
     { id: "build", label: "Build", description: "Can edit" },
     { id: "plan", label: "Plan", description: "Read-only" },
+    { id: "paseo-custom", label: "Paseo Custom", description: "Custom OpenCode agent" },
   ];
   const entries: ProviderSnapshotEntry[] = [
     buildSnapshotEntry({
@@ -298,13 +305,31 @@ function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void 
       modes: opencodeModes,
     }),
   ];
+  const customOpenCodeModes: AgentMode[] = [
+    ...opencodeModes,
+    { id: "paseo-custom", label: "Paseo Custom" },
+  ];
+  if (options.customOpenCodeProvider) {
+    entries.push(
+      buildSnapshotEntry({
+        provider: options.customOpenCodeProvider,
+        label: "OpenCode Custom",
+        description: "Custom OpenCode agent",
+        defaultModeId: "build",
+        modes: customOpenCodeModes,
+      }),
+    );
+  }
   const modesByProvider: Record<string, AgentMode[]> = {
     claude: claudeModes,
     codex: codexModes,
     opencode: opencodeModes,
   };
+  if (options.customOpenCodeProvider) {
+    modesByProvider[options.customOpenCodeProvider] = customOpenCodeModes;
+  }
 
-  stub.listRegisteredProviderIds.mockReturnValue(["claude", "codex", "opencode"]);
+  stub.listRegisteredProviderIds.mockReturnValue(entries.map((entry) => entry.provider));
   stub.hasProvider.mockImplementation((provider) =>
     Object.prototype.hasOwnProperty.call(modesByProvider, provider),
   );
@@ -334,56 +359,18 @@ function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void 
       provider: AgentProvider;
       requestedMode: string | undefined;
       featureValues: Record<string, unknown> | undefined;
-      parent: ManagedAgent | null;
     };
-    if (opts.provider === "opencode") {
-      if (opts.requestedMode === "full-access") {
-        return {
-          modeId: "build",
-          featureValues: { ...opts.featureValues, auto_accept: true },
-        };
-      }
-      // Cross-provider unattended inheritance: caller is in unattended mode and
-      // requested no explicit mode — map to build + auto_accept.
-      if (opts.requestedMode === undefined && opts.parent) {
-        const parentModes = modesByProvider[opts.parent.provider] ?? [];
-        const parentMode = parentModes.find((m) => m.id === opts.parent?.currentModeId);
-        if (parentMode?.isUnattended === true) {
-          return {
-            modeId: "build",
-            featureValues: { ...opts.featureValues, auto_accept: true },
-          };
-        }
-      }
-    }
-    const availableModes = modesByProvider[opts.provider] ?? [];
-    const parentModes = opts.parent ? (modesByProvider[opts.parent.provider] ?? []) : [];
-    const parentMode = opts.parent
-      ? parentModes.find((m) => m.id === opts.parent?.currentModeId)
-      : null;
-    return resolveDefaultAgentCreateConfig({
-      provider: opts.provider,
-      requestedMode: opts.requestedMode,
-      featureValues: opts.featureValues,
-      parent: opts.parent
-        ? {
-            provider: opts.parent.provider,
-            modeId: opts.parent.currentModeId,
-            isUnattended: parentMode?.isUnattended === true,
-          }
-        : null,
-      availableModes,
-    });
+    return { modeId: opts.requestedMode, featureValues: opts.featureValues };
   });
 }
 
 // Quick helper: returns a manager configured with the standard OpenCode catalog.
-function createOpenCodeManager(): {
+function createOpenCodeManager(options?: ConfigureOpenCodeProviderStubOptions): {
   manager: ProviderSnapshotManagerStub["manager"];
   stub: ProviderSnapshotManagerStub;
 } {
   const stub = createProviderSnapshotManagerStub();
-  configureOpenCodeProviderStub(stub);
+  configureOpenCodeProviderStub(stub, options);
   return { manager: stub.manager, stub };
 }
 
@@ -1843,12 +1830,17 @@ describe("create_agent MCP tool", () => {
       availableModes: [],
       config: { title: "Child", featureValues: { fast_mode: true } },
     } as ManagedAgent);
+    const providerSnapshot = createOpenCodeManager();
+    providerSnapshot.stub.resolveCreateConfig.mockImplementation(async (input) => {
+      const opts = input as { featureValues: Record<string, unknown> | undefined };
+      return { modeId: undefined, featureValues: opts.featureValues };
+    });
 
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
-      providerSnapshotManager: createOpenCodeManager().manager,
+      providerSnapshotManager: providerSnapshot.manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1917,10 +1909,14 @@ describe("create_agent MCP tool", () => {
 
   it("rejects an explicit mode that is not valid for the target provider", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
+    const providerSnapshot = createOpenCodeManager();
+    providerSnapshot.stub.resolveCreateConfig.mockImplementation(async () => {
+      throw new Error("resolver rejected mode");
+    });
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
+      providerSnapshotManager: providerSnapshot.manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1933,9 +1929,7 @@ describe("create_agent MCP tool", () => {
         settings: { modeId: "bypassPermissions" },
         initialPrompt: "Do work",
       }),
-    ).rejects.toThrow(
-      "Invalid mode 'bypassPermissions' for provider 'opencode'. Available modes: build, plan",
-    );
+    ).rejects.toThrow("resolver rejected mode");
     expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
   });
 
@@ -1963,13 +1957,8 @@ describe("create_agent MCP tool", () => {
     provStub.listModes.mockResolvedValue(dynamicModes);
     provStub.resolveCreateConfig.mockImplementation(async (input) => {
       const opts = input as { requestedMode: string | undefined };
-      return resolveDefaultAgentCreateConfig({
-        provider: "codex",
-        requestedMode: opts.requestedMode,
-        featureValues: undefined,
-        parent: null,
-        availableModes: dynamicModes,
-      });
+      expect(opts.requestedMode).toBe("dynamic");
+      return { modeId: "dynamic", featureValues: undefined };
     });
     const server = await createAgentMcpServer({
       agentManager,
@@ -1994,7 +1983,7 @@ describe("create_agent MCP tool", () => {
     );
   });
 
-  it("accepts legacy OpenCode full-access as build plus auto accept", async () => {
+  it("passes resolver-returned mode and features into createAgent", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
       id: "child-agent",
@@ -2004,10 +1993,15 @@ describe("create_agent MCP tool", () => {
       availableModes: [],
       config: { title: "Child", featureValues: { auto_accept: true } },
     } as ManagedAgent);
+    const providerSnapshot = createOpenCodeManager();
+    providerSnapshot.stub.resolveCreateConfig.mockResolvedValue({
+      modeId: "build",
+      featureValues: { auto_accept: true },
+    });
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
+      providerSnapshotManager: providerSnapshot.manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -2027,28 +2021,34 @@ describe("create_agent MCP tool", () => {
     );
   });
 
-  it("inherits the caller mode when the new agent uses the same provider", async () => {
+  it("passes the real parent agent and explicit unattended intent to the resolver", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.getAgent.mockReturnValue({
+    const parentAgent = {
       id: "parent-agent",
       cwd: existingCwd,
       provider: "claude",
       currentModeId: "bypassPermissions",
-    } as ManagedAgent);
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockReturnValue(parentAgent);
     spies.agentManager.createAgent.mockResolvedValue({
       id: "child-agent",
       cwd: existingCwd,
       lifecycle: "idle",
-      currentModeId: "bypassPermissions",
+      currentModeId: "resolver-mode",
       availableModes: [],
       config: { title: "Child" },
     } as ManagedAgent);
+    const providerSnapshot = createOpenCodeManager();
+    providerSnapshot.stub.resolveCreateConfig.mockResolvedValue({
+      modeId: "resolver-mode",
+      featureValues: { resolver_feature: true },
+    });
 
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
-      providerSnapshotManager: createOpenCodeManager().manager,
+      providerSnapshotManager: providerSnapshot.manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -2058,76 +2058,14 @@ describe("create_agent MCP tool", () => {
       initialPrompt: "Do work",
     });
 
-    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: "bypassPermissions" }),
-      undefined,
-      expect.any(Object),
+    expect(providerSnapshot.stub.resolveCreateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ parent: parentAgent, unattended: false }),
     );
-  });
-
-  it("refuses cross-provider mode inheritance when caller is not in an unattended mode", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.getAgent.mockReturnValue({
-      id: "parent-agent",
-      cwd: existingCwd,
-      provider: "claude",
-      currentModeId: "default",
-    } as ManagedAgent);
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      callerAgentId: "parent-agent",
-      providerSnapshotManager: createOpenCodeManager().manager,
-      logger,
-    });
-    const tool = registeredTool(server, "create_agent");
-
-    await expect(
-      tool.handler({
-        title: "Child",
-        provider: "opencode/gpt-5.4",
-        initialPrompt: "Do work",
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modeId: "resolver-mode",
+        featureValues: { resolver_feature: true },
       }),
-    ).rejects.toThrow(
-      "cannot inherit mode 'default' from caller (provider 'claude') for new agent (provider 'opencode'). Pass an explicit mode. Available modes for 'opencode': build, plan",
-    );
-    expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
-  });
-
-  it("maps unattended callers to OpenCode auto accept", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.getAgent.mockReturnValue({
-      id: "parent-agent",
-      cwd: existingCwd,
-      provider: "claude",
-      currentModeId: "bypassPermissions",
-    } as ManagedAgent);
-    spies.agentManager.createAgent.mockResolvedValue({
-      id: "child-agent",
-      cwd: existingCwd,
-      lifecycle: "idle",
-      currentModeId: "build",
-      availableModes: [],
-      config: { title: "Child", featureValues: { auto_accept: true } },
-    } as ManagedAgent);
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      callerAgentId: "parent-agent",
-      providerSnapshotManager: createOpenCodeManager().manager,
-      logger,
-    });
-    const tool = registeredTool(server, "create_agent");
-    await tool.handler({
-      title: "Child",
-      provider: "opencode/gpt-5.4",
-      initialPrompt: "Do work",
-    });
-
-    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: "build", featureValues: { auto_accept: true } }),
       undefined,
       expect.any(Object),
     );

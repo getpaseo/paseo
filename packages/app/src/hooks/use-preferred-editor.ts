@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { EditorTargetIdSchema, type EditorTargetId } from "@getpaseo/protocol/messages";
+import type { EditorTargetId } from "@/workspace/editor-targets";
 
 const PREFERRED_EDITOR_STORAGE_KEY = "@paseo:preferred-editor";
 const PREFERRED_EDITOR_QUERY_KEY = ["preferred-editor"];
@@ -11,8 +11,7 @@ async function loadPreferredEditor(): Promise<EditorTargetId | null> {
   if (!stored) {
     return null;
   }
-  const parsed = EditorTargetIdSchema.safeParse(stored);
-  return parsed.success ? parsed.data : null;
+  return stored.trim() || null;
 }
 
 export function resolvePreferredEditorId(

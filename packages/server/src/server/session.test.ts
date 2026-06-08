@@ -236,6 +236,7 @@ interface SessionForTestOptions {
   providerSnapshotManager?: ProviderSnapshotManager;
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
+  paseoHome?: string;
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
 }
@@ -272,7 +273,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     logger,
     downloadTokenStore: asDownloadTokenStore(),
     pushTokenStore: asPushTokenStore(),
-    paseoHome: "/tmp/paseo-home",
+    paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),

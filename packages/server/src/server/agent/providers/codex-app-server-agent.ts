@@ -103,6 +103,14 @@ const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
+// Codex treats most app-server client names as the model-request originator.
+// This reserved Codex name is non-originating, so requests keep Codex's default
+// CLI identity instead of showing up as Paseo in provider usage logs.
+const CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO = {
+  name: "codex_app_server_daemon",
+  title: "Codex App Server Daemon",
+  version: "0.0.0",
+} as const;
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
 const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
   "commandExecution",
@@ -829,6 +837,11 @@ function filterCodexThreadsByCwd(
   // with no cwd would falsely match the daemon's own cwd.
   const matchesCwd = createPathEquivalenceMatcher(cwd);
   return threads.filter((thread) => typeof thread.cwd === "string" && matchesCwd(thread.cwd));
+}
+
+function buildCodexThreadListTimeline(thread: Record<string, unknown>): AgentTimelineItem[] {
+  const preview = typeof thread.preview === "string" ? thread.preview.trim() : "";
+  return preview ? [{ type: "user_message", text: preview }] : [];
 }
 
 export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
@@ -2813,11 +2826,7 @@ function buildCodexAppServerInitializeParams(): {
   capabilities: { experimentalApi: true };
 } {
   return {
-    clientInfo: {
-      name: "paseo",
-      title: "Paseo",
-      version: "0.0.0",
-    },
+    clientInfo: CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO,
     capabilities: {
       experimentalApi: true,
     },
@@ -5486,58 +5495,48 @@ export class CodexAppServerAgentClient implements AgentClient {
       client.notify("initialized", {});
 
       const limit = options?.limit ?? 20;
-      // thread/list returns the cheap `cwd` field. When the caller supplied
-      // a cwd hint we filter here so the per-thread `thread/read includeTurns`
-      // hydration below only runs for matching threads. Fetch a wider window
-      // when filtering since most threads will be from other cwds.
+      // thread/list returns the cheap `cwd` field. Fetch a wider window when
+      // filtering since most threads will be from other cwds, then keep the
+      // local realpath-aware filter for symlink-equivalent workspace paths.
       const listLimit = options?.cwd ? Math.max(limit, 50) : limit;
-      const response = toObjectRecord(await client.request("thread/list", { limit: listLimit }));
-      const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
-      const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
-      const descriptors: PersistedAgentDescriptor[] = await Promise.all(
-        threads.slice(0, limit).map(async (thread) => {
-          const threadId = typeof thread.id === "string" ? thread.id : "";
-          const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
-          const title = typeof thread.preview === "string" ? thread.preview : null;
-          let timeline: PersistedTimelineEntry[] = [];
-
-          try {
-            timeline = await loadCodexThreadHistoryTimeline({
-              threadId,
-              cwd,
-              requestThread: (threadIdToRead) => {
-                return readCodexThread(client, threadIdToRead);
-              },
-            });
-          } catch {
-            timeline = [];
-          }
-
-          return {
-            provider: CODEX_PROVIDER,
-            sessionId: threadId,
-            cwd,
-            title,
-            lastActivityAt: new Date(
-              ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
-                (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
-                0) * 1000,
-            ),
-            persistence: {
-              provider: CODEX_PROVIDER,
-              sessionId: threadId,
-              nativeHandle: threadId,
-              metadata: {
-                provider: CODEX_PROVIDER,
-                cwd,
-                title,
-                threadId,
-              },
-            },
-            timeline: timeline.map((entry) => entry.item),
-          };
+      const response = toObjectRecord(
+        await client.request("thread/list", {
+          limit: listLimit,
+          ...(options?.cwd ? { cwd: options.cwd } : {}),
         }),
       );
+      const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+      const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
+      const descriptors: PersistedAgentDescriptor[] = threads.slice(0, limit).map((thread) => {
+        const threadId = typeof thread.id === "string" ? thread.id : "";
+        const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
+        const preview = typeof thread.preview === "string" ? thread.preview : null;
+        const title = typeof thread.name === "string" && thread.name.trim() ? thread.name : preview;
+
+        return {
+          provider: CODEX_PROVIDER,
+          sessionId: threadId,
+          cwd,
+          title,
+          lastActivityAt: new Date(
+            ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
+              (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
+              0) * 1000,
+          ),
+          persistence: {
+            provider: CODEX_PROVIDER,
+            sessionId: threadId,
+            nativeHandle: threadId,
+            metadata: {
+              provider: CODEX_PROVIDER,
+              cwd,
+              title,
+              threadId,
+            },
+          },
+          timeline: buildCodexThreadListTimeline(thread),
+        };
+      });
 
       return descriptors;
     } finally {

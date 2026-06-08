@@ -12,6 +12,7 @@ import {
   BottomSheetTextInput,
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
+import Animated from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/composer/types";
@@ -19,7 +20,9 @@ import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
+import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
 // leading icon, search input icon) and any row primitive rendered inside the
@@ -230,14 +233,14 @@ function SheetBackground({ style }: BottomSheetBackgroundProps) {
     () => [
       style,
       {
-        backgroundColor: theme.colors.surface1,
-        borderTopLeftRadius: theme.borderRadius.xl,
-        borderTopRightRadius: theme.borderRadius.xl,
+        backgroundColor: theme.colors.surface0,
+        borderTopLeftRadius: theme.borderRadius["2xl"],
+        borderTopRightRadius: theme.borderRadius["2xl"],
       },
     ],
-    [style, theme.colors.surface1, theme.borderRadius.xl],
+    [style, theme.colors.surface0, theme.borderRadius],
   );
-  return <View style={combinedStyle} />;
+  return <Animated.View pointerEvents="none" style={combinedStyle} />;
 }
 
 export type AdaptiveTextInputProps = TextInputProps & {
@@ -442,6 +445,7 @@ export interface AdaptiveModalSheetProps {
   /** When provided, wraps the card content in a FileDropZone. */
   onFilesDropped?: (files: ImageAttachment[]) => void;
   scrollable?: boolean;
+  presentation?: "push" | "replace";
 }
 
 export function AdaptiveModalSheet({
@@ -455,13 +459,53 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   onFilesDropped,
   scrollable = true,
+  presentation,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
+  const insets = useSafeAreaInsets();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
+  const compactSafeAreaPadding = useMemo(
+    () =>
+      getCompactSheetSafeAreaPadding({
+        isCompact: isMobile,
+        hasFooter: Boolean(footer),
+        baseContentPadding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+        baseFooterPadding: theme.spacing[3],
+        safeAreaBottom: insets.bottom,
+      }),
+    [footer, insets.bottom, isMobile, theme.spacing],
+  );
+  const bottomSheetContentStyle = useMemo(
+    () => [
+      styles.bottomSheetContent,
+      compactSafeAreaPadding.contentPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
+        : null,
+    ],
+    [compactSafeAreaPadding.contentPaddingBottom],
+  );
+  const bottomSheetStaticContentStyle = useMemo(
+    () => [
+      styles.bottomSheetStaticContent,
+      compactSafeAreaPadding.contentPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.contentPaddingBottom }
+        : null,
+    ],
+    [compactSafeAreaPadding.contentPaddingBottom],
+  );
+  const footerStyle = useMemo(
+    () => [
+      styles.footer,
+      compactSafeAreaPadding.footerPaddingBottom != null
+        ? { paddingBottom: compactSafeAreaPadding.footerPaddingBottom }
+        : null,
+    ],
+    [compactSafeAreaPadding.footerPaddingBottom],
+  );
   const handleIndicatorStyle = useMemo(
-    () => ({ backgroundColor: theme.colors.surface2 }),
-    [theme.colors.surface2],
+    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
+    [theme.colors.palette.zinc],
   );
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
@@ -502,20 +546,21 @@ export function AdaptiveModalSheet({
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
         accessible={false}
+        presentation={presentation}
       >
         <SheetHeaderView header={header} onClose={onClose} testID={testID} />
         {scrollable ? (
           <BottomSheetScrollView
-            contentContainerStyle={styles.bottomSheetContent}
+            contentContainerStyle={bottomSheetContentStyle}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
             {children}
           </BottomSheetScrollView>
         ) : (
-          <View style={styles.bottomSheetStaticContent}>{children}</View>
+          <View style={bottomSheetStaticContentStyle}>{children}</View>
         )}
-        {footer ? <View style={styles.footer}>{footer}</View> : null}
+        {footer ? <View style={footerStyle}>{footer}</View> : null}
       </IsolatedBottomSheetModal>
     );
   }
@@ -534,7 +579,7 @@ export function AdaptiveModalSheet({
       ) : (
         <View style={styles.desktopStaticContent}>{children}</View>
       )}
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
+      {footer ? <View style={footerStyle}>{footer}</View> : null}
     </>
   );
 

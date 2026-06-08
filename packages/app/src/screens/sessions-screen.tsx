@@ -44,7 +44,7 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
   }, [isRevalidating, isManualRefresh]);
 
   const sortedAgents = useMemo(() => {
-    return [...agents].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return [...agents].sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
   }, [agents]);
 
   const handleBack = useCallback(() => {

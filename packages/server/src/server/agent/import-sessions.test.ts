@@ -212,7 +212,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
 
   expect(listImportablePersistedAgents).toHaveBeenCalledWith({
-    limit: 200,
+    limit: 2,
     providerFilter: new Set(["codex"]),
     cwd,
   });

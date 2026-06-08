@@ -1,4 +1,5 @@
 import type {
+  AgentCreateConfigParent,
   AgentCreateConfigUnattendedInput,
   AgentMode,
   AgentProvider,
@@ -6,16 +7,11 @@ import type {
   ResolveAgentCreateConfigResult,
 } from "./agent-sdk-types.js";
 
-interface CreateAgentModeParent {
-  provider: AgentProvider;
-  modeId: string | null;
-  isUnattended: boolean;
-}
-
 export interface ResolveCreateAgentModeInput {
   requestedMode: string | undefined;
   targetProvider: AgentProvider;
-  parent: CreateAgentModeParent | null;
+  parent: AgentCreateConfigParent | null;
+  unattended: boolean;
   // `undefined` = target provider's modes unknown: explicit modes pass through
   // unvalidated, but cross-provider inheritance is still refused.
   availableModes: string[] | undefined;
@@ -29,6 +25,18 @@ function listModes(modes: string[] | undefined): string {
     return "unknown";
   }
   return modes.length > 0 ? modes.join(", ") : "(none)";
+}
+
+function isUnattendedCreateConfigParent(parent: AgentCreateConfigParent): boolean {
+  return parent.isUnattended;
+}
+
+function formatCreateConfigParentMode(parent: AgentCreateConfigParent): string {
+  return parent.modeId ?? "<none>";
+}
+
+function formatCreateConfigParentSource(parent: AgentCreateConfigParent): string {
+  return `caller (provider '${parent.provider}')`;
 }
 
 export function resolveAndValidateCreateAgentMode(
@@ -46,6 +54,9 @@ export function resolveAndValidateCreateAgentMode(
   }
 
   if (!parent) {
+    if (input.unattended && input.targetUnattendedMode !== undefined) {
+      return input.targetUnattendedMode;
+    }
     return undefined;
   }
 
@@ -53,12 +64,15 @@ export function resolveAndValidateCreateAgentMode(
     return parent.modeId ?? undefined;
   }
 
-  if (parent.isUnattended && input.targetUnattendedMode !== undefined) {
+  if (
+    (input.unattended || isUnattendedCreateConfigParent(parent)) &&
+    input.targetUnattendedMode !== undefined
+  ) {
     return input.targetUnattendedMode;
   }
 
   throw new Error(
-    `cannot inherit mode '${parent.modeId ?? "<none>"}' from caller (provider '${parent.provider}') for new agent (provider '${targetProvider}'). Pass an explicit mode. Available modes for '${targetProvider}': ${listModes(availableModes)}`,
+    `cannot inherit mode '${formatCreateConfigParentMode(parent)}' from ${formatCreateConfigParentSource(parent)} for new agent (provider '${targetProvider}'). Pass an explicit mode. Available modes for '${targetProvider}': ${listModes(availableModes)}`,
   );
 }
 
@@ -71,6 +85,7 @@ export function resolveDefaultAgentCreateConfig(
       requestedMode: input.requestedMode,
       targetProvider: input.provider,
       parent: input.parent,
+      unattended: input.unattended,
       availableModes: availableModeIds,
       targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
     }),

@@ -43,7 +43,6 @@ const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
 const STARTUP_POLL_MAX_ATTEMPTS = 150;
 const DETACHED_STARTUP_GRACE_MS = 1200;
-const STARTUP_OUTPUT_CAPTURE_LIMIT_CHARS = 64 * 1024;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 
@@ -68,11 +67,6 @@ interface DesktopPairingOffer {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-}
-
-interface StartupOutputCapture {
-  text: string;
-  truncated: boolean;
 }
 
 function parseReleaseChannel(
@@ -151,30 +145,6 @@ function tailFile(filePath: string, lines = 50): string {
   }
 }
 
-function createStartupOutputCapture(): StartupOutputCapture {
-  return { text: "", truncated: false };
-}
-
-function appendStartupOutput(capture: StartupOutputCapture, chunk: Buffer): StartupOutputCapture {
-  const nextText = capture.text + chunk.toString();
-  if (nextText.length <= STARTUP_OUTPUT_CAPTURE_LIMIT_CHARS) {
-    return { text: nextText, truncated: capture.truncated };
-  }
-
-  return {
-    text: nextText.slice(-STARTUP_OUTPUT_CAPTURE_LIMIT_CHARS),
-    truncated: true,
-  };
-}
-
-function formatStartupOutput(capture: StartupOutputCapture): string {
-  if (!capture.truncated) {
-    return capture.text;
-  }
-
-  return `[output truncated to the last ${STARTUP_OUTPUT_CAPTURE_LIMIT_CHARS} chars]\n${capture.text}`;
-}
-
 function logDesktopDaemonLifecycle(message: string, details?: Record<string, unknown>): void {
   log.info("[desktop daemon]", message, {
     pid: process.pid,
@@ -231,6 +201,7 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
       typeof payload.connectedDaemon === "string" ? payload.connectedDaemon : "not_probed";
     const hasRunningLocalProcess = localDaemon === "running";
     const hasLocalProcess = hasRunningLocalProcess || localDaemon === "unresponsive";
+    const desktopManaged = payload.desktopManaged === true;
     const apiReachable = connectedDaemon === "reachable";
     let status: DesktopDaemonState = "stopped";
     if (apiReachable || hasRunningLocalProcess) {
@@ -248,7 +219,7 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
       pid: hasLocalProcess && typeof payload.pid === "number" ? payload.pid : null,
       home,
       version: typeof payload.daemonVersion === "string" ? payload.daemonVersion : null,
-      desktopManaged: hasRunningLocalProcess && payload.desktopManaged === true,
+      desktopManaged,
       error: null,
     };
   } catch (error) {
@@ -287,19 +258,15 @@ function assertBuiltInDaemonManagementEnabled(settings: DesktopSettings): void {
   }
 }
 
-function buildStartupFailureError(
-  result: { code: number | null; signal: string | null; error?: Error },
-  stdout: StartupOutputCapture,
-  stderr: StartupOutputCapture,
-): Error {
+function buildStartupFailureError(result: {
+  code: number | null;
+  signal: string | null;
+  error?: Error;
+}): Error {
   const reason = result.error
     ? result.error.message
     : `exit code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`;
   const parts = [`Daemon failed to start: ${reason}`];
-  const formattedStderr = formatStartupOutput(stderr).trim();
-  const formattedStdout = formatStartupOutput(stdout).trim();
-  if (formattedStderr) parts.push(`stderr:\n${formattedStderr}`);
-  if (formattedStdout) parts.push(`stdout:\n${formattedStdout}`);
   const logs = tailFile(logFilePath(), 15);
   if (logs) parts.push(`Recent logs (${logFilePath()}):\n${logs}`);
   return new Error(parts.join("\n\n"));
@@ -377,16 +344,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     envMode: "internal",
     env: invocation.env,
     envOverlay: { PASEO_DESKTOP_MANAGED: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  let stdout = createStartupOutputCapture();
-  let stderr = createStartupOutputCapture();
-  child.stdout!.on("data", (data: Buffer) => {
-    stdout = appendStartupOutput(stdout, data);
-  });
-  child.stderr!.on("data", (data: Buffer) => {
-    stderr = appendStartupOutput(stderr, data);
+    stdio: ["ignore", "ignore", "ignore"],
   });
 
   logDesktopDaemonLifecycle("detached spawn returned", {
@@ -424,8 +382,6 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   logDesktopDaemonLifecycle("detached startup grace period completed", {
     childPid: child.pid ?? null,
     exitedEarly: result.exitedEarly,
-    stdout: formatStartupOutput(stdout).slice(0, 2000),
-    stderr: formatStartupOutput(stderr).slice(0, 2000),
     ...(result.exitedEarly
       ? {
           exitCode: result.code,
@@ -436,7 +392,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   });
 
   if (result.exitedEarly) {
-    throw buildStartupFailureError(result, stdout, stderr);
+    throw buildStartupFailureError(result);
   }
 
   return pollForRunningDaemon();
@@ -444,7 +400,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 
 export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {
   const status = await resolveDesktopDaemonStatus();
-  if (status.status !== "running" || !status.pid) return status;
+  if (status.status !== "running") return status;
 
   await stopDesktopDaemonViaCli();
   return await resolveDesktopDaemonStatus();

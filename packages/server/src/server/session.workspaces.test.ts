@@ -5,13 +5,9 @@ import path from "node:path";
 import { expect, test, vi } from "vitest";
 import { z } from "zod";
 import { Session } from "./session.js";
-import type {
-  AgentSnapshotPayload,
-  EditorTargetDescriptorPayload,
-  SessionOutboundMessage,
-} from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { AgentManager } from "./agent/agent-manager.js";
-import { AgentStorage } from "./agent/agent-storage.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -63,6 +59,7 @@ interface SessionTestAccess {
   agentStorage: {
     list(...args: unknown[]): Promise<unknown[]>;
     get(agentId: string): Promise<unknown>;
+    upsert(record: unknown): Promise<void>;
   };
   agentManager: {
     listAgents(): unknown[];
@@ -123,10 +120,6 @@ interface SessionTestAccess {
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
-  getAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
-  filterEditorsForClient(...args: unknown[]): unknown;
-  openEditorTarget(input: { editorId: string; path: string }): Promise<unknown>;
-  resolveAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
   paseoHome: string;
   terminalManager: {
     killTerminal(id: string): unknown;
@@ -163,6 +156,7 @@ function makeAgent(input: {
   pendingPermissions?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
+  attentionTimestamp?: string | null;
 }): AgentSnapshotPayload {
   const pendingPermissionCount = input.pendingPermissions ?? 0;
   return {
@@ -201,7 +195,39 @@ function makeAgent(input: {
     labels: {},
     requiresAttention: input.requiresAttention ?? false,
     attentionReason: input.attentionReason ?? null,
-    attentionTimestamp: null,
+    attentionTimestamp: input.attentionTimestamp ?? null,
+    archivedAt: null,
+  };
+}
+
+function makeStoredAgent(input: {
+  id: string;
+  cwd: string;
+  updatedAt: string;
+  requiresAttention?: boolean;
+  attentionReason?: StoredAgentRecord["attentionReason"];
+}): StoredAgentRecord {
+  return {
+    id: input.id,
+    provider: "codex",
+    cwd: input.cwd,
+    createdAt: input.updatedAt,
+    updatedAt: input.updatedAt,
+    lastActivityAt: input.updatedAt,
+    lastUserMessageAt: null,
+    title: null,
+    labels: {},
+    lastStatus: "closed",
+    lastModeId: null,
+    config: { provider: "codex", cwd: input.cwd },
+    runtimeInfo: { provider: "codex", sessionId: null },
+    features: [],
+    persistence: null,
+    lastError: null,
+    requiresAttention: input.requiresAttention ?? false,
+    attentionReason: input.attentionReason ?? null,
+    attentionTimestamp: input.requiresAttention ? input.updatedAt : null,
+    internal: false,
     archivedAt: null,
   };
 }
@@ -467,6 +493,7 @@ function createSessionForWorkspaceTests(
       agentStorage: asAgentStorage({
         list: async () => [],
         get: async () => null,
+        upsert: async () => {},
       }),
       projectRegistry: {
         initialize: async () => {},
@@ -1029,6 +1056,200 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
     agentId: "agent-1",
     archivedAt: expect.any(String),
     requestId: "req-archive",
+  });
+});
+
+test("workspace clear attention clears stored-only agents and responds", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: REPO_CWD,
+    projectId: REPO_CWD,
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: REPO_CWD,
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  let storedRecord = makeStoredAgent({
+    id: "stored-agent-1",
+    cwd: REPO_CWD,
+    updatedAt: "2026-03-30T15:00:00.000Z",
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.agentStorage.get = async (agentId: string) =>
+    agentId === storedRecord.id ? storedRecord : null;
+  session.agentStorage.upsert = async (record: unknown) => {
+    storedRecord = record as StoredAgentRecord;
+  };
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: storedRecord.id,
+      cwd: storedRecord.cwd,
+      status: "closed",
+      updatedAt: storedRecord.updatedAt,
+      requiresAttention: true,
+      attentionReason: "finished",
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-1",
+  });
+
+  expect(storedRecord.requiresAttention).toBe(false);
+  expect(storedRecord.attentionReason).toBeNull();
+  expect(storedRecord.attentionTimestamp).toBeNull();
+  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
+    requestId: "req-1",
+    workspaceId: workspace.workspaceId,
+    clearedAgentIds: [storedRecord.id],
+    success: true,
+    error: null,
+  });
+  const agentUpdate = findByType(emitted, "agent_update");
+  expect(agentUpdate.payload.kind).toBe("upsert");
+  if (agentUpdate.payload.kind === "upsert") {
+    expect(agentUpdate.payload.agent.requiresAttention).toBe(false);
+  }
+});
+
+test("workspace clear attention responds with an error instead of timing out", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.workspaceRegistry.get = async () => null;
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: "missing-workspace",
+    requestId: "req-1",
+  });
+
+  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
+    requestId: "req-1",
+    workspaceId: "missing-workspace",
+    clearedAgentIds: [],
+    success: false,
+    error: "Workspace not found: missing-workspace",
+  });
+});
+
+test("workspace clear attention can clear multiple workspaces in one request", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = [
+    createPersistedWorkspaceRecord({
+      workspaceId: "/tmp/repo-a",
+      projectId: "/tmp/repo-a",
+      cwd: "/tmp/repo-a",
+      kind: "directory",
+      displayName: "repo-a",
+      createdAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+    }),
+    createPersistedWorkspaceRecord({
+      workspaceId: "/tmp/repo-b",
+      projectId: "/tmp/repo-b",
+      cwd: "/tmp/repo-b",
+      kind: "directory",
+      displayName: "repo-b",
+      createdAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+    }),
+  ];
+  const projects = workspaces.map((workspace) =>
+    createPersistedProjectRecord({
+      projectId: workspace.projectId,
+      rootPath: workspace.cwd,
+      kind: "non_git",
+      displayName: workspace.displayName,
+      createdAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+    }),
+  );
+  const storedRecords = new Map(
+    workspaces.map((workspace, index) => [
+      `stored-agent-${index + 1}`,
+      makeStoredAgent({
+        id: `stored-agent-${index + 1}`,
+        cwd: workspace.cwd,
+        updatedAt: "2026-03-30T15:00:00.000Z",
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
+    ]),
+  );
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+
+  session.workspaceRegistry.list = async () => workspaces;
+  session.workspaceRegistry.get = async (id: string) =>
+    workspaces.find((workspace) => workspace.workspaceId === id) ?? null;
+  session.projectRegistry.list = async () => projects;
+  session.projectRegistry.get = async (id: string) =>
+    projects.find((project) => project.projectId === id) ?? null;
+  session.agentStorage.get = async (agentId: string) => storedRecords.get(agentId) ?? null;
+  session.agentStorage.upsert = async (record: unknown) => {
+    const storedRecord = record as StoredAgentRecord;
+    storedRecords.set(storedRecord.id, storedRecord);
+  };
+  session.listAgentPayloads = async () =>
+    Array.from(storedRecords.values()).map((record) =>
+      makeAgent({
+        id: record.id,
+        cwd: record.cwd,
+        status: "closed",
+        updatedAt: record.updatedAt,
+        requiresAttention: record.requiresAttention,
+        attentionReason: record.attentionReason,
+      }),
+    );
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: workspaces.map((workspace) => workspace.workspaceId),
+    requestId: "req-1",
+  });
+
+  expect(Array.from(storedRecords.values()).map((record) => record.requiresAttention)).toEqual([
+    false,
+    false,
+  ]);
+  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
+    requestId: "req-1",
+    workspaceId: workspaces.map((workspace) => workspace.workspaceId),
+    clearedAgentIds: ["stored-agent-1", "stored-agent-2"],
+    results: [
+      {
+        workspaceId: workspaces[0].workspaceId,
+        clearedAgentIds: ["stored-agent-1"],
+        success: true,
+        error: null,
+      },
+      {
+        workspaceId: workspaces[1].workspaceId,
+        clearedAgentIds: ["stored-agent-2"],
+        success: true,
+        error: null,
+      },
+    ],
+    success: true,
+    error: null,
   });
 });
 
@@ -3492,137 +3713,16 @@ test.skip("open_project_request collapses a git subdirectory onto the repo root 
   expect(response?.payload.workspace?.id).toBe(repoRoot);
 });
 
-test("list_available_editors_request returns available targets", async () => {
+test("legacy editor RPC requests return daemon unsupported errors", async () => {
   const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests({ appVersion: "0.1.50" });
-
-  session.emit = (message) => {
-    if (isSessionOutboundMessage(message)) emitted.push(message);
-  };
-  session.getAvailableEditorTargets = async () =>
-    session.filterEditorsForClient([
-      { id: "cursor", label: "Cursor" },
-      { id: "webstorm", label: "WebStorm" },
-      { id: "finder", label: "Finder" },
-      { id: "unknown-editor", label: "Unknown Editor" },
-    ]);
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
 
   await session.handleMessage({
     type: "list_available_editors_request",
     requestId: "req-editors",
   });
-
-  const response = emitted.find((message) => message.type === "list_available_editors_response") as
-    | { payload: Record<string, unknown> }
-    | undefined;
-  expect(response?.payload.error).toBeNull();
-  expect(response?.payload.editors).toEqual([
-    { id: "cursor", label: "Cursor" },
-    { id: "webstorm", label: "WebStorm" },
-    { id: "finder", label: "Finder" },
-    { id: "unknown-editor", label: "Unknown Editor" },
-  ]);
-});
-
-test("list_available_editors_request coalesces concurrent discovery", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = asTestSession(
-    createSessionForWorkspaceTests({
-      appVersion: "0.1.50",
-      onMessage: (message) => emitted.push(message),
-    }),
-  );
-  let resolveDiscovery: (editors: EditorTargetDescriptorPayload[]) => void = () => {};
-  let discoveryCalls = 0;
-
-  vi.spyOn(session, "resolveAvailableEditorTargets").mockImplementation(async () => {
-    discoveryCalls += 1;
-    return await new Promise<EditorTargetDescriptorPayload[]>((resolve) => {
-      resolveDiscovery = resolve;
-    });
-  });
-
-  const first = session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-1",
-  });
-  const second = session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-2",
-  });
-
-  await Promise.resolve();
-  expect(discoveryCalls).toBe(1);
-
-  resolveDiscovery([{ id: "cursor", label: "Cursor" }]);
-  await Promise.all([first, second]);
-
-  const responses = emitted.filter(
-    (
-      message,
-    ): message is Extract<SessionOutboundMessage, { type: "list_available_editors_response" }> =>
-      message.type === "list_available_editors_response",
-  );
-  expect(responses).toHaveLength(2);
-  expect(responses.map((response) => response.payload.requestId)).toEqual([
-    "req-editors-1",
-    "req-editors-2",
-  ]);
-  expect(responses.map((response) => response.payload.editors)).toEqual([
-    [{ id: "cursor", label: "Cursor" }],
-    [{ id: "cursor", label: "Cursor" }],
-  ]);
-
-  await session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-3",
-  });
-
-  expect(discoveryCalls).toBe(1);
-});
-
-test("list_available_editors_request filters unsupported ids for legacy clients", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests({ appVersion: "0.1.49" });
-
-  session.emit = (message) => {
-    if (isSessionOutboundMessage(message)) emitted.push(message);
-  };
-  session.getAvailableEditorTargets = async () =>
-    session.filterEditorsForClient([
-      { id: "cursor", label: "Cursor" },
-      { id: "webstorm", label: "WebStorm" },
-      { id: "unknown-editor", label: "Unknown Editor" },
-      { id: "finder", label: "Finder" },
-    ]);
-
-  await session.handleMessage({
-    type: "list_available_editors_request",
-    requestId: "req-editors-legacy",
-  });
-
-  const response = emitted.find((message) => message.type === "list_available_editors_response") as
-    | { payload: Record<string, unknown> }
-    | undefined;
-  expect(response?.payload.error).toBeNull();
-  expect(response?.payload.editors).toEqual([
-    { id: "cursor", label: "Cursor" },
-    { id: "finder", label: "Finder" },
-  ]);
-});
-
-test("open_in_editor_request launches the selected target", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const session = createSessionForWorkspaceTests();
-  const calls: Array<{ editorId: string; path: string }> = [];
-
-  session.emit = (message) => {
-    if (isSessionOutboundMessage(message)) emitted.push(message);
-  };
-  session.openEditorTarget = async (input: { editorId: string; path: string }) => {
-    calls.push(input);
-  };
-
   await session.handleMessage({
     type: "open_in_editor_request",
     requestId: "req-open-editor",
@@ -3630,11 +3730,15 @@ test("open_in_editor_request launches the selected target", async () => {
     path: REPO_CWD,
   });
 
-  expect(calls).toEqual([{ editorId: "vscode", path: REPO_CWD }]);
-  const response = emitted.find((message) => message.type === "open_in_editor_response") as
-    | { payload: Record<string, unknown> }
-    | undefined;
-  expect(response?.payload.error).toBeNull();
+  const listResponse = findByType(emitted, "list_available_editors_response");
+  const openResponse = findByType(emitted, "open_in_editor_response");
+  expect(listResponse?.payload.editors).toEqual([]);
+  expect(listResponse?.payload.error).toBe(
+    "Editor opening moved to the desktop app and is no longer supported by the daemon",
+  );
+  expect(openResponse?.payload.error).toBe(
+    "Editor opening moved to the desktop app and is no longer supported by the daemon",
+  );
 });
 
 test("archive_workspace_request hides non-destructive workspace records", async () => {
@@ -4010,6 +4114,7 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
     name: "main",
     archivingAt: null,
     status: "done",
+    statusEnteredAt: null,
     activityAt: null,
     diffStat: null,
   } as const;
@@ -4034,6 +4139,277 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
   expect(describeWorkspaceRecord).toHaveBeenCalledWith(workspace, project);
   expect(describeWorkspaceRecordWithGitData).not.toHaveBeenCalled();
   expect(descriptors).toEqual([baselineDescriptor]);
+});
+
+test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fields", async () => {
+  const setupSession = () => {
+    const session = createSessionForWorkspaceTests();
+    const project = createPersistedProjectRecord({
+      projectId: "proj-status-entered",
+      rootPath: REPO_CWD,
+      kind: "git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-status-entered",
+      projectId: project.projectId,
+      cwd: "/tmp/repo",
+      kind: "worktree",
+      displayName: "feature",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    session.projectRegistry.list = async () => [project];
+    session.workspaceRegistry.list = async () => [workspace];
+    return { session, workspace };
+  };
+
+  const buildDescriptor = (session: TestSession, workspaceId: string) =>
+    session.buildWorkspaceDescriptorMap({ includeGitData: false }).then((map) => {
+      const descriptor = map.get(workspaceId);
+      expect(descriptor).toBeDefined();
+      return descriptor!;
+    });
+
+  // 1. Empty workspace — no agents contribute. statusEnteredAt must be null
+  // and the workspace status is "done".
+  {
+    const { session, workspace } = setupSession();
+    session.listAgentPayloads = async () => [];
+    const descriptor = await buildDescriptor(session, workspace.workspaceId);
+    expect(descriptor.status).toBe("done");
+    expect(descriptor.statusEnteredAt).toBeNull();
+  }
+
+  // 2. Single idle agent (derives to "done") — statusEnteredAt uses the
+  // agent's updatedAt as a best-effort timestamp.
+  {
+    const { session, workspace } = setupSession();
+    const updatedAt = "2026-05-12T09:30:00.000Z";
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-done",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt,
+      }),
+    ];
+    const descriptor = await buildDescriptor(session, workspace.workspaceId);
+    expect(descriptor.status).toBe("done");
+    expect(descriptor.statusEnteredAt).toBe(updatedAt);
+  }
+
+  // 3. A root agent that is still initializing does not make the workspace
+  // look like it is actively working.
+  {
+    const { session, workspace } = setupSession();
+    const updatedAt = "2026-05-12T09:45:00.000Z";
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-initializing",
+        cwd: workspace.cwd,
+        status: "initializing",
+        updatedAt,
+      }),
+    ];
+    const descriptor = await buildDescriptor(session, workspace.workspaceId);
+    expect(descriptor.status).toBe("done");
+    expect(descriptor.statusEnteredAt).toBe(updatedAt);
+  }
+
+  // 4. Highest-priority across all buckets: a "needs_input" agent beats
+  // a "running" agent beats a "done" agent. statusEnteredAt is the winning
+  // bucket's newest agent timestamp.
+  {
+    const { session, workspace } = setupSession();
+    const doneUpdatedAt = "2026-05-12T09:30:00.000Z";
+    const runningUpdatedAt = "2026-05-12T10:00:00.000Z";
+    const needsInputUpdatedAt = "2026-05-12T10:15:00.000Z";
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-done",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: doneUpdatedAt,
+      }),
+      makeAgent({
+        id: "agent-running",
+        cwd: workspace.cwd,
+        status: "running",
+        updatedAt: runningUpdatedAt,
+      }),
+      makeAgent({
+        id: "agent-needs-input",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: needsInputUpdatedAt,
+        pendingPermissions: 1,
+      }),
+    ];
+    const descriptor = await buildDescriptor(session, workspace.workspaceId);
+    expect(descriptor.status).toBe("needs_input");
+    expect(descriptor.statusEnteredAt).toBe(needsInputUpdatedAt);
+  }
+
+  // 5. Same-bucket: keep the previous bucket entry time even when newer
+  // agents contribute to the same winning bucket.
+  {
+    const { session, workspace } = setupSession();
+    const earlyUpdatedAt = "2026-05-12T08:00:00.000Z";
+    const lateUpdatedAt = "2026-05-12T08:30:00.000Z";
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-done-early",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: earlyUpdatedAt,
+      }),
+    ];
+    const first = await buildDescriptor(session, workspace.workspaceId);
+    expect(first.status).toBe("done");
+    expect(first.statusEnteredAt).toBe(earlyUpdatedAt);
+
+    // Second call: same winning bucket, newer agent updatedAt must not move
+    // the workspace bucket entry time forward.
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-done-early",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: earlyUpdatedAt,
+      }),
+      makeAgent({
+        id: "agent-done-late",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: lateUpdatedAt,
+      }),
+    ];
+    const second = await buildDescriptor(session, workspace.workspaceId);
+    expect(second.status).toBe("done");
+    expect(second.statusEnteredAt).toBe(earlyUpdatedAt);
+  }
+
+  // 5. Priority unmasking: a higher-priority bucket clears, revealing a
+  // lower-priority one. The unmask time must be "now".
+  {
+    const { session, workspace } = setupSession();
+    const unmaskTime = "2026-05-12T12:00:00.000Z";
+    vi.setSystemTime(new Date(unmaskTime));
+    const doneUpdatedAt = "2026-05-12T08:00:00.000Z";
+    const needsInputUpdatedAt = "2026-05-12T07:00:00.000Z";
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-done",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: doneUpdatedAt,
+      }),
+      makeAgent({
+        id: "agent-needs-input",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: needsInputUpdatedAt,
+        pendingPermissions: 1,
+      }),
+    ];
+    const first = await buildDescriptor(session, workspace.workspaceId);
+    expect(first.status).toBe("needs_input");
+
+    // Drop the needs_input agent. The unmask time is "now", not doneUpdatedAt.
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-done",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: doneUpdatedAt,
+      }),
+    ];
+    const second = await buildDescriptor(session, workspace.workspaceId);
+    expect(second.status).toBe("done");
+    expect(second.statusEnteredAt).toBe(unmaskTime);
+    vi.useRealTimers();
+  }
+
+  // 6. Attention agent uses attentionTimestamp as the entered-at signal.
+  {
+    const { session, workspace } = setupSession();
+    const attentionTs = "2026-05-12T11:00:00.000Z";
+    const updatedAt = "2026-05-12T10:00:00.000Z";
+    session.listAgentPayloads = async () => [
+      makeAgent({
+        id: "agent-attention",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt,
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: attentionTs,
+      }),
+    ];
+    const descriptor = await buildDescriptor(session, workspace.workspaceId);
+    expect(descriptor.status).toBe("attention");
+    // attentionTimestamp takes priority over updatedAt
+    expect(descriptor.statusEnteredAt).toBe(attentionTs);
+  }
+});
+
+test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents are archived", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-archive-status-entered",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archive-status-entered",
+    projectId: project.projectId,
+    cwd: "/tmp/repo/archive-status-entered",
+    kind: "worktree",
+    displayName: "feature",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const doneEnteredAt = "2026-05-12T09:30:00.000Z";
+  const archivedAt = "2026-05-12T09:45:00.000Z";
+
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+  session.listAgentPayloads = async () => [
+    makeAgent({
+      id: "agent-done",
+      cwd: workspace.cwd,
+      status: "idle",
+      updatedAt: doneEnteredAt,
+    }),
+  ];
+
+  const first = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
+  expect(first.get(workspace.workspaceId)?.status).toBe("done");
+  expect(first.get(workspace.workspaceId)?.statusEnteredAt).toBe(doneEnteredAt);
+
+  session.listAgentPayloads = async () => [
+    {
+      ...makeAgent({
+        id: "agent-done",
+        cwd: workspace.cwd,
+        status: "idle",
+        updatedAt: doneEnteredAt,
+      }),
+      archivedAt,
+    },
+  ];
+
+  const second = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
+  expect(second.get(workspace.workspaceId)).toMatchObject({
+    status: "done",
+    statusEnteredAt: doneEnteredAt,
+  });
 });
 
 test("buildWorkspaceDescriptorMap stamps workspace archiving state", async () => {
@@ -4638,7 +5014,6 @@ test("project.rename.request returns accepted=false when project is not found", 
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
   );
   session.projectRegistry.get = async () => null;
-
   await session.handleMessage({
     type: "project.rename.request",
     projectId: "does-not-exist",

@@ -109,7 +109,7 @@ export async function listImportableProviderSessions(
   const importedHandles = await collectImportedProviderSessionHandles(agentManager, agentStorage);
 
   const descriptors = await agentManager.listImportablePersistedAgents({
-    limit: 200,
+    limit,
     providerFilter,
     cwd: request.cwd,
   });

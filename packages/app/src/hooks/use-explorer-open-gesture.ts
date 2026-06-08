@@ -2,7 +2,11 @@ import { useCallback, useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import { Extrapolation, interpolate, runOnJS, useSharedValue } from "react-native-reanimated";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
-import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
+import {
+  MOBILE_VISUAL_PANEL_AGENT,
+  MOBILE_VISUAL_PANEL_FILE_EXPLORER,
+  useSidebarAnimation,
+} from "@/contexts/sidebar-animation-context";
 import { isWeb } from "@/constants/platform";
 
 interface UseExplorerOpenGestureParams {
@@ -23,14 +27,19 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
     gestureAnimatingRef,
     openGestureRef,
   } = useExplorerSidebarAnimation();
-  const { openGestureRef: leftOpenGestureRef } = useSidebarAnimation();
+  const {
+    mobileVisualPanel,
+    gestureAnimatingRef: mobilePanelGestureAnimatingRef,
+    openGestureRef: leftOpenGestureRef,
+  } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
 
   const handleGestureOpen = useCallback(() => {
     gestureAnimatingRef.current = true;
+    mobilePanelGestureAnimatingRef.current = true;
     onOpen();
-  }, [onOpen, gestureAnimatingRef]);
+  }, [onOpen, gestureAnimatingRef, mobilePanelGestureAnimatingRef]);
 
   return useMemo(
     () =>
@@ -58,6 +67,11 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
           const deltaY = touch.absoluteY - touchStartY.value;
           const absDeltaX = Math.abs(deltaX);
           const absDeltaY = Math.abs(deltaY);
+
+          if (mobileVisualPanel.value !== MOBILE_VISUAL_PANEL_AGENT) {
+            stateManager.fail();
+            return;
+          }
 
           // Browser back-swipe owns most of the viewport; keep this gesture on the right edge.
           if (isWeb && touchStartX.value < windowWidth - MOBILE_WEB_EDGE_SWIPE_WIDTH) {
@@ -103,9 +117,11 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
           const shouldOpenByVelocity = event.velocityX < -500;
           const shouldOpen = shouldOpenByPosition || shouldOpenByVelocity;
           if (shouldOpen) {
+            mobileVisualPanel.value = MOBILE_VISUAL_PANEL_FILE_EXPLORER;
             animateToOpen();
             runOnJS(handleGestureOpen)();
           } else {
+            mobileVisualPanel.value = MOBILE_VISUAL_PANEL_AGENT;
             animateToClose();
           }
         })
@@ -117,6 +133,7 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
       windowWidth,
       translateX,
       backdropOpacity,
+      mobileVisualPanel,
       animateToOpen,
       animateToClose,
       isGesturing,

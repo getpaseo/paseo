@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import {
   openSettingsSection,
   expectSettingsHeader,
@@ -26,7 +27,12 @@ import {
   expectAboutContent,
   expectGeneralContent,
   expectAppearanceContent,
+  seedSavedSettingsHosts,
+  selectSettingsHost,
+  expectSettingsHostPickerLabel,
+  openSettingsHostSection,
 } from "./helpers/settings";
+import { getServerId } from "./helpers/server-id";
 
 test.describe("Settings sidebar navigation", () => {
   test("clicking a sidebar section updates the URL and renders the section", async ({ page }) => {
@@ -156,5 +162,29 @@ test.describe("Settings — compact master-detail", () => {
     await goBackInSettings(page);
     await expect(page).toHaveURL(/\/settings$/);
     await expectSettingsSidebarVisible(page);
+  });
+
+  test("switching the host picker on the settings list scopes host rows without navigating", async ({
+    page,
+  }) => {
+    const primaryServerId = getServerId();
+    const secondaryServerId = "srv_e2e_settings_secondary";
+    const secondaryHostLabel = "Stable horse";
+    const endpoint = `127.0.0.1:${getE2EDaemonPort()}`;
+
+    await seedSavedSettingsHosts(page, [
+      { serverId: primaryServerId, label: "First horse", endpoint },
+      { serverId: secondaryServerId, label: secondaryHostLabel, endpoint },
+    ]);
+    await gotoAppShell(page);
+    await openCompactSettings(page);
+
+    await selectSettingsHost(page, secondaryServerId);
+
+    await expect(page).toHaveURL(/\/settings$/);
+    await expectSettingsSidebarVisible(page);
+    await expectSettingsHostPickerLabel(page, secondaryHostLabel);
+
+    await openSettingsHostSection(page, secondaryServerId, "connections");
   });
 });

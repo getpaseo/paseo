@@ -59,6 +59,7 @@ import {
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
+import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 
 const IS_WEB = isWeb;
 
@@ -94,6 +95,7 @@ export interface ComboboxProps {
    */
   header?: SheetHeader;
   mobileChildrenScrollEnabled?: boolean;
+  presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   desktopPlacement?: "top-start" | "bottom-start";
@@ -964,6 +966,7 @@ interface MobileBodyProps {
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
+  presentation?: "push" | "replace";
   searchResetKey: number;
   searchPlaceholder: string;
   searchQuery: string;
@@ -1022,7 +1025,8 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
       keyboardBehavior="extend"
-      keyboardBlurBehavior="restore"
+      keyboardBlurBehavior="none"
+      presentation={props.presentation}
     >
       {props.header ? (
         <SheetHeaderView header={props.header} onClose={props.onClose} />
@@ -1247,6 +1251,7 @@ export function Combobox({
   title = "Select",
   header,
   mobileChildrenScrollEnabled = true,
+  presentation,
   open,
   onOpenChange,
   desktopPlacement = "top-start",
@@ -1482,6 +1487,7 @@ export function Combobox({
   );
 
   useWebKeyboardListener(isOpen, handleDesktopKey);
+  useDismissKeyboardOnOpen(isOpen, isMobile);
 
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
@@ -1532,6 +1538,7 @@ export function Combobox({
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
+        presentation={presentation}
         searchResetKey={searchResetKey}
         searchPlaceholder={effectiveSearchPlaceholder}
         searchQuery={searchQuery}

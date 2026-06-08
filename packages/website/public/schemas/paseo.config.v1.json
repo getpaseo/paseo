@@ -4,6 +4,9 @@
     "PaseoConfigV1": {
       "type": "object",
       "properties": {
+        "$schema": {
+          "type": "string"
+        },
         "version": {
           "type": "number",
           "const": 1

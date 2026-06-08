@@ -37,7 +37,7 @@ export function buildSidebarProjectRowModel(input: {
       kind: "workspace_link",
       workspace: flattenedWorkspace,
       chevron: null,
-      trailingAction: input.project.projectKind === "git" ? "new_worktree" : "none",
+      trailingAction: input.project.canCreateWorktree ? "new_worktree" : "none",
     };
   }
 
@@ -51,6 +51,6 @@ export function buildSidebarProjectRowModel(input: {
   return {
     kind: "project_section",
     chevron,
-    trailingAction: input.project.projectKind === "git" ? "new_worktree" : "none",
+    trailingAction: input.project.canCreateWorktree ? "new_worktree" : "none",
   };
 }

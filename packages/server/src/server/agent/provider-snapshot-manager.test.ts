@@ -4,11 +4,15 @@ import { describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
+  AgentMode,
   AgentModelDefinition,
   AgentProvider,
   ListModelsOptions,
+  ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
+import type { ManagedAgent } from "./agent-manager.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -149,6 +153,90 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(isAvailable).toHaveBeenCalledTimes(1);
     } finally {
       manager.destroy();
+    }
+  });
+
+  test("refreshTimeoutMs option overrides the default and yields a timeout error", async () => {
+    // never-resolving isAvailable forces the timeout path
+    const isAvailable = vi.fn(() => new Promise<boolean>(() => {}));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 1,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: { codex: createExtraClient("codex", { isAvailable }) },
+    });
+    try {
+      const entry = await manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+      expect(entry.provider).toBe("codex");
+      expect(entry.status).toBe("error");
+      expect(entry.error).toMatch(/after 1ms/);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("PASEO_PROVIDER_REFRESH_TIMEOUT_MS env var is honored when no option is given", async () => {
+    vi.stubEnv("PASEO_PROVIDER_REFRESH_TIMEOUT_MS", "1");
+    const isAvailable = vi.fn(() => new Promise<boolean>(() => {}));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: { codex: createExtraClient("codex", { isAvailable }) },
+    });
+    try {
+      const entry = await manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+      expect(entry.status).toBe("error");
+      expect(entry.error).toMatch(/after 1ms/);
+    } finally {
+      manager.destroy();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("PASEO_PROVIDER_REFRESH_TIMEOUT_MS env var is ignored when option is provided", async () => {
+    vi.stubEnv("PASEO_PROVIDER_REFRESH_TIMEOUT_MS", "1");
+    const isAvailable = vi.fn(() => new Promise<boolean>(() => {}));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: 5,
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: { codex: createExtraClient("codex", { isAvailable }) },
+    });
+    try {
+      const entry = await manager.getProvider({
+        cwd: "/tmp/project",
+        provider: "codex",
+        wait: true,
+      });
+      expect(entry.status).toBe("error");
+      // explicit option (5) wins over env var (1)
+      expect(entry.error).toMatch(/after 5ms/);
+    } finally {
+      manager.destroy();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -305,6 +393,199 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(state.clients.claude).toBe(claudeClient);
       expect(state.providerDefinitions.opencode).toMatchObject({ enabled: false });
       expect(state.providerDefinitions.codex).toMatchObject({ enabled: true });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("resolveCreateConfig reduces a managed parent to provider mode and unattended data", async () => {
+    const resolverInputs: ResolveAgentCreateConfigInput[] = [];
+    const childModes: AgentMode[] = [
+      { id: "child-unattended", label: "Child", isUnattended: true },
+    ];
+    const parentModes: AgentMode[] = [
+      { id: "parent-unattended", label: "Parent", isUnattended: true },
+    ];
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async listModes() {
+            return childModes;
+          },
+          async resolveCreateConfig(input) {
+            resolverInputs.push(input);
+            return {
+              modeId: input.parent?.isUnattended ? "child-unattended" : undefined,
+              featureValues: undefined,
+            };
+          },
+        }),
+        claude: createExtraClient("claude", {
+          async isAvailable() {
+            return true;
+          },
+          async listModes() {
+            return parentModes;
+          },
+          isCreateConfigUnattended(input) {
+            return input.modeId === "parent-unattended";
+          },
+        }),
+      },
+    });
+    try {
+      const parent = {
+        id: "parent-agent",
+        provider: "claude",
+        currentModeId: "parent-unattended",
+        availableModes: parentModes,
+        config: { provider: "claude", cwd: "/tmp/project" },
+      } as ManagedAgent;
+
+      const resolved = await manager.resolveCreateConfig({
+        cwd: "/tmp/project",
+        provider: "codex",
+        requestedMode: undefined,
+        featureValues: undefined,
+        parent,
+        unattended: false,
+      });
+
+      expect(resolved).toEqual({ modeId: "child-unattended", featureValues: undefined });
+      expect(resolverInputs).toEqual([
+        {
+          provider: "codex",
+          requestedMode: undefined,
+          featureValues: undefined,
+          parent: {
+            provider: "claude",
+            modeId: "parent-unattended",
+            isUnattended: true,
+          },
+          unattended: true,
+          availableModes: childModes,
+        },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("resolveCreateConfig passes explicit unattended intent to provider policy", async () => {
+    const resolverInputs: ResolveAgentCreateConfigInput[] = [];
+    const modes: AgentMode[] = [{ id: "worker", label: "Worker", isUnattended: true }];
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async listModes() {
+            return modes;
+          },
+          async resolveCreateConfig(input) {
+            resolverInputs.push(input);
+            return {
+              modeId: input.unattended ? "worker" : undefined,
+              featureValues: undefined,
+            };
+          },
+        }),
+      },
+    });
+    try {
+      const resolved = await manager.resolveCreateConfig({
+        cwd: "/tmp/project",
+        provider: "codex",
+        requestedMode: undefined,
+        featureValues: { fast_mode: true },
+        parent: null,
+        unattended: true,
+      });
+
+      expect(resolved).toEqual({ modeId: "worker", featureValues: undefined });
+      expect(resolverInputs).toEqual([
+        {
+          provider: "codex",
+          requestedMode: undefined,
+          featureValues: { fast_mode: true },
+          parent: null,
+          unattended: true,
+          availableModes: modes,
+        },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("treats an OpenCode parent with auto accept as unattended when resolving an explicit child mode", async () => {
+    const openCode = new OpenCodeAgentClient(createTestLogger());
+    const modes: AgentMode[] = [
+      { id: "build", label: "Build" },
+      { id: "base", label: "Base" },
+      { id: "orchestrator", label: "Orchestrator" },
+    ];
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        pi: { enabled: false },
+      },
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          async isAvailable() {
+            return true;
+          },
+          async listModes() {
+            return modes;
+          },
+          resolveCreateConfig: openCode.resolveCreateConfig.bind(openCode),
+          isCreateConfigUnattended: openCode.isCreateConfigUnattended.bind(openCode),
+        }),
+      },
+    });
+    try {
+      const parent = {
+        id: "parent-agent",
+        provider: "opencode",
+        currentModeId: "orchestrator",
+        availableModes: modes,
+        config: {
+          provider: "opencode",
+          cwd: "/tmp/project",
+          featureValues: { auto_accept: true },
+        },
+      } as ManagedAgent;
+
+      const resolved = await manager.resolveCreateConfig({
+        cwd: "/tmp/project",
+        provider: "opencode",
+        requestedMode: "base",
+        featureValues: undefined,
+        parent,
+        unattended: false,
+      });
+
+      expect(resolved).toEqual({ modeId: "base", featureValues: { auto_accept: true } });
     } finally {
       manager.destroy();
     }

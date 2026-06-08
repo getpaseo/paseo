@@ -156,6 +156,7 @@ export async function initializeLocalSpeechServices(params: {
 
   const workerClient = localConfig
     ? new LocalSpeechWorkerClient({
+        logger,
         config: {
           modelsDir: localConfig.modelsDir,
           voiceSttModel: localModels.voiceLocalSttModel,

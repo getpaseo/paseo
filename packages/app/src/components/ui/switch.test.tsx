@@ -10,6 +10,7 @@ const { theme } = vi.hoisted(() => ({
     colors: {
       surface3: "#333",
       accent: "#0a84ff",
+      accentForeground: "#fff",
       palette: { white: "#fff" },
     },
   },

@@ -43,6 +43,12 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
             >
               Privacy
             </a>
+            <a
+              href="/sponsor"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Sponsor
+            </a>
           </div>
         </div>
         <div className="space-y-3">

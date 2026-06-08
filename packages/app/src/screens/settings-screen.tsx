@@ -30,7 +30,7 @@ import {
   Palette,
   Server,
   Network,
-  Workflow,
+  Bot,
   Boxes,
   Keyboard,
   Stethoscope,
@@ -84,6 +84,7 @@ import {
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
+import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -93,9 +94,10 @@ import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pc
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import {
   HostConnectionsPage,
-  HostDaemonPage,
-  HostOrchestrationPage,
+  HostAgentsPage,
+  HostSettingsPage,
   HostProvidersPage,
+  HostWorkspacesPage,
 } from "@/screens/settings/host-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
@@ -132,6 +134,7 @@ interface SidebarSectionItem {
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", label: "General", icon: Settings },
+  { id: "daemon", label: "Daemon", icon: Server, desktopOnly: true },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, desktopOnly: true },
   { id: "integrations", label: "Integrations", icon: Puzzle, desktopOnly: true },
@@ -148,10 +151,29 @@ interface HostSectionItem {
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "connections", label: "Connections", icon: Network },
-  { id: "orchestration", label: "Orchestration", icon: Workflow },
+  { id: "agents", label: "Agents", icon: Bot },
+  { id: "workspaces", label: "Workspaces", icon: FolderGit2 },
   { id: "providers", label: "Providers", icon: Boxes },
-  { id: "daemon", label: "Daemon", icon: Server },
+  { id: "host", label: "Host", icon: Server },
 ];
+
+function renderHostSettingsContent(
+  view: Extract<SettingsView, { kind: "host" }>,
+  onHostRemoved: () => void,
+): ReactNode {
+  switch (view.section) {
+    case "connections":
+      return <HostConnectionsPage serverId={view.serverId} />;
+    case "agents":
+      return <HostAgentsPage serverId={view.serverId} />;
+    case "workspaces":
+      return <HostWorkspacesPage serverId={view.serverId} />;
+    case "providers":
+      return <HostProvidersPage serverId={view.serverId} />;
+    case "host":
+      return <HostSettingsPage serverId={view.serverId} onHostRemoved={onHostRemoved} />;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Trigger + sidebar style helpers
@@ -1095,13 +1117,30 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const anyOnlineServerId = useAnyOnlineHostServerId(hostServerIds);
+  const [selectedSettingsHostServerId, setSelectedSettingsHostServerId] = useState<string | null>(
+    view.kind === "host" ? view.serverId : null,
+  );
+  const knownSelectedSettingsHostServerId = useMemo(() => {
+    if (!selectedSettingsHostServerId) {
+      return null;
+    }
+    return hosts.some((host) => host.serverId === selectedSettingsHostServerId)
+      ? selectedSettingsHostServerId
+      : null;
+  }, [hosts, selectedSettingsHostServerId]);
+
+  useEffect(() => {
+    if (view.kind === "host") {
+      setSelectedSettingsHostServerId(view.serverId);
+    }
+  }, [view]);
 
   // The host the four sections scope to: the host on the active view, otherwise
-  // the local daemon, otherwise the first available host.
+  // the picker choice, otherwise the local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
     if (view.kind === "host") return view.serverId;
-    return localServerId ?? sortedHosts[0]?.serverId ?? null;
-  }, [view, localServerId, sortedHosts]);
+    return knownSelectedSettingsHostServerId ?? localServerId ?? sortedHosts[0]?.serverId ?? null;
+  }, [view, knownSelectedSettingsHostServerId, localServerId, sortedHosts]);
 
   const handleSendBehaviorChange = useCallback(
     (behavior: SendBehavior) => {
@@ -1203,10 +1242,15 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     [isCompactLayout, router],
   );
 
-  // Picker: swap the host but keep the section the user is already looking at.
+  // Picker: choose the host for host-section rows. If the user is already on a
+  // host detail route, keep that detail section and swap only the host segment.
   const handleSelectHost = useCallback(
     (serverId: string) => {
-      const section: HostSectionSlug = view.kind === "host" ? view.section : "connections";
+      setSelectedSettingsHostServerId(serverId);
+      if (view.kind !== "host") {
+        return;
+      }
+      const section: HostSectionSlug = view.section;
       const target = buildSettingsHostSectionRoute(serverId, section);
       if (isCompactLayout) {
         router.push(target);
@@ -1301,16 +1345,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   const content = (() => {
     if (view.kind === "host") {
-      switch (view.section) {
-        case "connections":
-          return <HostConnectionsPage serverId={view.serverId} />;
-        case "orchestration":
-          return <HostOrchestrationPage serverId={view.serverId} />;
-        case "providers":
-          return <HostProvidersPage serverId={view.serverId} />;
-        case "daemon":
-          return <HostDaemonPage serverId={view.serverId} onHostRemoved={handleHostRemoved} />;
-      }
+      return renderHostSettingsContent(view, handleHostRemoved);
     }
     if (view.kind === "projects") {
       return <ProjectsScreen view={view} />;
@@ -1330,6 +1365,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
             />
           );
+        case "daemon":
+          return <LocalDaemonSection />;
         case "appearance":
           return <AppearanceSection />;
         case "shortcuts":

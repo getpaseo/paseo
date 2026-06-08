@@ -420,7 +420,7 @@ describe("deriveAgentScreenViewState", () => {
     expect(transitions.join(" -> ")).not.toContain("loading -> idle");
   });
 
-  it("keeps optimistic running status while authoritative agent is initializing", () => {
+  it("uses authoritative initializing status instead of optimistic running status", () => {
     const memory = createBaseMemory();
     const input: AgentScreenMachineInput = {
       ...createBaseInput(),
@@ -431,8 +431,8 @@ describe("deriveAgentScreenViewState", () => {
     const result = deriveAgentScreenViewState({ input, memory });
     const ready = expectReadyState(result.state);
 
-    expect(ready.source).toBe("optimistic");
-    expect(ready.agent.status).toBe("running");
+    expect(ready.source).toBe("authoritative");
+    expect(ready.agent.status).toBe("initializing");
   });
 
   it("hands off to authoritative once agent reaches running", () => {

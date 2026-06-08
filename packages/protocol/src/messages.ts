@@ -145,7 +145,6 @@ export const MutableDaemonConfigPatchSchema = z
 
 export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
 export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
-import type { LiteralUnion } from "./literal-union.js";
 import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
@@ -267,18 +266,21 @@ const McpStdioServerConfigSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string()).optional(),
+  alwaysLoad: z.boolean().optional(),
 });
 
 const McpHttpServerConfigSchema = z.object({
   type: z.literal("http"),
   url: z.string(),
   headers: z.record(z.string()).optional(),
+  alwaysLoad: z.boolean().optional(),
 });
 
 const McpSseServerConfigSchema = z.object({
   type: z.literal("sse"),
   url: z.string(),
   headers: z.record(z.string()).optional(),
+  alwaysLoad: z.boolean().optional(),
 });
 
 const McpServerConfigSchema = z.discriminatedUnion("type", [
@@ -837,11 +839,21 @@ export const ReviewAttachmentSchema = z.object({
   comments: z.array(ReviewAttachmentCommentSchema),
 });
 
+export const UploadedFileAttachmentSchema = z.object({
+  type: z.literal("uploaded_file"),
+  id: z.string(),
+  fileName: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  path: z.string(),
+});
+
 export const AgentAttachmentSchema = z.discriminatedUnion("type", [
   GitHubPrAttachmentSchema,
   GitHubIssueAttachmentSchema,
   TextAttachmentSchema,
   ReviewAttachmentSchema,
+  UploadedFileAttachmentSchema,
 ]);
 
 function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
@@ -1569,47 +1581,18 @@ export const WorkspaceSetupStatusRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// TODO(2026-07): Remove once most clients are on >=0.1.50 and support arbitrary editor ids.
-export const LEGACY_EDITOR_TARGET_IDS = [
-  "cursor",
-  "vscode",
-  "zed",
-  "finder",
-  "explorer",
-  "file-manager",
-] as const;
-
-export const KNOWN_EDITOR_TARGET_IDS = [...LEGACY_EDITOR_TARGET_IDS, "webstorm"] as const;
-
-export const KnownEditorTargetIdSchema = z.enum(KNOWN_EDITOR_TARGET_IDS);
-export const LegacyEditorTargetIdSchema = z.enum(LEGACY_EDITOR_TARGET_IDS);
-export const EditorTargetIdSchema = z.string().trim().min(1);
-
-const KNOWN_EDITOR_TARGET_ID_SET = new Set<string>(KNOWN_EDITOR_TARGET_IDS);
-const LEGACY_EDITOR_TARGET_ID_SET = new Set<string>(LEGACY_EDITOR_TARGET_IDS);
-
-export function isKnownEditorTargetId(value: string): value is KnownEditorTargetId {
-  return KNOWN_EDITOR_TARGET_ID_SET.has(value);
-}
-
-export function isLegacyEditorTargetId(value: string): value is LegacyEditorTargetId {
-  return LEGACY_EDITOR_TARGET_ID_SET.has(value);
-}
-
-export const EditorTargetDescriptorPayloadSchema = z.object({
-  id: EditorTargetIdSchema,
-  label: z.string(),
-});
-
-export const ListAvailableEditorsRequestSchema = z.object({
+// COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer call daemon editor RPCs.
+export const LegacyListAvailableEditorsRequestSchema = z.object({
   type: z.literal("list_available_editors_request"),
   requestId: z.string(),
 });
 
-export const OpenInEditorRequestSchema = z.object({
+export const LegacyOpenInEditorRequestSchema = z.object({
   type: z.literal("open_in_editor_request"),
   path: z.string(),
-  editorId: EditorTargetIdSchema,
+  editorId: z.string().trim().min(1),
+  mode: z.enum(["open", "reveal"]).optional(),
+  cwd: z.string().optional(),
   requestId: z.string(),
 });
 
@@ -1622,6 +1605,12 @@ export const OpenProjectRequestSchema = z.object({
 export const ArchiveWorkspaceRequestSchema = z.object({
   type: z.literal("archive_workspace_request"),
   workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceClearAttentionRequestSchema = z.object({
+  type: z.literal("workspace.clear_attention.request"),
+  workspaceId: z.union([z.string(), z.array(z.string())]),
   requestId: z.string(),
 });
 
@@ -1698,6 +1687,15 @@ export const FileDownloadTokenRequestSchema = z.object({
   type: z.literal("file_download_token_request"),
   cwd: z.string(),
   path: z.string(),
+  requestId: z.string(),
+});
+
+export const FileUploadRequestSchema = z.object({
+  type: z.literal("file.upload.request"),
+  fileName: z.string().min(1),
+  mimeType: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  modifiedAt: z.string(),
   requestId: z.string(),
 });
 
@@ -1924,13 +1922,15 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PaseoWorktreeArchiveRequestSchema,
   CreatePaseoWorktreeRequestSchema,
   WorkspaceSetupStatusRequestSchema,
-  ListAvailableEditorsRequestSchema,
-  OpenInEditorRequestSchema,
+  LegacyListAvailableEditorsRequestSchema,
+  LegacyOpenInEditorRequestSchema,
   OpenProjectRequestSchema,
   ArchiveWorkspaceRequestSchema,
+  WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
+  FileUploadRequestSchema,
   ClearAgentAttentionMessageSchema,
   ClientHeartbeatMessageSchema,
   PingMessageSchema,
@@ -2415,6 +2415,14 @@ export const WorkspaceDescriptorPayloadSchema = z
     name: z.string(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    // Best-effort workspace status entry timestamp. Old daemons omit the
+    // field; old clients treat missing and null equivalently. The transform
+    // coerces a missing field to `null` so downstream code never has to
+    // handle `undefined`.
+    statusEnteredAt: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? null),
     activityAt: z.string().nullable(),
     diffStat: z
       .object({
@@ -2596,16 +2604,22 @@ export const StartWorkspaceScriptResponseMessageSchema = z.object({
   }),
 });
 
-export const ListAvailableEditorsResponseMessageSchema = z.object({
+// COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer parse daemon editor RPC responses.
+export const LegacyListAvailableEditorsResponseMessageSchema = z.object({
   type: z.literal("list_available_editors_response"),
   payload: z.object({
     requestId: z.string(),
-    editors: z.array(EditorTargetDescriptorPayloadSchema),
+    editors: z.array(
+      z.object({
+        id: z.string().trim().min(1),
+        label: z.string(),
+      }),
+    ),
     error: z.string().nullable(),
   }),
 });
 
-export const OpenInEditorResponseMessageSchema = z.object({
+export const LegacyOpenInEditorResponseMessageSchema = z.object({
   type: z.literal("open_in_editor_response"),
   payload: z.object({
     requestId: z.string(),
@@ -2689,6 +2703,25 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string().or(z.array(z.string())),
     agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+export const WorkspaceClearAttentionResponseSchema = z.object({
+  type: z.literal("workspace.clear_attention.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.union([z.string(), z.array(z.string())]),
+    clearedAgentIds: z.array(z.string()),
+    results: z.array(
+      z.object({
+        workspaceId: z.string(),
+        clearedAgentIds: z.array(z.string()),
+        success: z.boolean(),
+        error: z.string().nullable(),
+      }),
+    ),
+    success: z.boolean(),
+    error: z.string().nullable(),
   }),
 });
 
@@ -3423,6 +3456,15 @@ export const FileDownloadTokenResponseSchema = z.object({
   }),
 });
 
+export const FileUploadResponseSchema = z.object({
+  type: z.literal("file.upload.response"),
+  payload: z.object({
+    requestId: z.string(),
+    file: UploadedFileAttachmentSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const ListProviderModelsResponseMessageSchema = z.object({
   type: z.literal("list_provider_models_response"),
   payload: z.object({
@@ -3684,13 +3726,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
   StartWorkspaceScriptResponseMessageSchema,
-  ListAvailableEditorsResponseMessageSchema,
-  OpenInEditorResponseMessageSchema,
+  LegacyListAvailableEditorsResponseMessageSchema,
+  LegacyOpenInEditorResponseMessageSchema,
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
+  WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
@@ -3742,6 +3785,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FileExplorerResponseSchema,
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
+  FileUploadResponseSchema,
   ListProviderModelsResponseMessageSchema,
   ListProviderModesResponseMessageSchema,
   ListProviderFeaturesResponseMessageSchema,
@@ -3811,10 +3855,6 @@ export type WorkspaceDescriptorPayload = z.infer<typeof WorkspaceDescriptorPaylo
 export type WorkspaceScriptLifecycle = z.infer<typeof WorkspaceScriptLifecycleSchema>;
 export type WorkspaceScriptHealth = z.infer<typeof WorkspaceScriptHealthSchema>;
 export type WorkspaceScriptPayload = z.infer<typeof WorkspaceScriptPayloadSchema>;
-export type KnownEditorTargetId = z.infer<typeof KnownEditorTargetIdSchema>;
-export type LegacyEditorTargetId = z.infer<typeof LegacyEditorTargetIdSchema>;
-export type EditorTargetId = LiteralUnion<KnownEditorTargetId, string>;
-export type EditorTargetDescriptorPayload = z.infer<typeof EditorTargetDescriptorPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
 export type FetchAgentHistoryResponseMessage = z.infer<
   typeof FetchAgentHistoryResponseMessageSchema
@@ -3828,10 +3868,12 @@ export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessa
 export type StartWorkspaceScriptResponseMessage = z.infer<
   typeof StartWorkspaceScriptResponseMessageSchema
 >;
-export type ListAvailableEditorsResponseMessage = z.infer<
-  typeof ListAvailableEditorsResponseMessageSchema
+export type LegacyListAvailableEditorsResponseMessage = z.infer<
+  typeof LegacyListAvailableEditorsResponseMessageSchema
 >;
-export type OpenInEditorResponseMessage = z.infer<typeof OpenInEditorResponseMessageSchema>;
+export type LegacyOpenInEditorResponseMessage = z.infer<
+  typeof LegacyOpenInEditorResponseMessageSchema
+>;
 export type ArchiveWorkspaceResponseMessage = z.infer<typeof ArchiveWorkspaceResponseMessageSchema>;
 export type FetchAgentResponseMessage = z.infer<typeof FetchAgentResponseMessageSchema>;
 export type FetchAgentTimelineResponseMessage = z.infer<
@@ -4030,10 +4072,13 @@ export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponse
 export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>;
 export type PaseoWorktreeArchiveResponse = z.infer<typeof PaseoWorktreeArchiveResponseSchema>;
 export type WorkspaceSetupStatusRequest = z.infer<typeof WorkspaceSetupStatusRequestSchema>;
-export type ListAvailableEditorsRequest = z.infer<typeof ListAvailableEditorsRequestSchema>;
-export type OpenInEditorRequest = z.infer<typeof OpenInEditorRequestSchema>;
+export type LegacyListAvailableEditorsRequest = z.infer<
+  typeof LegacyListAvailableEditorsRequestSchema
+>;
+export type LegacyOpenInEditorRequest = z.infer<typeof LegacyOpenInEditorRequestSchema>;
 export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>;
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>;
+export type WorkspaceClearAttentionRequest = z.infer<typeof WorkspaceClearAttentionRequestSchema>;
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>;
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;
@@ -4041,6 +4086,8 @@ export type ProjectIconResponse = z.infer<typeof ProjectIconResponseSchema>;
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
+export type FileUploadRequest = z.infer<typeof FileUploadRequestSchema>;
+export type FileUploadResponse = z.infer<typeof FileUploadResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
 export type ShutdownServerRequestMessage = z.infer<typeof ShutdownServerRequestMessageSchema>;
 export type ClearAgentAttentionMessage = z.infer<typeof ClearAgentAttentionMessageSchema>;

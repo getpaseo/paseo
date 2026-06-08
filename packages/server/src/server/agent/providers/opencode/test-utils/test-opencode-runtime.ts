@@ -92,6 +92,7 @@ export class TestOpenCodeClient {
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
+  sessionSummarizeEvents: unknown[] = [idleEvent()];
   sessionSummarizeResponse: OpenCodeResponse = { data: {} };
   sessionUpdateResponse: OpenCodeResponse = {};
   private readonly queuedEventStream = createQueuedEventStream();
@@ -208,6 +209,9 @@ export class TestOpenCodeClient {
         },
         summarize: async (parameters: unknown) => {
           this.calls.sessionSummarize.push(parameters);
+          for (const event of this.sessionSummarizeEvents) {
+            this.emitEvent(event);
+          }
           return this.sessionSummarizeResponse;
         },
         update: async (parameters: unknown) => {

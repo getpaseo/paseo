@@ -11,6 +11,12 @@ import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  MOBILE_VISUAL_PANEL_AGENT,
+  MOBILE_VISUAL_PANEL_AGENT_LIST,
+  MOBILE_VISUAL_PANEL_FILE_EXPLORER,
+  useSidebarAnimation,
+} from "@/contexts/sidebar-animation-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getRightSidebarAnimationTargets,
@@ -35,9 +41,21 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
   null,
 );
 
+function getMobileVisualPanel(mobileView: "agent" | "agent-list" | "file-explorer"): number {
+  if (mobileView === "agent-list") {
+    return MOBILE_VISUAL_PANEL_AGENT_LIST;
+  }
+  if (mobileView === "file-explorer") {
+    return MOBILE_VISUAL_PANEL_FILE_EXPLORER;
+  }
+  return MOBILE_VISUAL_PANEL_AGENT;
+}
+
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
+  const { mobileVisualPanel } = useSidebarAnimation();
   const { width: windowWidth } = useWindowDimensions();
   const isCompactLayout = useIsCompactFormFactor();
+  const mobileView = usePanelStore((state) => state.mobileView);
   const isOpen = usePanelStore((state) =>
     selectIsFileExplorerOpen(state, { isCompact: isCompactLayout }),
   );
@@ -53,6 +71,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
+  const prevMobileView = useRef(mobileView);
   const prevWindowWidth = useRef(windowWidth);
 
   // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close)
@@ -63,11 +82,13 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       previousWindowWidth: prevWindowWidth.current,
       nextWindowWidth: windowWidth,
     });
+    const didMobileViewChange = prevMobileView.current !== mobileView;
     const previousIsOpen = prevIsOpen.current;
     prevIsOpen.current = isOpen;
+    prevMobileView.current = mobileView;
     prevWindowWidth.current = windowWidth;
 
-    if (!didStateChange) {
+    if (!didStateChange && !didMobileViewChange) {
       return;
     }
 
@@ -79,6 +100,10 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     // Don't animate if we're in the middle of a gesture - the gesture handler will handle it
     if (isGesturing.value) {
       return;
+    }
+
+    if (isCompactLayout) {
+      mobileVisualPanel.value = getMobileVisualPanel(mobileView);
     }
 
     const targets = getRightSidebarAnimationTargets({ isOpen, windowWidth });
@@ -97,7 +122,16 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-  }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
+  }, [
+    isOpen,
+    mobileView,
+    translateX,
+    backdropOpacity,
+    windowWidth,
+    isGesturing,
+    isCompactLayout,
+    mobileVisualPanel,
+  ]);
 
   const animateToOpen = useCallback(() => {
     "worklet";
