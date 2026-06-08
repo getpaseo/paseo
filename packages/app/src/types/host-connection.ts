@@ -89,15 +89,54 @@ function hostLifecycleEquals(left: HostLifecycle, right: HostLifecycle): boolean
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function dedupeHostConnections(connections: HostConnection[]): HostConnection[] {
+function replaceHostConnection(
+  _existing: HostConnection,
+  incoming: HostConnection,
+): HostConnection {
+  return incoming;
+}
+
+function dedupeHostConnections(
+  connections: HostConnection[],
+  mergeConnection: (existing: HostConnection, incoming: HostConnection) => HostConnection,
+): HostConnection[] {
   const next: HostConnection[] = [];
   for (const connection of connections) {
-    if (next.some((existing) => hostConnectionEquals(existing, connection))) {
+    const existingIndex = next.findIndex((existing) => existing.id === connection.id);
+    if (existingIndex === -1) {
+      next.push(connection);
       continue;
     }
-    next.push(connection);
+    next[existingIndex] = mergeConnection(next[existingIndex], connection);
   }
   return next;
+}
+
+function mergeStoredHostConnection(
+  existing: HostConnection,
+  incoming: HostConnection,
+): HostConnection {
+  if (
+    existing.type === "directTcp" &&
+    incoming.type === "directTcp" &&
+    existing.id === incoming.id
+  ) {
+    const password = incoming.password ?? existing.password;
+    return {
+      ...incoming,
+      ...(password ? { password } : {}),
+    };
+  }
+  return incoming;
+}
+
+function resolveHostConnectionMerge(
+  preserveExistingDirectTcpPassword: boolean | undefined,
+): (existing: HostConnection, incoming: HostConnection) => HostConnection {
+  if (preserveExistingDirectTcpPassword) {
+    return mergeStoredHostConnection;
+  }
+  return replaceHostConnection;
 }
 
 export function upsertHostConnectionInProfiles(input: {
@@ -105,6 +144,7 @@ export function upsertHostConnectionInProfiles(input: {
   serverId: string;
   label?: string;
   connection: HostConnection;
+  preserveExistingDirectTcpPassword?: boolean;
   now?: string;
 }): HostProfile[] {
   const serverId = input.serverId.trim();
@@ -141,10 +181,11 @@ export function upsertHostConnectionInProfiles(input: {
 
   const matchedProfiles = matchingIndexes.map((index) => existing[index]);
   const prev = matchedProfiles.find((daemon) => daemon.serverId === serverId) ?? matchedProfiles[0];
-  const nextConnections = dedupeHostConnections([
-    ...matchedProfiles.flatMap((daemon) => daemon.connections),
-    input.connection,
-  ]);
+  const mergeConnection = resolveHostConnectionMerge(input.preserveExistingDirectTcpPassword);
+  const nextConnections = dedupeHostConnections(
+    [...matchedProfiles.flatMap((daemon) => daemon.connections), input.connection],
+    mergeConnection,
+  );
   const nextLifecycle = prev.lifecycle;
   const nextLabel = labelTrimmed || (prev.label === prev.serverId ? derivedLabel : prev.label);
   const nextPreferredConnectionId =
@@ -309,9 +350,10 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   }
 
   const rawConnections = Array.isArray(record.connections) ? record.connections : [];
-  const connections = rawConnections
+  const normalizedConnections = rawConnections
     .map((connection) => normalizeStoredConnection(connection))
     .filter((connection): connection is HostConnection => connection !== null);
+  const connections = dedupeHostConnections(normalizedConnections, mergeStoredHostConnection);
   if (connections.length === 0) {
     return null;
   }

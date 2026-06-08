@@ -1741,6 +1741,46 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("upsertConnectionFromListen preserves an existing direct TCP password", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertDirectConnection({
+      serverId: "srv_listen_password",
+      endpoint: "localhost:6767",
+      password: "shared-secret",
+      label: "desktop host",
+    });
+
+    await store.upsertConnectionFromListen({
+      serverId: "srv_listen_password",
+      listenAddress: "127.0.0.1:6767",
+      hostname: "desktop host",
+    });
+
+    const host = store.getHosts().find((entry) => entry.serverId === "srv_listen_password");
+    expect(host?.connections).toEqual([
+      {
+        id: "direct:localhost:6767",
+        type: "directTcp",
+        endpoint: "localhost:6767",
+        useTls: false,
+        password: "shared-secret",
+      },
+    ]);
+
+    store.syncHosts([]);
+  });
+
   it("probeAndUpsertConnection learns the real server id before storing a direct host", async () => {
     const connection: HostConnection = {
       id: "direct:lan:6767",

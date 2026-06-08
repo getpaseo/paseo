@@ -1333,6 +1333,7 @@ export class HostRuntimeStore {
       await this.probeAndUpsertConnection({
         connection,
         timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS,
+        preserveExistingDirectTcpPassword: true,
       });
     } catch (error) {
       console.warn("[HostRuntime] bootstrap probe failed", {
@@ -1373,6 +1374,7 @@ export class HostRuntimeStore {
         await this.probeAndUpsertConnection({
           connection,
           timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS,
+          preserveExistingDirectTcpPassword: true,
         });
         return;
       } catch (error) {
@@ -1454,6 +1456,7 @@ export class HostRuntimeStore {
     connection: HostConnection;
     label?: string;
     timeoutMs?: number;
+    preserveExistingDirectTcpPassword?: boolean;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     if (input.connection.type === "relay") {
       throw new Error("Cannot probe a relay connection without a server id.");
@@ -1477,6 +1480,9 @@ export class HostRuntimeStore {
       label: input.label ?? hostname ?? undefined,
       connection: input.connection,
       existingClient: client,
+      ...(input.preserveExistingDirectTcpPassword !== undefined
+        ? { preserveExistingDirectTcpPassword: input.preserveExistingDirectTcpPassword }
+        : {}),
     });
     return { profile, serverId, hostname };
   }
@@ -1576,6 +1582,7 @@ export class HostRuntimeStore {
       serverId,
       label: input.hostname ?? undefined,
       connection,
+      preserveExistingDirectTcpPassword: true,
     });
   }
 
@@ -1623,6 +1630,7 @@ export class HostRuntimeStore {
     label?: string;
     connection: HostConnection;
     existingClient?: DaemonClient;
+    preserveExistingDirectTcpPassword?: boolean;
   }): Promise<HostProfile> {
     const now = new Date().toISOString();
     const next = upsertHostConnectionInProfiles({
@@ -1630,6 +1638,9 @@ export class HostRuntimeStore {
       serverId: input.serverId,
       label: input.label,
       connection: input.connection,
+      ...(input.preserveExistingDirectTcpPassword !== undefined
+        ? { preserveExistingDirectTcpPassword: input.preserveExistingDirectTcpPassword }
+        : {}),
       now,
     });
     this.setHostsAndSync(next, {
