@@ -5,8 +5,10 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { OpenCodeServerManager, type OpenCodeServerGeneration } from "./opencode/server-manager.js";
 
 type FakeServerProcess = EventEmitter & {
+  exitCode: number | null;
   killed: boolean;
   kill: ReturnType<typeof vi.fn>;
+  signalCode: NodeJS.Signals | null;
 };
 
 type FakeGeneration = OpenCodeServerGeneration & { process: FakeServerProcess };
@@ -119,6 +121,38 @@ describe("OpenCodeServerManager generations", () => {
     expect(first.process.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
+  test("release cleans lingering OpenCode serve processes by port after dedicated server teardown", async () => {
+    const cleanupServeProcessesByPort = vi.fn(async () => {});
+    const manager = createTestManager({ cleanupServeProcessesByPort });
+    const dedicated = createGeneration(4471);
+    stubGenerations(manager, [dedicated]);
+
+    const acquisition = await manager.acquire({
+      force: false,
+      env: { OPENCODE_AUTH_TOKEN: "test-token" },
+    });
+    acquisition.release();
+
+    await vi.waitFor(() => {
+      expect(cleanupServeProcessesByPort).toHaveBeenCalledWith(4471);
+    });
+  });
+
+  test("shutdown cleans lingering OpenCode serve processes when the owner process already exited", async () => {
+    const cleanupServeProcessesByPort = vi.fn(async () => {});
+    const manager = createTestManager({ cleanupServeProcessesByPort });
+    const first = createGeneration(4481);
+    stubGenerations(manager, [first]);
+
+    await manager.acquire({ force: false });
+    first.process.exitCode = 0;
+
+    await manager.shutdown();
+
+    expect(first.process.kill).not.toHaveBeenCalled();
+    expect(cleanupServeProcessesByPort).toHaveBeenCalledWith(4481);
+  });
+
   test("repeated rotations leave zero unreferenced retired servers", async () => {
     const manager = createTestManager();
     const first = createGeneration(4501);
@@ -141,11 +175,19 @@ describe("OpenCodeServerManager generations", () => {
   });
 });
 
-function createTestManager(): OpenCodeServerManager {
+function createTestManager(options?: {
+  cleanupServeProcessesByPort?: (port: number) => Promise<void>;
+}): OpenCodeServerManager {
   const ManagerConstructor = OpenCodeServerManager as unknown as {
-    new (logger: ReturnType<typeof createTestLogger>): OpenCodeServerManager;
+    new (
+      logger: ReturnType<typeof createTestLogger>,
+      runtimeSettings: undefined,
+      options?: {
+        cleanupServeProcessesByPort?: (port: number) => Promise<void>;
+      },
+    ): OpenCodeServerManager;
   };
-  return new ManagerConstructor(createTestLogger());
+  return new ManagerConstructor(createTestLogger(), undefined, options);
 }
 
 function stubGenerations(
@@ -165,12 +207,15 @@ function stubGenerations(
 
 function createGeneration(port: number): FakeGeneration {
   const process = new EventEmitter() as FakeServerProcess;
+  process.exitCode = null;
   process.killed = false;
   process.kill = vi.fn((signal?: NodeJS.Signals) => {
     process.killed = true;
+    process.signalCode = signal ?? "SIGTERM";
     process.emit("exit", signal ?? "SIGTERM");
     return true;
   });
+  process.signalCode = null;
   return {
     process,
     port,

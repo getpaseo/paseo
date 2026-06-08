@@ -10,6 +10,7 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
+import { cleanupWindowsOpenCodeServeProcessesByPort } from "./windows-serve-cleanup.js";
 
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -35,6 +36,10 @@ export interface OpenCodeServerGeneration {
   retired: boolean;
 }
 
+interface OpenCodeServerManagerOptions {
+  cleanupServeProcessesByPort?: (port: number) => Promise<void>;
+}
+
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
@@ -45,11 +50,19 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
+  private readonly cleanupServeProcessesByPort: (port: number) => Promise<void>;
 
-  private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
+  private constructor(
+    logger: Logger,
+    runtimeSettings?: ProviderRuntimeSettings,
+    options?: OpenCodeServerManagerOptions,
+  ) {
     this.logger = logger;
     this.runtimeSettings = runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
+    this.cleanupServeProcessesByPort =
+      options?.cleanupServeProcessesByPort ??
+      ((port) => cleanupWindowsOpenCodeServeProcessesByPort(port, logger));
   }
 
   static getInstance(
@@ -308,6 +321,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
       (server.process.signalCode !== null && server.process.signalCode !== undefined)
     ) {
+      await this.cleanupLingeringServeProcesses(server.port);
       return;
     }
     const result = await terminateWithTreeKill(server.process, {
@@ -324,6 +338,18 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       this.logger.warn(
         { timeoutMs: OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
         "OpenCode server did not report exit after SIGKILL",
+      );
+    }
+    await this.cleanupLingeringServeProcesses(server.port);
+  }
+
+  private async cleanupLingeringServeProcesses(port: number): Promise<void> {
+    try {
+      await this.cleanupServeProcessesByPort(port);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, port },
+        "Failed to clean up lingering OpenCode serve processes",
       );
     }
   }
