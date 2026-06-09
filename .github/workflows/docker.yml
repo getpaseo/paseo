@@ -92,14 +92,18 @@ jobs:
         id: tags
         env:
           IMAGE_BASE: ghcr.io/${{ needs.setup.outputs.owner }}/paseo
+          RESOLVED_VERSION: ${{ needs.setup.outputs.version }}
+          MATRIX_NAME: ${{ matrix.name }}
+          MATRIX_MOVING: ${{ matrix.moving }}
+          MATRIX_LATEST: ${{ matrix.latest }}
         run: |
           set -euo pipefail
-          V="${{ needs.setup.outputs.version }}"
-          tags="${IMAGE_BASE}:${V}-${{ matrix.name }}"
-          if [[ -n "${{ matrix.moving }}" ]]; then
-            tags="${tags}"$'\n'"${IMAGE_BASE}:${{ matrix.moving }}"
+          V="${RESOLVED_VERSION}"
+          tags="${IMAGE_BASE}:${V}-${MATRIX_NAME}"
+          if [[ -n "${MATRIX_MOVING}" ]]; then
+            tags="${tags}"$'\n'"${IMAGE_BASE}:${MATRIX_MOVING}"
           fi
-          if [[ "${{ matrix.latest }}" == "true" ]]; then
+          if [[ "${MATRIX_LATEST}" == "true" ]]; then
             tags="${tags}"$'\n'"${IMAGE_BASE}:latest"
           fi
           {
@@ -140,6 +144,9 @@ jobs:
         if: matrix.name == 'arch'
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
+          ARCH_BASE_IMAGE: ${{ matrix.base }}
+          RESOLVED_VERSION: ${{ needs.setup.outputs.version }}
+          SHOULD_PUSH: ${{ needs.setup.outputs.push }}
         run: |
           set -euo pipefail
           mapfile -t tags <<< "${TAGS}"
@@ -153,11 +160,11 @@ jobs:
           docker build \
             --platform linux/amd64 \
             "${tag_args[@]}" \
-            --build-arg BASE_IMAGE=${{ matrix.base }} \
-            --build-arg PASEO_VERSION=${{ needs.setup.outputs.version }} \
+            --build-arg "BASE_IMAGE=${ARCH_BASE_IMAGE}" \
+            --build-arg "PASEO_VERSION=${RESOLVED_VERSION}" \
             docker/base
 
-          if [[ "${{ needs.setup.outputs.push }}" == "true" ]]; then
+          if [[ "${SHOULD_PUSH}" == "true" ]]; then
             for tag in "${tags[@]}"; do
               if [[ -n "${tag}" ]]; then
                 docker push "${tag}"

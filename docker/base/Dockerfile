@@ -46,13 +46,19 @@ RUN set -eux; \
       *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     cd /tmp; \
-    curl -fsSL -o s6-noarch.tar.xz \
+    curl -fsSL -O \
       "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz"; \
-    curl -fsSL -o s6-arch.tar.xz \
+    curl -fsSL -O \
+      "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz.sha256"; \
+    curl -fsSL -O \
       "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz"; \
-    tar -C / -Jxpf s6-noarch.tar.xz; \
-    tar -C / -Jxpf s6-arch.tar.xz; \
-    rm -f s6-noarch.tar.xz s6-arch.tar.xz
+    curl -fsSL -O \
+      "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz.sha256"; \
+    sha256sum -c s6-overlay-noarch.tar.xz.sha256; \
+    sha256sum -c "s6-overlay-${S6_ARCH}.tar.xz.sha256"; \
+    tar -C / -Jxpf s6-overlay-noarch.tar.xz; \
+    tar -C / -Jxpf "s6-overlay-${S6_ARCH}.tar.xz"; \
+    rm -f s6-overlay-noarch.tar.xz s6-overlay-noarch.tar.xz.sha256 "s6-overlay-${S6_ARCH}.tar.xz" "s6-overlay-${S6_ARCH}.tar.xz.sha256"
 
 # Paseo server + CLI from npm. On Alpine this compiles node-pty against musl
 # using a throwaway toolchain that the script removes afterwards.
