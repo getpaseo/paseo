@@ -85,6 +85,7 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
+import { withPaseoToolingMcpServer } from "../paseo-tooling/provider-mcp.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 
 function assertChildWithPipes(
@@ -5438,7 +5439,10 @@ export class CodexAppServerAgentClient implements AgentClient {
       // TODO: Honor persistSession=false if app-server adds support, or route
       // utility generations through `codex exec --ephemeral` in a larger change.
     }
-    const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
+    const sessionConfig = withPaseoToolingMcpServer(
+      { ...config, provider: CODEX_PROVIDER },
+      launchContext,
+    );
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const session = new CodexAppServerAgentSession(
@@ -5463,12 +5467,15 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const storedConfig = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
-    const merged: AgentSessionConfig = {
-      ...storedConfig,
-      ...overrides,
-      provider: CODEX_PROVIDER,
-      cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
-    };
+    const merged = withPaseoToolingMcpServer(
+      {
+        ...storedConfig,
+        ...overrides,
+        provider: CODEX_PROVIDER,
+        cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
+      },
+      launchContext,
+    );
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
     const session = new CodexAppServerAgentSession(

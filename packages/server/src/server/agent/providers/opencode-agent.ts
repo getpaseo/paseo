@@ -78,6 +78,11 @@ import {
   type OpenCodeRuntime,
   type OpenCodeServerAcquisition,
 } from "./opencode/runtime.js";
+import {
+  bindOpenCodePaseoToolingSession,
+  ensureOpenCodePaseoToolingRuntime,
+  withOpenCodePaseoToolingEnv,
+} from "./opencode/paseo-tooling.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
 
@@ -1290,9 +1295,14 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
+    const paseoToolingRuntime = ensureOpenCodePaseoToolingRuntime();
     const acquisition = await this.runtime.acquireServer({
       force: false,
-      env: launchContext?.env,
+      env: withOpenCodePaseoToolingEnv({
+        env: launchContext?.env,
+        launchContext,
+        runtime: paseoToolingRuntime,
+      }),
     });
     const { url } = acquisition.server;
     const client = this.runtime.createClient({
@@ -1317,6 +1327,10 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      const unbindPaseoToolingSession = bindOpenCodePaseoToolingSession({
+        launchContext,
+        sessionId: session.id,
+      });
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1327,6 +1341,7 @@ export class OpenCodeAgentClient implements AgentClient {
         acquisition.release,
         options?.persistSession,
         launchContext?.agentId,
+        unbindPaseoToolingSession,
       );
     } catch (error) {
       acquisition.release();
@@ -1352,7 +1367,15 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.runtime.acquireServer({ force: false });
+    const paseoToolingRuntime = ensureOpenCodePaseoToolingRuntime();
+    const acquisition = await this.runtime.acquireServer({
+      force: false,
+      env: withOpenCodePaseoToolingEnv({
+        env: launchContext?.env,
+        launchContext,
+        runtime: paseoToolingRuntime,
+      }),
+    });
     const { url } = acquisition.server;
     const client = this.runtime.createClient({
       baseUrl: url,
@@ -1361,6 +1384,10 @@ export class OpenCodeAgentClient implements AgentClient {
 
     try {
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      const unbindPaseoToolingSession = bindOpenCodePaseoToolingSession({
+        launchContext,
+        sessionId: handle.sessionId,
+      });
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1371,6 +1398,7 @@ export class OpenCodeAgentClient implements AgentClient {
         acquisition.release,
         undefined,
         launchContext?.agentId,
+        unbindPaseoToolingSession,
       );
     } catch (error) {
       acquisition.release();
@@ -2821,6 +2849,7 @@ class OpenCodeAgentSession implements AgentSession {
     releaseServer?: () => void,
     persistSession = true,
     private readonly agentId?: string,
+    private readonly unbindPaseoToolingSession?: () => void,
   ) {
     this.config = config;
     this.client = client;
@@ -3593,6 +3622,7 @@ class OpenCodeAgentSession implements AgentSession {
       await this.deleteProviderSessionIfEphemeral();
       this.activeForegroundTurnId = null;
     } finally {
+      this.unbindPaseoToolingSession?.();
       this.releaseServer?.();
       this.releaseServer = null;
     }

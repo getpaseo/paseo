@@ -56,7 +56,8 @@ import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
-import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
+import { stripInternalPaseoMcpServer } from "./runtime-mcp-config.js";
+import type { PaseoToolingRuntime } from "./paseo-tooling/runtime.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -188,7 +189,7 @@ export interface AgentManagerOptions {
   onAgentAttention?: AgentAttentionCallback;
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
-  mcpBaseUrl?: string;
+  paseoToolingRuntime?: PaseoToolingRuntime;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -430,7 +431,7 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
-  private mcpBaseUrl: string | null;
+  private readonly paseoToolingRuntime: PaseoToolingRuntime | null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -442,7 +443,7 @@ export class AgentManager {
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
-    this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.paseoToolingRuntime = options?.paseoToolingRuntime ?? null;
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -495,10 +496,6 @@ export class AgentManager {
 
   setAgentArchivedCallback(callback: AgentArchivedCallback): void {
     this.onAgentArchived = callback;
-  }
-
-  setMcpBaseUrl(url: string | null): void {
-    this.mcpBaseUrl = url;
   }
 
   setAppendSystemPrompt(prompt: string | null | undefined): void {
@@ -3451,16 +3448,10 @@ export class AgentManager {
 
   private async prepareSessionConfig(
     config: AgentSessionConfig,
-    agentId: string,
+    _agentId: string,
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config));
-    const launchConfig = this.applyDaemonAppendSystemPrompt(
-      withRuntimePaseoMcpServer({
-        config: storedConfig,
-        agentId,
-        mcpBaseUrl: this.mcpBaseUrl,
-      }),
-    );
+    const launchConfig = this.applyDaemonAppendSystemPrompt(storedConfig);
     return { storedConfig, launchConfig };
   }
 
@@ -3480,6 +3471,7 @@ export class AgentManager {
   private buildLaunchContext(agentId: string, env?: Record<string, string>): AgentLaunchContext {
     return {
       agentId,
+      paseoTooling: this.paseoToolingRuntime?.createLaunchContext(agentId),
       env: {
         ...env,
         PASEO_AGENT_ID: agentId,

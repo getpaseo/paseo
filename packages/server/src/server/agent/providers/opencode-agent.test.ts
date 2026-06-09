@@ -16,6 +16,7 @@ import {
   TestOpenCodeRuntime,
 } from "./opencode/test-utils/test-opencode-runtime.js";
 import type {
+  AgentLaunchContext,
   AgentSessionConfig,
   AgentStreamEvent,
   ToolCallTimelineItem,
@@ -852,6 +853,55 @@ describe("OpenCode adapter context-window normalization", () => {
 });
 
 describe("OpenCode adapter startTurn error handling", () => {
+  test("uses native Paseo tooling plugin instead of registering internal MCP", async () => {
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    runtime.enqueueClient(openCodeClient);
+    const cwd = tmpCwd();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const boundSessions: string[] = [];
+    const unboundSessions: string[] = [];
+    const launchContext: AgentLaunchContext = {
+      agentId: "agent-1",
+      env: { PASEO_AGENT_ID: "agent-1" },
+      paseoTooling: {
+        agentId: "agent-1",
+        mcpUrl: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        httpBaseUrl: "http://127.0.0.1:6767",
+        token: "tool-token",
+        bindProviderSession: ({ provider, sessionId }) => {
+          expect(provider).toBe("opencode");
+          boundSessions.push(sessionId);
+          return () => unboundSessions.push(sessionId);
+        },
+      },
+    };
+
+    try {
+      const session = await client.createSession(
+        {
+          provider: "opencode",
+          cwd,
+        },
+        launchContext,
+      );
+
+      await collectTurnEvents(streamSession(session, "hello"));
+
+      expect(runtime.acquisitions[0]?.env?.PASEO_AGENT_ID).toBe("agent-1");
+      expect(runtime.acquisitions[0]?.env?.OPENCODE_CONFIG_CONTENT).toContain(
+        "paseo-tooling-plugin.mjs",
+      );
+      expect(openCodeClient.calls.mcpAdd).toEqual([]);
+      expect(boundSessions).toEqual(["session-1"]);
+
+      await session.close();
+      expect(unboundSessions).toEqual(["session-1"]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("dynamically adds injected MCP servers without config-backed connect", async () => {
     const runtime = new TestOpenCodeRuntime();
     const openCodeClient = new TestOpenCodeClient();

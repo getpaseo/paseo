@@ -32,6 +32,7 @@ import {
   type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
 import { runProviderTurn } from "../provider-runner.js";
+import { withPaseoToolingMcpServer } from "../../paseo-tooling/provider-mcp.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -1868,18 +1869,19 @@ export class PiRpcAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers);
+    const launchConfig = withPaseoToolingMcpServer(config, launchContext);
+    const mcpConfig = await this.prepareMcpConfig(launchConfig.cwd, launchConfig.mcpServers);
     const paseoExtension = createPiPaseoExtensionFile();
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
-        cwd: config.cwd,
-        model: config.model,
+        cwd: launchConfig.cwd,
+        model: launchConfig.model,
         thinkingOptionId:
-          normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
+          normalizePiThinkingOption(launchConfig.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL,
         systemPrompt: composeSystemPromptParts(
-          config.systemPrompt,
-          config.daemonAppendSystemPrompt,
+          launchConfig.systemPrompt,
+          launchConfig.daemonAppendSystemPrompt,
         ),
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
@@ -1893,7 +1895,7 @@ export class PiRpcAgentClient implements AgentClient {
     try {
       return new PiRpcAgentSession({
         runtimeSession,
-        config,
+        config: launchConfig,
         initialState: await runtimeSession.getState(),
         capabilities: withPiMcpCapability(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
@@ -1909,7 +1911,7 @@ export class PiRpcAgentClient implements AgentClient {
   async resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -1919,7 +1921,8 @@ export class PiRpcAgentClient implements AgentClient {
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides);
 
-    const mcpConfig = await this.prepareMcpConfig(resumeConfig.cwd, resumeConfig.config.mcpServers);
+    const launchConfig = withPaseoToolingMcpServer(resumeConfig.config, launchContext);
+    const mcpConfig = await this.prepareMcpConfig(resumeConfig.cwd, launchConfig.mcpServers);
     const paseoExtension = createPiPaseoExtensionFile();
     let runtimeSession: PiRuntimeSession;
     try {
@@ -1929,8 +1932,8 @@ export class PiRpcAgentClient implements AgentClient {
         model: resumeConfig.model,
         thinkingOptionId: normalizePiThinkingOption(resumeConfig.thinkingOptionId) ?? undefined,
         systemPrompt: composeSystemPromptParts(
-          resumeConfig.config.systemPrompt,
-          resumeConfig.config.daemonAppendSystemPrompt,
+          launchConfig.systemPrompt,
+          launchConfig.daemonAppendSystemPrompt,
         ),
         mcpConfigPath: mcpConfig?.path,
         extensionPaths: [paseoExtension.path],
@@ -1943,7 +1946,7 @@ export class PiRpcAgentClient implements AgentClient {
     try {
       return new PiRpcAgentSession({
         runtimeSession,
-        config: resumeConfig.config,
+        config: launchConfig,
         initialState: await runtimeSession.getState(),
         capabilities: withPiMcpCapability(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),

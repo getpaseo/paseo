@@ -45,6 +45,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
+import { withPaseoToolingMcpServer } from "../../paseo-tooling/provider-mcp.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 
 import {
@@ -1297,7 +1298,7 @@ export class ClaudeAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    const claudeConfig = this.assertConfig(config);
+    const claudeConfig = this.assertConfig(withPaseoToolingMcpServer(config, launchContext));
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
@@ -1325,7 +1326,7 @@ export class ClaudeAgentClient implements AgentClient {
       provider: "claude",
       cwd: merged.cwd,
     };
-    const claudeConfig = this.assertConfig(mergedConfig);
+    const claudeConfig = this.assertConfig(withPaseoToolingMcpServer(mergedConfig, launchContext));
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,

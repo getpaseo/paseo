@@ -26,28 +26,6 @@ export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSe
   return next;
 }
 
-export function withRuntimePaseoMcpServer(params: {
-  config: AgentSessionConfig;
-  agentId: string;
-  mcpBaseUrl: string | null;
-}): AgentSessionConfig {
-  const storedConfig = stripInternalPaseoMcpServer(params.config);
-  if (!params.mcpBaseUrl || storedConfig.mcpServers?.[PASEO_MCP_SERVER_NAME]) {
-    return storedConfig;
-  }
-
-  return {
-    ...storedConfig,
-    mcpServers: {
-      [PASEO_MCP_SERVER_NAME]: {
-        type: "http",
-        url: `${params.mcpBaseUrl}?callerAgentId=${params.agentId}`,
-      },
-      ...storedConfig.mcpServers,
-    },
-  };
-}
-
 function isInternalPaseoMcpServer(config: McpServerConfig): boolean {
   if (config.type !== "http" && config.type !== "sse") {
     return false;

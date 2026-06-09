@@ -93,6 +93,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { withPaseoToolingMcpServer } from "../paseo-tooling/provider-mcp.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import { platformShell, spawnProcess } from "../../../utils/spawn.js";
 
@@ -596,29 +597,30 @@ export class ACPAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.assertProvider(config);
-    const session = new ACPAgentSession(
+    const launchConfig = withPaseoToolingMcpServer(
       { ...config, provider: this.provider },
-      {
-        provider: this.provider,
-        logger: this.logger,
-        runtimeSettings: this.runtimeSettings,
-        defaultCommand: this.defaultCommand,
-        defaultModes: this.defaultModes,
-        modelTransformer: this.modelTransformer,
-        sessionResponseTransformer: this.sessionResponseTransformer,
-        configOptionsTransformer: this.configOptionsTransformer,
-        modeIdTransformer: this.modeIdTransformer,
-        toolSnapshotTransformer: this.toolSnapshotTransformer,
-        providerModeWriter: this.providerModeWriter,
-        beforeModeWriter: this.beforeModeWriter,
-        thinkingOptionWriter: this.thinkingOptionWriter,
-        capabilities: this.capabilities,
-        agentId: launchContext?.agentId,
-        launchEnv: launchContext?.env,
-        waitForInitialCommands: this.waitForInitialCommands,
-        initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
-      },
+      launchContext,
     );
+    const session = new ACPAgentSession(launchConfig, {
+      provider: this.provider,
+      logger: this.logger,
+      runtimeSettings: this.runtimeSettings,
+      defaultCommand: this.defaultCommand,
+      defaultModes: this.defaultModes,
+      modelTransformer: this.modelTransformer,
+      sessionResponseTransformer: this.sessionResponseTransformer,
+      configOptionsTransformer: this.configOptionsTransformer,
+      modeIdTransformer: this.modeIdTransformer,
+      toolSnapshotTransformer: this.toolSnapshotTransformer,
+      providerModeWriter: this.providerModeWriter,
+      beforeModeWriter: this.beforeModeWriter,
+      thinkingOptionWriter: this.thinkingOptionWriter,
+      capabilities: this.capabilities,
+      agentId: launchContext?.agentId,
+      launchEnv: launchContext?.env,
+      waitForInitialCommands: this.waitForInitialCommands,
+      initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+    });
     await session.initializeNewSession();
     return session;
   }
@@ -638,12 +640,15 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} resume requires the original working directory`);
     }
 
-    const mergedConfig: AgentSessionConfig = {
-      ...storedConfig,
-      ...overrides,
-      provider: this.provider,
-      cwd,
-    };
+    const mergedConfig = withPaseoToolingMcpServer(
+      {
+        ...storedConfig,
+        ...overrides,
+        provider: this.provider,
+        cwd,
+      },
+      launchContext,
+    );
     const session = new ACPAgentSession(mergedConfig, {
       provider: this.provider,
       logger: this.logger,

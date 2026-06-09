@@ -28,6 +28,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { PaseoToolingRuntime } from "./paseo-tooling/runtime.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -522,7 +523,20 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const client = new TestAgentClient();
+  class CaptureClient extends TestAgentClient {
+    lastLaunchContext: AgentLaunchContext | null = null;
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastLaunchContext = launchContext ?? null;
+      return super.resumeSession(handle, config, launchContext);
+    }
+  }
+
+  const client = new CaptureClient();
   const manager = new AgentManager({
     clients: {
       codex: client,
@@ -551,7 +565,20 @@ test("daemon append system prompt is injected into Pi configs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const client = new TestAgentClient();
+  class CaptureClient extends TestAgentClient {
+    lastLaunchContext: AgentLaunchContext | null = null;
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastLaunchContext = launchContext ?? null;
+      return super.resumeSession(handle, config, launchContext);
+    }
+  }
+
+  const client = new CaptureClient();
   const manager = new AgentManager({
     clients: {
       pi: client as unknown as AgentClient,
@@ -948,28 +975,38 @@ test("createAgent passes persistSession to provider create options", async () =>
   rmSync(workdir, { recursive: true, force: true });
 });
 
-test("createAgent injects paseo MCP server only into provider launch config", async () => {
+test("createAgent passes internal paseo tooling only through runtime launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
   class CaptureClient extends TestAgentClient {
     lastConfig: AgentSessionConfig | null = null;
+    lastLaunchContext: AgentLaunchContext | null = null;
 
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
       this.lastConfig = config;
+      this.lastLaunchContext = launchContext ?? null;
       return new TestAgentSession(config);
     }
   }
 
   const client = new CaptureClient();
+  const paseoToolingRuntime = new PaseoToolingRuntime();
+  paseoToolingRuntime.setEndpoints({
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    httpBaseUrl: "http://127.0.0.1:6767",
+  });
   const manager = new AgentManager({
     clients: {
       codex: client,
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    paseoToolingRuntime,
     idFactory: () => "00000000-0000-4000-8000-000000000103",
   });
 
@@ -991,15 +1028,15 @@ test("createAgent injects paseo MCP server only into provider launch config", as
     },
   });
   expect(client.lastConfig?.mcpServers).toEqual({
-    paseo: {
-      type: "http",
-      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
-    },
     custom: {
       type: "stdio",
       command: "custom-mcp",
     },
   });
+  expect(client.lastLaunchContext?.paseoTooling?.mcpUrl).toBe(
+    `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+  );
+  expect(client.lastLaunchContext?.paseoTooling?.httpBaseUrl).toBe("http://127.0.0.1:6767");
 
   const stored = await storage.get(snapshot.id);
   expect(stored?.config?.mcpServers).toEqual({
@@ -1010,18 +1047,36 @@ test("createAgent injects paseo MCP server only into provider launch config", as
   });
 });
 
-test("resumeAgentFromPersistence replaces stored internal paseo MCP with current runtime URL", async () => {
+test("resumeAgentFromPersistence strips stored internal paseo MCP and passes current runtime tooling", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const client = new TestAgentClient();
+  class CaptureClient extends TestAgentClient {
+    lastLaunchContext: AgentLaunchContext | null = null;
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastLaunchContext = launchContext ?? null;
+      return super.resumeSession(handle, config, launchContext);
+    }
+  }
+
+  const client = new CaptureClient();
+  const paseoToolingRuntime = new PaseoToolingRuntime();
+  paseoToolingRuntime.setEndpoints({
+    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents",
+    httpBaseUrl: "http://127.0.0.1:6768",
+  });
   const manager = new AgentManager({
     clients: {
       codex: client,
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents",
+    paseoToolingRuntime,
     idFactory: () => "00000000-0000-4000-8000-000000000105",
   });
   const handle: AgentPersistenceHandle = {
@@ -1047,15 +1102,14 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
   });
 
   expect(client.resumeOverrides[0]?.mcpServers).toEqual({
-    paseo: {
-      type: "http",
-      url: `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
-    },
     custom: {
       type: "stdio",
       command: "custom-mcp",
     },
   });
+  expect(client.lastLaunchContext?.paseoTooling?.mcpUrl).toBe(
+    `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
+  );
   expect(snapshot.config.mcpServers).toEqual({
     custom: {
       type: "stdio",
@@ -1119,7 +1173,6 @@ test("createAgent preserves a user-provided paseo MCP config", async () => {
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
 
