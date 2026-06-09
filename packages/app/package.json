@@ -22,7 +22,7 @@
     "test": "vitest run",
     "test:browser": "vitest run --project browser",
     "test:e2e": "playwright test --project='Desktop Chrome'",
-    "test:e2e:real": "playwright test --project=real-provider",
+    "test:e2e:real": "cross-env E2E_FORK_PASEO_HOME_FROM=../../.dev/paseo-home playwright test --project=real-provider",
     "test:e2e:ui": "playwright test --ui",
     "build": "npm run build:web",
     "build:web": "npm --prefix ../.. run build:app-deps && expo export --platform web",

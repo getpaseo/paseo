@@ -9,6 +9,7 @@ export interface AgentSlashCommand {
   name: string;
   description: string;
   argumentHint: string;
+  kind?: string;
 }
 
 export interface DraftCommandConfig {

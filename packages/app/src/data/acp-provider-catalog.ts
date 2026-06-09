@@ -54,15 +54,6 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "@autohandai/autohand-acp@0.2.1"],
   },
   {
-    id: "claude-acp",
-    title: "Claude Agent",
-    description: "ACP wrapper for Anthropic's Claude",
-    version: "0.42.0",
-    iconId: "claude-acp",
-    installLink: "https://github.com/agentclientprotocol/claude-agent-acp",
-    command: ["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.42.0"],
-  },
-  {
     id: "cline",
     title: "Cline",
     description:
@@ -80,15 +71,6 @@ const CATALOG_DATA = [
     iconId: "codebuddy-code",
     installLink: "https://www.codebuddy.cn/cli/",
     command: ["npx", "-y", "@tencent-ai/codebuddy-code@2.103.4", "--acp"],
-  },
-  {
-    id: "codex-acp",
-    title: "Codex CLI",
-    description: "ACP adapter for OpenAI's coding assistant",
-    version: "0.13.0",
-    iconId: "codex-acp",
-    installLink: "https://github.com/zed-industries/codex-acp",
-    command: ["codex-acp"],
   },
   {
     id: "cortex-code",
@@ -204,15 +186,6 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "@google/gemini-cli@0.45.2", "--acp"],
   },
   {
-    id: "github-copilot-cli",
-    title: "GitHub Copilot",
-    description: "GitHub's AI pair programmer",
-    version: "1.0.60",
-    iconId: "github-copilot-cli",
-    installLink: "https://github.com/features/copilot/cli/",
-    command: ["npx", "-y", "@github/copilot@1.0.60", "--acp"],
-  },
-  {
     id: "glm-acp-agent",
     title: "GLM Agent",
     description:
@@ -313,24 +286,6 @@ const CATALOG_DATA = [
     iconId: "nova",
     installLink: "https://www.compassap.ai/portfolio/nova.html",
     command: ["npx", "-y", "@compass-ai/nova@1.1.15", "acp"],
-  },
-  {
-    id: "opencode",
-    title: "OpenCode",
-    description: "The open source coding agent",
-    version: "1.14.39",
-    iconId: "opencode",
-    installLink: "https://opencode.ai/docs/acp/",
-    command: ["opencode", "acp"],
-  },
-  {
-    id: "pi-acp",
-    title: "pi ACP",
-    description: "ACP adapter for pi coding agent",
-    version: "0.0.27",
-    iconId: "pi-acp",
-    installLink: "https://github.com/svkozak/pi-acp",
-    command: ["npx", "-y", "pi-acp@0.0.27"],
   },
   {
     id: "poolside",

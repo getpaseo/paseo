@@ -47,7 +47,7 @@ function buildModelRows(
     providerLabel,
     modelId: model.id,
     modelLabel: model.label,
-    description: model.description,
+    description: model.description ?? model.id,
     isDefault: model.isDefault,
   }));
 }

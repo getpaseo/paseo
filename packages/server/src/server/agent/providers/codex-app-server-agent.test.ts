@@ -725,6 +725,7 @@ describe("Codex app-server provider", () => {
         name: "shipper",
         description: "Ship changes carefully.",
         argumentHint: "",
+        kind: "skill",
       });
       expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
     } finally {
@@ -983,6 +984,7 @@ describe("Codex app-server provider", () => {
         name: "paseo",
         description: "Shared orchestration skill.",
         argumentHint: "",
+        kind: "skill",
       },
     ]);
   });
@@ -1890,6 +1892,7 @@ describe("Codex app-server provider", () => {
       name: "compact",
       description: "Summarize conversation to prevent hitting the context limit",
       argumentHint: "",
+      kind: "command",
     });
 
     const handler = session.tryHandleOutOfBand?.("/compact");

@@ -481,6 +481,8 @@ export interface AgentRuntimeInfo {
   extra?: AgentMetadata;
 }
 
+export type AgentSlashCommandKind = "command" | "skill";
+
 /**
  * Represents a slash command available in an agent session.
  * Commands are executed by sending them as prompts with / prefix.
@@ -489,6 +491,7 @@ export interface AgentSlashCommand {
   name: string;
   description: string;
   argumentHint: string;
+  kind?: AgentSlashCommandKind;
 }
 
 export interface ListPersistedAgentsOptions {

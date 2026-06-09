@@ -560,6 +560,95 @@ describe("bottom anchor controller driver", () => {
 
     expect(harness.driver.getSnapshot().mode).toBe("detached");
   });
+
+  it("keeps initial native content growth anchored before layout scroll events arrive", () => {
+    const harness = createDriverHarness({
+      transportBehavior: {
+        verificationDelayFrames: 2,
+        verificationRetryMode: "recheck",
+      },
+      measurementState: createMeasurementState({
+        containerKey: "native-virtualized",
+        viewportWidth: 0,
+        viewportHeight: 0,
+        contentHeight: 0,
+        offsetY: 0,
+        viewportMeasuredForKey: null,
+        contentMeasuredForKey: null,
+      }),
+    });
+    harness.scrollToBottom.mockImplementation(() => {
+      harness.context.measurementState.offsetY = 0;
+    });
+
+    harness.context.measurementState.contentHeight = 1348;
+    harness.context.measurementState.contentMeasuredForKey = "native-virtualized";
+    harness.driver.handleContentSizeChange({
+      previousContentHeight: 0,
+      contentHeight: 1348,
+    });
+
+    expect(harness.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(harness.driver.getSnapshot()).toMatchObject({
+      mode: "sticky-bottom",
+      pendingVerification: {
+        requestId: null,
+      },
+    });
+
+    harness.context.measurementState.viewportWidth = 390;
+    harness.context.measurementState.viewportHeight = 546;
+    harness.context.measurementState.viewportMeasuredForKey = "native-virtualized";
+    harness.context.measurementState.offsetY = 50;
+    harness.context.nearBottom = false;
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: false,
+      scrollDelta: 50,
+    });
+
+    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
+  });
+
+  it("keeps native sticky content changes anchored when measured height is unchanged", () => {
+    const harness = createDriverHarness({
+      transportBehavior: {
+        verificationDelayFrames: 2,
+        verificationRetryMode: "recheck",
+      },
+      measurementState: createMeasurementState({
+        containerKey: "native-virtualized",
+        viewportWidth: 390,
+        viewportHeight: 546,
+        contentHeight: 546,
+        offsetY: 0,
+        viewportMeasuredForKey: "native-virtualized",
+        contentMeasuredForKey: "native-virtualized",
+      }),
+    });
+    harness.scrollToBottom.mockImplementation(() => {
+      harness.context.measurementState.offsetY = 0;
+      harness.context.nearBottom = true;
+    });
+
+    harness.driver.prepareForStickyContentChange();
+
+    expect(harness.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(harness.driver.getSnapshot()).toMatchObject({
+      mode: "sticky-bottom",
+      pendingVerification: {
+        requestId: null,
+      },
+    });
+
+    harness.context.measurementState.offsetY = 50;
+    harness.context.nearBottom = false;
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: false,
+      scrollDelta: 50,
+    });
+
+    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
+  });
 });
 
 describe("controller helper predicates", () => {

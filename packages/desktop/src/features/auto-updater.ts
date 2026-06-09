@@ -3,48 +3,34 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import { UUID } from "builder-util-runtime";
-import { autoUpdater, type UpdateInfo } from "electron-updater";
-import { z } from "zod";
+import { autoUpdater } from "electron-updater";
+import {
+  createAppUpdateService,
+  type AppUpdateCheckResult,
+  type AppUpdateInstallResult,
+  type AppUpdateRuntime,
+  type AppUpdateRuntimeConfiguration,
+  type RuntimeUpdateCheckResult,
+  type RuntimeUpdateInfo,
+} from "./app-update-service.js";
+import {
+  bucketFromStagingUserId,
+  rolloutManifestSchema,
+  shouldAdmitAppUpdate,
+  type AppReleaseChannel,
+  type AppUpdateCheckIntent,
+} from "./app-update-rollout.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+export {
+  bucketFromStagingUserId,
+  rolloutManifestSchema,
+  shouldAdmitAppUpdate,
+  type AppReleaseChannel,
+  type AppUpdateCheckIntent,
+  type AppUpdateCheckResult,
+  type AppUpdateInstallResult,
+};
 
-export interface AppUpdateCheckResult {
-  hasUpdate: boolean;
-  readyToInstall: boolean;
-  currentVersion: string;
-  latestVersion: string;
-  body: string | null;
-  date: string | null;
-}
-
-export interface AppUpdateInstallResult {
-  installed: boolean;
-  version: string | null;
-  message: string;
-}
-
-export type AppReleaseChannel = "stable" | "beta";
-
-export const rolloutManifestSchema = z.object({
-  rolloutHours: z
-    .union([z.number(), z.string().transform(Number)])
-    .pipe(z.number().finite().nonnegative())
-    .optional()
-    .catch(undefined),
-  releaseDate: z.string().optional().catch(undefined),
-});
-
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-let cachedUpdateInfo: UpdateInfo | null = null;
-let downloadedUpdateVersion: string | null = null;
-let downloading = false;
-let autoUpdaterConfigured = false;
-let configuredReleaseChannel: AppReleaseChannel | null = null;
 let cachedStagingUserIdPromise: Promise<string> | null = null;
 
 export function shouldAdmitToRollout(args: {
@@ -54,23 +40,7 @@ export function shouldAdmitToRollout(args: {
   now: number;
   bucket: number;
 }): boolean {
-  if (args.channel !== "stable") return true;
-  if (args.rolloutHours == null) return true;
-  if (args.rolloutHours === 0) return true;
-  if (!args.releaseDate) return true;
-
-  const releaseTime = new Date(args.releaseDate).getTime();
-  if (Number.isNaN(releaseTime)) return true;
-
-  const ageHours = (args.now - releaseTime) / 3_600_000;
-  if (ageHours < 0) return false;
-
-  const pct = Math.min(100, (ageHours / args.rolloutHours) * 100);
-  return args.bucket * 100 < pct;
-}
-
-export function bucketFromStagingUserId(stagingUserId: string): number {
-  return UUID.parse(stagingUserId).readUInt32BE(12) / 0x100000000;
+  return shouldAdmitAppUpdate({ ...args, intent: "automatic" });
 }
 
 export async function resolveStagingUserId(filePath: string): Promise<string> {
@@ -106,100 +76,74 @@ export function getStagingUserId(): Promise<string> {
   return cachedStagingUserIdPromise;
 }
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
+class ElectronAppUpdateRuntime implements AppUpdateRuntime {
+  private configured = false;
 
-function configureAutoUpdater(releaseChannel: AppReleaseChannel): void {
-  // Download updates in the background and only prompt once they are ready to install.
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  configure(input: AppUpdateRuntimeConfiguration): void {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoRunAppAfterInstall = true;
+    autoUpdater.allowPrerelease = input.releaseChannel === "beta";
+    autoUpdater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
+    autoUpdater.allowDowngrade = false;
+    autoUpdater.isUserWithinRollout = async (info) => {
+      try {
+        return await input.shouldAdmitUpdate(info as RuntimeUpdateInfo);
+      } catch {
+        return true;
+      }
+    };
 
-  // Suppress built-in dialogs; the renderer handles UI.
-  autoUpdater.autoRunAppAfterInstall = true;
-  autoUpdater.allowPrerelease = releaseChannel === "beta";
-  autoUpdater.channel = releaseChannel === "beta" ? "beta" : "latest";
-  autoUpdater.allowDowngrade = false;
-  autoUpdater.isUserWithinRollout = async (info) => {
-    try {
-      const parsed = rolloutManifestSchema.parse(info);
-      const stagingUserId = await getStagingUserId();
+    if (this.configured) return;
+    this.configured = true;
 
-      return shouldAdmitToRollout({
-        channel: releaseChannel,
-        rolloutHours: parsed.rolloutHours,
-        releaseDate: parsed.releaseDate,
-        now: Date.now(),
-        bucket: bucketFromStagingUserId(stagingUserId),
-      });
-    } catch {
-      return true;
-    }
-  };
-
-  if (configuredReleaseChannel !== releaseChannel) {
-    cachedUpdateInfo = null;
-    downloadedUpdateVersion = null;
-    downloading = false;
-    configuredReleaseChannel = releaseChannel;
+    autoUpdater.on("update-available", (info) => {
+      input.onUpdateAvailable(info as RuntimeUpdateInfo);
+    });
+    autoUpdater.on("update-downloaded", (info) => {
+      input.onUpdateDownloaded(info as RuntimeUpdateInfo);
+    });
+    autoUpdater.on("update-not-available", () => {
+      input.onUpdateNotAvailable();
+    });
+    autoUpdater.on("error", (error) => {
+      input.onError(error);
+    });
   }
 
-  if (autoUpdaterConfigured) {
-    return;
+  async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result) return null;
+    return {
+      isUpdateAvailable: result.isUpdateAvailable,
+      updateInfo: result.updateInfo as RuntimeUpdateInfo,
+    };
   }
 
-  autoUpdaterConfigured = true;
+  downloadUpdate(): Promise<unknown> {
+    return autoUpdater.downloadUpdate();
+  }
 
-  autoUpdater.on("update-available", (info) => {
-    cachedUpdateInfo = info;
-    downloadedUpdateVersion = null;
-    downloading = true;
-  });
+  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+    autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+  }
+}
 
-  autoUpdater.on("update-downloaded", (info) => {
-    cachedUpdateInfo = info;
-    downloadedUpdateVersion = info.version;
-    downloading = false;
-  });
-
-  autoUpdater.on("update-not-available", () => {
-    cachedUpdateInfo = null;
-    downloadedUpdateVersion = null;
-    downloading = false;
-  });
-
-  autoUpdater.on("error", (error) => {
-    downloading = false;
+const appUpdateService = createAppUpdateService({
+  runtime: new ElectronAppUpdateRuntime(),
+  isPackaged: () => app.isPackaged,
+  now: () => Date.now(),
+  bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
+  reportCheckError: (error) => {
+    console.error("[auto-updater] Failed to check for updates:", error);
+  },
+  reportRuntimeError: (error) => {
     console.error("[auto-updater] Updater event failed:", error);
-  });
-}
-
-function isReadyToInstallVersion(version: string): boolean {
-  return downloadedUpdateVersion === version;
-}
-
-function buildCheckResult(input: {
-  currentVersion: string;
-  hasUpdate: boolean;
-  readyToInstall: boolean;
-  info?: UpdateInfo | null;
-}): AppUpdateCheckResult {
-  const { currentVersion, hasUpdate, readyToInstall, info } = input;
-
-  return {
-    hasUpdate,
-    readyToInstall,
-    currentVersion,
-    latestVersion: info?.version ?? currentVersion,
-    body: typeof info?.releaseNotes === "string" ? info.releaseNotes : null,
-    date: typeof info?.releaseDate === "string" ? info.releaseDate : null,
-  };
-}
-
-async function performQuitAndInstall(onBeforeQuit?: () => Promise<void>): Promise<void> {
-  if (onBeforeQuit) await onBeforeQuit();
-  autoUpdater.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
-}
+  },
+  reportInstallError: (message) => {
+    console.error("[auto-updater] Failed to download/install update:", message);
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -208,73 +152,13 @@ async function performQuitAndInstall(onBeforeQuit?: () => Promise<void>): Promis
 export async function checkForAppUpdate({
   currentVersion,
   releaseChannel,
+  intent,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
+  intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
-  if (!app.isPackaged) {
-    return buildCheckResult({
-      currentVersion,
-      hasUpdate: false,
-      readyToInstall: false,
-    });
-  }
-
-  configureAutoUpdater(releaseChannel);
-
-  const cachedVersion = cachedUpdateInfo?.version ?? null;
-  if (cachedVersion && cachedVersion !== currentVersion) {
-    return buildCheckResult({
-      currentVersion,
-      hasUpdate: true,
-      readyToInstall: isReadyToInstallVersion(cachedVersion),
-      info: cachedUpdateInfo,
-    });
-  }
-
-  try {
-    const result = await autoUpdater.checkForUpdates();
-
-    if (!result || !result.updateInfo) {
-      return buildCheckResult({
-        currentVersion,
-        hasUpdate: false,
-        readyToInstall: false,
-      });
-    }
-
-    const info = result.updateInfo;
-    const latestVersion = info.version;
-    const hasUpdate = latestVersion !== currentVersion;
-
-    if (hasUpdate) {
-      cachedUpdateInfo = info;
-      downloading = !isReadyToInstallVersion(latestVersion);
-      return buildCheckResult({
-        currentVersion,
-        hasUpdate: true,
-        readyToInstall: isReadyToInstallVersion(latestVersion),
-        info,
-      });
-    }
-
-    cachedUpdateInfo = null;
-    downloadedUpdateVersion = null;
-    downloading = false;
-
-    return buildCheckResult({
-      currentVersion,
-      hasUpdate: false,
-      readyToInstall: false,
-    });
-  } catch (error) {
-    console.error("[auto-updater] Failed to check for updates:", error);
-    return buildCheckResult({
-      currentVersion,
-      hasUpdate: false,
-      readyToInstall: false,
-    });
-  }
+  return appUpdateService.checkForAppUpdate({ currentVersion, releaseChannel, intent });
 }
 
 export async function downloadAndInstallUpdate(
@@ -287,63 +171,8 @@ export async function downloadAndInstallUpdate(
   },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
-  if (!app.isPackaged) {
-    return {
-      installed: false,
-      version: currentVersion,
-      message: "Auto-update is not available in development mode.",
-    };
-  }
-
-  if (!cachedUpdateInfo) {
-    return {
-      installed: false,
-      version: currentVersion,
-      message: "No update available. Check for updates first.",
-    };
-  }
-
-  configureAutoUpdater(releaseChannel);
-
-  const readyVersion = cachedUpdateInfo.version;
-  if (isReadyToInstallVersion(readyVersion)) {
-    await performQuitAndInstall(onBeforeQuit);
-    return {
-      installed: true,
-      version: readyVersion,
-      message: "Update downloaded. The app will restart shortly.",
-    };
-  }
-
-  if (downloading) {
-    return {
-      installed: false,
-      version: currentVersion,
-      message: "Update is still being prepared. Try again in a moment.",
-    };
-  }
-
-  downloading = true;
-
-  try {
-    await autoUpdater.downloadUpdate();
-    downloadedUpdateVersion = readyVersion;
-    downloading = false;
-    await performQuitAndInstall(onBeforeQuit);
-
-    return {
-      installed: true,
-      version: readyVersion,
-      message: "Update downloaded. The app will restart shortly.",
-    };
-  } catch (error) {
-    downloading = false;
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("[auto-updater] Failed to download/install update:", message);
-    return {
-      installed: false,
-      version: currentVersion,
-      message: `Update failed: ${message}`,
-    };
-  }
+  return appUpdateService.downloadAndInstallUpdate(
+    { currentVersion, releaseChannel },
+    onBeforeQuit,
+  );
 }
