@@ -162,7 +162,7 @@ describe("applyStreamEvent", () => {
     }
   });
 
-  it("flushes reasoning when assistant message starts", () => {
+  it("keeps reasoning and assistant interleaved in head for interleaving providers (DeepSeek)", () => {
     let result = applyStreamEvent({
       tail: [],
       head: [],
@@ -176,11 +176,11 @@ describe("applyStreamEvent", () => {
       timestamp: baseTimestamp,
     });
 
-    expect(result.tail).toHaveLength(1);
-    expect(result.tail[0].kind).toBe("thought");
-    expect((result.tail[0] as ThoughtItem).status).toBe("ready");
-    expect(result.head).toHaveLength(1);
-    expect(result.head[0].kind).toBe("assistant_message");
+    expect(result.tail).toHaveLength(0);
+    expect(result.head).toHaveLength(2);
+    expect(result.head[0].kind).toBe("thought");
+    expect((result.head[0] as ThoughtItem).status).toBe("ready");
+    expect(result.head[1].kind).toBe("assistant_message");
   });
 
   it("keeps references stable for no-op events", () => {

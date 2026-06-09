@@ -314,6 +314,32 @@ export function clearOptimisticUserMessages(state: StreamItem[]): StreamItem[] {
   return next.length === state.length ? state : next;
 }
 
+function tryAppendToLastAssistantPastThoughts(
+  state: StreamItem[],
+  chunk: string,
+  timestamp: Date,
+  messageId?: string,
+): StreamItem[] | null {
+  if (messageId !== undefined) {
+    return null;
+  }
+  for (let i = state.length - 1; i >= 0; i--) {
+    const candidate = state[i];
+    if (candidate && candidate.kind === "assistant_message") {
+      const updated: AssistantMessageItem = {
+        ...candidate,
+        text: `${candidate.text}${chunk}`,
+        timestamp,
+      };
+      return [...state.slice(0, i), updated, ...state.slice(i + 1)];
+    }
+    if (candidate && candidate.kind !== "thought") {
+      break;
+    }
+  }
+  return null;
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
@@ -357,6 +383,16 @@ function appendAssistantMessage(
     return [...state.slice(0, -2), updated, last];
   }
 
+  const appendedToExisting = tryAppendToLastAssistantPastThoughts(
+    state,
+    chunk,
+    timestamp,
+    messageId,
+  );
+  if (appendedToExisting) {
+    return appendedToExisting;
+  }
+
   if (!hasContent) {
     return state;
   }
@@ -388,6 +424,25 @@ function appendThought(state: StreamItem[], text: string, timestamp: Date): Stre
       status: "loading",
     };
     return [...state.slice(0, -1), updated];
+  }
+
+  // Look backward past interleaved assistant_message items for the
+  // last thought (DeepSeek interleaves reasoning + text at fine
+  // granularity during thinking mode).
+  for (let i = state.length - 1; i >= 0; i--) {
+    const candidate = state[i];
+    if (candidate && candidate.kind === "thought") {
+      const updated: ThoughtItem = {
+        ...candidate,
+        text: `${candidate.text}${chunk}`,
+        timestamp,
+        status: "loading",
+      };
+      return [...state.slice(0, i), updated, ...state.slice(i + 1)];
+    }
+    if (candidate && candidate.kind !== "assistant_message") {
+      break;
+    }
   }
 
   if (!hasContent) {
@@ -1067,8 +1122,15 @@ function shouldFlushHead(head: StreamItem[], incomingKind: StreamItem["kind"] | 
   }
 
   // If incoming kind is different from current head's streamable kind, flush
+  // EXCEPT: allow thought and assistant_message to coexist (DeepSeek interleaves
+  // reasoning and text at fine granularity during thinking mode)
   if (lastStreamable.kind !== incomingKind) {
-    return true;
+    const bothAreThinkingOrText =
+      (lastStreamable.kind === "thought" || lastStreamable.kind === "assistant_message") &&
+      (incomingKind === "thought" || incomingKind === "assistant_message");
+    if (!bothAreThinkingOrText) {
+      return true;
+    }
   }
 
   return false;
