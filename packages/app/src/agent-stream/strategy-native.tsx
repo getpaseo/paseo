@@ -11,7 +11,6 @@ import {
   FlatList,
   ActivityIndicator,
   Keyboard,
-  Platform,
   View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
@@ -369,10 +368,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       removeClippedSubviews={false}
       scrollEnabled={scrollEnabled}
       showsVerticalScrollIndicator
-      // Drag the message list down to dismiss the keyboard. iOS gets the
-      // finger-tracking "interactive" feel; Android only honors "on-drag"
-      // (it silently falls back to "none" for "interactive"), so gate inline.
-      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      // Drag the message list to dismiss the keyboard. We use "on-drag" (not
+      // iOS's finger-tracking "interactive") because the list is `inverted`
+      // (scaleY: -1), which flips the coordinate space interactive mode tracks
+      // against and can make the keyboard follow the wrong direction. "on-drag"
+      // is direction-agnostic, so it stays correct under the transform and
+      // behaves identically on both platforms.
+      keyboardDismissMode="on-drag"
       inverted
     />
   );
