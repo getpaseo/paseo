@@ -616,6 +616,12 @@ function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string |
   if (input.behindOfOrigin === 0 && input.aheadOfOrigin === 0) {
     return "Pull and push isn't available because this branch is already in sync";
   }
+  if (input.behindOfOrigin === 0) {
+    return "Pull and push isn't available because there are no incoming changes to pull first";
+  }
+  if (input.aheadOfOrigin === 0) {
+    return "Pull and push isn't available because there is nothing new to send after pulling";
+  }
   return undefined;
 }
 

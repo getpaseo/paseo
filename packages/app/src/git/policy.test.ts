@@ -252,6 +252,38 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("keeps pull-and-push unavailable when the branch only has outgoing commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        aheadOfOrigin: 2,
+        behindOfOrigin: 0,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action).toMatchObject({
+      label: "Pull and push",
+      unavailableMessage: expect.any(String),
+    });
+  });
+
+  it("keeps pull-and-push unavailable when the branch only has incoming commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        aheadOfOrigin: 0,
+        behindOfOrigin: 2,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action).toMatchObject({
+      label: "Pull and push",
+      unavailableMessage: expect.any(String),
+    });
+  });
+
   it("explains why pull-and-push is unavailable when the branch is in sync", () => {
     const actions = buildGitActions(createInput({ hasRemote: true }));
     const action = actions.secondary.find((entry) => entry.id === "pull-and-push");

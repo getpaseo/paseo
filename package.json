@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.1.91-beta.2",
+  "version": "0.1.91",
   "private": true,
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
   "keywords": [
@@ -34,12 +34,12 @@
     "packages/cli"
   ],
   "scripts": {
-    "dev": "./scripts/dev.sh",
+    "dev": "npm run dev:server",
     "dev:win": "powershell ./scripts/dev.ps1",
-    "dev:server": "npm run build:server-deps && npm run dev:server:watch",
+    "dev:server": "cross-env PASEO_LISTEN=127.0.0.1:6768 ./scripts/dev-daemon.sh",
     "dev:server:watch": "concurrently --kill-others --names protocol,client,server --prefix-colors yellow,blue,cyan \"npm run watch:protocol\" \"npm run watch:client\" \"npm run dev:server:raw\"",
     "dev:server:raw": "npm run dev --workspace=@getpaseo/server",
-    "dev:app": "npm run start --workspace=@getpaseo/app",
+    "dev:app": "cross-env PASEO_LISTEN=127.0.0.1:6768 EXPO_PORT=8081 ./scripts/dev-app.sh",
     "dev:website": "npm run dev --workspace=@getpaseo/website",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "prepare": "lefthook install --force",
@@ -82,11 +82,11 @@
     "android:clean": "npm run android:clean --workspace=@getpaseo/app",
     "ios": "npm run ios --workspace=@getpaseo/app",
     "web": "npm run web --workspace=@getpaseo/app",
-    "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
+    "dev:desktop": "cross-env PASEO_LISTEN=127.0.0.1:6768 npm run dev --workspace=@getpaseo/desktop",
     "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
     "build:desktop": "npm run build:app-deps:clean && cd packages/app && cross-env PASEO_WEB_PLATFORM=electron npx expo export --platform web && cd ../.. && npm run build --workspace=@getpaseo/desktop --",
     "db:query": "npm run db:query --workspace=@getpaseo/server --",
-    "cli": "npx tsx packages/cli/src/index.js",
+    "cli": "./scripts/dev-home.sh npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
     "version:sync-internal": "node scripts/sync-workspace-versions.mjs",
     "release:prepare": "npm install --workspaces --include-workspace-root",

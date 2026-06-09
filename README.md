@@ -32,6 +32,10 @@
   <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo mobile app" width="100%">
 </p>
 
+> [!NOTE]
+> I'm a solo maintainer and don't always keep up with GitHub Issues daily.
+> If something is urgent or blocking you, [Discord](https://discord.gg/jz8T2uahpH) is the fastest place to reach me.
+
 ---
 
 Run agents in parallel on your own machines. Ship from your phone or your desk.

@@ -441,8 +441,8 @@ export function WorkspaceDraftAgentTab({
         workspaceDirectory: draftWorkingDirectory,
         hasClient: Boolean(client),
       }),
-    onBeforeSubmit: () => {
-      void composerState.persistFormPreferences();
+    onBeforeSubmit: async () => {
+      await composerState.persistFormPreferences();
       if (isWeb) {
         (document.activeElement as HTMLElement | null)?.blur?.();
       }

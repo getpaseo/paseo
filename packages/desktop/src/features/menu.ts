@@ -1,5 +1,5 @@
 import { app, Menu, BrowserWindow, ipcMain } from "electron";
-import { getWorkspaceActivePaseoBrowserWebContents } from "./browser-webviews.js";
+import { getWorkspaceActivePaseoBrowserWebContents } from "./browser-webviews/index.js";
 
 interface ShowContextMenuInput {
   kind?: "terminal";

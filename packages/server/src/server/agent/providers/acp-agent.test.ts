@@ -1486,11 +1486,13 @@ describe("ACPAgentSession slash commands", () => {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
         argumentHint: "",
+        kind: "command",
       },
       {
         name: "create_plan",
         description: "Draft a plan for the requested work",
         argumentHint: "",
+        kind: "command",
       },
     ]);
 
@@ -1499,11 +1501,13 @@ describe("ACPAgentSession slash commands", () => {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
         argumentHint: "",
+        kind: "command",
       },
       {
         name: "create_plan",
         description: "Draft a plan for the requested work",
         argumentHint: "",
+        kind: "command",
       },
     ]);
   });

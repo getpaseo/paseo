@@ -747,9 +747,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     provider,
     clientMessageId,
     timestamp,
-    ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-      ? { modeId: composerState.selectedMode }
-      : {}),
+    ...(composerState.selectedMode !== "" ? { modeId: composerState.selectedMode } : {}),
     ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
     ...(composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
@@ -1063,6 +1061,7 @@ export function NewWorkspaceScreen({
     async (payload: MessagePayload) => {
       try {
         setErrorMessage(null);
+        await composerState?.persistFormPreferences();
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           await runCreateEmptyWorkspace({

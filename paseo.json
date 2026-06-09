@@ -2,6 +2,7 @@
   "worktree": {
     "setup": [
       "npm ci",
+      "cross-env PASEO_DEV_MANAGED_HOME=1 PASEO_DEV_SEED_HOME=\"$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home\" PASEO_HOME=\"$PASEO_WORKTREE_PATH/.dev/paseo-home\" ./scripts/dev-home.sh",
       "npm run build:server",
       "npm run build --workspace=@getpaseo/expo-two-way-audio",
       "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
@@ -10,14 +11,15 @@
   "scripts": {
     "daemon": {
       "type": "service",
-      "command": "PASEO_SKIP_DEV_SERVER_BUILD=1 PASEO_LISTEN=0.0.0.0:$PASEO_PORT ./scripts/dev-daemon.sh"
+      "command": "cross-env PASEO_DEV_MANAGED_HOME=1 PASEO_DEV_ROOT=\"$PASEO_WORKTREE_PATH\" PASEO_HOME=\"$PASEO_WORKTREE_PATH/.dev/paseo-home\" PASEO_SKIP_DEV_SERVER_BUILD=1 PASEO_LISTEN=0.0.0.0:$PASEO_PORT ./scripts/dev-daemon.sh"
     },
     "app": {
       "type": "service",
-      "command": "BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON=\"localhost:${PASEO_SERVICE_DAEMON_PORT}\" npm run start:expo --workspace=@getpaseo/app -- --port $PASEO_PORT"
+      "command": "cross-env PASEO_DEV_MANAGED_HOME=1 PASEO_DEV_ROOT=\"$PASEO_WORKTREE_PATH\" PASEO_HOME=\"$PASEO_WORKTREE_PATH/.dev/paseo-home\" PASEO_LISTEN=0.0.0.0:${PASEO_SERVICE_DAEMON_PORT} PASEO_DEV_DAEMON_ENDPOINT=localhost:${PASEO_SERVICE_DAEMON_PORT} EXPO_PORT=$PASEO_PORT ./scripts/dev-app.sh"
     },
-    "typecheck": {
-      "command": "npm run typecheck"
+    "desktop": {
+      "type": "service",
+      "command": "cross-env PASEO_DEV_MANAGED_HOME=1 PASEO_DEV_ROOT=\"$PASEO_WORKTREE_PATH\" PASEO_HOME=\"$PASEO_WORKTREE_PATH/.dev/paseo-home\" PASEO_LISTEN=0.0.0.0:${PASEO_SERVICE_DAEMON_PORT} PASEO_DEV_DAEMON_ENDPOINT=localhost:${PASEO_SERVICE_DAEMON_PORT} EXPO_PORT=$PASEO_PORT npm run dev --workspace=@getpaseo/desktop"
     }
   }
 }

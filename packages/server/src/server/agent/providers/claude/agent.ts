@@ -2081,6 +2081,7 @@ class ClaudeAgentSession implements AgentSession {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
+          kind: "command",
         });
       }
     }

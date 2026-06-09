@@ -200,10 +200,16 @@ try {
       data.some((p: { provider: string }) => p.provider === "opencode"),
       "should include opencode",
     );
-    assert(
-      data.every((p: ProviderListRow) => p.enabled === "Enabled"),
-      "enabled providers should report Enabled",
-    );
+    const rows = data as ProviderListRow[];
+    for (const provider of ["claude", "codex", "opencode"] as const) {
+      const row = rows.find((p) => p.provider === provider);
+      assert(row, `should include ${provider}`);
+      assert.strictEqual(row.enabled, "Enabled", `${provider} should report Enabled`);
+    }
+
+    const omp = rows.find((p) => p.provider === "omp");
+    assert(omp, "should include omp");
+    assert.strictEqual(omp.enabled, "Disabled", "omp should report Disabled by default");
     console.log("✓ provider ls --json outputs valid JSON\n");
   }
 

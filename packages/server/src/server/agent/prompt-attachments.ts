@@ -54,6 +54,14 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
       });
       return lines.join("\n");
     }
+    case "uploaded_file": {
+      return [
+        `Uploaded file: ${attachment.fileName}`,
+        `Path: ${attachment.path}`,
+        `MIME: ${attachment.mimeType}`,
+        `Size: ${attachment.size} bytes`,
+      ].join("\n");
+    }
     default:
       throw new Error("unreachable");
   }

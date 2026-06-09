@@ -4,7 +4,32 @@ interface CommandAutocompleteEntry {
   command: {
     name: string;
     aliases?: readonly string[];
+    kind?: string;
   };
+}
+
+interface InlineSkillCommandEntry extends CommandAutocompleteEntry {
+  source: "provider" | "client";
+}
+
+export type SlashCommandPosition = "start" | "inline";
+
+export interface SlashCommandRange {
+  start: number;
+  end: number;
+  query: string;
+  position: SlashCommandPosition;
+}
+
+interface FindActiveSlashCommandInput {
+  text: string;
+  cursorIndex: number;
+}
+
+interface ApplySlashCommandReplacementInput {
+  text: string;
+  command: SlashCommandRange;
+  commandName: string;
 }
 
 interface ScoredCommandAutocompleteEntry<TEntry> {
@@ -45,4 +70,50 @@ export function filterAndRankCommandAutocompleteEntries<TEntry extends CommandAu
   });
 
   return scoredEntries.map((scored) => scored.entry);
+}
+
+export function filterInlineSkillCommandEntries<TEntry extends InlineSkillCommandEntry>(
+  entries: readonly TEntry[],
+): TEntry[] {
+  return entries.filter((entry) => entry.source === "provider" && entry.command.kind === "skill");
+}
+
+const INVALID_SLASH_COMMAND_QUERY_CHARS = /[/\s\n\r\t"']/;
+
+export function findActiveSlashCommand(
+  input: FindActiveSlashCommandInput,
+): SlashCommandRange | null {
+  const clampedCursor = Math.max(0, Math.min(input.cursorIndex, input.text.length));
+  const beforeCursor = input.text.slice(0, clampedCursor);
+
+  for (
+    let slashIndex = beforeCursor.lastIndexOf("/");
+    slashIndex >= 0;
+    slashIndex = slashIndex === 0 ? -1 : beforeCursor.lastIndexOf("/", slashIndex - 1)
+  ) {
+    const previousCharacter = slashIndex > 0 ? input.text[slashIndex - 1] : "";
+    if (previousCharacter && !/\s/.test(previousCharacter)) {
+      continue;
+    }
+
+    const query = beforeCursor.slice(slashIndex + 1);
+    if (INVALID_SLASH_COMMAND_QUERY_CHARS.test(query)) {
+      continue;
+    }
+
+    return {
+      start: slashIndex,
+      end: clampedCursor,
+      query,
+      position: slashIndex === 0 ? "start" : "inline",
+    };
+  }
+
+  return null;
+}
+
+export function applySlashCommandReplacement(input: ApplySlashCommandReplacementInput): string {
+  const before = input.text.slice(0, input.command.start);
+  const after = input.text.slice(input.command.end);
+  return `${before}/${input.commandName}${after}`;
 }

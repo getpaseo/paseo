@@ -1,6 +1,13 @@
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 
-export type BuiltinProviderIconName = "claude" | "codex" | "copilot" | "kiro" | "opencode" | "pi";
+export type BuiltinProviderIconName =
+  | "claude"
+  | "codex"
+  | "copilot"
+  | "kiro"
+  | "omp"
+  | "opencode"
+  | "pi";
 
 export type ProviderIconName =
   | { kind: "builtin"; id: BuiltinProviderIconName }
@@ -12,6 +19,7 @@ const BUILTIN_PROVIDER_IDS: ReadonlySet<BuiltinProviderIconName> = new Set([
   "codex",
   "copilot",
   "kiro",
+  "omp",
   "opencode",
   "pi",
 ]);

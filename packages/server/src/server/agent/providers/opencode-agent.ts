@@ -252,8 +252,18 @@ const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
 const OPENCODE_METADATA_CONCURRENCY = 4;
 const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
-  { name: "compact", description: "Compact the current session", argumentHint: "" },
-  { name: "summarize", description: "Compact the current session", argumentHint: "" },
+  {
+    name: "compact",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "summarize",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
 ];
 const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
   "headers timeout",
@@ -1040,6 +1050,21 @@ function buildOpenCodeReplayPartTimelineEvent(params: {
   });
 }
 
+function isOpenCodeCompactionSummaryMessage(message: OpenCodeMessage): boolean {
+  return (
+    message.role === "assistant" &&
+    (message.summary === true || message.agent === "compaction" || message.mode === "compaction")
+  );
+}
+
+function findOpenCodeCompactionPart(
+  message: OpenCodeSessionMessage,
+): Extract<OpenCodePart, { type: "compaction" }> | undefined {
+  return message.parts.find(
+    (part): part is Extract<OpenCodePart, { type: "compaction" }> => part.type === "compaction",
+  );
+}
+
 async function readOpenCodeSessionMessagesFromSdk(
   client: Pick<OpencodeClient, "session">,
   session: OpenCodePersistedSession,
@@ -1059,9 +1084,30 @@ async function readOpenCodeSessionMessagesFromSdk(
 function buildOpenCodeSessionTimeline(
   messages: ReadonlyArray<OpenCodeSessionMessage>,
 ): AgentTimelineItem[] {
-  return messages.flatMap((message) =>
-    buildOpenCodeReplayTimelineEvents(message).map((event) => event.item),
-  );
+  const timeline: AgentTimelineItem[] = [];
+  let hideNextAssistantAfterCompaction = false;
+
+  for (const message of messages) {
+    const compactionPart = findOpenCodeCompactionPart(message);
+    if (message.info.role === "assistant" && hideNextAssistantAfterCompaction) {
+      hideNextAssistantAfterCompaction = false;
+      continue;
+    }
+    if (message.info.role === "user" && !compactionPart) {
+      hideNextAssistantAfterCompaction = false;
+    }
+
+    timeline.push(...buildOpenCodeReplayTimelineEvents(message).map((event) => event.item));
+
+    if (message.info.role === "user" && compactionPart) {
+      timeline.push(
+        createCompactionTimelineItem("completed", compactionPart.auto ? "auto" : "manual"),
+      );
+      hideNextAssistantAfterCompaction = true;
+    }
+  }
+
+  return timeline;
 }
 
 function filterOpenCodeRevertedMessages(
@@ -1120,6 +1166,9 @@ function buildOpenCodeReplayTimelineEvents(
   message: OpenCodeSessionMessage,
 ): Extract<AgentStreamEvent, { type: "timeline" }>[] {
   const { info, parts } = message;
+  if (isOpenCodeCompactionSummaryMessage(info)) {
+    return [];
+  }
   if (info.role === "user") {
     const text = parts
       .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
@@ -1165,6 +1214,7 @@ function buildOpenCodeReplayTimelineEvents(
 
 export const __openCodeInternals = {
   buildOpenCodePromptParts,
+  buildOpenCodeSessionTimeline,
   buildOpenCodeModelContextWindowLookup,
   buildOpenCodeModelDefinition,
   buildOpenCodeModelLookupKey,
@@ -1591,6 +1641,9 @@ export interface OpenCodeEventTranslationState {
   sessionTotalCostUsd?: number;
   streamedPartKeys: Set<string>;
   emittedStructuredMessageIds: Set<string>;
+  compactionSummaryMessageIds: Set<string>;
+  emittedCompactionPartIds: Set<string>;
+  suppressAssistantMessagesUntilIdle?: { active: boolean };
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
@@ -1677,6 +1730,7 @@ async function listOpenCodeCommandsFromSdk(
       name: cmd.name,
       description: cmd.description ?? "",
       argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+      kind: cmd.source === "skill" ? "skill" : "command",
     });
   }
 
@@ -1951,6 +2005,11 @@ export function translateOpenCodeEvent(
 function resetOpenCodeTurnTrackingState(state: OpenCodeEventTranslationState): void {
   state.streamedPartKeys.clear();
   state.partTypes.clear();
+  state.compactionSummaryMessageIds.clear();
+  state.emittedCompactionPartIds.clear();
+  if (state.suppressAssistantMessagesUntilIdle) {
+    state.suppressAssistantMessagesUntilIdle.active = false;
+  }
 }
 
 function getOpenCodeSubAgentMaps(state: OpenCodeEventTranslationState): {
@@ -2263,6 +2322,14 @@ function appendOpenCodeMessageUpdated(
   if (info.role !== "assistant") {
     return;
   }
+  if (state.suppressAssistantMessagesUntilIdle?.active) {
+    state.compactionSummaryMessageIds.add(info.id);
+    return;
+  }
+  if (isOpenCodeCompactionSummaryMessage(info)) {
+    state.compactionSummaryMessageIds.add(info.id);
+    return;
+  }
   const modelLookupKey = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
   if (modelLookupKey) {
     const contextWindowMaxTokens = state.modelContextWindowsByModelKey?.get(modelLookupKey);
@@ -2320,6 +2387,15 @@ function appendOpenCodeMessagePartUpdated(
   const messageRole = state.messageRoles.get(part.messageID);
   state.partTypes.set(part.id, part.type);
 
+  if (state.compactionSummaryMessageIds.has(part.messageID)) {
+    return;
+  }
+
+  if (shouldSuppressOpenCodeAssistantPart(part, messageRole, state)) {
+    state.compactionSummaryMessageIds.add(part.messageID);
+    return;
+  }
+
   if (part.type === "text") {
     appendOpenCodeTextPart(part, messageRole, state, events);
     return;
@@ -2336,6 +2412,10 @@ function appendOpenCodeMessagePartUpdated(
     return;
   }
   if (part.type === "compaction") {
+    if (state.emittedCompactionPartIds.has(part.id)) {
+      return;
+    }
+    state.emittedCompactionPartIds.add(part.id);
     events.push({
       type: "timeline",
       provider: "opencode",
@@ -2359,6 +2439,18 @@ function appendOpenCodeMessagePartUpdated(
       });
     }
   }
+}
+
+function shouldSuppressOpenCodeAssistantPart(
+  part: Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
+  messageRole: OpenCodeMessageRole | undefined,
+  state: OpenCodeEventTranslationState,
+): boolean {
+  return (
+    state.suppressAssistantMessagesUntilIdle?.active === true &&
+    part.type === "text" &&
+    messageRole !== "user"
+  );
 }
 
 function appendOpenCodeTextPart(
@@ -2429,6 +2521,10 @@ function appendOpenCodeMessagePartDelta(
   const knownPartType = partID ? state.partTypes.get(partID) : undefined;
   const isReasoning = knownPartType === "reasoning" || field === "reasoning";
 
+  if (messageID && state.compactionSummaryMessageIds.has(messageID)) {
+    return;
+  }
+
   if (isReasoning) {
     if (partID) {
       state.streamedPartKeys.add(`reasoning:${partID}`);
@@ -2444,6 +2540,10 @@ function appendOpenCodeMessagePartDelta(
     return;
   }
   if (messageRole === "user") {
+    return;
+  }
+  if (messageID && state.suppressAssistantMessagesUntilIdle?.active === true) {
+    state.compactionSummaryMessageIds.add(messageID);
     return;
   }
   if (partID) {
@@ -2691,6 +2791,9 @@ class OpenCodeAgentSession implements AgentSession {
   private streamedPartKeys = new Set<string>();
   /** Tracks assistant messages already emitted from structured payloads. */
   private emittedStructuredMessageIds = new Set<string>();
+  private compactionSummaryMessageIds = new Set<string>();
+  private emittedCompactionPartIds = new Set<string>();
+  private suppressAssistantMessagesUntilIdle = { active: false };
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   private partTypes = new Map<string, string>();
   private availableModesCache: AgentMode[] | null = null;
@@ -2874,6 +2977,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     const parts = buildOpenCodePromptParts(prompt);
     this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
+    this.suppressAssistantMessagesUntilIdle.active = false;
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant = thinkingOptionId ?? undefined;
@@ -2895,6 +2999,7 @@ class OpenCodeAgentSession implements AgentSession {
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
       if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
+        this.suppressAssistantMessagesUntilIdle.active = true;
         void this.client.session
           .summarize({
             sessionID: this.sessionId,
@@ -2903,6 +3008,7 @@ class OpenCodeAgentSession implements AgentSession {
           })
           .then((response) => {
             if (response.error) {
+              this.suppressAssistantMessagesUntilIdle.active = false;
               this.finishForegroundTurn(
                 {
                   type: "turn_failed",
@@ -2911,15 +3017,11 @@ class OpenCodeAgentSession implements AgentSession {
                 },
                 turnId,
               );
-            } else {
-              this.finishForegroundTurn(
-                { type: "turn_completed", provider: "opencode", usage: undefined },
-                turnId,
-              );
             }
             return;
           })
           .catch((error) => {
+            this.suppressAssistantMessagesUntilIdle.active = false;
             this.finishForegroundTurn(
               {
                 type: "turn_failed",
@@ -3640,6 +3742,9 @@ class OpenCodeAgentSession implements AgentSession {
       sessionTotalCostUsd: this.sessionTotalCostUsd,
       streamedPartKeys: this.streamedPartKeys,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
+      compactionSummaryMessageIds: this.compactionSummaryMessageIds,
+      emittedCompactionPartIds: this.emittedCompactionPartIds,
+      suppressAssistantMessagesUntilIdle: this.suppressAssistantMessagesUntilIdle,
       partTypes: this.partTypes,
       subAgentsByCallId: this.subAgentsByCallId,
       subAgentCallIdByChildSessionId: this.subAgentCallIdByChildSessionId,

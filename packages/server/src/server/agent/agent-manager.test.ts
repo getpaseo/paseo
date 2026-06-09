@@ -542,7 +542,7 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
 
   expect(client.createdConfigs[0]?.systemPrompt).toBe("Agent instructions.");
   expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe("Daemon instructions.");
-  expect(snapshot.config.daemonAppendSystemPrompt).toBe("Daemon instructions.");
+  expect(snapshot.config).not.toHaveProperty("daemonAppendSystemPrompt");
   expect(record?.config?.systemPrompt).toBe("Agent instructions.");
   expect(record?.config).not.toHaveProperty("daemonAppendSystemPrompt");
 });
@@ -948,7 +948,7 @@ test("createAgent passes persistSession to provider create options", async () =>
   rmSync(workdir, { recursive: true, force: true });
 });
 
-test("createAgent injects paseo MCP server when manager has an MCP base URL", async () => {
+test("createAgent injects paseo MCP server only into provider launch config", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -985,6 +985,12 @@ test("createAgent injects paseo MCP server when manager has an MCP base URL", as
   });
 
   expect(snapshot.config.mcpServers).toEqual({
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+  expect(client.lastConfig?.mcpServers).toEqual({
     paseo: {
       type: "http",
       url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
@@ -994,7 +1000,102 @@ test("createAgent injects paseo MCP server when manager has an MCP base URL", as
       command: "custom-mcp",
     },
   });
-  expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
+
+  const stored = await storage.get(snapshot.id);
+  expect(stored?.config?.mcpServers).toEqual({
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+});
+
+test("resumeAgentFromPersistence replaces stored internal paseo MCP with current runtime URL", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents",
+    idFactory: () => "00000000-0000-4000-8000-000000000105",
+  });
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "session-123",
+    metadata: {
+      cwd: workdir,
+    },
+  };
+
+  const snapshot = await manager.resumeAgentFromPersistence(handle, {
+    cwd: workdir,
+    mcpServers: {
+      paseo: {
+        type: "http",
+        url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=stale-agent",
+      },
+      custom: {
+        type: "stdio",
+        command: "custom-mcp",
+      },
+    },
+  });
+
+  expect(client.resumeOverrides[0]?.mcpServers).toEqual({
+    paseo: {
+      type: "http",
+      url: `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
+    },
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+  expect(snapshot.config.mcpServers).toEqual({
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+});
+
+test("resumeAgentFromPersistence drops stored internal paseo MCP when runtime injection is disabled", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "session-123",
+    metadata: {
+      cwd: workdir,
+    },
+  };
+
+  const snapshot = await manager.resumeAgentFromPersistence(handle, {
+    cwd: workdir,
+    mcpServers: {
+      paseo: {
+        type: "http",
+        url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=stale-agent",
+      },
+    },
+  });
+
+  expect(client.resumeOverrides[0]?.mcpServers).toBeUndefined();
+  expect(snapshot.config.mcpServers).toBeUndefined();
 });
 
 test("createAgent preserves a user-provided paseo MCP config", async () => {
@@ -5636,24 +5737,6 @@ test.each([
       codex: { enabled: false, derivedFromProviderId: null },
     },
   ],
-  [
-    "derived",
-    "claude",
-    "zai",
-    {
-      claude: { enabled: true, derivedFromProviderId: null },
-      zai: { enabled: true, derivedFromProviderId: "claude" },
-    },
-  ],
-  [
-    "outside importable allowlist",
-    "claude",
-    "gemini",
-    {
-      claude: { enabled: true, derivedFromProviderId: null },
-      gemini: { enabled: true, derivedFromProviderId: null },
-    },
-  ],
 ])(
   "listImportablePersistedAgents skips %s providers in fan-out",
   async (_reason, includedProvider, skippedProvider, providerDefinitions) => {
@@ -5672,6 +5755,25 @@ test.each([
     expect(result.map((d) => d.provider)).toEqual([includedProvider]);
   },
 );
+
+test("listImportablePersistedAgents includes derived providers that list persisted agents", async () => {
+  const claudeClient = new RecordingPersistedAgentsClient("claude");
+  const ompClient = new RecordingPersistedAgentsClient("omp");
+  const manager = new AgentManager({
+    clients: { claude: claudeClient, omp: ompClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      omp: { enabled: true, derivedFromProviderId: "pi" },
+    },
+    logger,
+  });
+
+  const result = await manager.listImportablePersistedAgents();
+
+  expect(claudeClient.calls).toBe(1);
+  expect(ompClient.calls).toBe(1);
+  expect(result.map((d) => d.provider).sort()).toEqual(["claude", "omp"]);
+});
 
 test("listImportablePersistedAgents narrows to the providerFilter when supplied", async () => {
   const claudeClient = new RecordingPersistedAgentsClient("claude");

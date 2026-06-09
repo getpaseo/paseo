@@ -1989,6 +1989,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           name: command.name,
           description: command.description,
           argumentHint: "",
+          kind: "command",
         }));
         this.settleCommandsReady();
         return [];

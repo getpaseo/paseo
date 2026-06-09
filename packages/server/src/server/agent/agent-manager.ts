@@ -54,9 +54,9 @@ import {
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -73,6 +73,11 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 type TimeoutResult = "completed" | "timed_out";
+
+interface PreparedSessionConfig {
+  storedConfig: AgentSessionConfig;
+  launchConfig: AgentSessionConfig;
+}
 
 interface TimeoutOptions {
   operation: Promise<void>;
@@ -105,7 +110,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.systemPrompt = record.config.systemPrompt;
   }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
-  return config;
+  return stripInternalPaseoMcpServer(config);
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -413,7 +418,6 @@ function buildExplicitTimelineSeedForRegister(
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
-  private readonly providerDerivedFromId = new Map<AgentProvider, string | null>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -472,7 +476,6 @@ export class AgentManager {
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
         this.providerEnabled.set(provider, definition.enabled);
-        this.providerDerivedFromId.set(provider, definition.derivedFromProviderId ?? null);
       }
     }
     for (const [provider, client] of Object.entries(input.clients)) {
@@ -645,13 +648,7 @@ export class AgentManager {
     provider: AgentProvider,
     providerFilter: Set<string> | undefined,
   ): boolean {
-    if (!IMPORTABLE_PROVIDERS.includes(provider as (typeof IMPORTABLE_PROVIDERS)[number])) {
-      return false;
-    }
     if (this.providerEnabled.get(provider) === false) {
-      return false;
-    }
-    if (this.providerDerivedFromId.get(provider) != null) {
       return false;
     }
     if (providerFilter && !providerFilter.has(provider)) {
@@ -811,30 +808,15 @@ export class AgentManager {
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    const injectedConfig =
-      this.mcpBaseUrl == null
-        ? config
-        : {
-            ...config,
-            mcpServers: {
-              paseo: {
-                type: "http" as const,
-                url: `${this.mcpBaseUrl}?callerAgentId=${resolvedAgentId}`,
-              },
-              ...config.mcpServers,
-            },
-          };
-    this.requireEnabledProvider(injectedConfig.provider);
-    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
-      await this.normalizeConfig(injectedConfig),
-    );
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
+    this.requireEnabledProvider(storedConfig.provider);
     const launchContext = this.buildLaunchContext(resolvedAgentId, options?.env);
     const client = await this.requireAvailableClient({
-      provider: normalizedConfig.provider,
+      provider: storedConfig.provider,
     });
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(normalizedConfig, launchContext, createOptions);
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, {
+    const session = await client.createSession(launchConfig, launchContext, createOptions);
+    return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
       initialTitle: options?.initialTitle,
@@ -872,26 +854,10 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
-      await this.normalizeConfig(mergedConfig),
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      mergedConfig,
+      resolvedAgentId,
     );
-    const resumeOverrides: Partial<AgentSessionConfig> = { ...overrides };
-    let hasResumeOverrides = overrides !== undefined;
-
-    if (normalizedConfig.model !== mergedConfig.model) {
-      resumeOverrides.model = normalizedConfig.model;
-      hasResumeOverrides = true;
-    }
-
-    if (normalizedConfig.modeId !== mergedConfig.modeId) {
-      resumeOverrides.modeId = normalizedConfig.modeId;
-      hasResumeOverrides = true;
-    }
-
-    if (metadata.daemonAppendSystemPrompt !== normalizedConfig.daemonAppendSystemPrompt) {
-      resumeOverrides.daemonAppendSystemPrompt = normalizedConfig.daemonAppendSystemPrompt;
-      hasResumeOverrides = true;
-    }
 
     const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = this.requireClient(handle.provider);
@@ -901,12 +867,8 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const session = await client.resumeSession(
-      handle,
-      hasResumeOverrides ? resumeOverrides : undefined,
-      launchContext,
-    );
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
+    const session = await client.resumeSession(handle, launchConfig, launchContext);
+    return this.registerSession(session, storedConfig, resolvedAgentId, options);
   }
 
   // Hot-reload an active agent session with config overrides. By default the
@@ -938,14 +900,12 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const normalizedConfig = this.applyDaemonAppendSystemPrompt(
-      await this.normalizeConfig(refreshConfig),
-    );
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
     const launchContext = this.buildLaunchContext(agentId);
 
     const session = handle
-      ? await client.resumeSession(handle, normalizedConfig, launchContext)
-      : await client.createSession(normalizedConfig, launchContext);
+      ? await client.resumeSession(handle, launchConfig, launchContext)
+      : await client.createSession(launchConfig, launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -966,7 +926,7 @@ export class AgentManager {
     }
 
     // Preserve existing labels and timeline during reload.
-    return this.registerSession(session, normalizedConfig, agentId, {
+    return this.registerSession(session, storedConfig, agentId, {
       labels: existing.labels,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
@@ -3487,6 +3447,21 @@ export class AgentManager {
     }
 
     return normalized;
+  }
+
+  private async prepareSessionConfig(
+    config: AgentSessionConfig,
+    agentId: string,
+  ): Promise<PreparedSessionConfig> {
+    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config));
+    const launchConfig = this.applyDaemonAppendSystemPrompt(
+      withRuntimePaseoMcpServer({
+        config: storedConfig,
+        agentId,
+        mcpBaseUrl: this.mcpBaseUrl,
+      }),
+    );
+    return { storedConfig, launchConfig };
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {

@@ -78,10 +78,10 @@ export async function archiveIfSafe(input: {
       return;
     }
 
-    if (snapshot.git.isDirty === true || snapshot.git.aheadOfOrigin === null) {
+    if (snapshot.git.isDirty === true) {
       return;
     }
-    if (snapshot.git.aheadOfOrigin > 0) {
+    if (typeof snapshot.git.aheadOfOrigin === "number" && snapshot.git.aheadOfOrigin > 0) {
       return;
     }
 

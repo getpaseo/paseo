@@ -534,6 +534,37 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("initializes Codex app-server without making Paseo the request originator", async () => {
+    let initializeParams: unknown;
+    const appServer = createFakeCodexAppServer({
+      initialize: (params) => {
+        initializeParams = params;
+        return {};
+      },
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+
+    expect(initializeParams).toEqual({
+      clientInfo: {
+        name: "codex_app_server_daemon",
+        title: "Codex App Server Daemon",
+        version: "0.0.0",
+      },
+      capabilities: { experimentalApi: true },
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds the conversation to a freshly emitted Codex user message id", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -694,6 +725,7 @@ describe("Codex app-server provider", () => {
         name: "shipper",
         description: "Ship changes carefully.",
         argumentHint: "",
+        kind: "skill",
       });
       expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
     } finally {
@@ -952,6 +984,7 @@ describe("Codex app-server provider", () => {
         name: "paseo",
         description: "Shared orchestration skill.",
         argumentHint: "",
+        kind: "skill",
       },
     ]);
   });
@@ -1859,6 +1892,7 @@ describe("Codex app-server provider", () => {
       name: "compact",
       description: "Summarize conversation to prevent hitting the context limit",
       argumentHint: "",
+      kind: "command",
     });
 
     const handler = session.tryHandleOutOfBand?.("/compact");
@@ -2703,7 +2737,17 @@ describe("Codex persisted sessions", () => {
       }),
     );
     expect(calls).toEqual([
-      { method: "initialize", params: expect.any(Object) },
+      {
+        method: "initialize",
+        params: {
+          clientInfo: {
+            name: "codex_app_server_daemon",
+            title: "Codex App Server Daemon",
+            version: "0.0.0",
+          },
+          capabilities: { experimentalApi: true },
+        },
+      },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
     ]);
   });

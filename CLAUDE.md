@@ -49,7 +49,9 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 ## Quick start
 
 ```bash
-npm run dev                          # Start daemon + Expo in Tmux
+npm run dev                          # Start the dev daemon
+npm run dev:app                      # Start Expo against the dev daemon
+npm run dev:desktop                  # Start Electron desktop dev
 npm run cli -- ls -a -g              # List all agents
 npm run cli -- daemon status         # Check daemon status
 npm run typecheck                    # Always run after changes
@@ -57,6 +59,8 @@ npm run lint                         # Always run after changes
 npm run format                       # Auto-format with Biome
 npm run format:check                 # Check formatting without writing
 ```
+
+Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged desktop app and production-style daemon keep using `~/.paseo` on port `6767`.
 
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 

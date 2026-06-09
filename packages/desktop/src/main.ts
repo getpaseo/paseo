@@ -46,12 +46,16 @@ import { registerOpenerHandlers } from "./features/opener.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
+  BROWSER_NEW_TAB_REQUEST_EVENT,
   getPaseoBrowserIdForWebContents,
   getPaseoBrowserWebContents,
+  handleBrowserWindowOpenRequest,
   listRegisteredPaseoBrowserIds,
+  readBrowserIdFromWebviewAttach,
+  registerBrowserWebviewNavigationGuards,
   registerPaseoBrowserWebContents,
   setWorkspaceActivePaseoBrowserId,
-} from "./features/browser-webviews.js";
+} from "./features/browser-webviews/index.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { PendingOpenProjectStore } from "./pending-open-project-store.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
@@ -73,28 +77,6 @@ const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 
-function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
-  if (!value) {
-    return true;
-  }
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function preventUnsafeBrowserWebviewNavigation(
-  event: Electron.Event,
-  url: string | undefined,
-): void {
-  if (!isAllowedBrowserWebviewUrl(url)) {
-    event.preventDefault();
-  }
-}
 const BROWSER_SHORTCUT_EVENT = "paseo:event:browser-shortcut";
 const BROWSER_FORWARDED_KEY_EVENT = "paseo:event:browser-forwarded-key";
 
@@ -126,15 +108,6 @@ const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName(APP_NAME);
-
-function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
-  const prefix = "persist:paseo-browser-";
-  if (!partition?.startsWith(prefix)) {
-    return null;
-  }
-  const browserId = partition.slice(prefix.length).trim();
-  return browserId.length > 0 ? browserId : null;
-}
 
 const pendingBrowserWebviewIds: string[] = [];
 
@@ -470,11 +443,7 @@ async function createWindow(
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
   mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-    if (!isAllowedBrowserWebviewUrl(params.src)) {
-      event.preventDefault();
-      return;
-    }
-    const browserId = getBrowserIdFromWebviewPartition(params.partition);
+    const browserId = readBrowserIdFromWebviewAttach(params);
     if (!browserId) {
       event.preventDefault();
       return;
@@ -534,25 +503,19 @@ async function createWindow(
         });
       }
     });
-    contents.setWindowOpenHandler(({ url }) => {
-      if (!isAllowedBrowserWebviewUrl(url)) {
-        return { action: "deny" };
-      }
-      contents.loadURL(url).catch(() => undefined);
-      return { action: "deny" };
-    });
+    contents.setWindowOpenHandler(({ url }) =>
+      handleBrowserWindowOpenRequest({
+        url,
+        sourceBrowserId: getPaseoBrowserIdForWebContents(contents),
+        requestNewTab: (payload) => {
+          mainWindow.webContents.send(BROWSER_NEW_TAB_REQUEST_EVENT, payload);
+        },
+      }),
+    );
     contents.on("context-menu", (_contextMenuEvent, params) => {
       showBrowserWebviewContextMenu(mainWindow, contents, params);
     });
-    contents.on("will-navigate", (event) => {
-      preventUnsafeBrowserWebviewNavigation(event, event.url);
-    });
-    contents.on("will-frame-navigate", (event) => {
-      preventUnsafeBrowserWebviewNavigation(event, event.url);
-    });
-    contents.on("will-redirect", (event) => {
-      preventUnsafeBrowserWebviewNavigation(event, event.url);
-    });
+    registerBrowserWebviewNavigationGuards(contents);
   });
 
   mainWindow.once("ready-to-show", () => {

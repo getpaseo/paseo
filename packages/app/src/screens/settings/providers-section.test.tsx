@@ -97,7 +97,6 @@ vi.mock("lucide-react-native", () => {
   const icon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     ChevronRight: icon("ChevronRight"),
-    Plus: icon("Plus"),
   };
 });
 
@@ -143,8 +142,8 @@ vi.mock("@/stores/provider-settings-store", () => ({
     selector({ open: openProviderSettingsMock }),
 }));
 
-vi.mock("@/components/add-provider-modal", () => ({
-  AddProviderModal: () => null,
+vi.mock("@/components/provider-catalog-list", () => ({
+  ProviderCatalogList: () => null,
 }));
 
 vi.mock("@/hooks/use-providers-snapshot", () => ({

@@ -112,6 +112,66 @@ function assistantTurnEvents({
   ];
 }
 
+function manualCompactEvents({
+  sessionId = "session-1",
+  summaryText = "## Goal\n- Preserve context while continuing the task.",
+}: {
+  sessionId?: string;
+  summaryText?: string;
+} = {}): OpenCodeEvent[] {
+  return [
+    {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_compact_user",
+          sessionID: sessionId,
+          role: "user",
+        },
+      },
+    },
+    {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_compact",
+          sessionID: sessionId,
+          messageID: "msg_compact_user",
+          type: "compaction",
+          auto: false,
+        },
+      },
+    },
+    {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_compact_summary",
+          sessionID: sessionId,
+          role: "assistant",
+          providerID: "test-provider",
+          modelID: "gpt-5.5",
+        },
+      },
+    },
+    {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "prt_compact_summary",
+          sessionID: sessionId,
+          messageID: "msg_compact_summary",
+          type: "text",
+          text: summaryText,
+          time: { start: 1, end: 2 },
+        },
+      },
+    },
+    { type: "session.compacted", properties: { sessionID: sessionId } },
+    { type: "session.idle", properties: { sessionID: sessionId } },
+  ];
+}
+
 describe("OpenCodeAgentClient adapter smoke tests", () => {
   const logger = createTestLogger();
   const buildConfig = (cwd: string): AgentSessionConfig => ({
@@ -161,6 +221,41 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
         directory: cwd,
         model: { providerID: "opencode", modelID: "big-pickle" },
         agent: "build",
+      }),
+    ]);
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }, 120_000);
+
+  test("manual compact hides the generated summary text", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeRuntime();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionSummarizeEvents = manualCompactEvents();
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, { runtime });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd,
+      model: "test-provider/gpt-5.5",
+    });
+
+    const turn = await collectTurnEvents(streamSession(session, "/compact"));
+
+    expect(turn.turnCompleted).toBe(true);
+    expect(turn.assistantMessages).toEqual([]);
+    expect(turn.allTimelineItems).toEqual([
+      { type: "user_message", text: "/compact", messageId: "msg_compact_user" },
+      { type: "compaction", status: "loading", trigger: "manual" },
+      { type: "compaction", status: "completed" },
+    ]);
+    expect(openCodeClient.calls.sessionSummarize).toEqual([
+      expect.objectContaining({
+        sessionID: "session-1",
+        directory: cwd,
+        providerID: "test-provider",
+        modelID: "gpt-5.5",
       }),
     ]);
 
@@ -1595,6 +1690,155 @@ describe("OpenCodeAgentClient env", () => {
 });
 
 describe("OpenCode persisted sessions", () => {
+  test("replay hides summaries produced by manual compact", () => {
+    const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
+      {
+        info: {
+          id: "msg_compact_user",
+          sessionID: "ses_1",
+          role: "user",
+          time: { created: 1000 },
+          agent: "build",
+          model: { providerID: "test-provider", modelID: "gpt-5.5" },
+        },
+        parts: [
+          {
+            id: "prt_compact_text",
+            sessionID: "ses_1",
+            messageID: "msg_compact_user",
+            type: "text",
+            text: "/compact",
+          },
+          {
+            id: "prt_compact",
+            sessionID: "ses_1",
+            messageID: "msg_compact_user",
+            type: "compaction",
+            auto: false,
+          },
+        ],
+      },
+      {
+        info: {
+          id: "msg_compact_summary",
+          sessionID: "ses_1",
+          role: "assistant",
+          time: { created: 1001, completed: 1002 },
+          providerID: "test-provider",
+          modelID: "gpt-5.5",
+        },
+        parts: [
+          {
+            id: "prt_summary",
+            sessionID: "ses_1",
+            messageID: "msg_compact_summary",
+            type: "text",
+            text: "## Goal\n- Preserve context while continuing the task.",
+          },
+        ],
+      },
+      {
+        info: {
+          id: "msg_next_user",
+          sessionID: "ses_1",
+          role: "user",
+          time: { created: 1003 },
+          agent: "build",
+          model: { providerID: "test-provider", modelID: "gpt-5.5" },
+        },
+        parts: [
+          {
+            id: "prt_next_user",
+            sessionID: "ses_1",
+            messageID: "msg_next_user",
+            type: "text",
+            text: "continue",
+          },
+        ],
+      },
+    ]);
+
+    expect(timeline).toEqual([
+      { type: "user_message", text: "/compact", messageId: "msg_compact_user" },
+      { type: "compaction", status: "completed", trigger: "manual" },
+      { type: "user_message", text: "continue", messageId: "msg_next_user" },
+    ]);
+  });
+
+  test("replay suppresses OpenCode compaction summary messages", () => {
+    const timeline = __openCodeInternals.buildOpenCodeSessionTimeline([
+      {
+        info: {
+          id: "msg_compaction_user",
+          sessionID: "ses_1",
+          role: "user",
+          time: { created: 1000 },
+          agent: "build",
+          model: { providerID: "opencode", modelID: "big-pickle" },
+        },
+        parts: [
+          {
+            id: "prt_compaction",
+            sessionID: "ses_1",
+            messageID: "msg_compaction_user",
+            type: "compaction",
+            auto: true,
+          },
+        ],
+      },
+      {
+        info: {
+          id: "msg_compaction_summary",
+          sessionID: "ses_1",
+          role: "assistant",
+          time: { created: 1001, completed: 1002 },
+          parentID: "msg_compaction_user",
+          providerID: "opencode",
+          modelID: "big-pickle",
+          mode: "compaction",
+          agent: "compaction",
+          path: { cwd: "/workspace/repo", root: "/workspace/repo" },
+          summary: true,
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+        parts: [
+          {
+            id: "prt_summary",
+            sessionID: "ses_1",
+            messageID: "msg_compaction_summary",
+            type: "text",
+            text: "## Goal\n- Preserve context while continuing the task.",
+          },
+        ],
+      },
+      {
+        info: {
+          id: "msg_user_after_compaction",
+          sessionID: "ses_1",
+          role: "user",
+          time: { created: 1003 },
+          agent: "build",
+          model: { providerID: "opencode", modelID: "big-pickle" },
+        },
+        parts: [
+          {
+            id: "prt_user_after_compaction",
+            sessionID: "ses_1",
+            messageID: "msg_user_after_compaction",
+            type: "text",
+            text: "/create-pr",
+          },
+        ],
+      },
+    ]);
+
+    expect(timeline).toEqual([
+      { type: "compaction", status: "completed", trigger: "auto" },
+      { type: "user_message", text: "/create-pr", messageId: "msg_user_after_compaction" },
+    ]);
+  });
+
   test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
     const runtime = new TestOpenCodeRuntime();
     const openCodeClient = new TestOpenCodeClient();
