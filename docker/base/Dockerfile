@@ -93,6 +93,6 @@ EXPOSE 6767
 VOLUME /home/paseo
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "require('net').connect(6767,'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})" || exit 1
+  CMD node -e "const listen=process.env.PASEO_LISTEN||'0.0.0.0:6767'; const match=listen.match(/:(\d+)$/); const port=match?Number(match[1]):6767; require('net').connect(port,'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})" || exit 1
 
 ENTRYPOINT ["/init"]

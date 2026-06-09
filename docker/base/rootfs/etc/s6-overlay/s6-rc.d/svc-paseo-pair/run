@@ -22,6 +22,12 @@ esac
 
 PORT="${PASEO_LISTEN##*:}"
 : "${PORT:=6767}"
+case "$PORT" in
+  *[!0-9]*)
+    echo "[pair] invalid PASEO_LISTEN port '${PORT}'; using 6767 for readiness probe." >&2
+    PORT=6767
+    ;;
+esac
 
 # Wait for the daemon to accept connections (s6 marks the longrun "up" before it
 # actually listens). Reuse the same net.connect probe as the HEALTHCHECK.
