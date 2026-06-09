@@ -4,6 +4,7 @@ import {
   TextInput,
   Pressable,
   Platform,
+  Keyboard,
   ActivityIndicator,
   useWindowDimensions,
   NativeSyntheticEvent,
@@ -23,7 +24,15 @@ import {
 } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
+import {
+  ArrowUp,
+  Mic,
+  MicOff,
+  CornerDownLeft,
+  Plus,
+  Square,
+  ChevronDown,
+} from "lucide-react-native";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
@@ -57,7 +66,7 @@ import { formatShortcut } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
-import { isWeb } from "@/constants/platform";
+import { isWeb, isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerHeightMirror } from "./height-mirror";
 import { computeCanStartDictation } from "./state";
@@ -1789,6 +1798,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [isConnected, disabled],
     );
 
+    const handleDismissKeyboardPress = useCallback(() => {
+      Keyboard.dismiss();
+    }, []);
+
+    const dismissKeyboardButtonStyle = useCallback(
+      ({ pressed }: { pressed: boolean }) => [
+        styles.dismissKeyboardButton,
+        pressed && styles.iconButtonHovered,
+      ],
+      [],
+    );
+
     const voiceButtonStyle = useCallback(
       ({ hovered }: { hovered?: boolean }) => [
         styles.voiceButton,
@@ -1879,6 +1900,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           <View style={styles.buttonRow}>
             {/* Toolbar left: attachment button + agent controls */}
             <View style={styles.leftButtonGroup}>
+              {isNative && isInputFocused ? (
+                <Pressable
+                  onPress={handleDismissKeyboardPress}
+                  accessibilityLabel="Dismiss keyboard"
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  style={dismissKeyboardButtonStyle}
+                >
+                  <ThemedChevronDown size={buttonIconSize} uniProps={iconForegroundMutedMapping} />
+                </Pressable>
+              ) : null}
               <AttachmentDropdown
                 isConnected={isConnected}
                 disabled={disabled}
@@ -2026,6 +2058,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  dismissKeyboardButton: {
+    width: 28,
+    height: 28,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   attachButtonAnchor: {
     width: 28,
     height: 28,
@@ -2110,6 +2149,7 @@ const ThemedMic = withUnistyles(Mic);
 const ThemedMicOff = withUnistyles(MicOff);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
+const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedTextInput = withUnistyles(TextInput);
 
