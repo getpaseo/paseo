@@ -1277,6 +1277,26 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
+// Whether to show the native keyboard-dismiss button: this composer's input
+// must own focus AND the software keyboard must actually be up. We track
+// keyboard visibility separately from focus because swipe/interactive dismiss
+// hides the keyboard without firing the TextInput's onBlur, so focus alone goes
+// stale. Keyboard events are global, so gating on isInputFocused keeps the
+// button from appearing when some other input opens the keyboard.
+function useDismissKeyboardButtonVisible(isInputFocused: boolean): boolean {
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  useEffect(() => {
+    if (!isNative) return;
+    const showSub = Keyboard.addListener("keyboardDidShow", () => setIsKeyboardVisible(true));
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => setIsKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  return isInputFocused && isKeyboardVisible;
+}
+
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   function MessageInput(props, ref) {
     const {
@@ -1329,10 +1349,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
-    // Tracks actual keyboard visibility on native so the dismiss button hides
-    // even when the keyboard is swiped away (drag/interactive dismiss never
-    // fires the TextInput's onBlur, so isInputFocused alone goes stale).
-    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+    const showDismissKeyboardButton = useDismissKeyboardButtonVisible(isInputFocused);
     const rootRef = useRef<View | null>(null);
     const inputWrapperRef = useRef<View | null>(null);
     const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -1793,19 +1810,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       onFocusChange?.(false);
     }, [onFocusChange]);
 
-    // Keep the native dismiss button in sync with the keyboard itself, not just
-    // input focus: swipe-to-dismiss hides the keyboard without blurring the
-    // input, so we listen for the keyboard's own show/hide events.
-    useEffect(() => {
-      if (!isNative) return;
-      const showSub = Keyboard.addListener("keyboardDidShow", () => setIsKeyboardVisible(true));
-      const hideSub = Keyboard.addListener("keyboardDidHide", () => setIsKeyboardVisible(false));
-      return () => {
-        showSub.remove();
-        hideSub.remove();
-      };
-    }, []);
-
     const attachButtonStyle = useCallback(
       ({ hovered }: { hovered?: boolean }) => [
         styles.attachButton,
@@ -1917,7 +1921,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           <View style={styles.buttonRow}>
             {/* Toolbar left: attachment button + agent controls */}
             <View style={styles.leftButtonGroup}>
-              {isNative && isKeyboardVisible ? (
+              {isNative && showDismissKeyboardButton ? (
                 <Pressable
                   onPress={handleDismissKeyboardPress}
                   accessibilityLabel="Dismiss keyboard"
