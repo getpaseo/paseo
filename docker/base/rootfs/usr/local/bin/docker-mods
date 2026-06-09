@@ -145,7 +145,11 @@ apply_mod() {
       return 1
     fi
     # Layers are gzip-compressed tar by default; fall back to plain tar.
-    tar -C / -xzpf "$blob" 2>/dev/null || tar -C / -xpf "$blob"
+    if ! tar -C / -xzpf "$blob" 2>/dev/null && ! tar -C / -xpf "$blob"; then
+      echo "[mods] ERROR: failed to extract layer ${d}; skipping mod." >&2
+      rm -f "$blob"
+      return 1
+    fi
     rm -f "$blob"
   done <<< "$layers"
 
