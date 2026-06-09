@@ -35,19 +35,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - id: v
+        env:
+          INPUT_PASEO_VERSION: ${{ inputs.paseo_version }}
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             version="${GITHUB_REF#refs/tags/v}"
             push=true
-          elif [[ -n "${{ inputs.paseo_version }}" ]]; then
-            version="${{ inputs.paseo_version }}"
+          elif [[ -n "${INPUT_PASEO_VERSION}" ]]; then
+            version="${INPUT_PASEO_VERSION}"
             push=true
           else
             version="$(node -p "require('./package.json').version")"
             push=false
           fi
-          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          owner="$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "push=${push}" >> "$GITHUB_OUTPUT"
           echo "owner=${owner}" >> "$GITHUB_OUTPUT"

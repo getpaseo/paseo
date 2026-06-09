@@ -13,7 +13,7 @@ install_node_tarball() {
       ;;
   esac
 
-  node_dist_url="${NODE_DIST_URL:-https://nodejs.org/dist/latest-v22.x}"
+  node_dist_url="${NODE_DIST_URL:-https://nodejs.org/dist/v22.22.3}"
   node_tmp="$(mktemp -d)"
   sums_file="${node_tmp}/SHASUMS256.txt"
 

@@ -30,10 +30,6 @@ esac
 # Parse "[registry/]repo[:tag]" into registry / repo / tag.
 parse_ref() {
   local ref="$1" registry repo tag rest
-  case "$ref" in
-    *:*/*) registry=""; rest="$ref" ;;            # colon only inside a path is not a host
-    *) rest="$ref" ;;
-  esac
   # Split optional registry host (contains a dot or a colon, or is localhost).
   local first="${ref%%/*}"
   if [[ "$first" == *.* || "$first" == *:* || "$first" == "localhost" ]]; then
@@ -111,6 +107,7 @@ apply_mod() {
       '.manifests[] | select(.platform.os=="linux" and .platform.architecture==$arch) | .digest' \
       | head -n1)"
     if [[ -z "$digest" ]]; then
+      echo "[mods] WARNING: no ${GOARCH} manifest found for ${ref}; falling back to first entry." >&2
       digest="$(echo "$manifest" | jq -r '.manifests[0].digest')"
     fi
     manifest="$(curl -fsSL "${auth[@]}" -H "Accept: ${ACCEPT_MANIFEST}" \
@@ -124,7 +121,7 @@ apply_mod() {
     return 0
   fi
 
-  local i=0 d blob
+  local i=0 d blob expected actual
   while IFS= read -r d; do
     [[ -z "$d" ]] && continue
     i=$((i + 1))
@@ -134,6 +131,19 @@ apply_mod() {
       echo "[mods] ERROR: failed to download layer ${d}; skipping mod." >&2
       return 1
     }
+    if [[ "$d" != sha256:* ]]; then
+      echo "[mods] ERROR: unsupported layer digest ${d}; skipping mod." >&2
+      return 1
+    fi
+    expected="${d#sha256:}"
+    actual="$(sha256sum "$blob" | awk '{ print $1 }')" || {
+      echo "[mods] ERROR: failed to hash layer ${d}; skipping mod." >&2
+      return 1
+    }
+    if [[ "$actual" != "$expected" ]]; then
+      echo "[mods] ERROR: digest mismatch for layer ${d}; expected ${expected}, got ${actual}; skipping mod." >&2
+      return 1
+    fi
     # Layers are gzip-compressed tar by default; fall back to plain tar.
     tar -C / -xzpf "$blob" 2>/dev/null || tar -C / -xpf "$blob"
     rm -f "$blob"
