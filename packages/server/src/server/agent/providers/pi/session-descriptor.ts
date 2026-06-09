@@ -33,6 +33,30 @@ interface PiSessionTail {
   title: string | null;
   lastActivityAt: Date | null;
   lastUserMessage: string | null;
+  model: string | null;
+  thinkingOptionId: string | null;
+}
+
+interface PiSessionHead {
+  title: string | null;
+  firstUserMessage: string | null;
+  model: string | null;
+  thinkingOptionId: string | null;
+}
+
+interface PiSessionDescriptor {
+  cwd: string;
+  title: string | null;
+  firstUserMessage: string | null;
+  lastUserMessage: string | null;
+  lastActivityAt: Date;
+  model: string | null;
+  thinkingOptionId: string | null;
+}
+
+export interface PiImportSessionConfig {
+  model?: string;
+  thinkingOptionId?: string;
 }
 
 export async function listPiImportableSessions(
@@ -54,6 +78,14 @@ export async function listPiImportableSessions(
   return sessions
     .sort((left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime())
     .slice(0, limit);
+}
+
+export async function readPiImportSessionConfig(
+  filePath: string,
+): Promise<PiImportSessionConfig> {
+  const descriptor = await readPiSessionDescriptor(filePath);
+  if (!descriptor) return {};
+  return toPiImportSessionConfig(descriptor);
 }
 
 async function resolvePiSessionsDir(options: PiSessionDescriptorOptions): Promise<string> {
@@ -155,6 +187,22 @@ async function walkJsonlFiles(root: string): Promise<string[]> {
 async function readPiImportableSession(
   filePath: string,
 ): Promise<ImportableProviderSession | null> {
+  const descriptor = await readPiSessionDescriptor(filePath);
+  if (!descriptor) return null;
+
+  return {
+    providerHandleId: filePath,
+    cwd: descriptor.cwd,
+    title: descriptor.title,
+    firstPromptPreview: normalizePromptPreview(descriptor.firstUserMessage),
+    lastPromptPreview: normalizePromptPreview(
+      descriptor.lastUserMessage ?? descriptor.firstUserMessage,
+    ),
+    lastActivityAt: descriptor.lastActivityAt,
+  };
+}
+
+async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescriptor | null> {
   const firstLine = await readFirstLine(filePath);
   if (!firstLine) return null;
   const header = parseSessionHeader(firstLine);
@@ -164,17 +212,26 @@ async function readPiImportableSession(
   const tailInfo = parseSessionTail(tail);
   const headInfo = await scanSessionHead(filePath);
   const title = tailInfo.title ?? headInfo.title ?? headInfo.firstUserMessage;
+  const model = tailInfo.model ?? headInfo.model;
+  const thinkingOptionId = tailInfo.thinkingOptionId ?? headInfo.thinkingOptionId;
   const lastActivityAt =
     tailInfo.lastActivityAt ?? (await readFileMtime(filePath)) ?? header.createdAt ?? new Date(0);
+
   return {
-    providerHandleId: filePath,
     cwd: header.cwd,
     title,
-    firstPromptPreview: normalizePromptPreview(headInfo.firstUserMessage),
-    lastPromptPreview: normalizePromptPreview(
-      tailInfo.lastUserMessage ?? headInfo.firstUserMessage,
-    ),
+    firstUserMessage: headInfo.firstUserMessage,
+    lastUserMessage: tailInfo.lastUserMessage,
     lastActivityAt,
+    model,
+    thinkingOptionId,
+  };
+}
+
+function toPiImportSessionConfig(descriptor: PiSessionDescriptor): PiImportSessionConfig {
+  return {
+    ...(descriptor.model ? { model: descriptor.model } : {}),
+    ...(descriptor.thinkingOptionId ? { thinkingOptionId: descriptor.thinkingOptionId } : {}),
   };
 }
 
@@ -231,6 +288,8 @@ function parseSessionTail(tail: string): PiSessionTail {
   let lastActivityAt: Date | null = null;
   let fallbackTimestamp: Date | null = null;
   let lastUserMessage: string | null = null;
+  let model: string | null = null;
+  let thinkingOptionId: string | null = null;
 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const entry = parseJsonRecord(lines[index].trim());
@@ -240,12 +299,26 @@ function parseSessionTail(tail: string): PiSessionTail {
       title = readNonEmptyString(entry.name);
     }
 
+    if (!model) {
+      model = extractModel(entry);
+    }
+
+    if (!thinkingOptionId) {
+      thinkingOptionId = extractThinkingOptionId(entry);
+    }
+
     const entryTimestamp = parseDate(entry.timestamp);
     if (!fallbackTimestamp && entryTimestamp) {
       fallbackTimestamp = entryTimestamp;
     }
 
     if (entry.type !== "message") {
+      if (
+        hasCompleteTailInfo({ title, lastActivityAt, lastUserMessage, model, thinkingOptionId })
+      ) {
+        break;
+      }
+
       continue;
     }
 
@@ -257,27 +330,36 @@ function parseSessionTail(tail: string): PiSessionTail {
       lastUserMessage = extractMessageText(entry.message.content);
     }
 
-    if (title && lastActivityAt && lastUserMessage) {
+    if (hasCompleteTailInfo({ title, lastActivityAt, lastUserMessage, model, thinkingOptionId })) {
       break;
     }
   }
 
-  return { title, lastActivityAt: lastActivityAt ?? fallbackTimestamp, lastUserMessage };
+  return {
+    title,
+    lastActivityAt: lastActivityAt ?? fallbackTimestamp,
+    lastUserMessage,
+    model,
+    thinkingOptionId,
+  };
 }
 
-async function scanSessionHead(filePath: string): Promise<{
-  title: string | null;
-  firstUserMessage: string | null;
-}> {
+function hasCompleteTailInfo(info: PiSessionTail): boolean {
+  return Boolean(info.title && info.lastActivityAt && info.lastUserMessage && info.model);
+}
+
+async function scanSessionHead(filePath: string): Promise<PiSessionHead> {
   let content: string;
   try {
     content = await readFile(filePath, "utf8");
   } catch {
-    return { title: null, firstUserMessage: null };
+    return { title: null, firstUserMessage: null, model: null, thinkingOptionId: null };
   }
 
   let title: string | null = null;
   let firstUserMessage: string | null = null;
+  let model: string | null = null;
+  let thinkingOptionId: string | null = null;
   let lineCount = 0;
 
   for (const rawLine of content.split(/\r?\n/u)) {
@@ -289,13 +371,16 @@ async function scanSessionHead(filePath: string): Promise<{
       title = readNonEmptyString(entry.name) ?? title;
     }
 
+    model = extractModel(entry) ?? model;
+    thinkingOptionId = extractThinkingOptionId(entry) ?? thinkingOptionId;
+
     if (!firstUserMessage && entry.type === "message" && isRecord(entry.message)) {
       if (entry.message.role === "user") {
         firstUserMessage = extractMessageText(entry.message.content);
       }
     }
 
-    if (title && firstUserMessage) {
+    if (title && firstUserMessage && model) {
       break;
     }
     if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
@@ -303,7 +388,32 @@ async function scanSessionHead(filePath: string): Promise<{
     }
   }
 
-  return { title, firstUserMessage };
+  return { title, firstUserMessage, model, thinkingOptionId };
+}
+
+function extractModel(entry: Record<string, unknown>): string | null {
+  if (entry.type === "model_change") {
+    return buildModelId(entry.provider, entry.modelId);
+  }
+
+  if (entry.type === "message" && isRecord(entry.message)) {
+    return buildModelId(entry.message.provider, entry.message.model);
+  }
+
+  return null;
+}
+
+function extractThinkingOptionId(entry: Record<string, unknown>): string | null {
+  return entry.type === "thinking_level_change" ? readNonEmptyString(entry.thinkingLevel) : null;
+}
+
+function buildModelId(provider: unknown, modelId: unknown): string | null {
+  const providerName = readNonEmptyString(provider);
+  const modelName = readNonEmptyString(modelId);
+  if (!providerName || !modelName) {
+    return null;
+  }
+  return `${providerName}/${modelName}`;
 }
 
 function parseJsonRecord(line: string): Record<string, unknown> | null {

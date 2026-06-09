@@ -779,6 +779,85 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test("imports JSONL sessions with the recorded model and thinking level", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-import-config-"));
+    const cwd = path.join(root, "workspace");
+    const sessionsDir = path.join(root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, "20260103_session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-import-session",
+          timestamp: "2026-01-03T00:00:00.000Z",
+          cwd,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          timestamp: "2026-01-03T00:00:01.000Z",
+          message: { role: "user", content: "first prompt" },
+        }),
+        JSON.stringify({
+          type: "model_change",
+          id: "model-1",
+          timestamp: "2026-01-03T00:00:02.000Z",
+          provider: "openrouter",
+          modelId: "anthropic/claude-sonnet-4.5",
+        }),
+        JSON.stringify({
+          type: "thinking_level_change",
+          id: "thinking-1",
+          timestamp: "2026-01-03T00:00:03.000Z",
+          thinkingLevel: "high",
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const pi = new FakePi();
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: pi,
+      providerParams: { sessionDir: sessionsDir },
+    });
+
+    const imported = await client.importSession(
+      { providerHandleId: sessionFile, cwd },
+      { config: createConfig({ cwd }), storedConfig: createConfig({ cwd }) },
+    );
+
+    const actualLaunch = pi.recordedLaunches[0]!;
+    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(actualLaunch.argv).toEqual([
+      "pi",
+      "--mode",
+      "rpc",
+      "--model",
+      "openrouter/anthropic/claude-sonnet-4.5",
+      "--thinking",
+      "high",
+      "--session",
+      sessionFile,
+      "--extension",
+      actualLaunch.extensionPaths[0],
+    ]);
+    expect(imported.config).toMatchObject({
+      provider: "pi",
+      cwd,
+      model: "openrouter/anthropic/claude-sonnet-4.5",
+      thinkingOptionId: "high",
+    });
+    expect(imported.persistence.metadata).toMatchObject({
+      provider: "pi",
+      cwd,
+      model: "openrouter/anthropic/claude-sonnet-4.5",
+      thinkingOptionId: "high",
+    });
+  });
+
   test("lists models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

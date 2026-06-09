@@ -57,7 +57,7 @@ import {
 } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
-import { listPiImportableSessions } from "./session-descriptor.js";
+import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -1984,11 +1984,13 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    const importConfig = await readPiImportSessionConfig(input.providerHandleId);
     return importSessionFromPersistence({
       provider: PI_PROVIDER,
       request: input,
       context,
       resumeSession: this.resumeSession.bind(this),
+      config: importConfig,
     });
   }
 
