@@ -5,6 +5,7 @@ const KNOWN_EDITOR_TARGET_IDS: ReadonlySet<string> = new Set([
   "vscode",
   "webstorm",
   "zed",
+  "antigravity",
   "finder",
   "explorer",
   "file-manager",

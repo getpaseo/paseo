@@ -73,6 +73,7 @@ const BUILT_IN_EDITOR_TARGETS: readonly EditorTargetDefinition[] = [
   { id: "vscode", label: "VS Code", kind: "editor", command: "code" },
   { id: "webstorm", label: "WebStorm", kind: "editor", command: "webstorm" },
   { id: "zed", label: "Zed", kind: "editor", command: "zed" },
+  { id: "antigravity", label: "Antigravity", kind: "editor", command: "antigravity" },
   {
     id: "finder",
     label: "Finder",
