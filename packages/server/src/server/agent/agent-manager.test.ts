@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent-manager.js";
+import {
+  AgentManager,
+  commandMayHaveChangedExternalState,
+  type AgentManagerEvent,
+  type ManagedAgent,
+} from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
@@ -5898,4 +5903,139 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
 
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0].text).toBe("real user message");
+});
+
+test("commandMayHaveChangedExternalState matches remote-state commands", () => {
+  // GitHub PR operations (remote, no local file changes)
+  expect(commandMayHaveChangedExternalState("gh pr merge 123")).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr close 123")).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr create")).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr edit 123")).toBe(true);
+  expect(commandMayHaveChangedExternalState('gh pr comment 123 -b "lgtm"')).toBe(true);
+  expect(commandMayHaveChangedExternalState("gh pr review 123 -a")).toBe(true);
+  // Git remote operations (local refs unchanged)
+  expect(commandMayHaveChangedExternalState("git push origin main")).toBe(true);
+  expect(commandMayHaveChangedExternalState("git fetch origin")).toBe(true);
+});
+
+test("commandMayHaveChangedExternalState ignores local or read-only commands", () => {
+  // Local git mutations — already caught by file watchers on .git/HEAD
+  expect(commandMayHaveChangedExternalState("git commit -m 'hello'")).toBe(false);
+  expect(commandMayHaveChangedExternalState("git checkout main")).toBe(false);
+  expect(commandMayHaveChangedExternalState("git merge feature")).toBe(false);
+  expect(commandMayHaveChangedExternalState("git rebase main")).toBe(false);
+  expect(commandMayHaveChangedExternalState("git reset --hard HEAD~1")).toBe(false);
+  // git pull includes a merge/rebase that changes local refs → watchers catch it
+  expect(commandMayHaveChangedExternalState("git pull origin main")).toBe(false);
+  // Read-only gh commands
+  expect(commandMayHaveChangedExternalState("gh pr view 123")).toBe(false);
+  expect(commandMayHaveChangedExternalState("gh pr list")).toBe(false);
+  expect(commandMayHaveChangedExternalState("gh auth status")).toBe(false);
+  expect(commandMayHaveChangedExternalState("gh repo view")).toBe(false);
+  // Miscellaneous local commands
+  expect(commandMayHaveChangedExternalState("git status")).toBe(false);
+  expect(commandMayHaveChangedExternalState("ls -la")).toBe(false);
+  expect(commandMayHaveChangedExternalState("cat file.txt")).toBe(false);
+  expect(commandMayHaveChangedExternalState("npm install")).toBe(false);
+  expect(commandMayHaveChangedExternalState("npm publish")).toBe(false);
+});
+
+test("onWorkspaceStateMayHaveChanged is called when a completed shell tool call may have changed external state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-external-state-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const onWorkspaceStateMayHaveChanged = vi.fn();
+
+  const codex = fakeCodexEmitting({
+    turnItems: [
+      {
+        type: "tool_call",
+        callId: "call-1",
+        name: "bash",
+        status: "completed",
+        detail: { type: "shell", command: "gh pr merge 123 --squash" },
+        error: null,
+      },
+    ],
+  });
+
+  const manager = new AgentManager({
+    clients: { codex },
+    registry: storage,
+    logger,
+    onWorkspaceStateMayHaveChanged,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir });
+
+  await manager.runAgent(snapshot.id, { text: "merge it" });
+
+  expect(onWorkspaceStateMayHaveChanged).toHaveBeenCalledTimes(1);
+  expect(onWorkspaceStateMayHaveChanged).toHaveBeenCalledWith({ cwd: workdir });
+});
+
+test("onWorkspaceStateMayHaveChanged is not called for non-shell tool calls", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-external-state-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const onWorkspaceStateMayHaveChanged = vi.fn();
+
+  const codex = fakeCodexEmitting({
+    turnItems: [
+      {
+        type: "tool_call",
+        callId: "call-1",
+        name: "read",
+        status: "completed",
+        detail: { type: "read", filePath: "/tmp/foo.txt" },
+        error: null,
+      },
+    ],
+  });
+
+  const manager = new AgentManager({
+    clients: { codex },
+    registry: storage,
+    logger,
+    onWorkspaceStateMayHaveChanged,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir });
+
+  await manager.runAgent(snapshot.id, { text: "read it" });
+
+  expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
+});
+
+test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-external-state-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const onWorkspaceStateMayHaveChanged = vi.fn();
+
+  const codex = fakeCodexEmitting({
+    turnItems: [
+      {
+        type: "tool_call",
+        callId: "call-1",
+        name: "bash",
+        status: "running",
+        detail: { type: "shell", command: "gh pr merge 123 --squash" },
+        error: null,
+      },
+    ],
+  });
+
+  const manager = new AgentManager({
+    clients: { codex },
+    registry: storage,
+    logger,
+    onWorkspaceStateMayHaveChanged,
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir });
+
+  await manager.runAgent(snapshot.id, { text: "merge it" });
+
+  expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
 });

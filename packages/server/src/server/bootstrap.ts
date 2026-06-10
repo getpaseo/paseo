@@ -547,6 +547,9 @@ export async function createPaseoDaemon(
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
+    onWorkspaceStateMayHaveChanged: ({ cwd }) => {
+      workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
+    },
     logger,
   });
 

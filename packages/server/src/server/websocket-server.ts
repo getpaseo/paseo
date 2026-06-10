@@ -147,6 +147,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     scheduleRefreshForCwd: () => {},
+    onWorkspaceStateMayHaveChanged: () => {},
     dispose: () => {},
   };
 }
