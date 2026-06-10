@@ -21,6 +21,8 @@ export function deriveProjectPlacementFromCwd(cwd: string): ProjectPlacementPayl
       worktreeRoot: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
+      isMultiGit: undefined,
+      subRepos: undefined,
     },
   };
 }

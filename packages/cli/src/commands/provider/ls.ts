@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
-import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import type { ProviderSnapshotEntry, AgentMode } from "@getpaseo/protocol/agent-types";
 import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/protocol/provider-manifest";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
@@ -73,13 +73,13 @@ export async function runLsCommand(
     const snapshot = await client.getProvidersSnapshot();
     return {
       type: "list",
-      data: snapshot.entries.map((entry) => ({
+      data: snapshot.entries.map((entry: ProviderSnapshotEntry) => ({
         provider: entry.provider,
         label: entry.label ?? entry.provider,
         status: entry.status === "ready" ? "available" : entry.status,
         enabled: !entry.enabled ? "Disabled" : "Enabled",
         defaultMode: entry.defaultModeId ?? "default",
-        modes: (entry.modes ?? []).map((mode) => mode.label).join(", "),
+        modes: (entry.modes ?? []).map((mode: AgentMode) => mode.label).join(", "),
       })),
       schema: providerLsSchema,
     };

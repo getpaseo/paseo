@@ -20,6 +20,7 @@ export interface DirectoryProjectMembership {
   projectName: string;
   projectRootPath: string;
   projectKind: PersistedProjectKind;
+  subRepos?: string[];
 }
 
 export interface DetectStaleWorkspacesInput {
@@ -150,7 +151,9 @@ export function deriveProjectRootPath(input: {
 }
 
 export function deriveProjectKind(checkout: ProjectCheckoutLitePayload): PersistedProjectKind {
-  return checkout.isGit ? "git" : "non_git";
+  if (checkout.isGit) return "git";
+  if (!checkout.isGit && checkout.isMultiGit) return "multi_git";
+  return "non_git";
 }
 
 export function deriveWorkspaceKind(checkout: ProjectCheckoutLitePayload): PersistedWorkspaceKind {
@@ -180,6 +183,8 @@ export function checkoutLiteFromGitSnapshot(
       worktreeRoot: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
+      isMultiGit: undefined,
+      subRepos: undefined,
     };
   }
   if (git.isPaseoOwnedWorktree && git.mainRepoRoot) {
@@ -268,5 +273,6 @@ export function classifyDirectoryForProjectMembership(input: {
       checkout,
     }),
     projectKind: deriveProjectKind(checkout),
+    subRepos: !checkout.isGit && checkout.isMultiGit ? checkout.subRepos : undefined,
   };
 }

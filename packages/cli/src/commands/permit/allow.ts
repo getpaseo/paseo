@@ -111,13 +111,15 @@ export async function runAllowCommand(
       permissionsToAllow = pendingPermissions;
     } else {
       // Find permission by ID prefix
-      const permission = pendingPermissions.find((p) => p.id === reqId || p.id.startsWith(reqId));
+      const permission = pendingPermissions.find(
+        (p: AgentPermissionRequest) => p.id === reqId || p.id.startsWith(reqId),
+      );
       if (!permission) {
         await client.close();
         const error: CommandError = {
           code: "PERMISSION_NOT_FOUND",
           message: `Permission request not found: ${reqId}`,
-          details: `Available requests: ${pendingPermissions.map((p) => p.id.slice(0, 8)).join(", ")}`,
+          details: `Available requests: ${pendingPermissions.map((p: AgentPermissionRequest) => p.id.slice(0, 8)).join(", ")}`,
         };
         throw error;
       }

@@ -166,6 +166,8 @@ function makeFetchAgentsEntry(input: {
         worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
+        isMultiGit: undefined,
+        subRepos: undefined,
       },
     },
   };

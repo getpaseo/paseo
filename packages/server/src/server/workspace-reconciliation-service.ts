@@ -12,7 +12,7 @@ import { normalizeWorkspaceId } from "./workspace-registry-model.js";
 const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 
 function deriveWorkspaceKindFromMetadata(metadata: {
-  projectKind: "git" | "directory";
+  projectKind: "git" | "directory" | "multi_git";
   isWorktree: boolean;
 }): PersistedWorkspaceRecord["kind"] {
   if (metadata.projectKind !== "git") return "directory";
@@ -301,7 +301,14 @@ export class WorkspaceReconciliationService {
       Pick<PersistedProjectRecord, "kind" | "displayName" | "rootPath">
     > = {};
 
-    const mappedKind = currentGit.projectKind === "git" ? "git" : currentGit.projectKind === "multi_git" ? "multi_git" : "non_git";
+    let mappedKind: PersistedProjectRecord["kind"];
+    if (currentGit.projectKind === "git") {
+      mappedKind = "git";
+    } else if (currentGit.projectKind === "multi_git") {
+      mappedKind = "multi_git";
+    } else {
+      mappedKind = "non_git";
+    }
 
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;

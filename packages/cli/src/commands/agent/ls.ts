@@ -198,26 +198,28 @@ export async function runLsCommand(
 
     const labelFilters = parseLabelFilters(options.label);
     const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    let agents = fetchPayload.entries.map((entry: { agent: AgentSnapshotPayload }) => entry.agent);
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {
-      agents = agents.filter((a) => !a.archivedAt);
+      agents = agents.filter((a: AgentSnapshotPayload) => !a.archivedAt);
     }
 
     // If explicit status filter is provided, apply it.
     if (options.status) {
-      agents = agents.filter((a) => a.status === options.status);
+      agents = agents.filter((a: AgentSnapshotPayload) => a.status === options.status);
     }
 
     // Optional cwd filter.
     if (options.cwd) {
-      agents = agents.filter((a) => isSameOrDescendantPath(options.cwd!, a.cwd));
+      agents = agents.filter((a: AgentSnapshotPayload) =>
+        isSameOrDescendantPath(options.cwd!, a.cwd),
+      );
     }
 
     // Apply label filtering only when explicitly requested.
     if (Object.keys(labelFilters).length > 0) {
-      agents = agents.filter((a) => {
+      agents = agents.filter((a: AgentSnapshotPayload) => {
         const agentLabels = a.labels;
         for (const [key, value] of Object.entries(labelFilters)) {
           if (agentLabels[key] !== value) {
@@ -232,7 +234,7 @@ export async function runLsCommand(
 
     // Sort agents: running first, then idle, then others; within each group, most recent first
     const statusOrder = { running: 0, idle: 1 } as Record<string, number>;
-    agents.sort((a, b) => {
+    agents.sort((a: AgentSnapshotPayload, b: AgentSnapshotPayload) => {
       // Primary sort: by status
       const aOrder = statusOrder[a.status] ?? 999;
       const bOrder = statusOrder[b.status] ?? 999;

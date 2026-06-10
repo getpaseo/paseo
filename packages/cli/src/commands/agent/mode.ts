@@ -81,7 +81,7 @@ export async function runModeCommand(
       // List available modes for this agent
       const availableModes = agent.availableModes ?? [];
 
-      const items: AgentMode[] = availableModes.map((m) => ({
+      const items: AgentMode[] = availableModes.map((m: AgentMode) => ({
         id: m.id,
         label: m.label,
         description: m.description,

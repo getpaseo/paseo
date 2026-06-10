@@ -51,6 +51,8 @@ function createEntry(agent: AgentSnapshotPayload): FetchAgentsEntry {
         worktreeRoot: null,
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
+        isMultiGit: undefined,
+        subRepos: undefined,
       },
     },
   };

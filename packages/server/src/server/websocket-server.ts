@@ -118,6 +118,8 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       worktreeRoot: null,
       isPaseoOwnedWorktree: false,
       mainRepoRoot: null,
+      isMultiGit: undefined,
+      subRepos: undefined,
     }),
     getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
     getCheckoutDiff: async () => ({ diff: "" }),

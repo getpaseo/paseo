@@ -4,7 +4,7 @@ import { slugify } from "../utils/worktree.js";
 import { deriveProjectGroupingKey, deriveProjectGroupingName } from "./workspace-registry-model.js";
 
 export interface WorkspaceGitMetadata {
-  projectKind: "git" | "directory";
+  projectKind: "git" | "directory" | "multi_git";
   projectDisplayName: string;
   workspaceDisplayName: string;
   gitRemote: string | null;

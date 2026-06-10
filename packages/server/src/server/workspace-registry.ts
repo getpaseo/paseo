@@ -216,6 +216,7 @@ export function createPersistedProjectRecord(input: {
   kind: PersistedProjectKind;
   displayName: string;
   customName?: string | null;
+  subRepos?: string[];
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;

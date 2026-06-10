@@ -65,7 +65,9 @@ export async function runLsCommand(
 
   try {
     const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
+    const agents = agentsPayload.entries.map(
+      (entry: { agent: AgentSnapshotPayload }) => entry.agent,
+    );
     await client.close();
 
     // Collect all pending permissions from all agents

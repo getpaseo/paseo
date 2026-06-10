@@ -450,7 +450,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         logger: this.logger,
       });
       if (!status.isGit) {
-        return checkoutLiteFromGitSnapshot(normalizedCwd, {
+        const base = checkoutLiteFromGitSnapshot(normalizedCwd, {
           isGit: false,
           currentBranch: null,
           remoteUrl: null,
@@ -458,6 +458,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           isPaseoOwnedWorktree: false,
           mainRepoRoot: null,
         });
+        return {
+          ...base,
+          ...(status.isMultiGit ? { isMultiGit: true, subRepos: status.subRepos } : {}),
+        };
       }
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
         isGit: true,

@@ -2269,10 +2269,14 @@ export const ProjectCheckoutLiteNotGitPayloadSchema = z
     worktreeRoot: z.null().optional(),
     isPaseoOwnedWorktree: z.literal(false),
     mainRepoRoot: z.null(),
+    isMultiGit: z.boolean().optional(),
+    subRepos: z.array(z.string()).optional(),
   })
   .transform((value) => ({
     ...value,
-    worktreeRoot: null,
+    worktreeRoot: null as null,
+    isMultiGit: value.isMultiGit,
+    subRepos: value.subRepos,
   }));
 
 export const ProjectCheckoutLiteGitNonPaseoPayloadSchema = z
