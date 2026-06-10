@@ -2487,4 +2487,81 @@ const x = 1;
       expect(isDescendantPath("c:\\repo\\child", "C:\\repo")).toBe(true);
     });
   });
+
+  describe("multi-git sub-repo detection", () => {
+    function nativePath(p: string): string {
+      return realpathSync.native(p);
+    }
+
+    function initSubRepo(parentDir: string, name: string): string {
+      const subDir = join(parentDir, name);
+      mkdirSync(subDir, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: subDir });
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: subDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: subDir });
+      writeFileSync(join(subDir, "file.txt"), "hello\n");
+      execFileSync("git", ["add", "."], { cwd: subDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+        cwd: subDir,
+      });
+      return subDir;
+    }
+
+    it("detects multi_git when 2 or more immediate subdirs are git repos", async () => {
+      const multiDir = join(tempDir, "multi-parent");
+      mkdirSync(multiDir, { recursive: true });
+      const sub1 = initSubRepo(multiDir, "repo-one");
+      const sub2 = initSubRepo(multiDir, "repo-two");
+
+      const status = await getCheckoutStatus(multiDir);
+
+      expect(status.isGit).toBe(false);
+      expect(status.isMultiGit).toBe(true);
+      expect(status.subRepos).toBeDefined();
+      const actualSubRepos = (status.subRepos ?? []).map(nativePath).sort();
+      const expectedSubRepos = [nativePath(sub1), nativePath(sub2)].sort();
+      expect(actualSubRepos).toEqual(expectedSubRepos);
+    });
+
+    it("does NOT detect multi_git when only 1 subdir is a git repo", async () => {
+      const singleDir = join(tempDir, "single-parent");
+      mkdirSync(singleDir, { recursive: true });
+      initSubRepo(singleDir, "only-repo");
+      mkdirSync(join(singleDir, "plain-dir"), { recursive: true });
+
+      const status = await getCheckoutStatus(singleDir);
+
+      expect(status.isGit).toBe(false);
+      expect(status.isMultiGit).toBeUndefined();
+      expect(status.subRepos).toBeUndefined();
+    });
+
+    it("does NOT detect multi_git when no subdirs are git repos", async () => {
+      const emptyParent = join(tempDir, "empty-parent");
+      mkdirSync(emptyParent, { recursive: true });
+      mkdirSync(join(emptyParent, "dir-a"), { recursive: true });
+      mkdirSync(join(emptyParent, "dir-b"), { recursive: true });
+
+      const status = await getCheckoutStatus(emptyParent);
+
+      expect(status.isGit).toBe(false);
+      expect(status.isMultiGit).toBeUndefined();
+      expect(status.subRepos).toBeUndefined();
+    });
+
+    it("skips hidden directories and node_modules when scanning for sub-repos", async () => {
+      const multiDir = join(tempDir, "multi-skip-parent");
+      mkdirSync(multiDir, { recursive: true });
+      // These should be skipped
+      initSubRepo(multiDir, ".hidden-repo");
+      initSubRepo(multiDir, "node_modules");
+      // Only one visible repo — should NOT trigger multi_git
+      initSubRepo(multiDir, "visible-repo");
+
+      const status = await getCheckoutStatus(multiDir);
+
+      expect(status.isGit).toBe(false);
+      expect(status.isMultiGit).toBeUndefined();
+    });
+  });
 });

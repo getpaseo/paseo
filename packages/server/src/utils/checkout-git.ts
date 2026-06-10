@@ -1,6 +1,6 @@
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
-import { open as openFile, readFile, stat as statFile } from "fs/promises";
+import { open as openFile, readFile, stat as statFile, readdir } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { Logger } from "pino";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
@@ -718,6 +718,8 @@ export interface AheadBehind {
 
 export interface CheckoutStatus {
   isGit: false;
+  isMultiGit?: boolean;
+  subRepos?: string[];
 }
 
 export interface CheckoutStatusGitNonPaseo {
@@ -1731,12 +1733,54 @@ async function getUntrackedDiffText(
   };
 }
 
+async function discoverSubRepos(dir: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const subdirs: string[] = [];
+  for (const name of entries) {
+    if (name.startsWith(".") || name === "node_modules") {
+      continue;
+    }
+    const full = resolve(dir, name);
+    try {
+      const s = await statFile(full);
+      if (s.isDirectory()) {
+        subdirs.push(full);
+      }
+    } catch {
+      // skip unreadable entries
+    }
+  }
+
+  const results = await Promise.all(
+    subdirs.map(async (subdir): Promise<string | null> => {
+      try {
+        await statFile(resolve(subdir, ".git"));
+        return subdir;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return results.filter((p): p is string => p !== null);
+}
+
 export async function getCheckoutStatus(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<CheckoutStatusResult> {
   const facts = await getCheckoutSnapshotFacts(cwd, context);
   if (!facts.isGit) {
+    const subRepos = await discoverSubRepos(cwd);
+    if (subRepos.length >= 2) {
+      return { isGit: false, isMultiGit: true, subRepos };
+    }
     return { isGit: false };
   }
 
