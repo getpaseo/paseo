@@ -848,7 +848,6 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
                 { label: "Codex", description: "Use Codex" },
               ],
               multiSelect: false,
-              allowOther: true,
             },
           ],
           answers: { "Which provider should I use?": "Use both" },

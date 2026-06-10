@@ -129,6 +129,24 @@ export function normalizeClaudeAskUserQuestionRequestInput(
   };
 }
 
+function stripClaudeAskUserQuestionUiMetadata(input: AgentMetadata): AgentMetadata {
+  if (!Array.isArray(input.questions)) {
+    return input;
+  }
+
+  return {
+    ...input,
+    questions: input.questions.map((item) => {
+      if (!isMetadata(item) || !("allowOther" in item)) {
+        return item;
+      }
+      const itemForClaude: AgentMetadata = { ...item };
+      delete itemForClaude.allowOther;
+      return itemForClaude;
+    }),
+  };
+}
+
 export function normalizeClaudeAskUserQuestionUpdatedInput(
   updatedInput: AgentMetadata | undefined,
   fallbackInput: AgentMetadata | undefined,
@@ -139,7 +157,7 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
   // AskUserQuestion tool expects answer keys to match the full question text. Merge
   // the original request payload back in so provider callbacks that only return
   // `{ answers }` still satisfy Claude's full tool input schema.
-  const merged = { ...fallback, ...base };
+  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
   const questions =
     (Array.isArray(base.questions) ? base.questions : null) ??
     (Array.isArray(fallback.questions) ? fallback.questions : null);
