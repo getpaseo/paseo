@@ -641,7 +641,7 @@ export async function runAsyncWorktreeBootstrap(
     });
 
     setupResults = await runWorktreeSetupCommands({
-      worktreePath: options.worktree.worktreePath,
+      worktreePath: options.projectRootPath ?? options.worktree.worktreePath,
       branchName: options.worktree.branchName,
       cleanupOnFailure: false,
       runtimeEnv,
@@ -700,7 +700,7 @@ export async function runAsyncWorktreeBootstrap(
     // Register the env vars for the workspace root CWD so all terminals
     // spawned from there pick them up.
     options.terminalManager?.registerCwdEnv({
-      cwd: options.worktree.worktreePath,
+      cwd: options.projectRootPath ?? options.worktree.worktreePath,
       env: repoEnv,
     });
 
