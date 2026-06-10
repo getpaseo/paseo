@@ -631,6 +631,7 @@ export async function createPaseoWorktreeWorkflow(
               setupContinuation.emitLiveTimelineItem({ agentId, item }),
             logger: setupContinuation.logger,
             projectRootPath: createdWorktree.projectRootPath,
+            subRepoWorktrees: workspace.subRepoWorktrees,
           });
         },
       },

@@ -29,6 +29,7 @@ import {
   requirePlannedWorkspaceServicePort,
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
+import { formatSystemNotificationPrompt } from "./agent/agent-prompt.js";
 
 export interface WorktreeBootstrapTerminalResult {
   name: string | null;
@@ -49,6 +50,9 @@ export interface RunAsyncWorktreeBootstrapOptions {
   /** For multi_git projects: the parent folder that contains paseo.json.
    *  When set, config is read from this path instead of worktree.worktreePath. */
   projectRootPath?: string;
+  /** For multi_git workspaces: the list of sub-repo worktrees. When present,
+   *  env vars and a timeline summary item are injected for the workspace. */
+  subRepoWorktrees?: Array<{ name: string; repoPath: string; worktreePath: string }>;
 }
 
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
@@ -682,6 +686,34 @@ export async function runAsyncWorktreeBootstrap(
   }
 
   await runWorktreeTerminalBootstrap(options, runtimeEnv);
+
+  // multi_git: register per-repo env vars and append a workspace summary.
+  const subRepoWorktrees = options.subRepoWorktrees;
+  if (subRepoWorktrees && subRepoWorktrees.length > 0) {
+    const repoEnv: Record<string, string> = {};
+    for (const [index, repo] of subRepoWorktrees.entries()) {
+      repoEnv[`PASEO_REPO_${index}_NAME`] = repo.name;
+      repoEnv[`PASEO_REPO_${index}_PATH`] = repo.repoPath;
+      repoEnv[`PASEO_REPO_${index}_WORKTREE_PATH`] = repo.worktreePath;
+    }
+
+    // Register the env vars for the workspace root CWD so all terminals
+    // spawned from there pick them up.
+    options.terminalManager?.registerCwdEnv({
+      cwd: options.worktree.worktreePath,
+      env: repoEnv,
+    });
+
+    // Append a system timeline item so the agent sees the sub-repo paths.
+    const repoLines = subRepoWorktrees
+      .map((repo) => `- ${repo.name}: ${repo.worktreePath}`)
+      .join("\n");
+    const summaryText = `Multi-repo workspace initialized with ${subRepoWorktrees.length} repo${subRepoWorktrees.length === 1 ? "" : "s"}:\n${repoLines}`;
+    await options.appendTimelineItem({
+      type: "user_message",
+      text: formatSystemNotificationPrompt(summaryText),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
