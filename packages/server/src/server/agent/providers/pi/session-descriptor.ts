@@ -80,9 +80,7 @@ export async function listPiImportableSessions(
     .slice(0, limit);
 }
 
-export async function readPiImportSessionConfig(
-  filePath: string,
-): Promise<PiImportSessionConfig> {
+export async function readPiImportSessionConfig(filePath: string): Promise<PiImportSessionConfig> {
   const descriptor = await readPiSessionDescriptor(filePath);
   if (!descriptor) return {};
   return toPiImportSessionConfig(descriptor);
