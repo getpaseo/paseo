@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react";
+import { i18n } from "@/i18n/i18next";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -25,7 +26,7 @@ export function useClearWorkspaceAttention({
     }
     const client = getHostRuntimeStore().getClient(serverId);
     if (!client) {
-      throw new Error("Host is not connected");
+      throw new Error(i18n.t("workspace.terminal.hostDisconnected"));
     }
     await client.clearWorkspaceAttention(workspaceId);
   }, [hasClearableAttention, serverId, workspaceId]);

@@ -689,6 +689,7 @@ export const ar: TranslationResources = {
         open: "يفتح",
         chooseEditor: "اختر المحرر",
         openIn: "افتح مساحة العمل في{{target}}",
+        openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "فشل في فتح مساحة العمل",
       },
       pr: {
@@ -746,6 +747,8 @@ export const ar: TranslationResources = {
       actions: {
         menu: "إجراءات المشروع",
         openSettings: "افتح إعدادات المشروع",
+        openNewWindow: "Open in new window",
+        openNewWindowFailed: "Couldn't open a new window",
         remove: "إزالة المشروع",
         removing: "جارٍ الإزالة...",
       },
@@ -848,6 +851,8 @@ export const ar: TranslationResources = {
         pauseMessage:
           "سيؤدي هذا إلى إيقاف البرنامج الخفي المدمج على الفور. سيتم إيقاف تشغيل الوكلاء والمحطات الطرفية المتصلة بالبرنامج الخفي المدمج.",
         pauseAndStop: "وقفة وتوقف",
+        registrationFailed:
+          "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
         pausedStopFailed:
           "تم إيقاف إدارة البرنامج الخفي المضمنة مؤقتًا، لكن لم يتمكن Paseo من إيقاف البرنامج الخفي.",
         updateFailed: "غير قادر على تحديث إدارة البرنامج الخفي المضمنة.",
@@ -885,6 +890,7 @@ export const ar: TranslationResources = {
         checking: "جارٍ التحقق من وجود تحديثات للتطبيق...",
         installing: "جارٍ تثبيت تحديث التطبيق...",
         upToDate: "التطبيق محدث.",
+        upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "سنخبرك عندما يصبح التحديث جاهزًا.",
         availableWithVersion: "التحديث جاهز:{{version}}",
         available: "تحديث التطبيق جاهز للتثبيت.",
@@ -1331,6 +1337,7 @@ export const ar: TranslationResources = {
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
+      daemon: "Daemon",
       appearance: "مظهر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -1340,9 +1347,10 @@ export const ar: TranslationResources = {
     },
     hostSections: {
       connections: "اتصالات",
-      orchestration: "التنسيق",
+      agents: "Agents",
+      workspaces: "Workspaces",
       providers: "مقدمي الخدمات",
-      daemon: "Daemon",
+      host: "Host",
     },
     general: {
       title: "عام",
@@ -1602,6 +1610,12 @@ export const ar: TranslationResources = {
           placeholder: "اجعل الردود موجزة دائمًا.",
         },
       },
+      agents: {
+        unavailable: "Connect to this host to manage agents",
+      },
+      workspaces: {
+        unavailable: "Connect to this host to manage workspaces",
+      },
       daemon: {
         rename: {
           editLabel: "تحرير التسمية",
@@ -1631,10 +1645,16 @@ export const ar: TranslationResources = {
         dangerZone: "منطقة الخطر",
         remove: {
           title: "إزالة المضيف",
+          localTitle: "Remove localhost connection",
           hint: "إزالة هذا المضيف واتصالاته المحفوظة من هذا الجهاز",
+          localHint: "Removes localhost from this device and stops the built-in daemon",
+          localConfirmTitle: "Remove localhost connection and stop daemon?",
           confirmMessage: "إزالة{{name}}؟ سيؤدي هذا إلى حذف اتصالاته المحفوظة.",
+          localConfirmMessage:
+            "This will remove the localhost connection, turn off built-in daemon management, and stop the managed daemon. Remote hosts remain connected.",
           errorTitle: "خطأ",
           errorMessage: "غير قادر على إزالة المضيف",
+          localErrorMessage: "Unable to remove localhost connection",
         },
       },
     },
@@ -1645,6 +1665,7 @@ export const ar: TranslationResources = {
       enableProvider: "تمكين{{name}}",
       unavailable: "اتصل بهذا المضيف لرؤية مقدمي الخدمة",
       loading: "تحميل...",
+      addErrorTitle: "Unable to add provider",
       updateErrorTitle: "غير قادر على تحديث الموفر",
       statuses: {
         disabled: "عاجز",

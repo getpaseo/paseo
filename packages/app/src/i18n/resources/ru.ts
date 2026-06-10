@@ -707,6 +707,7 @@ export const ru: TranslationResources = {
         open: "Открыть",
         chooseEditor: "Выбрать редактор",
         openIn: "Открыть рабочую область в{{target}}",
+        openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "Не удалось открыть рабочую область",
       },
       pr: {
@@ -764,6 +765,8 @@ export const ru: TranslationResources = {
       actions: {
         menu: "Действия проекта",
         openSettings: "Открыть настройки проекта",
+        openNewWindow: "Open in new window",
+        openNewWindowFailed: "Couldn't open a new window",
         remove: "Удалить проект",
         removing: "Удаление...",
       },
@@ -866,6 +869,8 @@ export const ru: TranslationResources = {
         pauseMessage:
           "Это немедленно остановит встроенный демон. Запущенные агенты и терминалы, подключенные к встроенному демону, будут остановлены.",
         pauseAndStop: "Пауза и остановка",
+        registrationFailed:
+          "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
         pausedStopFailed:
           "Встроенное управление демоном было приостановлено, но Paseo не смог остановить демон.",
         updateFailed: "Невозможно обновить встроенное управление демонами.",
@@ -903,6 +908,7 @@ export const ru: TranslationResources = {
         checking: "Проверка обновлений приложения...",
         installing: "Установка обновления приложения...",
         upToDate: "Приложение актуально.",
+        upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Мы сообщим вам, когда обновление будет готово.",
         availableWithVersion: "Обновление готово:{{version}}",
         available: "Обновление приложения готово к установке.",
@@ -1358,6 +1364,7 @@ export const ru: TranslationResources = {
     groupInfo: "О{{title}}",
     sections: {
       general: "Общий",
+      daemon: "Daemon",
       appearance: "Появление",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
@@ -1367,9 +1374,10 @@ export const ru: TranslationResources = {
     },
     hostSections: {
       connections: "Соединения",
-      orchestration: "оркестровка",
+      agents: "Agents",
+      workspaces: "Workspaces",
       providers: "Провайдеры",
-      daemon: "Daemon",
+      host: "Host",
     },
     general: {
       title: "Общий",
@@ -1633,6 +1641,12 @@ export const ru: TranslationResources = {
           placeholder: "Всегда отвечайте кратко.",
         },
       },
+      agents: {
+        unavailable: "Connect to this host to manage agents",
+      },
+      workspaces: {
+        unavailable: "Connect to this host to manage workspaces",
+      },
       daemon: {
         rename: {
           editLabel: "Изменить ярлык",
@@ -1663,10 +1677,16 @@ export const ru: TranslationResources = {
         dangerZone: "Опасная зона",
         remove: {
           title: "Удалить хост",
+          localTitle: "Remove localhost connection",
           hint: "Удаляет этот хост и его сохраненные подключения с этого устройства.",
+          localHint: "Removes localhost from this device and stops the built-in daemon",
+          localConfirmTitle: "Remove localhost connection and stop daemon?",
           confirmMessage: "Удалить{{name}}? Это приведет к удалению сохраненных соединений.",
+          localConfirmMessage:
+            "This will remove the localhost connection, turn off built-in daemon management, and stop the managed daemon. Remote hosts remain connected.",
           errorTitle: "Ошибка",
           errorMessage: "Невозможно удалить хост",
+          localErrorMessage: "Unable to remove localhost connection",
         },
       },
     },
@@ -1677,6 +1697,7 @@ export const ru: TranslationResources = {
       enableProvider: "Включить{{name}}",
       unavailable: "Подключитесь к этому хосту, чтобы увидеть поставщиков",
       loading: "Загрузка...",
+      addErrorTitle: "Unable to add provider",
       updateErrorTitle: "Невозможно обновить провайдера",
       statuses: {
         disabled: "Неполноценный",

@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { View, Text, Pressable, ScrollView, type PressableStateCallbackType } from "react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
@@ -348,6 +349,7 @@ function StatusWorkspaceRowWithMenu({
   showShortcutBadge: boolean;
   onPress: () => void;
 }) {
+  const { t } = useTranslation();
   const toast = useToast();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
   const queryClient = useQueryClient();
@@ -419,7 +421,7 @@ function StatusWorkspaceRowWithMenu({
     if (!confirmed) return;
     const client = getHostRuntimeStore().getClient(workspace.serverId);
     if (!client) {
-      toast.error("Host is not connected");
+      toast.error(t("workspace.terminal.hostDisconnected"));
       return;
     }
     setIsArchivingWorkspace(true);
@@ -434,7 +436,7 @@ function StatusWorkspaceRowWithMenu({
     } finally {
       setIsArchivingWorkspace(false);
     }
-  }, [isArchivingWorkspace, redirectAfterArchive, toast, workspace]);
+  }, [isArchivingWorkspace, redirectAfterArchive, t, toast, workspace]);
 
   const handleCopyPath = useCallback(() => {
     let copyTargetDirectory: string;
@@ -459,7 +461,7 @@ function StatusWorkspaceRowWithMenu({
   const renameMutation = useMutation({
     mutationFn: async (branch: string) => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
-      if (!client) throw new Error("Host is not connected");
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
       const targetCwd = requireWorkspaceExecutionDirectory({
         workspaceId: workspace.workspaceId,
         workspaceDirectory: workspace.workspaceDirectory,

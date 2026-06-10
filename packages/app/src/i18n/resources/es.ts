@@ -715,6 +715,7 @@ export const es: TranslationResources = {
         open: "Abierto",
         chooseEditor: "Elige editor",
         openIn: "Abrir espacio de trabajo en{{target}}",
+        openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "No se pudo abrir el espacio de trabajo",
       },
       pr: {
@@ -772,6 +773,8 @@ export const es: TranslationResources = {
       actions: {
         menu: "Acciones del proyecto",
         openSettings: "Abrir la configuración del proyecto",
+        openNewWindow: "Open in new window",
+        openNewWindowFailed: "Couldn't open a new window",
         remove: "Eliminar proyecto",
         removing: "Eliminando...",
       },
@@ -874,6 +877,8 @@ export const es: TranslationResources = {
         pauseMessage:
           "Esto detendrá el demonio incorporado inmediatamente. Se detendrán los agentes en ejecución y los terminales conectados al demonio integrado.",
         pauseAndStop: "Pausa y para",
+        registrationFailed:
+          "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
         pausedStopFailed:
           "La gestión del demonio integrado se pausó, peroPaseono pudo detener el demonio.",
         updateFailed: "No se puede actualizar la gestión de demonios integrada.",
@@ -911,6 +916,7 @@ export const es: TranslationResources = {
         checking: "Buscando actualizaciones de la aplicación...",
         installing: "Instalando actualización de la aplicación...",
         upToDate: "La aplicación está actualizada.",
+        upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Le avisaremos cuando la actualización esté lista.",
         availableWithVersion: "Actualización lista:{{version}}",
         available: "Una actualización de la aplicación está lista para instalarse.",
@@ -1366,6 +1372,7 @@ export const es: TranslationResources = {
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",
+      daemon: "Daemon",
       appearance: "Apariencia",
       shortcuts: "Atajos",
       integrations: "Integraciones",
@@ -1375,9 +1382,10 @@ export const es: TranslationResources = {
     },
     hostSections: {
       connections: "Conexiones",
-      orchestration: "Orquestación",
+      agents: "Agents",
+      workspaces: "Workspaces",
       providers: "Proveedores",
-      daemon: "Daemon",
+      host: "Host",
     },
     general: {
       title: "General",
@@ -1639,6 +1647,12 @@ export const es: TranslationResources = {
           placeholder: "Mantenga siempre respuestas concisas.",
         },
       },
+      agents: {
+        unavailable: "Connect to this host to manage agents",
+      },
+      workspaces: {
+        unavailable: "Connect to this host to manage workspaces",
+      },
       daemon: {
         rename: {
           editLabel: "Editar etiqueta",
@@ -1670,10 +1684,16 @@ export const es: TranslationResources = {
         dangerZone: "Zona de peligro",
         remove: {
           title: "Eliminar host",
+          localTitle: "Remove localhost connection",
           hint: "Elimina este host y sus conexiones guardadas de este dispositivo",
+          localHint: "Removes localhost from this device and stops the built-in daemon",
+          localConfirmTitle: "Remove localhost connection and stop daemon?",
           confirmMessage: "¿Quitar{{name}}? Esto eliminará sus conexiones guardadas.",
+          localConfirmMessage:
+            "This will remove the localhost connection, turn off built-in daemon management, and stop the managed daemon. Remote hosts remain connected.",
           errorTitle: "Error",
           errorMessage: "No se puede eliminar el host",
+          localErrorMessage: "Unable to remove localhost connection",
         },
       },
     },
@@ -1684,6 +1704,7 @@ export const es: TranslationResources = {
       enableProvider: "Habilitar{{name}}",
       unavailable: "Conéctese a este host para ver proveedores",
       loading: "Cargando...",
+      addErrorTitle: "Unable to add provider",
       updateErrorTitle: "No se puede actualizar el proveedor",
       statuses: {
         disabled: "Desactivado",

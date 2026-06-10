@@ -302,7 +302,9 @@ describe("formatStatusText", () => {
           status: "checking",
           availableUpdate: null,
           installMessage: null,
+          lastCheckedAt: null,
           formatVersion,
+          formatLastCheckedAt,
         }),
       ).toBe("正在检查 app 更新...");
       expect(
@@ -310,7 +312,9 @@ describe("formatStatusText", () => {
           status: "available",
           availableUpdate: buildFakeCheckResult({ latestVersion: "1.2.3" }),
           installMessage: null,
+          lastCheckedAt: null,
           formatVersion,
+          formatLastCheckedAt,
         }),
       ).toBe("更新已就绪：v1.2.3");
     } finally {
