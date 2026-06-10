@@ -690,29 +690,39 @@ export async function runAsyncWorktreeBootstrap(
   // multi_git: register per-repo env vars and append a workspace summary.
   const subRepoWorktrees = options.subRepoWorktrees;
   if (subRepoWorktrees && subRepoWorktrees.length > 0) {
-    const repoEnv: Record<string, string> = {};
-    for (const [index, repo] of subRepoWorktrees.entries()) {
-      repoEnv[`PASEO_REPO_${index}_NAME`] = repo.name;
-      repoEnv[`PASEO_REPO_${index}_PATH`] = repo.repoPath;
-      repoEnv[`PASEO_REPO_${index}_WORKTREE_PATH`] = repo.worktreePath;
+    try {
+      const repoEnv: Record<string, string> = {};
+      for (const [index, repo] of subRepoWorktrees.entries()) {
+        repoEnv[`PASEO_REPO_${index}_NAME`] = repo.name;
+        repoEnv[`PASEO_REPO_${index}_PATH`] = repo.repoPath;
+        repoEnv[`PASEO_REPO_${index}_WORKTREE_PATH`] = repo.worktreePath;
+      }
+
+      // Register the env vars for the workspace root CWD so all terminals
+      // spawned from there pick them up.
+      options.terminalManager?.registerCwdEnv({
+        cwd: options.projectRootPath ?? options.worktree.worktreePath,
+        env: repoEnv,
+      });
+
+      // Append a system timeline item so the agent sees the sub-repo paths.
+      const repoLines = subRepoWorktrees
+        .map((repo) => `- ${repo.name}: ${repo.worktreePath}`)
+        .join("\n");
+      const summaryText = `Multi-repo workspace initialized with ${subRepoWorktrees.length} repo${subRepoWorktrees.length === 1 ? "" : "s"}:\n${repoLines}`;
+      await options.appendTimelineItem({
+        type: "user_message",
+        text: formatSystemNotificationPrompt(summaryText),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await options.appendTimelineItem({
+        type: "user_message",
+        text: formatSystemNotificationPrompt(
+          `Failed to initialize multi-repo workspace: ${message}`,
+        ),
+      });
     }
-
-    // Register the env vars for the workspace root CWD so all terminals
-    // spawned from there pick them up.
-    options.terminalManager?.registerCwdEnv({
-      cwd: options.projectRootPath ?? options.worktree.worktreePath,
-      env: repoEnv,
-    });
-
-    // Append a system timeline item so the agent sees the sub-repo paths.
-    const repoLines = subRepoWorktrees
-      .map((repo) => `- ${repo.name}: ${repo.worktreePath}`)
-      .join("\n");
-    const summaryText = `Multi-repo workspace initialized with ${subRepoWorktrees.length} repo${subRepoWorktrees.length === 1 ? "" : "s"}:\n${repoLines}`;
-    await options.appendTimelineItem({
-      type: "user_message",
-      text: formatSystemNotificationPrompt(summaryText),
-    });
   }
 }
 
