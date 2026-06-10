@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
@@ -139,6 +139,56 @@ function buildCreateAgentOptions({
   };
 }
 
+function MultiGitConfirmationStep({
+  subRepos,
+  onConfirm,
+  onCancel,
+}: {
+  subRepos: string[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <View style={styles.multiGitConfirmation}>
+      <Text style={styles.multiGitHeading}>
+        Found {subRepos.length} git repo{subRepos.length === 1 ? "" : "s"} inside this folder:
+      </Text>
+      <View style={styles.multiGitRepoList}>
+        {subRepos.map((repoPath) => {
+          const repoName = repoPath.split(/[\\/]/).findLast(Boolean) ?? repoPath;
+          return (
+            <Text key={repoPath} style={styles.multiGitRepoItem}>
+              {"•"} {repoName}
+            </Text>
+          );
+        })}
+      </View>
+      <Text style={styles.multiGitDescription}>
+        This will be added as a multi-repo project. Creating a workspace will set up worktrees for
+        all repos, and your setup script will run from a shared workspace directory.
+      </Text>
+      <View style={styles.multiGitActions}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onConfirm}
+          style={styles.multiGitContinueButton}
+          testID="multi-git-confirm-continue"
+        >
+          <Text style={styles.multiGitContinueButtonText}>Continue</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onCancel}
+          style={styles.multiGitCancelButton}
+          testID="multi-git-confirm-cancel"
+        >
+          <Text style={styles.multiGitCancelButtonText}>Cancel</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 export function WorkspaceSetupDialog() {
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
@@ -151,6 +201,10 @@ export function WorkspaceSetupDialog() {
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
   const [pendingAction, setPendingAction] = useState<"chat" | null>(null);
+  const [multiGitConfirmation, setMultiGitConfirmation] = useState<{
+    subRepos: string[];
+  } | null>(null);
+  const [multiGitConfirmed, setMultiGitConfirmed] = useState(false);
 
   const serverId = pendingWorkspaceSetup?.serverId ?? "";
   const sourceDirectory = pendingWorkspaceSetup?.sourceDirectory ?? "";
@@ -183,9 +237,61 @@ export function WorkspaceSetupDialog() {
     setErrorMessage(null);
     setCreatedWorkspace(null);
     setPendingAction(null);
+    setMultiGitConfirmation(null);
+    setMultiGitConfirmed(false);
   }, [pendingWorkspaceSetup?.creationMethod, serverId, sourceDirectory]);
 
   const handleClose = useCallback(() => {
+    clearWorkspaceSetup();
+  }, [clearWorkspaceSetup]);
+
+  // For open_project flows, probe the project kind before showing the composer.
+  // If the project is multi_git, we show a confirmation step first.
+  useEffect(() => {
+    if (
+      !pendingWorkspaceSetup ||
+      pendingWorkspaceSetup.creationMethod !== "open_project" ||
+      !client ||
+      !isConnected ||
+      multiGitConfirmed
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const payload = await client.openProject(sourceDirectory);
+      if (cancelled) return;
+      if (!payload.workspace || payload.error) return;
+      const normalized = normalizeWorkspaceDescriptor(payload.workspace);
+      if (normalized.projectKind !== "multi_git") return;
+      const subRepos = payload.workspace.project?.subRepos ?? [];
+      setMultiGitConfirmation({ subRepos });
+      // Cache the already-created workspace so ensureWorkspace reuses it.
+      mergeWorkspaces(pendingWorkspaceSetup.serverId, [normalized]);
+      setHasHydratedWorkspaces(pendingWorkspaceSetup.serverId, true);
+      setCreatedWorkspace(normalized);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    client,
+    isConnected,
+    mergeWorkspaces,
+    multiGitConfirmed,
+    pendingWorkspaceSetup,
+    setHasHydratedWorkspaces,
+    sourceDirectory,
+  ]);
+
+  const handleMultiGitConfirm = useCallback(() => {
+    setMultiGitConfirmation(null);
+    setMultiGitConfirmed(true);
+  }, []);
+
+  const handleMultiGitCancel = useCallback(() => {
     clearWorkspaceSetup();
   }, [clearWorkspaceSetup]);
 
@@ -410,28 +516,36 @@ export function WorkspaceSetupDialog() {
       desktopMaxWidth={640}
       onFilesDropped={handleFilesDropped}
     >
-      <View style={styles.section}>
-        <Composer
-          agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
-          serverId={serverId}
-          isPaneFocused={true}
-          onSubmitMessage={handleCreateChatAgent}
-          isSubmitLoading={pendingAction === "chat"}
-          blurOnSubmit={true}
-          value={chatDraft.text}
-          onChangeText={chatDraft.setText}
-          attachments={chatDraft.attachments}
-          onChangeAttachments={chatDraft.setAttachments}
-          cwd={sourceDirectory}
-          clearDraft={chatDraft.clear}
-          autoFocus
-          commandDraftConfig={composerState?.commandDraftConfig}
-          agentControls={agentControlsWithDisabled}
-          inputWrapperStyle={styles.composerInputWrapper}
-          onAddImages={handleAddImagesCallback}
-          footer={composerFooter}
+      {multiGitConfirmation ? (
+        <MultiGitConfirmationStep
+          subRepos={multiGitConfirmation.subRepos}
+          onConfirm={handleMultiGitConfirm}
+          onCancel={handleMultiGitCancel}
         />
-      </View>
+      ) : (
+        <View style={styles.section}>
+          <Composer
+            agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
+            serverId={serverId}
+            isPaneFocused={true}
+            onSubmitMessage={handleCreateChatAgent}
+            isSubmitLoading={pendingAction === "chat"}
+            blurOnSubmit={true}
+            value={chatDraft.text}
+            onChangeText={chatDraft.setText}
+            attachments={chatDraft.attachments}
+            onChangeAttachments={chatDraft.setAttachments}
+            cwd={sourceDirectory}
+            clearDraft={chatDraft.clear}
+            autoFocus
+            commandDraftConfig={composerState?.commandDraftConfig}
+            agentControls={agentControlsWithDisabled}
+            inputWrapperStyle={styles.composerInputWrapper}
+            onAddImages={handleAddImagesCallback}
+            footer={composerFooter}
+          />
+        </View>
+      )}
 
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>
@@ -478,5 +592,61 @@ const styles = StyleSheet.create((theme) => ({
   },
   composerInputWrapper: {
     backgroundColor: theme.colors.surface2,
+  },
+  multiGitConfirmation: {
+    gap: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+  },
+  multiGitHeading: {
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+    color: theme.colors.foreground,
+    lineHeight: 22,
+  },
+  multiGitRepoList: {
+    gap: theme.spacing[1],
+  },
+  multiGitRepoItem: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    lineHeight: 20,
+  },
+  multiGitDescription: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 20,
+  },
+  multiGitActions: {
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    marginTop: theme.spacing[2],
+  },
+  multiGitContinueButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.primary,
+  },
+  multiGitContinueButtonText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+    color: theme.colors.primaryForeground,
+  },
+  multiGitCancelButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  multiGitCancelButtonText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+    color: theme.colors.foreground,
   },
 }));
