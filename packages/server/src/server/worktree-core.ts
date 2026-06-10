@@ -26,6 +26,8 @@ export interface CreateWorktreeCoreInput {
   paseoHome?: string;
   worktreesRoot?: string;
   runSetup?: boolean;
+  /** If provided, create the worktree at this exact path instead of the computed paseo path. */
+  explicitWorktreePath?: string;
 }
 
 export interface CreateWorktreeCoreDeps {
@@ -113,6 +115,7 @@ export async function createWorktreeCore(
       runSetup: input.runSetup ?? true,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
+      explicitWorktreePath: input.explicitWorktreePath,
     }),
     intent,
     repoRoot,

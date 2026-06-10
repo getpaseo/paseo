@@ -175,6 +175,8 @@ export interface CreateWorktreeOptions {
   runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
+  /** If provided, use this exact path for the worktree instead of the computed paseo path. */
+  explicitWorktreePath?: string;
 }
 
 interface ResolveExistingWorktreeForSlugOptions {
@@ -1180,9 +1182,12 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
+  explicitWorktreePath,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
+  let worktreePath = explicitWorktreePath
+    ? explicitWorktreePath
+    : join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Also handle worktree path collision

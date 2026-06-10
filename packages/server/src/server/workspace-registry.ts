@@ -238,6 +238,7 @@ export function createPersistedWorkspaceRecord(input: {
   cwd: string;
   kind: PersistedWorkspaceKind;
   displayName: string;
+  subRepoWorktrees?: Array<{ name: string; repoPath: string; worktreePath: string }>;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
