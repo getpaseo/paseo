@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import type { ThoughtItem } from "@/types/stream";
+import type { AssistantMessageItem, ThoughtItem } from "@/types/stream";
 import { applyStreamEvent } from "@/types/stream";
 
 const baseTimestamp = new Date(0);
@@ -181,6 +181,64 @@ describe("applyStreamEvent", () => {
     expect(result.head[0].kind).toBe("thought");
     expect((result.head[0] as ThoughtItem).status).toBe("ready");
     expect(result.head[1].kind).toBe("assistant_message");
+  });
+
+  it("accumulates interleaved reasoning and assistant chunks across multiple cycles (DeepSeek)", () => {
+    // R → A → R → A → turn_completed
+    let result = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: reasoningChunk("Thinking phase one. "),
+      timestamp: baseTimestamp,
+    });
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: assistantChunk("Answer part one. "),
+      timestamp: baseTimestamp,
+    });
+    // Head now contains [thought, assistant_message]
+    expect(result.head).toHaveLength(2);
+
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: reasoningChunk("Thinking phase two."),
+      timestamp: baseTimestamp,
+    });
+    // Should append to existing thought via backward scan past assistant_message
+    expect(result.head).toHaveLength(2);
+    expect(result.head[0].kind).toBe("thought");
+    expect((result.head[0] as ThoughtItem).text).toBe("Thinking phase one. Thinking phase two.");
+    expect((result.head[0] as ThoughtItem).status).toBe("loading");
+
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: assistantChunk("Answer part two."),
+      timestamp: baseTimestamp,
+    });
+    // Should append to existing assistant_message via backward scan past thought
+    expect(result.head).toHaveLength(2);
+    expect(result.head[0].kind).toBe("thought");
+    expect((result.head[0] as ThoughtItem).status).toBe("ready");
+    expect(result.head[1].kind).toBe("assistant_message");
+    expect((result.head[1] as AssistantMessageItem).text).toBe(
+      "Answer part one. Answer part two.",
+    );
+
+    // Turn completion flushes head to tail
+    result = applyStreamEvent({
+      tail: result.tail,
+      head: result.head,
+      event: completionEvent(),
+      timestamp: baseTimestamp,
+    });
+    expect(result.head).toHaveLength(0);
+    expect(result.tail).toHaveLength(2);
+    expect(result.tail[0].kind).toBe("thought");
+    expect((result.tail[0] as ThoughtItem).status).toBe("ready");
+    expect(result.tail[1].kind).toBe("assistant_message");
   });
 
   it("keeps references stable for no-op events", () => {

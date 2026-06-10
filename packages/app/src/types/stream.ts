@@ -320,12 +320,13 @@ function tryAppendToLastAssistantPastThoughts(
   timestamp: Date,
   messageId?: string,
 ): StreamItem[] | null {
-  if (messageId !== undefined) {
-    return null;
-  }
   for (let i = state.length - 1; i >= 0; i--) {
     const candidate = state[i];
-    if (candidate && candidate.kind === "assistant_message") {
+    if (
+      candidate &&
+      candidate.kind === "assistant_message" &&
+      (messageId === undefined || candidate.messageId === messageId)
+    ) {
       const updated: AssistantMessageItem = {
         ...candidate,
         text: `${candidate.text}${chunk}`,
