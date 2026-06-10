@@ -1266,7 +1266,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
 }
 
 function RepoRow({ repoPath, isFirst }: { repoPath: string; isFirst: boolean }) {
-  const parts = repoPath.split("/");
+  const parts = repoPath.split(/[\\/]/).filter(Boolean);
   const folderName = parts[parts.length - 1] || repoPath;
   const rowStyle = isFirst ? settingsStyles.row : styles.repoRowWithBorder;
   return (
