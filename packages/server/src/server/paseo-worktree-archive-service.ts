@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+
 import type { Logger } from "pino";
 
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -8,8 +10,10 @@ import type { GitHubService } from "../services/github-service.js";
 import {
   deletePaseoWorktree,
   resolvePaseoWorktreeRootForCwd,
+  runWorktreeTeardownCommands,
   WorktreeTeardownError,
 } from "../utils/worktree.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 
 export interface ArchivePaseoWorktreeDependencies {
@@ -44,6 +48,8 @@ export async function archivePaseoWorktree(
     worktreesRoot?: string;
     worktreesBaseRoot?: string;
     requestId: string;
+    /** Present for multi_git workspaces: the list of sub-repo worktrees to clean up. */
+    subRepoWorktrees?: Array<{ name: string; repoPath: string; worktreePath: string }>;
   },
 ): Promise<string[]> {
   let targetPath = options.targetPath;
@@ -111,26 +117,7 @@ export async function archivePaseoWorktree(
       }
     }
 
-    let teardownError: WorktreeTeardownError | null = null;
-    try {
-      await deletePaseoWorktree({
-        cwd: options.repoRoot,
-        worktreePath: targetPath,
-        worktreesRoot: options.worktreesRoot,
-        paseoHome: dependencies.paseoHome,
-        worktreesBaseRoot: options.worktreesBaseRoot ?? dependencies.worktreesRoot,
-      });
-    } catch (error) {
-      if (error instanceof WorktreeTeardownError) {
-        teardownError = error;
-        dependencies.sessionLogger?.warn(
-          { err: error, targetPath },
-          "Worktree teardown failed during archive; archiving workspace record anyway",
-        );
-      } else {
-        throw error;
-      }
-    }
+    const teardownError = await teardownWorktreeFilesystem(targetPath, options, dependencies);
 
     if (!teardownError && options.repoRoot) {
       try {
@@ -174,6 +161,94 @@ export async function archivePaseoWorktree(
   }
 
   return Array.from(archivedAgents);
+}
+
+/**
+ * Dispatch to either the multi_git or single-repo teardown path.
+ * Returns any WorktreeTeardownError that should be re-thrown after the
+ * workspace record has been archived (best-effort semantics).
+ */
+async function teardownWorktreeFilesystem(
+  targetPath: string,
+  options: {
+    repoRoot: string | null;
+    worktreesRoot?: string;
+    worktreesBaseRoot?: string;
+    subRepoWorktrees?: Array<{ name: string; repoPath: string; worktreePath: string }>;
+  },
+  dependencies: Pick<ArchivePaseoWorktreeDependencies, "paseoHome" | "sessionLogger">,
+): Promise<WorktreeTeardownError | null> {
+  const subRepoWorktrees = options.subRepoWorktrees;
+  if (subRepoWorktrees && subRepoWorktrees.length > 0) {
+    await teardownMultiGitWorkspace(targetPath, subRepoWorktrees, dependencies.sessionLogger);
+    return null;
+  }
+
+  try {
+    await deletePaseoWorktree({
+      cwd: options.repoRoot,
+      worktreePath: targetPath,
+      worktreesRoot: options.worktreesRoot,
+      paseoHome: dependencies.paseoHome,
+      worktreesBaseRoot: options.worktreesBaseRoot,
+    });
+    return null;
+  } catch (error) {
+    if (error instanceof WorktreeTeardownError) {
+      dependencies.sessionLogger?.warn(
+        { err: error, targetPath },
+        "Worktree teardown failed during archive; archiving workspace record anyway",
+      );
+      return error;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Tear down a multi_git workspace: run paseo.json teardown commands from
+ * workspaceRoot, remove each sub-repo worktree from its parent git repo,
+ * then delete the workspaceRoot directory. All steps are best-effort.
+ */
+async function teardownMultiGitWorkspace(
+  workspaceRoot: string,
+  subRepoWorktrees: Array<{ name: string; repoPath: string; worktreePath: string }>,
+  logger: Logger | undefined,
+): Promise<void> {
+  // Step 1: Run worktree.teardown commands from workspaceRoot (best-effort).
+  try {
+    await runWorktreeTeardownCommands({ worktreePath: workspaceRoot });
+  } catch (error) {
+    logger?.warn(
+      { err: error, workspaceRoot },
+      "Multi-git worktree teardown commands failed; continuing with cleanup",
+    );
+  }
+
+  // Step 2: Remove each sub-repo worktree from its parent git repo (best-effort).
+  for (const subRepo of subRepoWorktrees) {
+    try {
+      await runGitCommand(["worktree", "remove", "--force", subRepo.worktreePath], {
+        cwd: subRepo.repoPath,
+        timeout: 120_000,
+      });
+    } catch (error) {
+      logger?.warn(
+        { err: error, worktreePath: subRepo.worktreePath, repoPath: subRepo.repoPath },
+        "git worktree remove failed for sub-repo during multi-git archive; continuing",
+      );
+    }
+  }
+
+  // Step 3: Remove the workspaceRoot directory (best-effort).
+  try {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  } catch (error) {
+    logger?.warn(
+      { err: error, workspaceRoot },
+      "Failed to remove workspaceRoot directory during multi-git archive; continuing",
+    );
+  }
 }
 
 export async function killTerminalsUnderPath(

@@ -11,6 +11,8 @@ import type {
 } from "../paseo-worktree-service.js";
 import { toWorktreeWireError, type WorktreeWireError } from "../worktree-errors.js";
 import type { WorkspaceGitService, WorkspaceGitWorktreeInfo } from "../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
+import { normalizeWorkspaceId } from "../workspace-registry-model.js";
 
 export interface ListPaseoWorktreesCommandDependencies {
   workspaceGitService: Pick<WorkspaceGitService, "listWorktrees">;
@@ -92,6 +94,8 @@ export interface ArchivePaseoWorktreeCommandDependencies extends Omit<
   "workspaceGitService"
 > {
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  /** Optional registry used to look up subRepoWorktrees for multi_git workspaces. */
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get">;
 }
 
 export interface ArchivePaseoWorktreeCommandInput {
@@ -119,12 +123,35 @@ export async function archivePaseoWorktreeCommand(
   input: ArchivePaseoWorktreeCommandInput,
 ): Promise<ArchivePaseoWorktreeCommandResult> {
   const resolvedTarget = await resolveArchiveTarget(dependencies, input);
+
+  // For multi_git workspaces the workspace record carries subRepoWorktrees.
+  // Look it up so the archive step can clean up all sub-repo worktrees, and so
+  // we can bypass the Paseo-ownership check (workspaceRoot is not under the
+  // Paseo worktrees base root — it lives next to the project directory).
+  let subRepoWorktrees: Array<{ name: string; repoPath: string; worktreePath: string }> | undefined;
+  if (dependencies.workspaceRegistry) {
+    try {
+      const workspaceId = normalizeWorkspaceId(resolvedTarget.targetPath);
+      const workspace = await dependencies.workspaceRegistry.get(workspaceId);
+      if (workspace?.subRepoWorktrees?.length) {
+        subRepoWorktrees = workspace.subRepoWorktrees;
+      }
+    } catch {
+      // best-effort: if lookup fails, proceed without subRepoWorktrees
+    }
+  }
+
+  const isMultiGit = subRepoWorktrees !== undefined;
+
   const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
     paseoHome: dependencies.paseoHome,
     worktreesRoot: dependencies.worktreesRoot,
   });
 
-  if (!ownership.allowed) {
+  // Multi-git workspaces live outside the Paseo worktrees base root (the
+  // workspaceRoot is placed next to the project dir), so they never pass the
+  // ownership check. Allow archive if we confirmed this is a multi_git workspace.
+  if (!ownership.allowed && !isMultiGit) {
     return {
       ok: false,
       code: "NOT_ALLOWED",
@@ -134,12 +161,14 @@ export async function archivePaseoWorktreeCommand(
   }
 
   const repoRoot = ownership.repoRoot ?? resolvedTarget.repoRoot ?? null;
+
   const removedAgents = await archivePaseoWorktree(dependencies, {
     targetPath: resolvedTarget.targetPath,
     repoRoot,
     worktreesRoot: ownership.worktreeRoot,
     worktreesBaseRoot: dependencies.worktreesRoot,
     requestId: input.requestId,
+    subRepoWorktrees,
   });
 
   return {

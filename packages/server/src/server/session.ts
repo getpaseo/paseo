@@ -5721,6 +5721,7 @@ export class Session {
         killTerminalsUnderPath: (rootPath) =>
           this.terminalController.killTerminalsUnderPath(rootPath),
         sessionLogger: this.sessionLogger,
+        workspaceRegistry: this.workspaceRegistry,
       },
       msg,
     );

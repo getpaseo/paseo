@@ -10,7 +10,7 @@ import {
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
-import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
+import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   runAsyncWorktreeBootstrap,
@@ -438,6 +438,8 @@ export async function handlePaseoWorktreeArchiveRequest(
     emit: EmitSessionMessage;
     workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
     emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
+    /** Optional registry used to look up subRepoWorktrees for multi_git workspace teardown. */
+    workspaceRegistry?: Pick<WorkspaceRegistry, "get">;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
 ): Promise<void> {
