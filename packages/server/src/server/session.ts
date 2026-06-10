@@ -4875,7 +4875,7 @@ export class Session {
   private syncWorkspaceGitObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
     for (const workspace of workspaces) {
       this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
-        isGit: workspace.projectKind === "git",
+        isGit: workspace.projectKind === "git" || workspace.projectKind === "multi_git",
         workspaceId: workspace.id,
       });
       this.rememberWorkspaceGitDescriptorState(workspace.workspaceDirectory, workspace);
@@ -6277,7 +6277,7 @@ export class Session {
       projectCustomName: resolvedProjectRecord?.customName ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
-      projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
+      projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : (resolvedProjectRecord?.kind ?? "directory") === "multi_git" ? "multi_git" : "non_git",
       workspaceKind: workspace.kind,
       name: workspace.displayName,
       archivingAt: null,

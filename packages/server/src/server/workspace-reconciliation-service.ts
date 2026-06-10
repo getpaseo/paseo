@@ -301,7 +301,7 @@ export class WorkspaceReconciliationService {
       Pick<PersistedProjectRecord, "kind" | "displayName" | "rootPath">
     > = {};
 
-    const mappedKind = currentGit.projectKind === "git" ? "git" : "non_git";
+    const mappedKind = currentGit.projectKind === "git" ? "git" : currentGit.projectKind === "multi_git" ? "multi_git" : "non_git";
 
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
