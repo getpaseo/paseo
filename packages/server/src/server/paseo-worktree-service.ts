@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { createNameId } from "mnemonic-id";
+
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   type PersistedProjectRecord,
@@ -108,13 +110,23 @@ async function createMultiGitWorktree(
 ): Promise<CreatePaseoWorktreeResult> {
   const subRepos = project.subRepos!;
 
-  // Step 1: Create a worktree for each sub-repo sequentially, using the same
-  // branchSlug across all repos.  For the first sub-repo we let createWorktreeCore
-  // generate/resolve the slug; for subsequent ones we re-use that slug so all
-  // worktrees land on the same branch name.
+  // Step 1: Pre-resolve the branch slug so we can compute workspaceRoot before
+  // creating any worktrees and place each sub-repo worktree at the correct path
+  // (workspaceRoot/<folderName>) from the very first call.
+  const branchSlug = slugify(input.worktreeSlug ?? createNameId());
+  const workspaceRoot = path.join(
+    path.dirname(project.rootPath),
+    path.basename(project.rootPath) + "-workspaces",
+    branchSlug,
+  );
+  await fs.mkdir(workspaceRoot, { recursive: true });
+
+  // Step 2: Create a worktree for each sub-repo sequentially, using the same
+  // branchSlug across all repos.  We pin worktreeSlug for all repos so they
+  // all land on the same branch name, and pass explicitWorktreePath so each
+  // worktree is placed inside workspaceRoot instead of the default paseo location.
   const subRepoWorktrees: Array<{ name: string; repoPath: string; worktreePath: string }> = [];
   let firstCreatedWorktree: Awaited<ReturnType<typeof createWorktreeCore>> | null = null;
-  let resolvedBranchSlug: string | undefined;
 
   for (const subRepoPath of subRepos) {
     const folderName = path.basename(subRepoPath);
@@ -123,16 +135,14 @@ async function createMultiGitWorktree(
       {
         ...input,
         cwd: subRepoPath,
-        // After the first sub-repo we lock in the slug so all repos use the same branch.
-        worktreeSlug: resolvedBranchSlug ?? input.worktreeSlug,
+        worktreeSlug: branchSlug,
+        explicitWorktreePath: path.join(workspaceRoot, folderName),
       },
       deps,
     );
 
     if (!firstCreatedWorktree) {
       firstCreatedWorktree = createdWorktree;
-      // Derive the slug from the actual branch name of the first worktree
-      resolvedBranchSlug = createdWorktree.worktree.branchName;
       maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
     }
 
@@ -145,20 +155,9 @@ async function createMultiGitWorktree(
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
   }
 
-  if (!firstCreatedWorktree || !resolvedBranchSlug) {
+  if (!firstCreatedWorktree) {
     throw new Error("No sub-repos produced a worktree");
   }
-
-  // Step 2: Compute workspace root using the resolved slug and create the directory.
-  // workspaceRoot acts as the cwd for the setup script — it is a plain directory,
-  // not a git repo itself.
-  const branchSlug = slugify(resolvedBranchSlug);
-  const workspaceRoot = path.join(
-    path.dirname(project.rootPath),
-    path.basename(project.rootPath) + "-workspaces",
-    branchSlug,
-  );
-  await fs.mkdir(workspaceRoot, { recursive: true });
 
   // Step 3: Upsert the project record (refresh timestamps).
   const now = new Date().toISOString();
