@@ -252,8 +252,18 @@ const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
 const OPENCODE_METADATA_CONCURRENCY = 4;
 const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
-  { name: "compact", description: "Compact the current session", argumentHint: "" },
-  { name: "summarize", description: "Compact the current session", argumentHint: "" },
+  {
+    name: "compact",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "summarize",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
 ];
 const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
   "headers timeout",
@@ -1720,6 +1730,7 @@ async function listOpenCodeCommandsFromSdk(
       name: cmd.name,
       description: cmd.description ?? "",
       argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+      kind: cmd.source === "skill" ? "skill" : "command",
     });
   }
 
@@ -2510,6 +2521,10 @@ function appendOpenCodeMessagePartDelta(
   const knownPartType = partID ? state.partTypes.get(partID) : undefined;
   const isReasoning = knownPartType === "reasoning" || field === "reasoning";
 
+  if (messageID && state.compactionSummaryMessageIds.has(messageID)) {
+    return;
+  }
+
   if (isReasoning) {
     if (partID) {
       state.streamedPartKeys.add(`reasoning:${partID}`);
@@ -2525,6 +2540,10 @@ function appendOpenCodeMessagePartDelta(
     return;
   }
   if (messageRole === "user") {
+    return;
+  }
+  if (messageID && state.suppressAssistantMessagesUntilIdle?.active === true) {
+    state.compactionSummaryMessageIds.add(messageID);
     return;
   }
   if (partID) {

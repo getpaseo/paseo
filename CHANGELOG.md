@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.1.91 - 2026-06-08
+
+### Added
+
+- **Open multiple desktop windows** ([#1355](https://github.com/getpaseo/paseo/pull/1355) by [@arieel-ost](https://github.com/arieel-ost))
+- **Open browser pop-ups and links inside workspace tabs** ([#1375](https://github.com/getpaseo/paseo/pull/1375))
+- **Use the command center from mobile**
+- **Add OMP as a provider** ([#1388](https://github.com/getpaseo/paseo/pull/1388))
+
+### Improved
+
+- New workspaces remember your last provider, mode, and thinking choices
+- Git controls now default ready branches to pull requests and hide unavailable pull or push actions
+- Desktop-managed hosts recover more reliably after stale daemon state
+- Daemon status now explains authentication failures
+- Project search skips Python virtual environments ([#1356](https://github.com/getpaseo/paseo/pull/1356))
+- Config files can include `$schema` for editor help
+- Claude MCP servers preserve always-load tool settings ([#1333](https://github.com/getpaseo/paseo/pull/1333) by [@nodomain](https://github.com/nodomain))
+- Claude profiles keep their configured models ([#1311](https://github.com/getpaseo/paseo/pull/1311) by [@ilteoood](https://github.com/ilteoood))
+- Provider loading can wait longer on slow machines ([#1346](https://github.com/getpaseo/paseo/pull/1346) by [@nodomain](https://github.com/nodomain))
+- The Kimi catalog entry now points to Kimi Code CLI ([#1403](https://github.com/getpaseo/paseo/pull/1403) by [@wbxl2000](https://github.com/wbxl2000))
+- ACP provider catalog entries are updated for Auggie, Claude Agent, Cline, Codebuddy Code, DimCode, Factory Droid, fast-agent, Gemini, GitHub Copilot, and Nova
+- Local dictation crash reports show more useful details ([#1379](https://github.com/getpaseo/paseo/pull/1379))
+- Daemon logs show why managed workers exit
+
+### Fixed
+
+- Pi compaction slash commands run correctly ([#1338](https://github.com/getpaseo/paseo/pull/1338) by [@chyendongnhanh338](https://github.com/chyendongnhanh338))
+- Auto-archiving still works after a merged PR branch is deleted ([#1378](https://github.com/getpaseo/paseo/pull/1378))
+- Worktrees can check out existing branch refs correctly ([#1358](https://github.com/getpaseo/paseo/pull/1358) by [@dixonl90](https://github.com/dixonl90))
+- File downloads work when daemon password protection is enabled ([#1351](https://github.com/getpaseo/paseo/pull/1351) by [@nodomain](https://github.com/nodomain))
+- iOS markdown links are tappable again ([#1334](https://github.com/getpaseo/paseo/pull/1334) by [@kaspesi](https://github.com/kaspesi))
+- iOS markdown images render correctly
+- Windows workspaces load their providers correctly ([#1329](https://github.com/getpaseo/paseo/pull/1329))
+- Removing a localhost host stops its local daemon ([#1297](https://github.com/getpaseo/paseo/pull/1297) by [@mcowger](https://github.com/mcowger))
+- Provider settings sheets stack correctly
+- The new workspace screen no longer opens behind the mobile sidebar
+- Global agent listing works again ([#1420](https://github.com/getpaseo/paseo/pull/1420))
+- OpenCode compaction summaries stay out of chat
+- OpenCode agents sharing a workspace keep their own Paseo tools
+
 ## 0.1.90 - 2026-06-04
 
 ### Added

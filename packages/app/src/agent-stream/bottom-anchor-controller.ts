@@ -244,29 +244,6 @@ function createBottomAnchorControllerDriver(
   let stickyMeasurementRevision = 0;
   let lastVerifiedStickyMeasurementRevision = 0;
 
-  const _getLogContext = (extra?: Record<string, unknown>) => {
-    const measurementState = input.getMeasurementState();
-    const distanceFromBottom = Math.max(
-      0,
-      measurementState.contentHeight - (measurementState.offsetY + measurementState.viewportHeight),
-    );
-    return {
-      agentId: input.getAgentId(),
-      requestReason: pendingRequest?.reason ?? null,
-      authoritativeHistoryReady: input.getIsAuthoritativeHistoryReady(),
-      contentHeight: measurementState.contentHeight,
-      viewportHeight: measurementState.viewportHeight,
-      offset: measurementState.offsetY,
-      distanceFromBottom,
-      renderStrategy: input.getRenderStrategy(),
-      blockedReason,
-      mode,
-      containerKey: measurementState.containerKey,
-      transportBehavior: input.getTransportBehavior(),
-      ...extra,
-    };
-  };
-
   const setBlockedReason = (nextBlockedReason: BottomAnchorBlockedReason | null) => {
     if (blockedReason === nextBlockedReason) {
       return;
@@ -327,7 +304,6 @@ function createBottomAnchorControllerDriver(
     });
 
   const scheduleVerification = (attemptContext: AttemptContext, delayFramesOverride?: number) => {
-    const _scheduledMeasurementState = input.getMeasurementState();
     if (verificationHandle) {
       input.cancelFrame(verificationHandle);
     }
@@ -560,6 +536,12 @@ function createBottomAnchorControllerDriver(
       });
       if (shouldRestick && !pendingRequest) {
         pendingVerification = { requestId: null, retries: 0 };
+        if (attemptHandle) {
+          input.cancelFrame(attemptHandle);
+          attemptHandle = null;
+        }
+        runAttempt(false);
+        return;
       }
       if (shouldRestick || pendingRequest) {
         evaluate(false, "content_size_change");
@@ -576,6 +558,16 @@ function createBottomAnchorControllerDriver(
         return;
       }
       markStickyMeasurementChanged();
+      if (!pendingRequest) {
+        pendingVerification = { requestId: null, retries: 0 };
+        if (attemptHandle) {
+          input.cancelFrame(attemptHandle);
+          attemptHandle = null;
+        }
+        runAttempt(false);
+        return;
+      }
+      evaluate(false, "content_size_change");
     },
     handleScrollNearBottomChange(params) {
       const { nextIsNearBottom, scrollDelta } = params;
@@ -656,11 +648,7 @@ export const __private__ = {
     previousContentHeight: number;
     contentHeight: number;
   }): boolean {
-    return (
-      input.mode === "sticky-bottom" &&
-      input.previousContentHeight > 0 &&
-      input.contentHeight > input.previousContentHeight
-    );
+    return input.mode === "sticky-bottom" && input.contentHeight > input.previousContentHeight;
   },
   shouldDetachFromScrollAway(input: {
     mode: BottomAnchorMode;

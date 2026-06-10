@@ -147,16 +147,19 @@ function resolveExecutable(
       continue;
     }
     const candidate = `${directory}/${command}`;
-    if (input.existsSync(candidate)) {
-      return candidate;
-    }
     if (input.platform === "win32") {
-      for (const extension of [".exe", ".cmd"]) {
+      const hasExtension = Boolean(win32.extname(command));
+      const extensions = hasExtension ? [""] : [".exe", ".cmd", ".bat", ".com", ""];
+      for (const extension of extensions) {
         const windowsCandidate = `${candidate}${extension}`;
         if (input.existsSync(windowsCandidate)) {
           return windowsCandidate;
         }
       }
+      continue;
+    }
+    if (input.existsSync(candidate)) {
+      return candidate;
     }
   }
   return null;

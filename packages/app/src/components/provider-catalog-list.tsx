@@ -1,36 +1,24 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Pressable, Text, View } from "react-native";
 import { SvgXml } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ExternalLink, PackagePlus, Search } from "lucide-react-native";
-import {
-  AdaptiveModalSheet,
-  AdaptiveTextInput,
-  type SheetHeader,
-} from "@/components/adaptive-modal-sheet";
+import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import {
-  buildAcpProviderConfigPatch,
   useAcpProviderCatalog,
   type AcpProviderCatalogItem,
 } from "@/hooks/use-acp-provider-catalog";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 
-interface AddProviderModalProps {
+interface ProviderCatalogListProps {
   serverId: string;
-  visible: boolean;
-  onClose: () => void;
+  installingProviderId: string | null;
+  onInstall: (entry: AcpProviderCatalogItem) => Promise<void> | void;
 }
 
-type InstallState = "installed" | "available";
-
-const FLEX_ONE_STYLE = { flex: 1 } as const;
-const ACTION_BUTTON_STYLE = { width: 92 } as const;
-const MODAL_SNAP_POINTS = ["78%", "92%"];
-const ADD_PROVIDER_HEADER: SheetHeader = { title: "Add provider" };
 const SEARCH_ICON_SIZE = 16;
 const PROVIDER_FALLBACK_ICON_SIZE = 20;
 const PROVIDER_REMOTE_ICON_SIZE = 24;
@@ -45,14 +33,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 
-function getInstallState(
-  entry: AcpProviderCatalogItem,
-  installedProviderIds: Set<string>,
-): InstallState {
-  if (installedProviderIds.has(entry.id)) return "installed";
-  return "available";
-}
-
 function matchesSearch(entry: AcpProviderCatalogItem, query: string): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
@@ -61,22 +41,13 @@ function matchesSearch(entry: AcpProviderCatalogItem, query: string): boolean {
   );
 }
 
-interface ProviderCatalogRowProps {
+interface CatalogRowProps {
   entry: AcpProviderCatalogItem;
-  state: InstallState;
   installing: boolean;
   onInstall: (entry: AcpProviderCatalogItem) => void;
 }
 
-function ProviderCatalogRow({ entry, state, installing, onInstall }: ProviderCatalogRowProps) {
-  const isAvailable = state === "available";
-  let actionLabel = "Add";
-  if (installing) {
-    actionLabel = "Adding";
-  } else if (state === "installed") {
-    actionLabel = "Installed";
-  }
-
+function CatalogRow({ entry, installing, onInstall }: CatalogRowProps) {
   const handleInstall = useCallback(() => {
     onInstall(entry);
   }, [entry, onInstall]);
@@ -125,72 +96,43 @@ function ProviderCatalogRow({ entry, state, installing, onInstall }: ProviderCat
       </View>
       <Button
         size="sm"
-        variant={isAvailable ? "default" : "secondary"}
-        disabled={!isAvailable || installing}
+        variant="default"
+        disabled={installing}
         loading={installing}
         onPress={handleInstall}
-        style={ACTION_BUTTON_STYLE}
+        style={styles.actionButton}
         testID={`install-provider-${entry.id}`}
       >
-        {actionLabel}
+        {installing ? "Adding" : "Add"}
       </Button>
     </View>
   );
 }
 
-export function AddProviderModal({ serverId, visible, onClose }: AddProviderModalProps) {
-  const { entries } = useAcpProviderCatalog();
-  const { entries: providerEntries, refresh } = useProvidersSnapshot(serverId);
-  const { patchConfig } = useDaemonConfig(serverId);
+export function ProviderCatalogList({
+  serverId,
+  installingProviderId,
+  onInstall,
+}: ProviderCatalogListProps) {
+  const { entries: catalogEntries } = useAcpProviderCatalog();
+  const { entries: providerEntries } = useProvidersSnapshot(serverId);
   const [search, setSearch] = useState("");
-  const [searchResetKey, bumpSearchResetKey] = useReducer((key: number) => key + 1, 0);
-  const [installingProviderId, setInstallingProviderId] = useState<string | null>(null);
 
-  const handleClose = useCallback(() => {
-    setSearch("");
-    bumpSearchResetKey();
-    onClose();
-  }, [onClose]);
-
-  const installedProviderIds = useMemo(
+  const installedIds = useMemo(
     () => new Set(providerEntries?.map((entry) => entry.provider) ?? []),
     [providerEntries],
   );
-  const filteredEntries = useMemo(
-    () => entries.filter((entry) => matchesSearch(entry, search)),
-    [entries, search],
-  );
 
-  const handleInstall = useCallback(
-    async (entry: AcpProviderCatalogItem) => {
-      if (installingProviderId) return;
-
-      setInstallingProviderId(entry.id);
-      try {
-        await patchConfig(buildAcpProviderConfigPatch(entry));
-        await refresh([entry.id]);
-        handleClose();
-      } catch (installError) {
-        Alert.alert(
-          "Unable to install provider",
-          installError instanceof Error ? installError.message : String(installError),
-        );
-      } finally {
-        setInstallingProviderId((current) => (current === entry.id ? null : current));
-      }
-    },
-    [installingProviderId, handleClose, patchConfig, refresh],
+  const availableEntries = useMemo(
+    () =>
+      catalogEntries
+        .filter((entry) => !installedIds.has(entry.id))
+        .filter((entry) => matchesSearch(entry, search)),
+    [catalogEntries, installedIds, search],
   );
 
   return (
-    <AdaptiveModalSheet
-      header={ADD_PROVIDER_HEADER}
-      visible={visible}
-      onClose={handleClose}
-      desktopMaxWidth={680}
-      snapPoints={MODAL_SNAP_POINTS}
-      testID="add-provider-modal"
-    >
+    <View>
       <View style={styles.searchField}>
         <View style={styles.searchIcon}>
           <ThemedSearch size={SEARCH_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
@@ -198,8 +140,6 @@ export function AddProviderModal({ serverId, visible, onClose }: AddProviderModa
         <AdaptiveTextInput
           testID="provider-catalog-search"
           accessibilityLabel="Search providers"
-          initialValue={search}
-          resetKey={`provider-catalog-search-${searchResetKey}`}
           value={search}
           onChangeText={setSearch}
           placeholder="Search providers"
@@ -209,32 +149,25 @@ export function AddProviderModal({ serverId, visible, onClose }: AddProviderModa
         />
       </View>
 
-      {filteredEntries.length === 0 ? (
+      {availableEntries.length === 0 ? (
         <View style={styles.stateBox}>
-          <Text style={styles.stateText}>No providers found</Text>
+          <Text style={styles.stateText}>
+            {search.trim().length > 0 ? "No providers found" : "All providers are installed"}
+          </Text>
         </View>
-      ) : null}
-
-      {filteredEntries.length > 0 ? (
+      ) : (
         <View style={styles.list}>
-          {filteredEntries.map((entry) => (
-            <ProviderCatalogRow
+          {availableEntries.map((entry) => (
+            <CatalogRow
               key={entry.id}
               entry={entry}
-              state={getInstallState(entry, installedProviderIds)}
               installing={installingProviderId === entry.id}
-              onInstall={handleInstall}
+              onInstall={onInstall}
             />
           ))}
         </View>
-      ) : null}
-
-      <View style={styles.actions}>
-        <Button style={FLEX_ONE_STYLE} variant="secondary" onPress={handleClose}>
-          Cancel
-        </Button>
-      </View>
-    </AdaptiveModalSheet>
+      )}
+    </View>
   );
 }
 
@@ -248,6 +181,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     paddingHorizontal: theme.spacing[3],
+    marginBottom: theme.spacing[3],
   },
   searchIcon: {
     width: 18,
@@ -320,6 +254,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
   },
+  actionButton: {
+    width: 92,
+    flexShrink: 0,
+  },
   stateBox: {
     minHeight: 96,
     borderRadius: theme.borderRadius.lg,
@@ -334,8 +272,5 @@ const styles = StyleSheet.create((theme) => ({
   stateText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  actions: {
-    flexDirection: "row",
   },
 }));

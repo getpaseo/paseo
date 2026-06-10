@@ -56,7 +56,7 @@ describe("combined model selector data", () => {
               providerLabel: "Codex",
               modelId: "gpt-5.4",
               modelLabel: "GPT-5.4",
-              description: undefined,
+              description: "gpt-5.4",
               isDefault: undefined,
             },
           ],

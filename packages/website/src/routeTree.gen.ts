@@ -19,6 +19,7 @@ import { Route as PrivacyRouteImport } from "./routes/privacy";
 import { Route as PoolsideRouteImport } from "./routes/poolside";
 import { Route as PiRouteImport } from "./routes/pi";
 import { Route as OpencodeRouteImport } from "./routes/opencode";
+import { Route as OmpRouteImport } from "./routes/omp";
 import { Route as NovaRouteImport } from "./routes/nova";
 import { Route as MistralVibeRouteImport } from "./routes/mistral-vibe";
 import { Route as MinionCodeRouteImport } from "./routes/minion-code";
@@ -109,6 +110,11 @@ const PiRoute = PiRouteImport.update({
 const OpencodeRoute = OpencodeRouteImport.update({
   id: "/opencode",
   path: "/opencode",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const OmpRoute = OmpRouteImport.update({
+  id: "/omp",
+  path: "/omp",
   getParentRoute: () => rootRouteImport,
 } as any);
 const NovaRoute = NovaRouteImport.update({
@@ -355,6 +361,7 @@ export interface FileRoutesByFullPath {
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
   "/nova": typeof NovaRoute;
+  "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
   "/pi": typeof PiRoute;
   "/poolside": typeof PoolsideRoute;
@@ -406,6 +413,7 @@ export interface FileRoutesByTo {
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
   "/nova": typeof NovaRoute;
+  "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
   "/pi": typeof PiRoute;
   "/poolside": typeof PoolsideRoute;
@@ -460,6 +468,7 @@ export interface FileRoutesById {
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
   "/nova": typeof NovaRoute;
+  "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
   "/pi": typeof PiRoute;
   "/poolside": typeof PoolsideRoute;
@@ -515,6 +524,7 @@ export interface FileRouteTypes {
     | "/minion-code"
     | "/mistral-vibe"
     | "/nova"
+    | "/omp"
     | "/opencode"
     | "/pi"
     | "/poolside"
@@ -566,6 +576,7 @@ export interface FileRouteTypes {
     | "/minion-code"
     | "/mistral-vibe"
     | "/nova"
+    | "/omp"
     | "/opencode"
     | "/pi"
     | "/poolside"
@@ -619,6 +630,7 @@ export interface FileRouteTypes {
     | "/minion-code"
     | "/mistral-vibe"
     | "/nova"
+    | "/omp"
     | "/opencode"
     | "/pi"
     | "/poolside"
@@ -673,6 +685,7 @@ export interface RootRouteChildren {
   MinionCodeRoute: typeof MinionCodeRoute;
   MistralVibeRoute: typeof MistralVibeRoute;
   NovaRoute: typeof NovaRoute;
+  OmpRoute: typeof OmpRoute;
   OpencodeRoute: typeof OpencodeRoute;
   PiRoute: typeof PiRoute;
   PoolsideRoute: typeof PoolsideRoute;
@@ -755,6 +768,13 @@ declare module "@tanstack/react-router" {
       path: "/opencode";
       fullPath: "/opencode";
       preLoaderRoute: typeof OpencodeRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/omp": {
+      id: "/omp";
+      path: "/omp";
+      fullPath: "/omp";
+      preLoaderRoute: typeof OmpRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/nova": {
@@ -1109,6 +1129,7 @@ const rootRouteChildren: RootRouteChildren = {
   MinionCodeRoute: MinionCodeRoute,
   MistralVibeRoute: MistralVibeRoute,
   NovaRoute: NovaRoute,
+  OmpRoute: OmpRoute,
   OpencodeRoute: OpencodeRoute,
   PiRoute: PiRoute,
   PoolsideRoute: PoolsideRoute,

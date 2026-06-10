@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
 import { createPaseoDaemon } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
@@ -41,6 +43,31 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+function writeWorkerLifecycleLog(
+  paseoHome: string,
+  message: string,
+  fields: Record<string, unknown> = {},
+): void {
+  try {
+    const logPath = path.join(paseoHome, "daemon.log");
+    mkdirSync(path.dirname(logPath), { recursive: true });
+    appendFileSync(
+      logPath,
+      `${JSON.stringify({
+        level: "warn",
+        time: new Date().toISOString(),
+        pid: process.pid,
+        name: "DaemonWorker",
+        msg: message,
+        ...fields,
+      })}\n`,
+      "utf8",
+    );
+  } catch {
+    // Exit-reason logging must never prevent the worker from exiting.
+  }
+}
+
 function bootstrapFromEnvironment(): BootstrapResult {
   try {
     const paseoHome = resolvePaseoHome();
@@ -70,7 +97,7 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
 }
 
 async function main() {
-  const { logger, config } = bootstrapFromEnvironment();
+  const { paseoHome, logger, config } = bootstrapFromEnvironment();
   let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
   let shutdownPromise: Promise<number> | null = null;
   let exitHookInstalled = false;
@@ -174,11 +201,19 @@ async function main() {
     const supervisorPid = process.ppid;
     let lastSupervisorHeartbeatAt = Date.now();
     let supervisorExitRequested = false;
-    const exitAfterSupervisorLoss = () => {
+    const exitAfterSupervisorLoss = (reason: string) => {
       if (supervisorExitRequested) {
         return;
       }
       supervisorExitRequested = true;
+
+      writeWorkerLifecycleLog(paseoHome, "Supervisor liveness lost; worker exiting", {
+        reason,
+        supervisorPid,
+        currentParentPid: process.ppid,
+        ipcConnected: typeof process.connected === "boolean" ? process.connected : null,
+        heartbeatAgeMs: Date.now() - lastSupervisorHeartbeatAt,
+      });
 
       // The supervisor owns the worker's stdout/stderr pipes. Once it is gone,
       // logging during graceful shutdown can block on the broken pipe and leave
@@ -196,19 +231,23 @@ async function main() {
         lastSupervisorHeartbeatAt = Date.now();
       }
     });
-    process.on("disconnect", exitAfterSupervisorLoss);
+    process.on("disconnect", () => exitAfterSupervisorLoss("ipc_disconnect_event"));
 
     const timer = setInterval(() => {
       const ipcConnected = typeof process.connected === "boolean" ? process.connected : true;
       const heartbeatExpired = Date.now() - lastSupervisorHeartbeatAt > 3500;
       const supervisorChanged = process.ppid !== supervisorPid;
-      if (
-        ipcConnected === false ||
-        supervisorChanged ||
-        !isPidAlive(supervisorPid) ||
-        heartbeatExpired
-      ) {
-        exitAfterSupervisorLoss();
+
+      if (ipcConnected === false) {
+        exitAfterSupervisorLoss("ipc_disconnected");
+        return;
+      }
+      if (supervisorChanged) {
+        exitAfterSupervisorLoss("supervisor_parent_pid_changed");
+        return;
+      }
+      if (heartbeatExpired && !isPidAlive(supervisorPid)) {
+        exitAfterSupervisorLoss("supervisor_pid_dead");
       }
     }, 1000);
     timer.unref();

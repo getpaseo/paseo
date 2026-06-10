@@ -53,6 +53,16 @@ export const AGENT_PAGES = [
       "Open source mobile and desktop app for GitHub Copilot. Launch sessions on your machine, monitor progress, merge from anywhere.",
   },
   {
+    slug: "omp",
+    name: "OMP (Oh My Pi)",
+    title: "Open source app for OMP (Oh My Pi)",
+    subtitle:
+      "Run OMP (Oh My Pi) on your machine, drive it from your phone or desktop. Self-hosted and open source.",
+    metaTitle: "OMP (Oh My Pi) Mobile and Desktop App, Open Source",
+    metaDescription:
+      "Open source mobile and desktop app for OMP (Oh My Pi). Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",
+  },
+  {
     slug: "pi",
     name: "Pi Agent",
     title: "Open source app for the Pi coding agent",

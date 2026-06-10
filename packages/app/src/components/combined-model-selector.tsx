@@ -63,8 +63,6 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 
-// TODO: this should be configured per provider in the provider manifest
-const PROVIDERS_WITH_MODEL_DESCRIPTIONS = new Set(["opencode", "pi"]);
 const DESKTOP_PROVIDER_VIEW_MIN_HEIGHT = 220;
 const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
 const DESKTOP_PROVIDER_VIEW_BASE_HEIGHT = 80;
@@ -198,12 +196,10 @@ function ModelRow({
     ],
   );
 
-  const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
-
   return (
     <ComboboxItem
       label={row.modelLabel}
-      description={showDescription ? row.description : undefined}
+      description={row.description}
       selected={isSelected}
       elevated={elevated}
       onPress={onPress}

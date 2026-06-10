@@ -1,8 +1,6 @@
 import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
 
-export const IMPORTABLE_PROVIDER_IDS: Set<string> = new Set(IMPORTABLE_PROVIDERS);
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
@@ -28,9 +26,7 @@ export function resolveProvidersToFetch(
   // when the supported daemon floor is >= v0.1.48 (target: 2026-10-05).
   if (!supportsSnapshot) return null;
   if (!snapshotEntries) return null;
-  return snapshotEntries
-    .filter((entry) => IMPORTABLE_PROVIDER_IDS.has(entry.provider) && entry.enabled !== false)
-    .map((entry) => entry.provider);
+  return snapshotEntries.filter((entry) => entry.enabled !== false).map((entry) => entry.provider);
 }
 
 export function buildProviderLabelMap(

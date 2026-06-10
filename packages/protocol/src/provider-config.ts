@@ -49,6 +49,7 @@ export const ProviderOverrideSchema = z.object({
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
   env: z.record(z.string()).optional(),
+  params: z.record(z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),
@@ -56,7 +57,7 @@ export const ProviderOverrideSchema = z.object({
   order: z.number().optional(),
 });
 
-const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi"] as const;
+const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 export const ProviderOverridesSchema = z

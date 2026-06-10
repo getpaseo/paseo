@@ -28,6 +28,7 @@ import {
   submitNewWorkspacePrompt,
 } from "./helpers/new-workspace";
 import { createTempGitRepo, readWorktreeBranchInfo } from "./helpers/workspace";
+import { createTempGithubRepo, hasGithubAuth } from "./helpers/github-fixtures";
 import { getServerId } from "./helpers/server-id";
 import {
   expectSidebarWorkspaceSelected,
@@ -707,10 +708,16 @@ test.describe("New workspace flow", () => {
   });
 
   test("selected GitHub PR shows PR context in the trigger and composer", async ({ page }) => {
-    const tempRepo = await createTempGitRepo("new-workspace-pr-ref-");
+    test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
+
+    const ghRepo = await createTempGithubRepo({
+      category: "new-workspace-pr-ref",
+      prs: [{ title: "Review selected start ref", state: "open" }],
+    });
+    const pr = ghRepo.prs[0]!;
 
     try {
-      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      const openedProject = await openProjectViaDaemon(client, pr.localPath);
       localWorkspaceIds.add(openedProject.workspaceId);
 
       await gotoAppShell(page);
@@ -720,19 +727,19 @@ test.describe("New workspace flow", () => {
         projectDisplayName: openedProject.projectDisplayName,
       });
       await openStartingRefPicker(page);
-      await selectGitHubPrInPicker(page, 515);
+      await selectGitHubPrInPicker(page, pr.number);
 
       await expectStartingRefPickerTriggerPr(page, {
-        number: 515,
-        title: "Review selected start ref",
-        headRef: "feature/start-from-pr",
+        number: pr.number,
+        title: pr.title,
+        headRef: pr.branch,
       });
       await expectComposerGithubAttachmentPill(page, {
-        number: 515,
-        title: "Review selected start ref",
+        number: pr.number,
+        title: pr.title,
       });
     } finally {
-      await tempRepo.cleanup();
+      await ghRepo.cleanup();
     }
   });
 });

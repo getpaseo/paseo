@@ -35,7 +35,7 @@ Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`)
 
 ## Extending a built-in provider
 
-Use `extends` to create a new provider entry that inherits from a built-in provider (claude, codex, copilot, opencode, pi). The new provider gets its own entry in the provider list, with its own label, environment, and model definitions.
+Use `extends` to create a new provider entry that inherits from a built-in provider (claude, codex, copilot, opencode, pi, omp). The new provider gets its own entry in the provider list, with its own label, environment, and model definitions.
 
 ```json
 {
@@ -347,6 +347,41 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+### Pi-compatible forks with their own session directory
+
+OMP already ships as a built-in provider option. It is disabled by default; enable it with:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "omp": { "enabled": true }
+    }
+  }
+}
+```
+
+For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-pi-fork": {
+        "extends": "pi",
+        "label": "My Pi Fork",
+        "command": ["my-pi-fork"],
+        "params": {
+          "sessionDir": "~/.my-pi-fork/sessions"
+        }
+      }
+    }
+  }
+}
+```
+
+The session directory is used only for importing sessions that were started outside Paseo. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
+
 ---
 
 ## Disabling a provider
@@ -364,7 +399,7 @@ Set `enabled: false` to hide a provider from the provider list. The provider wil
 }
 ```
 
-This works for both built-in and custom providers. To re-enable, set `enabled: true` or remove the `enabled` field entirely (providers are enabled by default).
+This works for both built-in and custom providers. To re-enable, set `enabled: true` or remove the `enabled` field entirely. Most providers are enabled by default; OMP is intentionally disabled by default and requires `enabled: true`.
 
 ---
 
@@ -604,7 +639,7 @@ Use `disallowedTools` to disable unsupported tools:
 
 ### Valid `extends` values
 
-Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`
+Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`, `omp`
 
 Special value: `acp` — creates a generic ACP provider (requires `command`)
 
