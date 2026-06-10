@@ -100,6 +100,25 @@ vi.mock("lucide-react-native", () => {
   };
 });
 
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, string | number>) => {
+      if (key === "settings.providers.providerDetails") return `${values?.name} provider details`;
+      if (key === "settings.providers.enableProvider") return `Enable ${values?.name}`;
+      if (key === "settings.providers.statuses.disabled") return "Disabled";
+      if (key === "settings.providers.statuses.available") return "Available";
+      if (key === "settings.providers.statuses.loading") return "Loading";
+      if (key === "settings.providers.statuses.error") return "Error";
+      if (key === "settings.providers.statuses.notInstalled") return "Not installed";
+      if (key === "settings.providers.models.one") return "1 model";
+      if (key === "settings.providers.models.many") return `${values?.count} models`;
+      if (key === "settings.providers.addErrorTitle") return "Unable to add provider";
+      if (key === "settings.providers.updateErrorTitle") return "Unable to update provider";
+      return key;
+    },
+  }),
+}));
+
 vi.mock("@/components/ui/switch", () => ({
   Switch: ({
     value,

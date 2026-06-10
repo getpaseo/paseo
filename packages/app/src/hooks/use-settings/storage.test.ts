@@ -120,7 +120,7 @@ describe("loadAppSettingsFromStorage", () => {
   it("drops an unknown persisted language back to system", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ language: "fr" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ language: "klingon" }),
       }),
     });
 

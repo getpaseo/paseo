@@ -125,6 +125,19 @@ vi.mock("expo-router", () => ({
   router: { navigate },
 }));
 
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, string>) => {
+      if (key === "sidebar.project.empty.title") return "No projects yet";
+      if (key === "settings.projectList.hostLoadFailed") {
+        return `Couldn't load projects from host ${values?.hostName}: ${values?.message}`;
+      }
+      if (key === "settings.projectList.editProject") return `Edit ${values?.projectName}`;
+      return key;
+    },
+  }),
+}));
+
 vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: ({ size }: { size?: string | number }) =>
     React.createElement("span", {
