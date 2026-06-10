@@ -108,7 +108,7 @@ async function createMultiGitWorktree(
   project: PersistedProjectRecord,
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
-  const subRepos = project.subRepos!;
+  const subRepos = project.subRepos ?? [];
 
   // Step 1: Pre-resolve the branch slug so we can compute workspaceRoot before
   // creating any worktrees and place each sub-repo worktree at the correct path
@@ -128,31 +128,40 @@ async function createMultiGitWorktree(
   const subRepoWorktrees: Array<{ name: string; repoPath: string; worktreePath: string }> = [];
   let firstCreatedWorktree: Awaited<ReturnType<typeof createWorktreeCore>> | null = null;
 
-  for (const subRepoPath of subRepos) {
-    const folderName = path.basename(subRepoPath);
+  try {
+    for (const subRepoPath of subRepos) {
+      const folderName = path.basename(subRepoPath);
 
-    const createdWorktree = await createWorktreeCore(
-      {
-        ...input,
-        cwd: subRepoPath,
-        worktreeSlug: branchSlug,
-        explicitWorktreePath: path.join(workspaceRoot, folderName),
-      },
-      deps,
-    );
+      const createdWorktree = await createWorktreeCore(
+        {
+          ...input,
+          cwd: subRepoPath,
+          worktreeSlug: branchSlug,
+          explicitWorktreePath: path.join(workspaceRoot, folderName),
+        },
+        deps,
+      );
 
-    if (!firstCreatedWorktree) {
-      firstCreatedWorktree = createdWorktree;
-      maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+      if (!firstCreatedWorktree) {
+        firstCreatedWorktree = createdWorktree;
+        maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+      }
+
+      subRepoWorktrees.push({
+        name: folderName,
+        repoPath: subRepoPath,
+        worktreePath: createdWorktree.worktree.worktreePath,
+      });
+
+      deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
     }
-
-    subRepoWorktrees.push({
-      name: folderName,
-      repoPath: subRepoPath,
-      worktreePath: createdWorktree.worktree.worktreePath,
-    });
-
-    deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
+  } catch (err) {
+    try {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors, throw original
+    }
+    throw err;
   }
 
   if (!firstCreatedWorktree) {
