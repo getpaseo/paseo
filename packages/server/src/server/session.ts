@@ -1602,6 +1602,7 @@ export class Session {
       projectKey: project.projectId,
       projectName: resolveProjectDisplayName(project),
       checkout,
+      subRepos: project.subRepos,
     };
   }
 
