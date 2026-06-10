@@ -1220,7 +1220,13 @@ export class Session {
         );
         return;
       }
-      const transport = new StreamableHTTPClientTransport(new URL(this.mcpBaseUrl));
+      const authToken = this.agentManager.getMcpAuthToken();
+      const transport = new StreamableHTTPClientTransport(
+        new URL(this.mcpBaseUrl),
+        authToken
+          ? { requestInit: { headers: { Authorization: `Bearer ${authToken}` } } }
+          : undefined,
+      );
 
       this.agentMcpClient = await experimental_createMCPClient({
         transport,
