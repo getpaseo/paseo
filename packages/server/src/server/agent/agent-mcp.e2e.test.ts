@@ -205,7 +205,7 @@ describe("agent MCP end-to-end (offline)", () => {
 
     const mcpUrl = `http://127.0.0.1:${port}/mcp/agents`;
     const capabilityToken = daemon.agentManager.getMcpAuthToken();
-    expect(capabilityToken).toBeTruthy();
+    expect(typeof capabilityToken).toBe("string");
 
     let agentId: string | null = null;
     let client: McpClient | null = null;

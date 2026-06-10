@@ -1,4 +1,5 @@
 import { compare, compareSync, hashSync } from "bcryptjs";
+import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 
 export const DAEMON_PASSWORD_BCRYPT_COST = 12;
@@ -168,8 +169,14 @@ export async function isAgentMcpRequestAuthorized(input: {
     return true;
   }
   const token = extractHttpBearerToken(input.authorizationHeader);
-  if (input.capabilityToken !== null && token === input.capabilityToken) {
-    return true;
+  if (input.capabilityToken !== null && token !== null) {
+    // Constant-time compare; length-guard first because timingSafeEqual throws
+    // on differing buffer lengths.
+    const provided = Buffer.from(token);
+    const expected = Buffer.from(input.capabilityToken);
+    if (provided.length === expected.length && timingSafeEqual(provided, expected)) {
+      return true;
+    }
   }
   return isBearerTokenValidAsync({ password: input.password, token });
 }
