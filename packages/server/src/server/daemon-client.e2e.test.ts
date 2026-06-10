@@ -137,6 +137,44 @@ test("createAgent without an initial prompt returns an idle snapshot", async () 
   }
 });
 
+test("DaemonClient uploads file bytes to daemon temp storage", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    const result = await client.uploadFile({
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      bytes: new TextEncoder().encode("hello world"),
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-upload-e2e",
+      chunkSize: 5,
+    });
+
+    expect(result).toEqual({
+      requestId: "req-upload-e2e",
+      file: {
+        type: "uploaded_file",
+        id: "upload_req-upload-e2e",
+        fileName: "notes.txt",
+        mimeType: "text/plain",
+        size: 11,
+        path: path.join(daemon.paseoHome, "uploads", "upload_req-upload-e2e", "notes.txt"),
+      },
+      error: null,
+    });
+    await expect(readFile(result.file?.path ?? "", "utf8")).resolves.toBe("hello world");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("createAgent with background initialPrompt returns a running snapshot before turn completion", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({

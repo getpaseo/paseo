@@ -73,11 +73,14 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ListModelsOptions,
-  type ListPersistedAgentsOptions,
   type McpServerConfig,
-  type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -101,6 +104,49 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+export function normalizeClaudeAskUserQuestionRequestInput(
+  toolName: string,
+  input: AgentMetadata,
+): AgentMetadata {
+  if (toolName !== "AskUserQuestion" || !Array.isArray(input.questions)) {
+    return input;
+  }
+
+  // Claude Code's AskUserQuestion schema says "Other" is host-provided, not a
+  // model-supplied option. Paseo's shared question UI uses allowOther for that
+  // freeform answer path.
+  return {
+    ...input,
+    questions: input.questions.map((item) => {
+      if (!isMetadata(item)) {
+        return item;
+      }
+      return {
+        ...item,
+        allowOther: true,
+      };
+    }),
+  };
+}
+
+function stripClaudeAskUserQuestionUiMetadata(input: AgentMetadata): AgentMetadata {
+  if (!Array.isArray(input.questions)) {
+    return input;
+  }
+
+  return {
+    ...input,
+    questions: input.questions.map((item) => {
+      if (!isMetadata(item) || !("allowOther" in item)) {
+        return item;
+      }
+      const itemForClaude: AgentMetadata = { ...item };
+      delete itemForClaude.allowOther;
+      return itemForClaude;
+    }),
+  };
+}
+
 export function normalizeClaudeAskUserQuestionUpdatedInput(
   updatedInput: AgentMetadata | undefined,
   fallbackInput: AgentMetadata | undefined,
@@ -111,7 +157,7 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
   // AskUserQuestion tool expects answer keys to match the full question text. Merge
   // the original request payload back in so provider callbacks that only return
   // `{ answers }` still satisfy Claude's full tool input schema.
-  const merged = { ...fallback, ...base };
+  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
   const questions =
     (Array.isArray(base.questions) ? base.questions : null) ??
     (Array.isArray(fallback.questions) ? fallback.questions : null);
@@ -210,6 +256,7 @@ type ClaudeConversationRewindTarget =
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: true,
   supportsReasoningStream: true,
@@ -279,6 +326,7 @@ interface ClaudeAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
+  configDir?: string;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -799,7 +847,7 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
   return result;
 }
 
-function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServerConfig {
+export function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServerConfig {
   switch (config.type) {
     case "stdio":
       return {
@@ -807,18 +855,21 @@ function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServerConfig
         command: config.command,
         args: config.args,
         env: config.env,
+        alwaysLoad: config.alwaysLoad,
       };
     case "http":
       return {
         type: "http",
         url: config.url,
         headers: config.headers,
+        alwaysLoad: config.alwaysLoad,
       };
     case "sse":
       return {
         type: "sse",
         url: config.url,
         headers: config.headers,
+        alwaysLoad: config.alwaysLoad,
       };
   }
   throw new Error("Unhandled MCP server config type");
@@ -1277,6 +1328,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
+  private readonly configDir?: string;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1284,6 +1336,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
+    this.configDir = options.configDir;
   }
 
   async createSession(
@@ -1334,7 +1387,7 @@ export class ClaudeAgentClient implements AgentClient {
 
   async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
-    return await getClaudeModelsWithSettings(this.logger);
+    return await getClaudeModelsWithSettings(this.logger, this.configDir);
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -1345,9 +1398,9 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const projectsRoot = path.join(configDir, "projects");
     if (!(await pathExists(projectsRoot))) {
@@ -1359,8 +1412,17 @@ export class ClaudeAgentClient implements AgentClient {
       candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
     );
     return parsed
-      .filter((descriptor): descriptor is PersistedAgentDescriptor => descriptor !== null)
+      .filter((session): session is ImportableProviderSession => session !== null)
       .slice(0, limit);
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    return importSessionFromPersistence({
+      provider: "claude",
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
+    });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -2075,6 +2137,7 @@ class ClaudeAgentSession implements AgentSession {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
+          kind: "command",
         });
       }
     }
@@ -3740,6 +3803,7 @@ class ClaudeAgentSession implements AgentSession {
   ): Promise<PermissionResult> => {
     const requestId = `permission-${randomUUID()}`;
     const kind = resolvePermissionKind(toolName, input);
+    const requestInput = normalizeClaudeAskUserQuestionRequestInput(toolName, input);
     const metadata: AgentMetadata = {};
     if (options.toolUseID) {
       metadata.toolUseId = options.toolUseID;
@@ -3762,7 +3826,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
-      input,
+      input: requestInput,
       detail: toolDetail,
       suggestions: options.suggestions?.map((suggestion) => ({
         ...suggestion,
@@ -4901,7 +4965,8 @@ interface ClaudeSessionDescriptorAccumulator {
   sessionId: string | null;
   cwd: string | null;
   title: string | null;
-  timeline: AgentTimelineItem[];
+  firstPromptPreview: string | null;
+  lastPromptPreview: string | null;
 }
 
 function isFinishedAccumulator(acc: ClaudeSessionDescriptorAccumulator): boolean {
@@ -4934,22 +4999,18 @@ function applyClaudeSessionEntryToAccumulator(
       if (!acc.title) {
         acc.title = text;
       }
-      acc.timeline.push({ type: "user_message", text });
+      const preview = normalizeImportablePromptPreview(text);
+      acc.firstPromptPreview ??= preview;
+      acc.lastPromptPreview = preview;
     }
     return;
-  }
-  if (entry.type === "assistant" && entry.message) {
-    const text = extractClaudeUserText(entry.message);
-    if (text) {
-      acc.timeline.push({ type: "assistant_message", text });
-    }
   }
 }
 
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
-): Promise<PersistedAgentDescriptor | null> {
+): Promise<ImportableProviderSession | null> {
   let content: string;
   try {
     content = await fsPromises.readFile(filePath, "utf8");
@@ -4961,7 +5022,8 @@ async function parseClaudeSessionDescriptor(
     sessionId: null,
     cwd: null,
     title: null,
-    timeline: [],
+    firstPromptPreview: null,
+    lastPromptPreview: null,
   };
 
   for (const rawLine of content.split(/\r?\n/)) {
@@ -4979,31 +5041,26 @@ async function parseClaudeSessionDescriptor(
     }
   }
 
-  const { sessionId, cwd, title, timeline } = acc;
+  const { sessionId, cwd, title } = acc;
 
   if (!sessionId || !cwd) {
     return null;
   }
 
-  const persistence: AgentPersistenceHandle = {
-    provider: "claude",
-    sessionId,
-    nativeHandle: sessionId,
-    metadata: {
-      provider: "claude",
-      cwd,
-    },
-  };
-
   return {
-    provider: "claude",
-    sessionId,
+    providerHandleId: sessionId,
     cwd,
     title: (title ?? "").trim() || `Claude session ${sessionId.slice(0, 8)}`,
+    firstPromptPreview: acc.firstPromptPreview,
+    lastPromptPreview: acc.lastPromptPreview,
     lastActivityAt: mtime,
-    persistence,
-    timeline,
   };
+}
+
+function normalizeImportablePromptPreview(text: string): string | null {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  return normalized.length > 160 ? normalized.slice(0, 160) : normalized;
 }
 
 function extractClaudeUserText(messageRaw: unknown): string | null {

@@ -70,8 +70,8 @@ export interface BuildGitActionsInput {
   baseRefLabel: string;
   aheadCount: number;
   behindBaseCount: number;
-  aheadOfOrigin: number;
-  behindOfOrigin: number;
+  aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
   shouldPromoteArchive: boolean;
   shipDefault: "merge" | "pr";
   runtime: Record<GitActionId, GitActionRuntimeState>;
@@ -333,9 +333,6 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (canPull(input)) {
     return "pull";
   }
-  if (canPush(input)) {
-    return "push";
-  }
   if (canMergePr(input)) {
     return getDefaultDirectPullRequestMergeActionId(input);
   }
@@ -344,6 +341,12 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   }
   if (hasEnabledPrAutoMerge(input)) {
     return "pr";
+  }
+  if (input.shipDefault === "pr" && canUsePullRequestActionAsShipDefault(input)) {
+    return "pr";
+  }
+  if (canPush(input)) {
+    return "push";
   }
   if (!input.isOnBaseBranch && input.aheadCount > 0) {
     return "merge-branch";
@@ -486,11 +489,20 @@ function buildDisablePullRequestAutoMergeAction(input: BuildGitActionsInput): Gi
 }
 
 function canPull(input: BuildGitActionsInput): boolean {
-  return input.hasRemote && !input.hasUncommittedChanges && input.behindOfOrigin > 0;
+  return input.hasRemote && !input.hasUncommittedChanges && (input.behindOfOrigin ?? 0) > 0;
 }
 
 function canPush(input: BuildGitActionsInput): boolean {
-  return input.hasRemote && input.aheadOfOrigin > 0 && input.behindOfOrigin === 0;
+  return input.hasRemote && hasPushableCommits(input) && (input.behindOfOrigin ?? 0) === 0;
+}
+
+function hasPushableCommits(input: BuildGitActionsInput): boolean {
+  if ((input.aheadOfOrigin ?? 0) > 0) {
+    return true;
+  }
+  // No-upstream Paseo worktrees are first-pushable: the daemon push sets upstream with `git push -u`.
+  // Do not fold this into aheadOfOrigin; null also covers deleted/pruned upstream branches.
+  return input.isPaseoOwnedWorktree && input.aheadOfOrigin === null && input.aheadCount > 0;
 }
 
 function canMergeFromBase(input: BuildGitActionsInput): boolean {
@@ -500,6 +512,16 @@ function canMergeFromBase(input: BuildGitActionsInput): boolean {
     !input.hasUncommittedChanges &&
     input.behindBaseCount > 0
   );
+}
+
+function canUsePullRequestActionAsShipDefault(input: BuildGitActionsInput): boolean {
+  if (input.isOnBaseBranch || !input.githubFeaturesEnabled) {
+    return false;
+  }
+  if (input.hasPullRequest) {
+    return input.pullRequestUrl !== null;
+  }
+  return input.aheadCount > 0;
 }
 
 function canMergePr(input: BuildGitActionsInput): boolean {
@@ -574,6 +596,9 @@ function getPullUnavailableMessage(input: BuildGitActionsInput): string | undefi
   if (input.hasUncommittedChanges) {
     return "Pull isn't available while you have local changes so commit or stash them first";
   }
+  if (input.behindOfOrigin === null) {
+    return "Pull isn't available here because this branch is not connected to a remote yet";
+  }
   if (input.behindOfOrigin === 0) {
     return "Pull isn't available because this branch is already up to date";
   }
@@ -584,10 +609,10 @@ function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefi
   if (!input.hasRemote) {
     return "Push isn't available here because this branch is not connected to a remote yet";
   }
-  if (input.behindOfOrigin > 0) {
+  if ((input.behindOfOrigin ?? 0) > 0) {
     return "Push isn't available yet because there are newer changes to bring in first";
   }
-  if (input.aheadOfOrigin === 0) {
+  if (!hasPushableCommits(input)) {
     return "Push isn't available because there is nothing new to send";
   }
   return undefined;
@@ -600,8 +625,17 @@ function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string |
   if (input.hasUncommittedChanges) {
     return "Pull and push isn't available while you have local changes so commit or stash them first";
   }
+  if (input.behindOfOrigin === null) {
+    return "Pull and push isn't available because there are no incoming changes to pull first";
+  }
   if (input.behindOfOrigin === 0 && input.aheadOfOrigin === 0) {
     return "Pull and push isn't available because this branch is already in sync";
+  }
+  if (input.behindOfOrigin === 0) {
+    return "Pull and push isn't available because there are no incoming changes to pull first";
+  }
+  if ((input.aheadOfOrigin ?? 0) === 0) {
+    return "Pull and push isn't available because there is nothing new to send after pulling";
   }
   return undefined;
 }

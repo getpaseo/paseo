@@ -30,6 +30,7 @@ Configuration and local state live under `PASEO_HOME` (defaults to `~/.paseo`).
 
 ## Where next
 
+- [Workspaces](/docs/workspaces), the project, workspace, and session model Paseo is built around.
 - [Providers](/docs/providers), what a provider is and how Paseo wraps existing CLIs.
 - [CLI reference](/docs/cli), every command.
 - [GitHub repo](https://github.com/getpaseo/paseo)

@@ -99,6 +99,21 @@ function todoTimeline(items: { text: string; completed: boolean }[]): AgentStrea
   };
 }
 
+function compactionTimeline(
+  status: "loading" | "completed",
+  trigger?: "auto" | "manual",
+): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "pi",
+    item: {
+      type: "compaction",
+      status,
+      ...(trigger ? { trigger } : {}),
+    },
+  };
+}
+
 function findToolByCallId(state: StreamItem[], callId: string): AgentToolCallItem | undefined {
   return state.find(
     (item): item is AgentToolCallItem =>
@@ -691,6 +706,27 @@ describe("stream reducer canonical tool calls", () => {
     assert.ok(todos);
     assert.strictEqual(todos.items.length, 2);
     assert.strictEqual(todos.items[1]?.completed, true);
+  });
+
+  it("preserves compaction trigger when completed update replaces loading marker", () => {
+    const state = hydrateStreamState([
+      {
+        event: compactionTimeline("loading", "auto"),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: compactionTimeline("completed"),
+        timestamp: new Date("2025-01-01T10:50:01Z"),
+      },
+    ]);
+
+    const compactions = state.filter(
+      (item): item is Extract<StreamItem, { kind: "compaction" }> => item.kind === "compaction",
+    );
+
+    assert.strictEqual(compactions.length, 1);
+    assert.strictEqual(compactions[0].status, "completed");
+    assert.strictEqual(compactions[0].trigger, "auto");
   });
 
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {

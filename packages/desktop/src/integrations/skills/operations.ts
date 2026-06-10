@@ -33,9 +33,10 @@ export const PASEO_SKILL_NAMES = [
   "paseo-advisor",
   "paseo-chat",
   "paseo-committee",
-  "paseo-epic",
   "paseo-handoff",
   "paseo-loop",
+  // Keep removed bundle names here so auto-update deletes stale installed copies.
+  "paseo-epic",
   "paseo-orchestrate",
   "paseo-orchestrator",
 ] as const;

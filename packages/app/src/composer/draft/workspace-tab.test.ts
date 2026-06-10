@@ -3,8 +3,8 @@ import { describe, expect, test } from "vitest";
 import { validateDraftSubmission } from "./workspace-tab-core";
 
 const baseComposerState = {
-  providerDefinitions: [{ id: "deepseek-tui" }],
-  selectedProvider: "deepseek-tui",
+  providerDefinitions: [{ id: "codewhale" }],
+  selectedProvider: "codewhale",
   isModelLoading: false,
   effectiveModelId: "",
   availableModels: [],

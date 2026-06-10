@@ -196,6 +196,7 @@ function AddCustomModelSubSheet({
       onClose={onClose}
       desktopMaxWidth={420}
       snapPoints={ADD_SNAP_POINTS}
+      testID="add-custom-model-sheet"
     >
       <View style={sheetStyles.formGroup}>
         <Text style={sheetStyles.formLabel}>Model ID</Text>
@@ -339,6 +340,7 @@ function DiagnosticSubSheet({
       onClose={onClose}
       snapPoints={DIAGNOSTIC_SNAP_POINTS}
       scrollable={false}
+      testID="provider-diagnostic-sheet"
     >
       <View style={DIAGNOSTIC_CARD_STYLE}>{body}</View>
     </AdaptiveModalSheet>
@@ -616,6 +618,7 @@ export function ProviderDiagnosticSheet({
         header={sheetHeader}
         visible={visible}
         onClose={onClose}
+        testID="provider-settings-sheet"
         footer={renderProviderSheetFooter({
           fetchedAtLabel,
           isCompact,

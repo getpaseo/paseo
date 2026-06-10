@@ -78,14 +78,17 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ListModesOptions,
   type ListModelsOptions,
-  type ListPersistedAgentsOptions,
   type McpServerConfig,
-  type PersistedAgentDescriptor,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
@@ -112,7 +115,22 @@ function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
 }
 
-function summarizeACPRequestError(error: unknown): {
+function extractACPErrorDataMessage(data: unknown): string | null {
+  if (!isRecord(data)) {
+    return null;
+  }
+
+  for (const key of ["details", "errorMessage", "message", "detail", "title"]) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return extractACPErrorDataMessage(data.error);
+}
+
+export function summarizeACPRequestError(error: unknown): {
   message: string;
   code?: string;
   diagnostic?: string;
@@ -120,11 +138,14 @@ function summarizeACPRequestError(error: unknown): {
   // Promise rejections are untyped, but the ACP SDK rejects JSON-RPC failures as response.error.
   if (isACPError(error)) {
     const code = String(error.code);
+    const detail = extractACPErrorDataMessage(error.data);
+    const message =
+      detail && detail !== error.message ? `${error.message}: ${detail}` : error.message;
     const data = error.data === undefined ? "" : ` | data=${JSON.stringify(error.data)}`;
     return {
-      message: error.message,
+      message,
       code,
-      diagnostic: `${error.message} | code=${code}${data}`,
+      diagnostic: `${message} | code=${code}${data}`,
     };
   }
 
@@ -133,6 +154,17 @@ function summarizeACPRequestError(error: unknown): {
   }
 
   return { message: String(error) };
+}
+
+function toACPRequestError(error: unknown): Error {
+  if (!isACPError(error)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+
+  const summary = summarizeACPRequestError(error);
+  const next = new Error(summary.message);
+  next.name = "ACPRequestError";
+  return next;
 }
 
 function resolveTerminalCommand(
@@ -151,7 +183,7 @@ function resolveTerminalCommand(
   return { command: shell.command, args: [...shell.flag, command] };
 }
 
-const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
+export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsDynamicModes: true,
@@ -673,10 +705,12 @@ export class ACPAgentClient implements AgentClient {
     const { cwd } = options;
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
-      const response = await probe.connection.newSession({
-        cwd,
-        mcpServers: [],
-      });
+      const response = await this.runACPRequest(() =>
+        probe.connection.newSession({
+          cwd,
+          mcpServers: [],
+        }),
+      );
       const transformed = this.transformSessionResponse(response);
       const models = deriveModelDefinitionsFromACP(
         this.provider,
@@ -693,10 +727,12 @@ export class ACPAgentClient implements AgentClient {
     const { cwd } = options;
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
-      const response = await probe.connection.newSession({
-        cwd,
-        mcpServers: [],
-      });
+      const response = await this.runACPRequest(() =>
+        probe.connection.newSession({
+          cwd,
+          mcpServers: [],
+        }),
+      );
       const transformed = this.transformSessionResponse(response);
       const modeInfo = deriveModesFromACP(
         this.defaultModes,
@@ -709,39 +745,29 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
       if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
         return [];
       }
 
-      const sessions: PersistedAgentDescriptor[] = [];
+      const sessions: ImportableProviderSession[] = [];
       let cursor: string | null | undefined;
       for (;;) {
-        const page: ListSessionsResponse = await probe.connection.listSessions(
-          cursor ? { cursor } : {},
+        const page: ListSessionsResponse = await this.runACPRequest(() =>
+          probe.connection.listSessions(cursor ? { cursor } : {}),
         );
         for (const session of page.sessions) {
           sessions.push({
-            provider: this.provider,
-            sessionId: session.sessionId,
+            providerHandleId: session.sessionId,
             cwd: session.cwd,
             title: session.title ?? null,
+            firstPromptPreview: null,
+            lastPromptPreview: null,
             lastActivityAt: session.updatedAt ? new Date(session.updatedAt) : new Date(0),
-            persistence: {
-              provider: this.provider,
-              sessionId: session.sessionId,
-              nativeHandle: session.sessionId,
-              metadata: {
-                provider: this.provider,
-                cwd: session.cwd,
-                title: session.title ?? null,
-              },
-            },
-            timeline: [],
           });
         }
         cursor = page.nextCursor ?? null;
@@ -753,6 +779,15 @@ export class ACPAgentClient implements AgentClient {
     } finally {
       await this.closeProbe(probe);
     }
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    return importSessionFromPersistence({
+      provider: this.provider,
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
+    });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -809,15 +844,17 @@ export class ACPAgentClient implements AgentClient {
 
     let initialize: InitializeResponse;
     try {
-      initialize = await Promise.race([
-        connection.initialize({
-          protocolVersion: PROTOCOL_VERSION,
-          clientCapabilities: ACP_CLIENT_CAPABILITIES,
-          clientInfo: { name: "Paseo", version: "dev" },
-        }),
-        spawnErrorPromise,
-        ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
-      ]);
+      initialize = await this.runACPRequest(() =>
+        Promise.race([
+          connection.initialize({
+            protocolVersion: PROTOCOL_VERSION,
+            clientCapabilities: ACP_CLIENT_CAPABILITIES,
+            clientInfo: { name: "Paseo", version: "dev" },
+          }),
+          spawnErrorPromise,
+          ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
+        ]),
+      );
     } catch (error) {
       await terminateChildProcess(child, 2_000);
       throw error;
@@ -858,6 +895,14 @@ export class ACPAgentClient implements AgentClient {
       }
     } finally {
       await terminateChildProcess(probe.child, 2_000);
+    }
+  }
+
+  protected async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
+    try {
+      return await request();
+    } catch (error) {
+      throw toACPRequestError(error);
     }
   }
 
@@ -998,10 +1043,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.connection = spawned.connection;
     this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-    const response = await this.connection.newSession({
-      cwd: this.config.cwd,
-      mcpServers: normalizeMcpServers(this.config.mcpServers),
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.newSession({
+        cwd: this.config.cwd,
+        mcpServers: this.acpMcpServers(),
+      }),
+    );
     this.sessionId = response.sessionId;
     this.bootstrapThreadEventPending = true;
     this.applySessionState(response);
@@ -1024,20 +1071,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
     if (this.agentCapabilities?.loadSession) {
       this.replayingHistory = true;
-      const response = await this.connection.loadSession({
-        sessionId: handle.sessionId,
-        cwd: this.config.cwd,
-        mcpServers: normalizeMcpServers(this.config.mcpServers),
-      });
+      const response = await this.runACPRequest(() =>
+        this.connection!.loadSession({
+          sessionId: handle.sessionId,
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
       this.replayingHistory = false;
       this.historyPending = this.persistedHistory.length > 0;
       this.applySessionState(response);
     } else if (sessionCapabilities?.resume) {
-      const response = await this.connection.unstable_resumeSession({
-        sessionId: handle.sessionId,
-        cwd: this.config.cwd,
-        mcpServers: normalizeMcpServers(this.config.mcpServers),
-      });
+      const response = await this.runACPRequest(() =>
+        this.connection!.unstable_resumeSession({
+          sessionId: handle.sessionId,
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
       this.applySessionState(response);
     } else {
       throw new Error(`${this.provider} does not support ACP session resume`);
@@ -1853,13 +1904,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this, stream);
-    const initialize = await connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: ACP_CLIENT_CAPABILITIES,
-      clientInfo: { name: "Paseo", version: "dev" },
-    });
+    const initialize = await this.runACPRequest(() =>
+      connection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: ACP_CLIENT_CAPABILITIES,
+        clientInfo: { name: "Paseo", version: "dev" },
+      }),
+    );
 
     return { child, connection, initialize };
+  }
+
+  private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
+    try {
+      return await request();
+    } catch (error) {
+      throw toACPRequestError(error);
+    }
+  }
+
+  private acpMcpServers(): McpServer[] {
+    return this.capabilities.supportsMcpServers ? normalizeMcpServers(this.config.mcpServers) : [];
   }
 
   private applySessionState(response: SessionStateResponse): void {
@@ -1989,6 +2054,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           name: command.name,
           description: command.description,
           argumentHint: "",
+          kind: "command",
         }));
         this.settleCommandsReady();
         return [];

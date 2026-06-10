@@ -2,7 +2,7 @@
 title: Providers
 description: How Paseo thinks about coding agents, wrapping existing CLIs, native vs ACP support, and where to go next.
 nav: Providers
-order: 3
+order: 5
 ---
 
 # Providers

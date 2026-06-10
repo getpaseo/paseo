@@ -84,7 +84,7 @@ interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   initialAttempt?: CreateAttempt | null;
   allowEmptyText?: boolean;
   validateBeforeSubmit?: (ctx: SubmitContext) => string | null;
-  onBeforeSubmit?: (ctx: CreateRequestContext) => void;
+  onBeforeSubmit?: (ctx: CreateRequestContext) => Promise<void> | void;
   onCreateStart?: () => void;
   createRequest: (ctx: CreateRequestContext) => Promise<CreateRequestResult<TCreateResult>>;
   buildDraftAgent: (attempt: CreateAttempt) => TDraftAgent;
@@ -168,7 +168,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         throw error;
       }
 
-      onBeforeSubmit?.({
+      await onBeforeSubmit?.({
         attempt,
         text: attempt.text,
         images: attempt.images,

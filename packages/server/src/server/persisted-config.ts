@@ -151,7 +151,7 @@ const AgentMetadataGenerationSchema = z
   })
   .strict();
 
-const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi"] as const;
+const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
 
 function isLegacyProviderEntry(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -203,6 +203,8 @@ function normalizeAgentProviders(value: unknown): unknown {
 
 export const PersistedConfigSchema = z
   .object({
+    $schema: z.string().optional(),
+
     // v1 schema marker
     version: z.literal(1).optional(),
 

@@ -169,6 +169,11 @@ on that attach races Gorhom's dismiss path and leaves the modal unable to reopen
 Track an explicit phase (`closed` / `presenting` / `presented` / `dismissing`) and
 ignore ref churn while dismissing.
 
+Do not treat `onChange(-1)` as a close by itself. In a stacked
+`BottomSheetModal`, `-1` can also mean the sheet is temporarily hidden under
+another pushed sheet. Close React state from `onDismiss`; use `onChange` only to
+track phase.
+
 ## Recipe for a new anchored panel
 
 Before you write a new one, ask:

@@ -2,7 +2,7 @@
 title: Metadata generation
 description: How Paseo uses providers to generate agent titles, branch names, commit messages, and pull request text, and how to configure them.
 nav: Metadata generation
-order: 11
+order: 15
 ---
 
 # Metadata generation

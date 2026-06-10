@@ -100,6 +100,7 @@ import {
   AssistantMarkdownLink,
   type InlinePathTarget,
   useAssistantFileLinkActions,
+  useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
@@ -1532,8 +1533,19 @@ function MarkdownInheritedText({
     () => [inheritedStyles, textStyle, overrideStyle],
     [inheritedStyles, textStyle, overrideStyle],
   );
+  // When this span renders link label text on iOS, pick up the link's press
+  // handler from context and hand it to MarkdownTextSpan, which forwards it to
+  // the leaf string children react-native-uitextview makes tappable. Null
+  // outside a link (and on every other platform, where no provider mounts), so
+  // ordinary text is unaffected. See assistant-file-links/link-press-context.
+  const linkPress = useAssistantLinkPress();
   return (
-    <MarkdownTextSpan monoSurface={monoSurface} style={style}>
+    <MarkdownTextSpan
+      monoSurface={monoSurface}
+      style={style}
+      onPress={linkPress?.onPress}
+      accessibilityRole={linkPress?.accessibilityRole}
+    >
       {children}
     </MarkdownTextSpan>
   );

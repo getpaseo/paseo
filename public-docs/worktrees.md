@@ -2,12 +2,16 @@
 title: Git worktrees
 description: Run agents in isolated git worktrees with setup hooks, scripts, and long-running services.
 nav: Git worktrees
-order: 7
+order: 4
 ---
 
 # Git worktrees
 
-Each agent runs in its own git worktree, a separate directory on a separate branch, so parallel agents never step on each other. You configure setup, scripts, and long-running services through a `paseo.json` file at your repo root.
+Git worktrees are one kind of workspace.
+
+A [workspace](/docs/workspaces) is the place where a task happens. When that workspace is backed by a git worktree, Paseo creates a separate directory on a separate branch so parallel agents never step on each other.
+
+This page covers the git-specific details: where worktrees live, how branches are chosen, and how to configure setup hooks, scripts, terminals, and long-running services through `paseo.json`.
 
 ## Layout and workflow
 

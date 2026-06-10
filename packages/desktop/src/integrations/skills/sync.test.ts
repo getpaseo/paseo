@@ -83,8 +83,8 @@ describe("syncSkills", () => {
   });
 
   it("installs new bundled skills, including references/, when not present on disk", async () => {
-    await writeBundleSkill(sandbox.sourceDir, "paseo-epic", {
-      "SKILL.md": "epic content",
+    await writeBundleSkill(sandbox.sourceDir, "paseo-committee", {
+      "SKILL.md": "committee content",
       "references/roles.md": "roles content",
     });
 
@@ -93,28 +93,30 @@ describe("syncSkills", () => {
       agentsDir: sandbox.agentsDir,
       claudeDir: sandbox.claudeDir,
       codexDir: sandbox.codexDir,
-      skillNames: ["paseo-epic"],
+      skillNames: ["paseo-committee"],
     });
 
-    expect(await fs.readFile(path.join(sandbox.agentsDir, "paseo-epic", "SKILL.md"), "utf-8")).toBe(
-      "epic content",
-    );
+    expect(
+      await fs.readFile(path.join(sandbox.agentsDir, "paseo-committee", "SKILL.md"), "utf-8"),
+    ).toBe("committee content");
     expect(
       await fs.readFile(
-        path.join(sandbox.agentsDir, "paseo-epic", "references", "roles.md"),
+        path.join(sandbox.agentsDir, "paseo-committee", "references", "roles.md"),
         "utf-8",
       ),
     ).toBe("roles content");
     expect(
       await fs.readFile(
-        path.join(sandbox.codexDir, "paseo-epic", "references", "roles.md"),
+        path.join(sandbox.codexDir, "paseo-committee", "references", "roles.md"),
         "utf-8",
       ),
     ).toBe("roles content");
 
-    const claudeSkillDir = path.join(sandbox.claudeDir, "paseo-epic");
+    const claudeSkillDir = path.join(sandbox.claudeDir, "paseo-committee");
     expect((await fs.lstat(claudeSkillDir)).isDirectory()).toBe(true);
-    expect(await fs.readFile(path.join(claudeSkillDir, "SKILL.md"), "utf-8")).toBe("epic content");
+    expect(await fs.readFile(path.join(claudeSkillDir, "SKILL.md"), "utf-8")).toBe(
+      "committee content",
+    );
     expect(await fs.readFile(path.join(claudeSkillDir, "references", "roles.md"), "utf-8")).toBe(
       "roles content",
     );

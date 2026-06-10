@@ -2,7 +2,7 @@
 title: Orchestration skills
 description: "Paseo orchestration skills: teach coding agents to spawn, coordinate, and manage other agents using slash commands."
 nav: Skills
-order: 8
+order: 12
 ---
 
 # Orchestration skills
@@ -70,15 +70,4 @@ The advisor gives a judgment. You decide what to do. The advisor prompt is analy
 ```
 /paseo-advisor did I miss anything in this migration plan?
 /paseo-advisor --provider claude/opus what is the UX risk in this flow?
-```
-
-## `/paseo-epic`, Epic Orchestration
-
-Heavy-ceremony orchestration for big work: research, planning, adversarial review, phased implementation, audit, and delivery. Use it when you say "epic", "long task", "build this end to end", or want a feature that runs all night.
-
-The plan file at `~/.paseo/plans/<slug>.md` is the source of truth. Default mode is conversational, with clarification and gates between phases. `--autopilot` runs through delivery without grills or gates. `--worktree` isolates the work in a new Paseo worktree.
-
-```
-/paseo-epic build the settings import/export flow end to end
-/paseo-epic --autopilot --worktree migrate the relay config UI overnight
 ```

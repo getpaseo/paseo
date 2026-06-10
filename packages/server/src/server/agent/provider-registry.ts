@@ -12,8 +12,6 @@ import type {
   AgentStreamEvent,
   ListModelsOptions,
   ListModesOptions,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
 } from "./agent-sdk-types.js";
@@ -69,8 +67,6 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
 
-export { IMPORTABLE_PROVIDERS } from "@getpaseo/protocol/importable-providers";
-
 export interface BuildProviderRegistryOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
@@ -82,6 +78,7 @@ interface ProviderClientFactoryOptions extends Pick<
   BuildProviderRegistryOptions,
   "workspaceGitService"
 > {
+  providerParams?: unknown;
   customProvider?: {
     id: string;
     label: string;
@@ -103,6 +100,7 @@ interface ResolvedProvider {
   profileModelsAreAdditive: boolean;
   enabled: boolean;
   derivedFromProviderId: string | null;
+  providerParams?: unknown;
   createBaseClient: (logger: Logger) => AgentClient;
 }
 
@@ -129,10 +127,27 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       env: runtimeSettings?.env,
     }),
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
-  pi: (logger, runtimeSettings) =>
+  pi: (logger, runtimeSettings, options) =>
     new PiRpcAgentClient({
       logger,
       runtimeSettings,
+      providerParams: options?.providerParams,
+    }),
+  omp: (logger, runtimeSettings, options) =>
+    new PiRpcAgentClient({
+      logger,
+      runtimeSettings: mergeRuntimeSettings(
+        {
+          command: {
+            mode: "replace",
+            argv: ["omp"],
+          },
+        },
+        runtimeSettings,
+      ),
+      providerParams: options?.providerParams ?? {
+        sessionDir: "~/.omp/agent/sessions",
+      },
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),
@@ -260,20 +275,6 @@ function mapStreamEvent(provider: AgentProvider, event: AgentStreamEvent): Agent
   };
 }
 
-function mapPersistedAgentDescriptor(
-  provider: AgentProvider,
-  descriptor: PersistedAgentDescriptor,
-): PersistedAgentDescriptor {
-  return {
-    ...descriptor,
-    provider,
-    persistence: {
-      ...descriptor.persistence,
-      provider,
-    },
-  };
-}
-
 function mapModel(
   provider: AgentProvider,
   model: AgentModelDefinition | ProviderProfileModel,
@@ -384,7 +385,8 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
 ): AgentClient {
-  const listPersistedAgents = inner.listPersistedAgents?.bind(inner);
+  const listImportableSessions = inner.listImportableSessions?.bind(inner);
+  const importSession = inner.importSession?.bind(inner);
 
   return {
     provider,
@@ -424,11 +426,36 @@ function wrapClientProvider(
     listModes: inner.listModes?.bind(inner),
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
-    listPersistedAgents: listPersistedAgents
-      ? async (options?: ListPersistedAgentsOptions) =>
-          (await listPersistedAgents(options)).map((descriptor) =>
-            mapPersistedAgentDescriptor(provider, descriptor),
-          )
+    listImportableSessions: listImportableSessions
+      ? async (options) => await listImportableSessions(options)
+      : undefined,
+    importSession: importSession
+      ? async (input, context) => {
+          const imported = await importSession(input, {
+            ...context,
+            config: {
+              ...context.config,
+              provider: inner.provider,
+            },
+            storedConfig: {
+              ...context.storedConfig,
+              provider: inner.provider,
+            },
+          });
+          const persistence = mapPersistenceHandle(provider, imported.persistence);
+          if (!persistence) {
+            throw new Error(`Provider '${provider}' import did not return persistence`);
+          }
+          return {
+            ...imported,
+            session: wrapSessionProvider(provider, imported.session),
+            config: {
+              ...imported.config,
+              provider,
+            },
+            persistence,
+          };
+        }
       : undefined,
     isAvailable: () => inner.isAvailable(),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
@@ -523,12 +550,14 @@ function buildResolvedBuiltinProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
       additionalModels: override?.additionalModels ?? [],
-      profileModelsAreAdditive: definition.id === "claude",
-      enabled: override?.enabled !== false,
+      profileModelsAreAdditive: false,
+      enabled: override?.enabled ?? definition.enabledByDefault ?? true,
       derivedFromProviderId: null,
+      providerParams: override?.params,
       createBaseClient: (logger) =>
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
+          providerParams: override?.params,
         }),
     });
   }
@@ -574,6 +603,7 @@ function addDerivedProviders(
         profileModelsAreAdditive: false,
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
+        providerParams: override.params,
         createBaseClient: (logger) =>
           providerId === "cursor"
             ? new CursorACPAgentClient({
@@ -582,6 +612,7 @@ function addDerivedProviders(
                 env: override.env,
                 providerId,
                 label: override.label ?? providerId,
+                providerParams: override.params,
               })
             : new GenericACPAgentClient({
                 logger,
@@ -589,6 +620,7 @@ function addDerivedProviders(
                 env: override.env,
                 providerId,
                 label: override.label ?? providerId,
+                providerParams: override.params,
               }),
       });
       continue;
@@ -608,6 +640,7 @@ function addDerivedProviders(
     );
     const baseDefinition = baseProvider.definition;
     const baseFactory = getProviderClientFactory(baseProviderId);
+    const providerParams = override.params ?? baseProvider.providerParams;
 
     resolvedProviders.set(providerId, {
       definition: createDerivedDefinition(providerId, baseDefinition, override),
@@ -617,8 +650,10 @@ function addDerivedProviders(
       profileModelsAreAdditive: false,
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
+      providerParams,
       createBaseClient: (logger) =>
         baseFactory(logger, mergedRuntimeSettings, {
+          providerParams,
           customProvider: {
             id: providerId,
             label: override.label ?? providerId,

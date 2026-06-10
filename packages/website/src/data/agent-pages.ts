@@ -53,6 +53,16 @@ export const AGENT_PAGES = [
       "Open source mobile and desktop app for GitHub Copilot. Launch sessions on your machine, monitor progress, merge from anywhere.",
   },
   {
+    slug: "omp",
+    name: "OMP (Oh My Pi)",
+    title: "Open source app for OMP (Oh My Pi)",
+    subtitle:
+      "Run OMP (Oh My Pi) on your machine, drive it from your phone or desktop. Self-hosted and open source.",
+    metaTitle: "OMP (Oh My Pi) Mobile and Desktop App, Open Source",
+    metaDescription:
+      "Open source mobile and desktop app for OMP (Oh My Pi). Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",
+  },
+  {
     slug: "pi",
     name: "Pi Agent",
     title: "Open source app for the Pi coding agent",
@@ -191,13 +201,13 @@ export const AGENT_PAGES = [
   },
   {
     slug: "deepseek-tui",
-    name: "DeepSeek TUI",
-    title: "Open source app for DeepSeek TUI",
+    name: "CodeWhale",
+    title: "Open source app for CodeWhale",
     subtitle:
-      "Run DeepSeek V4's terminal coding agent on your machine, drive it from your phone or desktop.",
-    metaTitle: "DeepSeek TUI Mobile and Desktop App, Open Source",
+      "Run CodeWhale's DeepSeek V4 terminal coding agent on your machine, drive it from your phone or desktop.",
+    metaTitle: "CodeWhale Mobile and Desktop App, Open Source",
     metaDescription:
-      "Open source mobile and desktop app for DeepSeek TUI. Launch coding sessions on your machine, monitor progress, ship from anywhere.",
+      "Open source mobile and desktop app for CodeWhale. Launch coding sessions on your machine, monitor progress, ship from anywhere.",
   },
   {
     slug: "dimcode",

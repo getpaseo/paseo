@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess, execFileSync, execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcess, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,6 +7,8 @@ import path from "node:path";
 import net from "node:net";
 import { Buffer } from "node:buffer";
 import dotenv from "dotenv";
+import { loadDaemonClientConstructor } from "./helpers/daemon-client-loader";
+import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./helpers/node-ws-factory";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./helpers/paseo-home-fork";
 
 interface WaitForServerOptions {
@@ -188,7 +191,7 @@ async function isOpenAiApiKeyUsable(apiKey: string | undefined): Promise<boolean
 let daemonProcess: ChildProcess | null = null;
 let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
-let fakeToolBinDir: string | null = null;
+let fakeEditorBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
 
 function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
@@ -209,81 +212,24 @@ interface OfferPayload {
   relay: { endpoint: string };
 }
 
-async function createFakeToolBin(): Promise<string> {
-  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-tool-bin-"));
-  const ghPath = path.join(binDir, "gh");
-  await writeFile(
-    ghPath,
-    `#!/usr/bin/env node
-const { spawnSync } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-const args = process.argv.slice(2);
-
-function findRealGh() {
-  const fakeBinDir = __dirname;
-  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
-    if (dir === fakeBinDir) continue;
-    const candidate = path.join(dir, "gh");
-    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch {}
-  }
-  return null;
+interface DaemonClientConfig {
+  url: string;
+  clientId: string;
+  clientType: "cli";
+  webSocketFactory: NodeWebSocketFactory;
 }
 
-function forwardToRealGh() {
-  const realGh = findRealGh();
-  if (!realGh) { console.error("[fake-gh] real gh not found in PATH"); process.exit(1); }
-  const result = spawnSync(realGh, process.argv.slice(2), { stdio: "inherit", env: process.env });
-  process.exit(result.status ?? 1);
+interface PairingDaemonClient {
+  connect(): Promise<void>;
+  close(): Promise<void>;
+  getDaemonPairingOffer(): Promise<{
+    relayEnabled: boolean;
+    url: string;
+  }>;
 }
 
-if (args[0] === "auth" && args[1] === "status") {
-  process.exit(0);
-}
-
-if (args[0] === "pr" && args[1] === "list") {
-  console.log(JSON.stringify([
-    {
-      number: 515,
-      title: "Review selected start ref",
-      url: "https://github.com/getpaseo/paseo/pull/515",
-      state: "OPEN",
-      body: "Fixture pull request for app e2e.",
-      labels: [],
-      baseRefName: "main",
-      headRefName: "feature/start-from-pr"
-    }
-  ]));
-  process.exit(0);
-}
-
-if (args[0] === "pr" && args[1] === "view" && args[2] === "--json" && args[3]) {
-  const fixture = path.join(process.cwd(), ".paseo-e2e-pr.json");
-  if (fs.existsSync(fixture)) {
-    console.log(fs.readFileSync(fixture, "utf8"));
-    process.exit(0);
-  }
-  forwardToRealGh();
-}
-
-if (args[0] === "api" && args[1] === "graphql") {
-  const fixture = path.join(process.cwd(), ".paseo-e2e-timeline.json");
-  if (fs.existsSync(fixture)) {
-    console.log(fs.readFileSync(fixture, "utf8"));
-    process.exit(0);
-  }
-  forwardToRealGh();
-}
-
-if (args[0] === "issue" && args[1] === "list") {
-  console.log("[]");
-  process.exit(0);
-}
-
-forwardToRealGh();
-`,
-  );
-  await chmod(ghPath, 0o755);
+async function createFakeEditorBin(): Promise<string> {
+  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-editor-bin-"));
 
   const fakeEditorSource = `#!/usr/bin/env node
 const fs = require("fs");
@@ -343,29 +289,29 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   return offer as OfferPayload;
 }
 
-function loadPairingOfferFromCli(repoRoot: string, paseoHomePath: string): OfferPayload {
-  const stdout = execFileSync(
-    process.execPath,
-    ["--import", "tsx", "packages/cli/src/index.ts", "daemon", "pair", "--json"],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        PASEO_HOME: paseoHomePath,
-      },
-      encoding: "utf8",
-    },
-  );
-  const payload = JSON.parse(stdout) as { relayEnabled?: boolean; url?: string | null };
-  if (payload.relayEnabled !== true || typeof payload.url !== "string") {
-    throw new Error(`Unexpected daemon pair response: ${stdout}`);
+async function loadPairingOfferFromDaemon(port: number): Promise<OfferPayload> {
+  const DaemonClient = await loadDaemonClientConstructor<DaemonClientConfig, PairingDaemonClient>();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${port}/ws`,
+    clientId: `playwright-global-setup-${randomUUID()}`,
+    clientType: "cli",
+    webSocketFactory: createNodeWebSocketFactory(),
+  });
+
+  await client.connect();
+  try {
+    const pairing = await client.getDaemonPairingOffer();
+    if (!pairing.relayEnabled || !pairing.url) {
+      throw new Error("Daemon returned a disabled pairing offer");
+    }
+    return decodeOfferFromFragmentUrl(pairing.url);
+  } finally {
+    await client.close().catch(() => {});
   }
-  return decodeOfferFromFragmentUrl(payload.url);
 }
 
-async function waitForPairingOfferFromCli(args: {
-  repoRoot: string;
-  paseoHome: string;
+async function waitForPairingOfferFromDaemon(args: {
+  port: number;
   timeoutMs?: number;
 }): Promise<OfferPayload> {
   const timeoutMs = args.timeoutMs ?? 15000;
@@ -374,7 +320,7 @@ async function waitForPairingOfferFromCli(args: {
 
   while (Date.now() - start < timeoutMs) {
     try {
-      return loadPairingOfferFromCli(args.repoRoot, args.paseoHome);
+      return await loadPairingOfferFromDaemon(args.port);
     } catch (error) {
       lastError = error;
       await sleep(100);
@@ -382,7 +328,7 @@ async function waitForPairingOfferFromCli(args: {
   }
 
   throw new Error(
-    `Timed out waiting for \`paseo daemon pair --json\` to produce a pairing offer: ${
+    `Timed out waiting for daemon pairing offer: ${
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
@@ -629,7 +575,7 @@ interface DaemonSpawnArgs {
   relayPort: number;
   metroPort: number;
   paseoHome: string;
-  fakeToolBinDir: string;
+  fakeEditorBinDir: string;
   editorRecordPath: string;
   dictation: DictationConfig;
   buffer: ReturnType<typeof createLineBuffer>;
@@ -644,7 +590,7 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     cwd: serverDir,
     env: {
       ...process.env,
-      PATH: `${args.fakeToolBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${args.fakeEditorBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
       PASEO_HOME: args.paseoHome,
       PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
       PASEO_SERVER_ID: "srv_e2e_test_daemon",
@@ -710,9 +656,9 @@ async function performCleanup(shouldRemovePaseoHome: boolean): Promise<void> {
   } else if (paseoHome) {
     console.log(`[e2e] Preserving PASEO_HOME: ${paseoHome}`);
   }
-  if (fakeToolBinDir) {
-    await rm(fakeToolBinDir, { recursive: true, force: true });
-    fakeToolBinDir = null;
+  if (fakeEditorBinDir) {
+    await rm(fakeEditorBinDir, { recursive: true, force: true });
+    fakeEditorBinDir = null;
   }
 }
 
@@ -727,7 +673,7 @@ export default async function globalSetup() {
   const shouldRemovePaseoHome = !requestedPaseoHome && process.env.E2E_KEEP_PASEO_HOME !== "1";
   paseoHome = requestedPaseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-")));
   const editorRecordPath = path.join(paseoHome, "editor-open-records.jsonl");
-  fakeToolBinDir = await createFakeToolBin();
+  fakeEditorBinDir = await createFakeEditorBin();
   const metroLineBuffer = createLineBuffer();
   const daemonLineBuffer = createLineBuffer();
 
@@ -745,7 +691,7 @@ export default async function globalSetup() {
       relayPort,
       metroPort,
       paseoHome,
-      fakeToolBinDir,
+      fakeEditorBinDir,
       editorRecordPath,
       dictation,
       buffer: daemonLineBuffer,
@@ -765,9 +711,8 @@ export default async function globalSetup() {
       }),
     ]);
 
-    const offer = await waitForPairingOfferFromCli({
-      repoRoot,
-      paseoHome,
+    const offer = await waitForPairingOfferFromDaemon({
+      port,
     });
 
     process.env.E2E_DAEMON_PORT = String(port);

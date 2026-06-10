@@ -26,6 +26,7 @@ import {
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
+  summarizeACPRequestError,
 } from "./acp-agent.js";
 import {
   COPILOT_ALLOW_ALL_MODE_ID,
@@ -48,6 +49,7 @@ interface ACPSessionInternals {
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
+  acpMcpServers(): unknown[];
 }
 
 interface ACPModelSelectionInternals {
@@ -1486,11 +1488,13 @@ describe("ACPAgentSession slash commands", () => {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
         argumentHint: "",
+        kind: "command",
       },
       {
         name: "create_plan",
         description: "Draft a plan for the requested work",
         argumentHint: "",
+        kind: "command",
       },
     ]);
 
@@ -1499,17 +1503,65 @@ describe("ACPAgentSession slash commands", () => {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
         argumentHint: "",
+        kind: "command",
       },
       {
         name: "create_plan",
         description: "Draft a plan for the requested work",
         argumentHint: "",
+        kind: "command",
       },
     ]);
   });
 });
 
 describe("ACPAgentSession", () => {
+  test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
+    const session = new ACPAgentSession(
+      {
+        provider: "no-mcp-acp",
+        cwd: "/tmp/paseo-acp-test",
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+        },
+      },
+      {
+        provider: "no-mcp-acp",
+        logger: createTestLogger(),
+        defaultCommand: ["no-mcp-acp", "serve"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: false,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+
+    expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
+  });
+
+  test("summarizes JSON-RPC error details without stringifying objects", () => {
+    const summary = summarizeACPRequestError(
+      new RequestError(-32603, "Internal error", {
+        details: "Droid process exited unexpectedly (exit code 1)",
+      }),
+    );
+
+    expect(summary).toMatchObject({
+      message: "Internal error: Droid process exited unexpectedly (exit code 1)",
+      code: "-32603",
+    });
+    expect(summary.message).not.toContain("[object Object]");
+    expect(summary.diagnostic).toContain("Droid process exited unexpectedly");
+  });
+
   test("accepts ACP extension notifications without failing the JSON-RPC connection", async () => {
     const logger = createTestLogger();
     const trace = vi.spyOn(logger, "trace");

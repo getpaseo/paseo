@@ -95,6 +95,7 @@ export interface ComboboxProps {
    */
   header?: SheetHeader;
   mobileChildrenScrollEnabled?: boolean;
+  presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   desktopPlacement?: "top-start" | "bottom-start";
@@ -965,6 +966,7 @@ interface MobileBodyProps {
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
+  presentation?: "push" | "replace";
   searchResetKey: number;
   searchPlaceholder: string;
   searchQuery: string;
@@ -1024,6 +1026,7 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       handleIndicatorStyle={props.handleIndicatorStyle}
       keyboardBehavior="extend"
       keyboardBlurBehavior="none"
+      presentation={props.presentation}
     >
       {props.header ? (
         <SheetHeaderView header={props.header} onClose={props.onClose} />
@@ -1248,6 +1251,7 @@ export function Combobox({
   title = "Select",
   header,
   mobileChildrenScrollEnabled = true,
+  presentation,
   open,
   onOpenChange,
   desktopPlacement = "top-start",
@@ -1534,6 +1538,7 @@ export function Combobox({
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
+        presentation={presentation}
         searchResetKey={searchResetKey}
         searchPlaceholder={effectiveSearchPlaceholder}
         searchQuery={searchQuery}

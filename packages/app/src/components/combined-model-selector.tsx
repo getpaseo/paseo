@@ -63,8 +63,6 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 
-// TODO: this should be configured per provider in the provider manifest
-const PROVIDERS_WITH_MODEL_DESCRIPTIONS = new Set(["opencode", "pi"]);
 const DESKTOP_PROVIDER_VIEW_MIN_HEIGHT = 220;
 const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
 const DESKTOP_PROVIDER_VIEW_BASE_HEIGHT = 80;
@@ -198,12 +196,10 @@ function ModelRow({
     ],
   );
 
-  const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
-
   return (
     <ComboboxItem
       label={row.modelLabel}
-      description={showDescription ? row.description : undefined}
+      description={row.description}
       selected={isSelected}
       elevated={elevated}
       onPress={onPress}
@@ -685,10 +681,6 @@ export function CombinedModelSelector({
     handleOpenChange(!isOpen);
   }, [handleOpenChange, isOpen]);
 
-  const handleClose = useCallback(() => {
-    handleOpenChange(false);
-  }, [handleOpenChange]);
-
   const triggerStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.trigger,
@@ -714,11 +706,10 @@ export function CombinedModelSelector({
     setSearchQuery(value);
   }, []);
 
-  const openHeaderProviderSettings = useCallback(() => {
+  const openProviderSettings = useCallback(() => {
     if (!serverId || view.kind !== "provider") return;
     useProviderSettingsStore.getState().open({ serverId, provider: view.providerId });
-    handleClose();
-  }, [serverId, view, handleClose]);
+  }, [serverId, view]);
 
   const sheetHeader = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
@@ -727,7 +718,7 @@ export function CombinedModelSelector({
     const ProviderIconForView = getProviderIcon(view.providerId);
     const headerActions = (
       <Pressable
-        onPress={openHeaderProviderSettings}
+        onPress={openProviderSettings}
         disabled={!serverId}
         hitSlop={8}
         style={iconButtonStyle}
@@ -760,7 +751,7 @@ export function CombinedModelSelector({
     view,
     singleProviderView,
     serverId,
-    openHeaderProviderSettings,
+    openProviderSettings,
     theme.colors.border,
     theme.colors.foregroundMuted,
     handleBackToAll,

@@ -12,6 +12,7 @@ import {
   BottomSheetTextInput,
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
+import Animated from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/composer/types";
@@ -232,14 +233,14 @@ function SheetBackground({ style }: BottomSheetBackgroundProps) {
     () => [
       style,
       {
-        backgroundColor: theme.colors.surface1,
-        borderTopLeftRadius: theme.borderRadius.xl,
-        borderTopRightRadius: theme.borderRadius.xl,
+        backgroundColor: theme.colors.surface0,
+        borderTopLeftRadius: theme.borderRadius["2xl"],
+        borderTopRightRadius: theme.borderRadius["2xl"],
       },
     ],
-    [style, theme.colors.surface1, theme.borderRadius.xl],
+    [style, theme.colors.surface0, theme.borderRadius],
   );
-  return <View style={combinedStyle} />;
+  return <Animated.View pointerEvents="none" style={combinedStyle} />;
 }
 
 export type AdaptiveTextInputProps = TextInputProps & {
@@ -444,6 +445,7 @@ export interface AdaptiveModalSheetProps {
   /** When provided, wraps the card content in a FileDropZone. */
   onFilesDropped?: (files: ImageAttachment[]) => void;
   scrollable?: boolean;
+  presentation?: "push" | "replace";
 }
 
 export function AdaptiveModalSheet({
@@ -457,6 +459,7 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   onFilesDropped,
   scrollable = true,
+  presentation,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
@@ -501,8 +504,8 @@ export function AdaptiveModalSheet({
     [compactSafeAreaPadding.footerPaddingBottom],
   );
   const handleIndicatorStyle = useMemo(
-    () => ({ backgroundColor: theme.colors.surface2 }),
-    [theme.colors.surface2],
+    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
+    [theme.colors.palette.zinc],
   );
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible,
@@ -543,6 +546,7 @@ export function AdaptiveModalSheet({
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
         accessible={false}
+        presentation={presentation}
       >
         <SheetHeaderView header={header} onClose={onClose} testID={testID} />
         {scrollable ? (

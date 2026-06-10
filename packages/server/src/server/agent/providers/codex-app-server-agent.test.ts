@@ -534,6 +534,37 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("initializes Codex app-server without making Paseo the request originator", async () => {
+    let initializeParams: unknown;
+    const appServer = createFakeCodexAppServer({
+      initialize: (params) => {
+        initializeParams = params;
+        return {};
+      },
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+
+    expect(initializeParams).toEqual({
+      clientInfo: {
+        name: "codex_app_server_daemon",
+        title: "Codex App Server Daemon",
+        version: "0.0.0",
+      },
+      capabilities: { experimentalApi: true },
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds the conversation to a freshly emitted Codex user message id", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -694,6 +725,7 @@ describe("Codex app-server provider", () => {
         name: "shipper",
         description: "Ship changes carefully.",
         argumentHint: "",
+        kind: "skill",
       });
       expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
     } finally {
@@ -952,6 +984,7 @@ describe("Codex app-server provider", () => {
         name: "paseo",
         description: "Shared orchestration skill.",
         argumentHint: "",
+        kind: "skill",
       },
     ]);
   });
@@ -1859,6 +1892,7 @@ describe("Codex app-server provider", () => {
       name: "compact",
       description: "Summarize conversation to prevent hitting the context limit",
       argumentHint: "",
+      kind: "command",
     });
 
     const handler = session.tryHandleOutOfBand?.("/compact");
@@ -2637,8 +2671,8 @@ describe("Codex app-server provider", () => {
   });
 });
 
-describe("Codex persisted sessions", () => {
-  test("listPersistedAgents uses thread list metadata without hydrating thread history", async () => {
+describe("Codex importable sessions", () => {
+  test("listImportableSessions uses thread list metadata without hydrating thread history", async () => {
     const allThreads = [
       {
         id: "thread-a1",
@@ -2691,19 +2725,33 @@ describe("Codex persisted sessions", () => {
       return child;
     };
 
-    const descriptors = await provider.listPersistedAgents({ cwd: "/workspace/project-a" });
+    const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
 
-    expect(descriptors.map((d) => d.sessionId).sort()).toEqual(["thread-a1", "thread-a2"]);
-    expect(descriptors.every((d) => d.cwd === "/workspace/project-a")).toBe(true);
-    expect(descriptors[0]).toEqual(
+    expect(sessions.map((session) => session.providerHandleId).sort()).toEqual([
+      "thread-a1",
+      "thread-a2",
+    ]);
+    expect(sessions.every((session) => session.cwd === "/workspace/project-a")).toBe(true);
+    expect(sessions[0]).toEqual(
       expect.objectContaining({
-        sessionId: "thread-a1",
+        providerHandleId: "thread-a1",
         title: "Named first A session",
-        timeline: [{ type: "user_message", text: "First A session" }],
+        firstPromptPreview: "First A session",
+        lastPromptPreview: "First A session",
       }),
     );
     expect(calls).toEqual([
-      { method: "initialize", params: expect.any(Object) },
+      {
+        method: "initialize",
+        params: {
+          clientInfo: {
+            name: "codex_app_server_daemon",
+            title: "Codex App Server Daemon",
+            version: "0.0.0",
+          },
+          capabilities: { experimentalApi: true },
+        },
+      },
       { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
     ]);
   });

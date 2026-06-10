@@ -20,13 +20,15 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  ImportableProviderSession,
+  ImportProviderSessionContext,
+  ImportProviderSessionInput,
   ListModesOptions,
   ListModelsOptions,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../provider-session-import.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
@@ -38,6 +40,7 @@ const MOCK_LOAD_TEST_INTERVAL_MS = 40;
 const CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: false,
   supportsMcpServers: false,
   supportsReasoningStream: true,
@@ -427,10 +430,17 @@ export class MockLoadTestAgentClient implements AgentClient {
     return getAgentProviderDefinition(MOCK_LOAD_TEST_PROVIDER_ID).modes;
   }
 
-  async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(): Promise<ImportableProviderSession[]> {
     return [];
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    return importSessionFromPersistence({
+      provider: MOCK_LOAD_TEST_PROVIDER_ID,
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
+    });
   }
 
   async isAvailable(): Promise<boolean> {

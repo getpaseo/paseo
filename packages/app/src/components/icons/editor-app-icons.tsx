@@ -15,6 +15,7 @@ const EDITOR_APP_IMAGES: Record<string, ImageSourcePropType> = {
   vscode: require("../../../assets/images/editor-apps/vscode.png"),
   webstorm: require("../../../assets/images/editor-apps/webstorm.png"),
   zed: require("../../../assets/images/editor-apps/zed.png"),
+  antigravity: require("../../../assets/images/editor-apps/antigravity.png"),
   finder: require("../../../assets/images/editor-apps/finder.png"),
   explorer: require("../../../assets/images/editor-apps/file-explorer.png"),
   "file-manager": require("../../../assets/images/editor-apps/file-explorer.png"),

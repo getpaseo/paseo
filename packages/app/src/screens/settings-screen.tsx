@@ -523,7 +523,7 @@ function DesktopAppUpdateRow() {
       if (!isDesktopApp) {
         return undefined;
       }
-      void checkForUpdates({ silent: true });
+      void checkForUpdates({ intent: "automatic", silent: true });
       return undefined;
     }, [checkForUpdates, isDesktopApp]),
   );
@@ -996,11 +996,12 @@ function SettingsSidebar({
   const insets = useSafeAreaInsets();
   const padding = useWindowControlsPadding("sidebar");
   const isDesktop = layout === "desktop";
-  const containerStyle = useMemo(
-    () => [
-      isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer,
-      isDesktop ? { paddingTop: insets.top } : null,
-    ],
+  const outerContainerStyle = useMemo(
+    () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
+    [isDesktop],
+  );
+  const innerContainerStyle = useMemo(
+    () => [{ flex: 1 }, isDesktop ? { paddingTop: insets.top } : null],
     [insets.top, isDesktop],
   );
   const selectedSectionId = view.kind === "section" ? view.section : null;
@@ -1008,22 +1009,8 @@ function SettingsSidebar({
   const isProjectsSelected = view.kind === "projects" || view.kind === "project";
   const paddingTopStyle = useMemo(() => ({ height: padding.top }), [padding.top]);
 
-  return (
-    <View style={containerStyle} testID="settings-sidebar">
-      {isDesktop ? (
-        <>
-          <TitlebarDragRegion />
-          {padding.top > 0 ? <View style={paddingTopStyle} /> : null}
-        </>
-      ) : null}
-      {isDesktop ? (
-        <SidebarHeaderRow
-          icon={ArrowLeft}
-          label="Back"
-          onPress={onBackToWorkspace}
-          testID="settings-back-to-workspace"
-        />
-      ) : null}
+  const sidebarBody = (
+    <>
       <View style={sidebarStyles.list}>
         <Text style={sidebarStyles.groupLabel}>App</Text>
         {items.map((item) => (
@@ -1078,6 +1065,30 @@ function SettingsSidebar({
             </Text>
           </Pressable>
         </View>
+      )}
+    </>
+  );
+
+  return (
+    <View style={outerContainerStyle} testID="settings-sidebar">
+      {isDesktop ? (
+        <View style={innerContainerStyle}>
+          <View style={sidebarStyles.sidebarDragArea}>
+            <TitlebarDragRegion />
+            {padding.top > 0 ? <View style={paddingTopStyle} /> : null}
+            <SidebarHeaderRow
+              icon={ArrowLeft}
+              label="Back"
+              onPress={onBackToWorkspace}
+              testID="settings-back-to-workspace"
+            />
+          </View>
+          <ScrollView style={sidebarStyles.scrollBody} showsVerticalScrollIndicator={false}>
+            {sidebarBody}
+          </ScrollView>
+        </View>
+      ) : (
+        sidebarBody
       )}
     </View>
   );
@@ -1629,6 +1640,12 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
+  },
+  scrollBody: {
+    flex: 1,
+  },
+  sidebarDragArea: {
+    position: "relative",
   },
   mobileContainer: {
     paddingVertical: theme.spacing[2],

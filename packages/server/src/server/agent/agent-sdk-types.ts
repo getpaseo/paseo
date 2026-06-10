@@ -15,6 +15,11 @@ export interface McpStdioServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /**
+   * When true, all tools from this server are always included in the prompt
+   * and never deferred behind tool search. Honored by the Claude provider.
+   */
+  alwaysLoad?: boolean;
 }
 
 /**
@@ -24,6 +29,11 @@ export interface McpHttpServerConfig {
   type: "http";
   url: string;
   headers?: Record<string, string>;
+  /**
+   * When true, all tools from this server are always included in the prompt
+   * and never deferred behind tool search. Honored by the Claude provider.
+   */
+  alwaysLoad?: boolean;
 }
 
 /**
@@ -33,6 +43,11 @@ export interface McpSseServerConfig {
   type: "sse";
   url: string;
   headers?: Record<string, string>;
+  /**
+   * When true, all tools from this server are always included in the prompt
+   * and never deferred behind tool search. Honored by the Claude provider.
+   */
+  alwaysLoad?: boolean;
 }
 
 /**
@@ -147,6 +162,7 @@ export type AgentFeature = AgentFeatureToggle | AgentFeatureSelect;
 export interface AgentCapabilityFlags {
   supportsStreaming: boolean;
   supportsSessionPersistence: boolean;
+  supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
   supportsReasoningStream: boolean;
@@ -466,6 +482,8 @@ export interface AgentRuntimeInfo {
   extra?: AgentMetadata;
 }
 
+export type AgentSlashCommandKind = "command" | "skill";
+
 /**
  * Represents a slash command available in an agent session.
  * Commands are executed by sending them as prompts with / prefix.
@@ -474,27 +492,48 @@ export interface AgentSlashCommand {
   name: string;
   description: string;
   argumentHint: string;
+  kind?: AgentSlashCommandKind;
 }
 
-export interface ListPersistedAgentsOptions {
+export interface ListImportableSessionsOptions {
   limit?: number;
   /**
-   * Optional cwd hint. Providers that can cheaply pre-filter persisted
-   * sessions by working directory should do so before doing expensive
-   * work like fetching turn timelines. Providers that can't filter
-   * cheaply may ignore this hint.
+   * Optional cwd hint. Providers that can cheaply pre-filter importable
+   * sessions by working directory should do so before doing expensive work.
    */
   cwd?: string;
 }
 
-export interface PersistedAgentDescriptor {
-  provider: AgentProvider;
-  sessionId: string;
+export interface ImportableProviderSession {
+  providerHandleId: string;
   cwd: string;
   title: string | null;
+  firstPromptPreview: string | null;
+  lastPromptPreview: string | null;
   lastActivityAt: Date;
+}
+
+export interface ImportProviderSessionInput {
+  providerHandleId: string;
+  cwd: string;
+}
+
+export interface ImportProviderSessionContext {
+  config: AgentSessionConfig;
+  storedConfig: AgentSessionConfig;
+  launchContext?: AgentLaunchContext;
+}
+
+export interface ImportedTimelineEntry {
+  item: AgentTimelineItem;
+  timestamp?: string;
+}
+
+export interface ImportedProviderSession {
+  session: AgentSession;
+  config: AgentSessionConfig;
   persistence: AgentPersistenceHandle;
-  timeline: AgentTimelineItem[];
+  timeline: ImportedTimelineEntry[];
 }
 
 export interface AgentSessionConfig {
@@ -622,7 +661,13 @@ export interface AgentClient {
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
   listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
-  listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
+  listImportableSessions?(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]>;
+  importSession?(
+    input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession>;
   /**
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.

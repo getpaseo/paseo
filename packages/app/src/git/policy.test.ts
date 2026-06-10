@@ -49,7 +49,7 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
     aheadOfOrigin: 0,
     behindOfOrigin: 0,
     shouldPromoteArchive: false,
-    shipDefault: "merge",
+    shipDefault: "pr",
     runtime: {
       commit: {
         disabled: false,
@@ -166,6 +166,25 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("keeps push available for a no-upstream Paseo worktree with local commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+      }),
+    );
+    const pushAction = actions.secondary.find((action) => action.id === "push");
+
+    expect(pushAction).toMatchObject({
+      disabled: false,
+      unavailableMessage: undefined,
+    });
+  });
+
   it("shows update-from-base only on feature branches that are behind the base branch", () => {
     const actions = buildGitActions(
       createInput({
@@ -249,6 +268,38 @@ describe("git-actions-policy", () => {
       label: "Pull and push",
       disabled: false,
       unavailableMessage: undefined,
+    });
+  });
+
+  it("keeps pull-and-push unavailable when the branch only has outgoing commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        aheadOfOrigin: 2,
+        behindOfOrigin: 0,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action).toMatchObject({
+      label: "Pull and push",
+      unavailableMessage: expect.any(String),
+    });
+  });
+
+  it("keeps pull-and-push unavailable when the branch only has incoming commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        aheadOfOrigin: 0,
+        behindOfOrigin: 2,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action).toMatchObject({
+      label: "Pull and push",
+      unavailableMessage: expect.any(String),
     });
   });
 
@@ -387,13 +438,31 @@ describe("git-actions-policy", () => {
     });
   });
 
-  it("promotes local merge over update-from-base", () => {
+  it("promotes Create PR over push and local merge when PR is the ship default", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        aheadOfOrigin: 2,
+        behindBaseCount: 3,
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({
+      id: "pr",
+      label: "Create PR",
+    });
+  });
+
+  it("uses local merge when merge is the stored ship default", () => {
     const actions = buildGitActions(
       createInput({
         hasRemote: true,
         isOnBaseBranch: false,
         aheadCount: 2,
         behindBaseCount: 3,
+        shipDefault: "merge",
       }),
     );
 
@@ -665,7 +734,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
-    expect(actions.primary).toMatchObject({ id: "merge-branch", label: "Merge locally" });
+    expect(actions.primary).toMatchObject({ id: "pr", label: "View PR" });
     expect(actions.secondary.some((action) => action.id.startsWith("enable-pr-auto-merge"))).toBe(
       false,
     );
@@ -766,7 +835,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
-    expect(actions.primary).toMatchObject({ id: "merge-branch", label: "Merge locally" });
+    expect(actions.primary).toMatchObject({ id: "pr", label: "View PR" });
     expect(
       actions.secondary.some((action) =>
         ["merge-pr-squash", "merge-pr-merge", "merge-pr-rebase"].includes(action.id),
