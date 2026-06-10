@@ -147,6 +147,51 @@
           },
           "additionalProperties": false
         },
+        "worktree": {
+          "description": "Per-project worktree lifecycle hooks, defined in each project's paseo.json. For multi-repo projects (multi_git), the workspace root contains all sub-repo worktrees as named subdirectories matching their original folder names.",
+          "type": "object",
+          "properties": {
+            "setup": {
+              "description": "Shell command(s) to run after a worktree is created. For single-repo projects, runs from the worktree root. For multi-repo projects, runs from the workspace root that contains each sub-repo as a named subdirectory — e.g. \"cd frontend && npm install\" or \"cd backend && pip install -r requirements.txt\".",
+              "examples": [
+                "npm ci",
+                "cd frontend && npm install",
+                "cd backend && pip install -r requirements.txt"
+              ],
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "teardown": {
+              "description": "Shell command(s) to run before a worktree is deleted. For single-repo projects, runs from the worktree root. For multi-repo projects, runs from the workspace root that contains each sub-repo as a named subdirectory.",
+              "examples": [
+                "docker compose down",
+                "cd frontend && rm -rf node_modules",
+                "cd backend && deactivate"
+              ],
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
         "providers": {
           "type": "object",
           "properties": {

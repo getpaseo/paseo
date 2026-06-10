@@ -22,9 +22,27 @@ export const PaseoScriptEntryRawSchema = z
   })
   .passthrough();
 
+/**
+ * Per-project worktree lifecycle configuration.
+ *
+ * For single-repo projects, setup/teardown commands run from the worktree root.
+ *
+ * For multi-repo projects (multi_git), a workspace root directory is created that
+ * contains each sub-repo's worktree as a named subdirectory matching the original
+ * folder name. setup/teardown commands run from that workspace root, so you can
+ * install dependencies across multiple repos in a single script, e.g.:
+ *   "cd frontend && npm install"
+ *   "cd backend && pip install -r requirements.txt"
+ */
 export const PaseoWorktreeConfigRawSchema = z
   .object({
+    /** Shell command(s) to run after a worktree is created. For multi-repo projects,
+     *  runs from the workspace root which contains all sub-repo worktrees as named
+     *  subdirectories (e.g. `cd frontend && npm install`). */
     setup: PaseoLifecycleCommandRawSchema.optional(),
+    /** Shell command(s) to run before a worktree is deleted. For multi-repo projects,
+     *  runs from the workspace root which contains all sub-repo worktrees as named
+     *  subdirectories. */
     teardown: PaseoLifecycleCommandRawSchema.optional(),
     terminals: z.unknown().optional(),
   })
