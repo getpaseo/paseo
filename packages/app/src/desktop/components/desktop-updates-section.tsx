@@ -337,7 +337,7 @@ export function LocalDaemonSection() {
       ? t("desktop.daemon.status.running")
       : t("desktop.daemon.status.notRunning"));
   const daemonStatusDetailText = t("desktop.daemon.status.pid", {
-    pid: daemonStatus?.pid ? daemonStatus.pid : "-",
+    pid: daemonStatus?.pid ? daemonStatus.pid : "—",
   });
   const isDaemonManagementPaused = !daemonSettings.manageBuiltInDaemon;
 
