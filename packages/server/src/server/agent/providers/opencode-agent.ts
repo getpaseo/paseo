@@ -38,16 +38,19 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
   type ListModelsOptions,
   type ListModesOptions,
-  type ListPersistedAgentsOptions,
   type McpServerConfig,
-  type PersistedAgentDescriptor,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -84,6 +87,7 @@ import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: true,
   supportsReasoningStream: true,
@@ -252,8 +256,18 @@ const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
 const OPENCODE_METADATA_CONCURRENCY = 4;
 const openCodeMetadataLimit = pLimit(OPENCODE_METADATA_CONCURRENCY);
 const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
-  { name: "compact", description: "Compact the current session", argumentHint: "" },
-  { name: "summarize", description: "Compact the current session", argumentHint: "" },
+  {
+    name: "compact",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
+  {
+    name: "summarize",
+    description: "Compact the current session",
+    argumentHint: "",
+    kind: "command",
+  },
 ];
 const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
   "headers timeout",
@@ -897,10 +911,10 @@ function buildOpenCodeUserTimelineText(prompt: AgentPromptInput): string {
     .join("\n");
 }
 
-async function collectOpenCodePersistedAgentsFromSdk(
-  client: Pick<OpencodeClient, "experimental" | "session">,
-  options?: ListPersistedAgentsOptions,
-): Promise<PersistedAgentDescriptor[]> {
+async function collectOpenCodeImportableSessionsFromSdk(
+  client: Pick<OpencodeClient, "experimental">,
+  options?: ListImportableSessionsOptions,
+): Promise<ImportableProviderSession[]> {
   const limit = options?.limit ?? OPENCODE_PERSISTED_SESSION_LIMIT;
   const sessionListLimit = options?.cwd ? Math.max(limit, OPENCODE_PERSISTED_SESSION_LIMIT) : limit;
   const response = await client.experimental.session.list({
@@ -913,46 +927,19 @@ async function collectOpenCodePersistedAgentsFromSdk(
     throw new Error(`Failed to list OpenCode sessions: ${JSON.stringify(response.error)}`);
   }
 
-  const sessions = response.data ?? [];
   const matchesCwd = options?.cwd ? createPathEquivalenceMatcher(options.cwd) : null;
-  const candidates = sessions
+  return (response.data ?? [])
     .filter((session) => !matchesCwd || matchesCwd(session.directory))
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
-    .slice(0, limit);
-
-  return await Promise.all(
-    candidates.map((session) => buildOpenCodePersistedAgentDescriptor(client, session)),
-  );
-}
-
-async function buildOpenCodePersistedAgentDescriptor(
-  client: Pick<OpencodeClient, "session">,
-  session: OpenCodePersistedSession,
-): Promise<PersistedAgentDescriptor> {
-  const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
-  const timeline = buildOpenCodeSessionTimeline(messages);
-  const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
-  const model = resolveOpenCodePersistedSessionModel(session, messages);
-  return {
-    provider: "opencode",
-    sessionId: session.id,
-    cwd: session.directory,
-    title: normalizeOpenCodeSessionTitle(session.title),
-    lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
-    persistence: {
-      provider: "opencode",
-      sessionId: session.id,
-      nativeHandle: session.id,
-      metadata: {
-        provider: "opencode",
-        cwd: session.directory,
-        title: normalizeOpenCodeSessionTitle(session.title),
-        ...(modeId ? { modeId } : {}),
-        ...(model ? { model } : {}),
-      },
-    },
-    timeline,
-  };
+    .slice(0, limit)
+    .map((session) => ({
+      providerHandleId: session.id,
+      cwd: session.directory,
+      title: normalizeOpenCodeSessionTitle(session.title),
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
+    }));
 }
 
 function normalizeOpenCodeSessionTitle(title: string | null | undefined): string | null {
@@ -1488,9 +1475,9 @@ export class OpenCodeAgentClient implements AgentClient {
     return [buildOpenCodeAutoAcceptFeature(this.assertConfig(config))];
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
     const acquisition = await this.runtime.acquireServer({ force: false });
     const { url } = acquisition.server;
     const client = this.runtime.createClient({
@@ -1499,7 +1486,43 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      return await collectOpenCodePersistedAgentsFromSdk(client, options);
+      return await collectOpenCodeImportableSessionsFromSdk(client, options);
+    } finally {
+      acquisition.release();
+    }
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    const acquisition = await this.runtime.acquireServer({ force: false });
+    const { url } = acquisition.server;
+    const client = this.runtime.createClient({
+      baseUrl: url,
+      directory: input.cwd,
+    });
+
+    try {
+      const sessionResponse = await client.session.get({
+        sessionID: input.providerHandleId,
+        directory: input.cwd,
+      });
+      if (sessionResponse.error || !sessionResponse.data) {
+        throw new Error(`Failed to load OpenCode session ${input.providerHandleId}`);
+      }
+      const session = sessionResponse.data;
+      const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
+      const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
+      const model = resolveOpenCodePersistedSessionModel(session, messages);
+      return await importSessionFromPersistence({
+        provider: "opencode",
+        request: input,
+        context,
+        resumeSession: this.resumeSession.bind(this),
+        config: {
+          title: normalizeOpenCodeSessionTitle(session.title) ?? undefined,
+          ...(modeId ? { modeId } : {}),
+          ...(model ? { model } : {}),
+        },
+      });
     } finally {
       acquisition.release();
     }
@@ -1720,6 +1743,7 @@ async function listOpenCodeCommandsFromSdk(
       name: cmd.name,
       description: cmd.description ?? "",
       argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+      kind: cmd.source === "skill" ? "skill" : "command",
     });
   }
 

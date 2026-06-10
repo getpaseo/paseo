@@ -3305,7 +3305,6 @@ export class Session {
         logger: this.sessionLogger,
       });
       await this.registerWorkspaceForImportedAgent(snapshot.cwd);
-      await this.forwardAgentUpdate(snapshot);
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
         type: "status",

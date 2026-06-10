@@ -28,6 +28,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Autohand Code](https://www.autohand.ai/cli/), Autohand AI's coding agent.
 - [Cline](https://cline.bot/cli), autonomous coding agent.
 - [Codebuddy Code](https://www.codebuddy.cn/cli/), Tencent Cloud's coding tool.
+- [CodeWhale](https://codewhale.net/), terminal coding agent for DeepSeek V4 and open models.
 - [Cortex Code](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-cli), Snowflake's coding agent.
 - [Corust Agent](https://github.com/Corust-ai/corust-agent-release/releases), Rust-focused coding partner.
 - [crow-cli](https://crow-ai.dev/), minimal ACP-native coding agent.

@@ -3,15 +3,12 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import type {
-  AgentPersistenceHandle,
-  AgentTimelineItem,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
+  ImportableProviderSession,
+  ListImportableSessionsOptions,
 } from "../../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import { createRealpathAwarePathMatcher } from "../../../../utils/path.js";
 
-const PI_PROVIDER = "pi";
 const PI_CONFIG_DIR_NAME = ".pi";
 const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
@@ -19,8 +16,7 @@ const HEAD_BYTES = 64 * 1024;
 const TAIL_BYTES = 256 * 1024;
 const FULL_SCAN_LINE_LIMIT = 2_000;
 
-interface PiSessionDescriptorOptions extends ListPersistedAgentsOptions {
-  provider?: string;
+interface PiSessionDescriptorOptions extends ListImportableSessionsOptions {
   sessionDir?: string;
   runtimeSettings?: ProviderRuntimeSettings;
   env?: NodeJS.ProcessEnv;
@@ -39,24 +35,23 @@ interface PiSessionTail {
   lastUserMessage: string | null;
 }
 
-export async function listPiPersistedAgents(
+export async function listPiImportableSessions(
   options: PiSessionDescriptorOptions = {},
-): Promise<PersistedAgentDescriptor[]> {
-  const provider = options.provider ?? PI_PROVIDER;
+): Promise<ImportableProviderSession[]> {
   const sessionsDir = await resolvePiSessionsDir(options);
   const files = await walkJsonlFiles(sessionsDir);
   const matchesCwd = options.cwd ? createRealpathAwarePathMatcher(options.cwd) : null;
   const limit = options.limit ?? 20;
-  const descriptors: PersistedAgentDescriptor[] = [];
+  const sessions: ImportableProviderSession[] = [];
 
   for (const file of files) {
-    const descriptor = await readPiSessionDescriptor(file, provider);
-    if (!descriptor) continue;
-    if (matchesCwd && !matchesCwd(descriptor.cwd)) continue;
-    descriptors.push(descriptor);
+    const session = await readPiImportableSession(file);
+    if (!session) continue;
+    if (matchesCwd && !matchesCwd(session.cwd)) continue;
+    sessions.push(session);
   }
 
-  return descriptors
+  return sessions
     .sort((left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime())
     .slice(0, limit);
 }
@@ -157,10 +152,9 @@ async function walkJsonlFiles(root: string): Promise<string[]> {
   return files.flat();
 }
 
-async function readPiSessionDescriptor(
+async function readPiImportableSession(
   filePath: string,
-  provider: string,
-): Promise<PersistedAgentDescriptor | null> {
+): Promise<ImportableProviderSession | null> {
   const firstLine = await readFirstLine(filePath);
   if (!firstLine) return null;
   const header = parseSessionHeader(firstLine);
@@ -172,29 +166,15 @@ async function readPiSessionDescriptor(
   const title = tailInfo.title ?? headInfo.title ?? headInfo.firstUserMessage;
   const lastActivityAt =
     tailInfo.lastActivityAt ?? (await readFileMtime(filePath)) ?? header.createdAt ?? new Date(0);
-  const timeline = buildPreviewTimeline({
-    firstUserMessage: headInfo.firstUserMessage,
-    lastUserMessage: tailInfo.lastUserMessage,
-  });
-
-  const persistence: AgentPersistenceHandle = {
-    provider,
-    sessionId: header.sessionId,
-    nativeHandle: filePath,
-    metadata: {
-      provider,
-      cwd: header.cwd,
-    },
-  };
-
   return {
-    provider,
-    sessionId: header.sessionId,
+    providerHandleId: filePath,
     cwd: header.cwd,
     title,
+    firstPromptPreview: normalizePromptPreview(headInfo.firstUserMessage),
+    lastPromptPreview: normalizePromptPreview(
+      tailInfo.lastUserMessage ?? headInfo.firstUserMessage,
+    ),
     lastActivityAt,
-    persistence,
-    timeline,
   };
 }
 
@@ -326,20 +306,6 @@ async function scanSessionHead(filePath: string): Promise<{
   return { title, firstUserMessage };
 }
 
-function buildPreviewTimeline(input: {
-  firstUserMessage: string | null;
-  lastUserMessage: string | null;
-}): AgentTimelineItem[] {
-  const items: AgentTimelineItem[] = [];
-  if (input.firstUserMessage) {
-    items.push({ type: "user_message", text: input.firstUserMessage });
-  }
-  if (input.lastUserMessage && input.lastUserMessage !== input.firstUserMessage) {
-    items.push({ type: "user_message", text: input.lastUserMessage });
-  }
-  return items;
-}
-
 function parseJsonRecord(line: string): Record<string, unknown> | null {
   if (!line) return null;
   try {
@@ -356,6 +322,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizePromptPreview(text: string | null): string | null {
+  const normalized = text?.trim().replace(/\s+/g, " ") ?? "";
+  if (!normalized) return null;
+  return normalized.length > 160 ? normalized.slice(0, 160) : normalized;
 }
 
 function parseDate(value: unknown): Date | null {

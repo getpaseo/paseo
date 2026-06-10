@@ -66,6 +66,7 @@ export class TestOpenCodeClient {
     sessionCommand: [] as unknown[],
     sessionCreate: [] as unknown[],
     sessionDelete: [] as unknown[],
+    sessionGet: [] as unknown[],
     sessionMessages: [] as unknown[],
     sessionPromptAsync: [] as unknown[],
     sessionSummarize: [] as unknown[],
@@ -89,6 +90,9 @@ export class TestOpenCodeClient {
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
   sessionDeleteResponse: OpenCodeResponse = {};
+  sessionGetResponse: OpenCodeResponse = {
+    data: { id: "session-1", directory: "/workspace/repo", title: null },
+  };
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
@@ -195,6 +199,10 @@ export class TestOpenCodeClient {
         delete: async (parameters: unknown) => {
           this.calls.sessionDelete.push(parameters);
           return this.sessionDeleteResponse;
+        },
+        get: async (parameters: unknown) => {
+          this.calls.sessionGet.push(parameters);
+          return this.sessionGetResponse;
         },
         messages: async (parameters: unknown) => {
           this.calls.sessionMessages.push(parameters);

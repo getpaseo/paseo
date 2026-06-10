@@ -23,6 +23,7 @@ export interface DesktopRuntimeInfo {
 }
 
 export type DesktopReleaseChannel = "stable" | "beta";
+export type DesktopAppUpdateCheckIntent = "automatic" | "manual";
 
 export interface LocalDaemonUpdateResult {
   exitCode: number;
@@ -99,10 +100,15 @@ export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo> {
 
 export async function checkDesktopAppUpdate({
   releaseChannel,
+  intent,
 }: {
   releaseChannel: DesktopReleaseChannel;
+  intent: DesktopAppUpdateCheckIntent;
 }): Promise<DesktopAppUpdateCheckResult> {
-  const result = await invokeDesktopCommand<unknown>("check_app_update", { releaseChannel });
+  const result = await invokeDesktopCommand<unknown>("check_app_update", {
+    releaseChannel,
+    intent,
+  });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while checking desktop updates.");
   }

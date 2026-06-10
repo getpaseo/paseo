@@ -23,13 +23,17 @@ import {
   type AgentSession,
   type AgentSessionConfig,
   type AgentSlashCommand,
+  type AgentSlashCommandKind,
   type AgentStreamEvent,
   type AgentUsage,
-  type ListPersistedAgentsOptions,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ListModesOptions,
   type ListModelsOptions,
-  type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
   checkProviderLaunchAvailable,
@@ -53,7 +57,7 @@ import {
 } from "./history-mapper.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
-import { listPiPersistedAgents } from "./session-descriptor.js";
+import { listPiImportableSessions } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -101,17 +105,27 @@ const PI_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
     name: "compact",
     description: "Manually compact the session context",
     argumentHint: "[instructions]",
+    kind: "command",
   },
   {
     name: "autocompact",
     description: "Toggle automatic context compaction",
     argumentHint: "[on|off|toggle]",
+    kind: "command",
   },
 ];
+
+function mapPiCommandKind(source: PiRpcSlashCommand["source"]): AgentSlashCommandKind {
+  if (source === "skill") {
+    return "skill";
+  }
+  return "command";
+}
 
 const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: false,
   supportsReasoningStream: true,
@@ -237,7 +251,13 @@ interface PiSlashCommandInvocation {
 type AutoCompactMode = boolean | "toggle" | "unknown";
 
 function normalizePiModelLabel(label: string): string {
-  return label.trim().replace(/[_\s]+/g, " ");
+  const normalizedLabel = label.trim().replace(/[_\s]+/g, " ");
+  const vendorSeparatorIndex = normalizedLabel.indexOf(": ");
+  if (vendorSeparatorIndex === -1) {
+    return normalizedLabel;
+  }
+
+  return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
 }
 
 export function transformPiModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
@@ -1184,6 +1204,7 @@ export class PiRpcAgentSession implements AgentSession {
         name: command.name,
         description: command.description ?? command.source,
         argumentHint: knownCommand?.argumentHint ?? "",
+        kind: mapPiCommandKind(command.source),
       });
     }
     return [...mappedCommands.values()];
@@ -1952,14 +1973,22 @@ export class PiRpcAgentClient implements AgentClient {
     return [];
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
-    return await listPiPersistedAgents({
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
+    return await listPiImportableSessions({
       ...options,
-      provider: PI_PROVIDER,
       sessionDir: this.providerParams.sessionDir,
       runtimeSettings: this.runtimeSettings,
+    });
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    return importSessionFromPersistence({
+      provider: PI_PROVIDER,
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
     });
   }
 

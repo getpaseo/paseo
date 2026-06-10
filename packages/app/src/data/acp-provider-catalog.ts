@@ -9,6 +9,7 @@ export interface AcpProviderCatalogEntry {
   installLink: string;
   command: readonly [string, ...string[]];
   env?: Readonly<Record<string, string>>;
+  params?: Readonly<Record<string, unknown>>;
 }
 
 const CATALOG_DATA = [
@@ -58,19 +59,28 @@ const CATALOG_DATA = [
     title: "Cline",
     description:
       "Autonomous coding agent CLI - capable of creating/editing files, running commands, using the browser, and more",
-    version: "3.0.20",
+    version: "3.0.23",
     iconId: "cline",
     installLink: "https://cline.bot/cli",
-    command: ["npx", "-y", "cline@3.0.20", "--acp"],
+    command: ["npx", "-y", "cline@3.0.23", "--acp"],
   },
   {
     id: "codebuddy-code",
     title: "Codebuddy Code",
     description: "Tencent Cloud's official intelligent coding tool",
-    version: "2.103.4",
+    version: "2.105.0",
     iconId: "codebuddy-code",
     installLink: "https://www.codebuddy.cn/cli/",
-    command: ["npx", "-y", "@tencent-ai/codebuddy-code@2.103.4", "--acp"],
+    command: ["npx", "-y", "@tencent-ai/codebuddy-code@2.105.0", "--acp"],
+  },
+  {
+    id: "codewhale",
+    title: "CodeWhale",
+    description: "Terminal coding agent for DeepSeek V4 and open models",
+    version: "0.8.55",
+    iconId: "codewhale",
+    installLink: "https://codewhale.net/",
+    command: ["codewhale", "serve", "--acp"],
   },
   {
     id: "cortex-code",
@@ -118,15 +128,6 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "deepagents-acp@0.1.12"],
   },
   {
-    id: "deepseek-tui",
-    title: "DeepSeek TUI",
-    description: "Terminal coding agent for DeepSeek V4",
-    version: "0.8.39",
-    iconId: "deepseek-tui",
-    installLink: "https://github.com/Hmbown/DeepSeek-TUI",
-    command: ["deepseek", "serve", "--acp"],
-  },
-  {
     id: "devin",
     title: "Devin CLI",
     description: "Cognition's Devin for Terminal via Agent Client Protocol",
@@ -139,10 +140,10 @@ const CATALOG_DATA = [
     id: "dimcode",
     title: "DimCode",
     description: "A coding agent that puts leading models at your command.",
-    version: "0.1.0",
+    version: "0.1.5",
     iconId: "dimcode",
     installLink: "https://dimcode.dev/docs/acp.html",
-    command: ["npx", "-y", "dimcode@0.1.0", "acp"],
+    command: ["npx", "-y", "dimcode@0.1.5", "acp"],
   },
   {
     id: "dirac",
@@ -158,14 +159,15 @@ const CATALOG_DATA = [
     id: "factory-droid",
     title: "Factory Droid",
     description: "Factory Droid - AI coding agent powered by Factory AI",
-    version: "0.142.0",
+    version: "0.144.0",
     iconId: "factory-droid",
     installLink: "https://factory.ai/product/cli",
-    command: ["npx", "-y", "droid@0.142.0", "exec", "--output-format", "acp-daemon"],
+    command: ["npx", "-y", "droid@0.144.0", "exec", "--output-format", "acp-daemon"],
     env: {
       DROID_DISABLE_AUTO_UPDATE: "true",
       FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
     },
+    params: { supportsMcpServers: false },
   },
   {
     id: "fast-agent",
@@ -180,10 +182,10 @@ const CATALOG_DATA = [
     id: "gemini",
     title: "Gemini CLI",
     description: "Google's official CLI for Gemini",
-    version: "0.45.2",
+    version: "0.46.0",
     iconId: "gemini",
     installLink: "https://geminicli.com",
-    command: ["npx", "-y", "@google/gemini-cli@0.45.2", "--acp"],
+    command: ["npx", "-y", "@google/gemini-cli@0.46.0", "--acp"],
   },
   {
     id: "glm-acp-agent",
@@ -282,10 +284,10 @@ const CATALOG_DATA = [
     id: "nova",
     title: "Nova",
     description: "Nova by Compass AI - a fully-fledged software engineer at your command",
-    version: "1.1.15",
+    version: "1.1.16",
     iconId: "nova",
     installLink: "https://www.compassap.ai/portfolio/nova.html",
-    command: ["npx", "-y", "@compass-ai/nova@1.1.15", "acp"],
+    command: ["npx", "-y", "@compass-ai/nova@1.1.16", "acp"],
   },
   {
     id: "poolside",
@@ -300,10 +302,10 @@ const CATALOG_DATA = [
     id: "qoder",
     title: "Qoder CLI",
     description: "AI coding assistant with agentic capabilities",
-    version: "1.0.14",
+    version: "1.0.16",
     iconId: "qoder",
     installLink: "https://qoder.com",
-    command: ["npx", "-y", "@qoder-ai/qodercli@1.0.14", "--acp"],
+    command: ["npx", "-y", "@qoder-ai/qodercli@1.0.16", "--acp"],
   },
   {
     id: "qwen-code",
@@ -357,5 +359,6 @@ export const ACP_PROVIDER_CATALOG: AcpProviderCatalogEntry[] = CATALOG_DATA.map(
   installLink: entry.installLink,
   command: entry.command,
   env: "env" in entry ? entry.env : undefined,
+  params: "params" in entry ? entry.params : undefined,
   iconSvg: entry.iconId ? (ACP_PROVIDER_ICON_SVGS[entry.iconId] ?? null) : null,
 }));

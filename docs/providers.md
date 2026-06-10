@@ -36,6 +36,8 @@ Every provider adapter owns its canonical user-message timeline rows. When a for
 
 Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.listModels`, `listModes`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs.
 
+Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
+
 ---
 
 ## Provider Snapshot Refresh Contract
@@ -315,7 +317,13 @@ interface AgentClient {
   isAvailable(): Promise<boolean>;
   // Optional:
   listModes?(options: ListModesOptions): Promise<AgentMode[]>;
-  listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
+  listImportableSessions?(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]>;
+  importSession?(
+    input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
 }
 ```

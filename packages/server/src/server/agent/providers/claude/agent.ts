@@ -73,11 +73,14 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ListModelsOptions,
-  type ListPersistedAgentsOptions,
   type McpServerConfig,
-  type PersistedAgentDescriptor,
 } from "../../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -210,6 +213,7 @@ type ClaudeConversationRewindTarget =
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: true,
   supportsReasoningStream: true,
@@ -1351,9 +1355,9 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const projectsRoot = path.join(configDir, "projects");
     if (!(await pathExists(projectsRoot))) {
@@ -1365,8 +1369,17 @@ export class ClaudeAgentClient implements AgentClient {
       candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
     );
     return parsed
-      .filter((descriptor): descriptor is PersistedAgentDescriptor => descriptor !== null)
+      .filter((session): session is ImportableProviderSession => session !== null)
       .slice(0, limit);
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    return importSessionFromPersistence({
+      provider: "claude",
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
+    });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -2081,6 +2094,7 @@ class ClaudeAgentSession implements AgentSession {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
+          kind: "command",
         });
       }
     }
@@ -4907,7 +4921,8 @@ interface ClaudeSessionDescriptorAccumulator {
   sessionId: string | null;
   cwd: string | null;
   title: string | null;
-  timeline: AgentTimelineItem[];
+  firstPromptPreview: string | null;
+  lastPromptPreview: string | null;
 }
 
 function isFinishedAccumulator(acc: ClaudeSessionDescriptorAccumulator): boolean {
@@ -4940,22 +4955,18 @@ function applyClaudeSessionEntryToAccumulator(
       if (!acc.title) {
         acc.title = text;
       }
-      acc.timeline.push({ type: "user_message", text });
+      const preview = normalizeImportablePromptPreview(text);
+      acc.firstPromptPreview ??= preview;
+      acc.lastPromptPreview = preview;
     }
     return;
-  }
-  if (entry.type === "assistant" && entry.message) {
-    const text = extractClaudeUserText(entry.message);
-    if (text) {
-      acc.timeline.push({ type: "assistant_message", text });
-    }
   }
 }
 
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
-): Promise<PersistedAgentDescriptor | null> {
+): Promise<ImportableProviderSession | null> {
   let content: string;
   try {
     content = await fsPromises.readFile(filePath, "utf8");
@@ -4967,7 +4978,8 @@ async function parseClaudeSessionDescriptor(
     sessionId: null,
     cwd: null,
     title: null,
-    timeline: [],
+    firstPromptPreview: null,
+    lastPromptPreview: null,
   };
 
   for (const rawLine of content.split(/\r?\n/)) {
@@ -4985,31 +4997,26 @@ async function parseClaudeSessionDescriptor(
     }
   }
 
-  const { sessionId, cwd, title, timeline } = acc;
+  const { sessionId, cwd, title } = acc;
 
   if (!sessionId || !cwd) {
     return null;
   }
 
-  const persistence: AgentPersistenceHandle = {
-    provider: "claude",
-    sessionId,
-    nativeHandle: sessionId,
-    metadata: {
-      provider: "claude",
-      cwd,
-    },
-  };
-
   return {
-    provider: "claude",
-    sessionId,
+    providerHandleId: sessionId,
     cwd,
     title: (title ?? "").trim() || `Claude session ${sessionId.slice(0, 8)}`,
+    firstPromptPreview: acc.firstPromptPreview,
+    lastPromptPreview: acc.lastPromptPreview,
     lastActivityAt: mtime,
-    persistence,
-    timeline,
   };
+}
+
+function normalizeImportablePromptPreview(text: string): string | null {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  return normalized.length > 160 ? normalized.slice(0, 160) : normalized;
 }
 
 function extractClaudeUserText(messageRaw: unknown): string | null {

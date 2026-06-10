@@ -523,7 +523,7 @@ function DesktopAppUpdateRow() {
       if (!isDesktopApp) {
         return undefined;
       }
-      void checkForUpdates({ silent: true });
+      void checkForUpdates({ intent: "automatic", silent: true });
       return undefined;
     }, [checkForUpdates, isDesktopApp]),
   );

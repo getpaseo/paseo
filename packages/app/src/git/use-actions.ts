@@ -59,8 +59,8 @@ interface DerivedGitActionsState {
   actionsDisabled: boolean;
   aheadCount: number;
   behindBaseCount: number;
-  aheadOfOrigin: number;
-  behindOfOrigin: number;
+  aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
   hasPullRequest: boolean;
   hasRemote: boolean;
   isPaseoOwnedWorktree: boolean;
@@ -71,16 +71,16 @@ interface DerivedGitActionsState {
 interface GitCommitCounts {
   aheadCount: number;
   behindBaseCount: number;
-  aheadOfOrigin: number;
-  behindOfOrigin: number;
+  aheadOfOrigin: number | null;
+  behindOfOrigin: number | null;
 }
 
 function extractGitCommitCounts(gitStatus: CheckoutStatusPayload | null): GitCommitCounts {
   return {
     aheadCount: gitStatus?.aheadBehind?.ahead ?? 0,
     behindBaseCount: gitStatus?.aheadBehind?.behind ?? 0,
-    aheadOfOrigin: gitStatus?.aheadOfOrigin ?? 0,
-    behindOfOrigin: gitStatus?.behindOfOrigin ?? 0,
+    aheadOfOrigin: gitStatus?.aheadOfOrigin ?? null,
+    behindOfOrigin: gitStatus?.behindOfOrigin ?? null,
   };
 }
 

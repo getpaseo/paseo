@@ -62,10 +62,10 @@ export function UpdateCalloutSource() {
   useEffect(() => {
     if (!isDesktopApp) return;
 
-    void checkForUpdates({ silent: true });
+    void checkForUpdates({ intent: "automatic", silent: true });
 
     intervalRef.current = setInterval(() => {
-      void checkForUpdates({ silent: true });
+      void checkForUpdates({ intent: "automatic", silent: true });
     }, CHECK_INTERVAL_MS);
 
     return () => {

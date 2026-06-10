@@ -180,6 +180,18 @@ export async function goBackInSettings(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Back", exact: true }).click();
 }
 
+export async function closeCompactSettings(page: Page): Promise<void> {
+  await goBackInSettings(page);
+  await expect(page).not.toHaveURL(/\/settings(\/|$)/);
+}
+
+export async function removeCurrentHostFromSettings(page: Page): Promise<void> {
+  await page.getByTestId("host-page-remove-host-button").click();
+  await expect(page.getByTestId("remove-host-confirm-modal")).toBeVisible();
+  await page.getByTestId("remove-host-confirm").click();
+  await expect(page).toHaveURL(/\/settings$/);
+}
+
 export async function expectSettingsBackButton(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
 }

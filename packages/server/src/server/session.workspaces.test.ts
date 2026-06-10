@@ -17,7 +17,6 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
-  PersistedAgentDescriptor,
 } from "./agent/agent-sdk-types.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
@@ -63,12 +62,8 @@ interface SessionTestAccess {
   };
   agentManager: {
     listAgents(): unknown[];
-    listImportablePersistedAgents(options?: unknown): Promise<PersistedAgentDescriptor[]>;
-    findPersistedAgent(
-      provider: string,
-      providerHandleId: string,
-      options?: unknown,
-    ): Promise<PersistedAgentDescriptor | null>;
+    listImportableSessions(options?: unknown): Promise<unknown[]>;
+    importProviderSession(input: unknown): Promise<unknown>;
     resumeAgentFromPersistence(
       handle: unknown,
       overrides?: unknown,
@@ -274,7 +269,7 @@ function makeManagedAgent(input: {
   };
 }
 
-function makePersistedProviderSession(input: {
+function makeImportableProviderSession(input: {
   provider: string;
   sessionId: string;
   nativeHandle?: string;
@@ -282,19 +277,23 @@ function makePersistedProviderSession(input: {
   title?: string | null;
   lastActivityAt: string;
   firstPrompt?: string;
-}): PersistedAgentDescriptor {
+}): {
+  provider: string;
+  providerHandleId: string;
+  cwd: string;
+  title: string | null;
+  firstPromptPreview: string | null;
+  lastPromptPreview: string | null;
+  lastActivityAt: Date;
+} {
   return {
     provider: input.provider,
-    sessionId: input.sessionId,
+    providerHandleId: input.nativeHandle ?? input.sessionId,
     cwd: input.cwd,
     title: input.title ?? null,
+    firstPromptPreview: input.firstPrompt ?? null,
+    lastPromptPreview: input.firstPrompt ?? null,
     lastActivityAt: new Date(input.lastActivityAt),
-    persistence: {
-      provider: input.provider,
-      sessionId: input.sessionId,
-      ...(input.nativeHandle ? { nativeHandle: input.nativeHandle } : {}),
-    },
-    timeline: input.firstPrompt ? [{ type: "user_message", text: input.firstPrompt }] : [],
   };
 }
 
@@ -2127,8 +2126,8 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       },
     },
   ];
-  const persistedDescriptors: PersistedAgentDescriptor[] = [
-    makePersistedProviderSession({
+  const importableSessions = [
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "outside-filter",
       nativeHandle: "outside-filter-handle",
@@ -2136,7 +2135,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       title: "Outside filter",
       lastActivityAt: "2026-04-30T12:05:00.000Z",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "stored-session",
       nativeHandle: "stored-handle",
@@ -2145,14 +2144,14 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       lastActivityAt: "2026-04-30T12:04:00.000Z",
       firstPrompt: "stored prompt",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "claude",
       sessionId: "wrong-provider",
       cwd: "/tmp/recent",
       title: "Wrong provider",
       lastActivityAt: "2026-04-30T12:03:00.000Z",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "older-session",
       nativeHandle: "older-handle",
@@ -2160,7 +2159,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       title: "Older than since",
       lastActivityAt: "2026-04-29T23:59:59.000Z",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "newer-session",
       nativeHandle: "newer-handle",
@@ -2169,7 +2168,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       lastActivityAt: "2026-04-30T12:02:00.000Z",
       firstPrompt: "newer prompt",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "second-session",
       nativeHandle: "second-handle",
@@ -2178,7 +2177,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       lastActivityAt: "2026-04-30T12:00:00.000Z",
       firstPrompt: "second prompt",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "third-session",
       nativeHandle: "third-handle",
@@ -2187,7 +2186,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       lastActivityAt: "2026-04-30T11:59:00.000Z",
       firstPrompt: "third prompt",
     }),
-    makePersistedProviderSession({
+    makeImportableProviderSession({
       provider: "codex",
       sessionId: "live-session",
       nativeHandle: "live-handle",
@@ -2199,13 +2198,12 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
   ];
   // The real AgentManager filters by providerFilter at the fan-out level
   // (Phase 1). Mirror that here so the mock matches the contract.
-  session.agentManager.listImportablePersistedAgents = async (options?: unknown) => {
+  session.agentManager.listImportableSessions = async (options?: unknown) => {
     const providerFilter = (options as { providerFilter?: Set<string> } | undefined)
       ?.providerFilter;
-    if (!providerFilter) {
-      return persistedDescriptors;
-    }
-    return persistedDescriptors.filter((d) => providerFilter.has(d.provider));
+    return providerFilter
+      ? importableSessions.filter((entry) => providerFilter.has(entry.provider))
+      : importableSessions;
   };
   session.agentStorage.list = async () => [
     {
@@ -2275,7 +2273,7 @@ test("fetch_recent_provider_sessions_request forwards providerFilter to agent ma
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
   session.agentManager.listAgents = () => [];
   session.agentStorage.list = async () => [];
-  session.agentManager.listImportablePersistedAgents = async (options?: unknown) => {
+  session.agentManager.listImportableSessions = async (options?: unknown) => {
     capturedOptions = options as { providerFilter?: Set<string>; limit?: number };
     return [];
   };
@@ -2316,16 +2314,16 @@ test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCoun
     },
   ];
   session.agentStorage.list = async () => [];
-  session.agentManager.listImportablePersistedAgents = async () => [
-    makePersistedProviderSession({
+  session.agentManager.listImportableSessions = async () => [
+    {
       provider: "codex",
-      sessionId: "live-session",
-      nativeHandle: "live-handle",
+      providerHandleId: "live-handle",
       cwd: "/tmp/recent",
       title: "Already live",
-      lastActivityAt: "2026-04-30T12:01:00.000Z",
-      firstPrompt: "live prompt",
-    }),
+      firstPromptPreview: "live prompt",
+      lastPromptPreview: "live prompt",
+      lastActivityAt: new Date("2026-04-30T12:01:00.000Z"),
+    },
   ];
 
   await session.handleMessage({
@@ -2951,9 +2949,7 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
     updatedAt: "2026-05-21T00:00:00.000Z",
   });
   session.agentManager.listAgents = () => [managed];
-  session.agentManager.findPersistedAgent = async () => null;
-  session.agentManager.resumeAgentFromPersistence = async () => managed;
-  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.importProviderSession = async () => managed;
   session.agentManager.getTimeline = () => [];
   session.agentManager.setTitle = async () => undefined;
   session.agentStorage.list = async () => [];

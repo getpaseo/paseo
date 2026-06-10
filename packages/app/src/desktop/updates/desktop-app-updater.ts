@@ -1,5 +1,6 @@
 import type {
   DesktopAppUpdateCheckResult,
+  DesktopAppUpdateCheckIntent,
   DesktopAppUpdateInstallResult,
   DesktopReleaseChannel,
 } from "@/desktop/updates/desktop-updates";
@@ -29,6 +30,7 @@ export interface DesktopAppUpdaterSnapshot {
 export interface DesktopAppUpdaterPort {
   checkDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
+    intent: DesktopAppUpdateCheckIntent;
   }): Promise<DesktopAppUpdateCheckResult>;
   installDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
@@ -52,6 +54,7 @@ export interface DesktopAppUpdater {
   subscribe(listener: () => void): () => void;
   checkForUpdates(options?: {
     releaseChannel: DesktopReleaseChannel;
+    intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }): Promise<DesktopAppUpdateCheckResult | null>;
   installUpdate(options: {
@@ -102,9 +105,18 @@ export function formatStatusText(input: {
   status: DesktopAppUpdateStatus;
   availableUpdate: DesktopAppUpdateCheckResult | null;
   installMessage: string | null;
+  lastCheckedAt: number | null;
   formatVersion: (version: string | null | undefined) => string;
+  formatLastCheckedAt: (timestamp: number) => string;
 }): string {
-  const { status, availableUpdate, installMessage, formatVersion } = input;
+  const {
+    status,
+    availableUpdate,
+    installMessage,
+    lastCheckedAt,
+    formatVersion,
+    formatLastCheckedAt,
+  } = input;
 
   if (status === "checking") {
     return "Checking for app updates...";
@@ -115,7 +127,10 @@ export function formatStatusText(input: {
   }
 
   if (status === "up-to-date") {
-    return "App is up to date.";
+    if (lastCheckedAt != null) {
+      return `Up to date. Last checked at ${formatLastCheckedAt(lastCheckedAt)}.`;
+    }
+    return "Up to date.";
   }
 
   if (status === "pending") {
@@ -155,12 +170,13 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
 
   async function checkForUpdates(options?: {
     releaseChannel: DesktopReleaseChannel;
+    intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }): Promise<DesktopAppUpdateCheckResult | null> {
     if (!options) {
       return null;
     }
-    const { releaseChannel, silent = false } = options;
+    const { releaseChannel, intent = "manual", silent = false } = options;
     const requestVersion = state.requestVersion + 1;
 
     commit({
@@ -171,7 +187,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     });
 
     try {
-      const result = await deps.port.checkDesktopAppUpdate({ releaseChannel });
+      const result = await deps.port.checkDesktopAppUpdate({ releaseChannel, intent });
       if (requestVersion !== state.requestVersion) {
         return result;
       }

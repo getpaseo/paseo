@@ -25,10 +25,13 @@ import {
   type AgentTimelineItem,
   type ToolCallTimelineItem,
   type AgentUsage,
+  type ImportableProviderSession,
+  type ImportProviderSessionContext,
+  type ImportProviderSessionInput,
+  type ListImportableSessionsOptions,
   type ListModelsOptions,
-  type ListPersistedAgentsOptions,
-  type PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
+import { importSessionFromPersistence } from "../provider-session-import.js";
 import type { Logger } from "pino";
 import { homedir } from "node:os";
 
@@ -172,6 +175,7 @@ function formatOutOfBandStatusMessage(text: string): string {
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  supportsSessionListing: true,
   supportsDynamicModes: false,
   supportsMcpServers: true,
   supportsReasoningStream: true,
@@ -631,6 +635,7 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
         name: `prompts:${name}`,
         description,
         argumentHint,
+        kind: "command",
       };
     }),
   );
@@ -695,6 +700,7 @@ export async function listCodexSkills(
           name,
           description,
           argumentHint: "",
+          kind: "skill",
         });
       }
     }
@@ -837,11 +843,6 @@ function filterCodexThreadsByCwd(
   // with no cwd would falsely match the daemon's own cwd.
   const matchesCwd = createPathEquivalenceMatcher(cwd);
   return threads.filter((thread) => typeof thread.cwd === "string" && matchesCwd(thread.cwd));
-}
-
-function buildCodexThreadListTimeline(thread: Record<string, unknown>): AgentTimelineItem[] {
-  const preview = typeof thread.preview === "string" ? thread.preview.trim() : "";
-  return preview ? [{ type: "user_message", text: preview }] : [];
 }
 
 export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
@@ -3949,6 +3950,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       name: skill.name,
       description: skill.description,
       argumentHint: "",
+      kind: "skill" as const,
     }));
     const fallbackSkills =
       appServerSkills.length === 0
@@ -3959,6 +3961,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         name: "compact",
         description: "Summarize conversation to prevent hitting the context limit",
         argumentHint: "",
+        kind: "command",
       },
     ];
     if (this.goalsEnabled) {
@@ -3966,6 +3969,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         name: "goal",
         description: "Set, pause, resume, or clear the agent's goal",
         argumentHint: "[<objective>|pause|resume|clear]",
+        kind: "command",
       });
     }
     return [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
@@ -5482,9 +5486,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     return session;
   }
 
-  async listPersistedAgents(
-    options?: ListPersistedAgentsOptions,
-  ): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
     const child = await this.spawnAppServer();
     const client =
       this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
@@ -5507,41 +5511,37 @@ export class CodexAppServerAgentClient implements AgentClient {
       );
       const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
       const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
-      const descriptors: PersistedAgentDescriptor[] = threads.slice(0, limit).map((thread) => {
+      return threads.slice(0, limit).map((thread) => {
         const threadId = typeof thread.id === "string" ? thread.id : "";
         const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
         const preview = typeof thread.preview === "string" ? thread.preview : null;
         const title = typeof thread.name === "string" && thread.name.trim() ? thread.name : preview;
 
         return {
-          provider: CODEX_PROVIDER,
-          sessionId: threadId,
+          providerHandleId: threadId,
           cwd,
           title,
+          firstPromptPreview: preview,
+          lastPromptPreview: preview,
           lastActivityAt: new Date(
             ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
               (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
               0) * 1000,
           ),
-          persistence: {
-            provider: CODEX_PROVIDER,
-            sessionId: threadId,
-            nativeHandle: threadId,
-            metadata: {
-              provider: CODEX_PROVIDER,
-              cwd,
-              title,
-              threadId,
-            },
-          },
-          timeline: buildCodexThreadListTimeline(thread),
         };
       });
-
-      return descriptors;
     } finally {
       await client.dispose();
     }
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    return importSessionFromPersistence({
+      provider: CODEX_PROVIDER,
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
+    });
   }
 
   async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {

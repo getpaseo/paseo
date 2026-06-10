@@ -170,10 +170,12 @@ function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean
 function buildRealtimeVoiceButtonStyle(
   hovered: boolean | undefined,
   voiceButtonDisabled: boolean,
+  reserveLeadingSpace: boolean,
 ): object[] {
   const hoveredStyle = hovered ? styles.iconButtonHovered : undefined;
   const disabledStyle = voiceButtonDisabled ? styles.buttonDisabled : undefined;
-  return [styles.realtimeVoiceButton, hoveredStyle, disabledStyle].filter(
+  const reserveStyle = reserveLeadingSpace ? styles.realtimeVoiceButtonCompactReserve : undefined;
+  return [styles.realtimeVoiceButton, reserveStyle, hoveredStyle, disabledStyle].filter(
     (value): value is object => Boolean(value),
   );
 }
@@ -1415,8 +1417,8 @@ export function Composer({
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) =>
-      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled),
-    [voiceButtonDisabled],
+      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled, isCompactLayout),
+    [isCompactLayout, voiceButtonDisabled],
   );
 
   const cancelButton = useMemo(
@@ -1850,6 +1852,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
+  },
+  realtimeVoiceButtonCompactReserve: {
+    marginLeft: theme.spacing[1],
   },
   realtimeVoiceButtonActive: {
     backgroundColor: theme.colors.palette.green[600],

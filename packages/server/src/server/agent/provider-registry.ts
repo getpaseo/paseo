@@ -12,8 +12,6 @@ import type {
   AgentStreamEvent,
   ListModelsOptions,
   ListModesOptions,
-  ListPersistedAgentsOptions,
-  PersistedAgentDescriptor,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
 } from "./agent-sdk-types.js";
@@ -277,20 +275,6 @@ function mapStreamEvent(provider: AgentProvider, event: AgentStreamEvent): Agent
   };
 }
 
-function mapPersistedAgentDescriptor(
-  provider: AgentProvider,
-  descriptor: PersistedAgentDescriptor,
-): PersistedAgentDescriptor {
-  return {
-    ...descriptor,
-    provider,
-    persistence: {
-      ...descriptor.persistence,
-      provider,
-    },
-  };
-}
-
 function mapModel(
   provider: AgentProvider,
   model: AgentModelDefinition | ProviderProfileModel,
@@ -401,7 +385,8 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
 ): AgentClient {
-  const listPersistedAgents = inner.listPersistedAgents?.bind(inner);
+  const listImportableSessions = inner.listImportableSessions?.bind(inner);
+  const importSession = inner.importSession?.bind(inner);
 
   return {
     provider,
@@ -441,11 +426,36 @@ function wrapClientProvider(
     listModes: inner.listModes?.bind(inner),
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
-    listPersistedAgents: listPersistedAgents
-      ? async (options?: ListPersistedAgentsOptions) =>
-          (await listPersistedAgents(options)).map((descriptor) =>
-            mapPersistedAgentDescriptor(provider, descriptor),
-          )
+    listImportableSessions: listImportableSessions
+      ? async (options) => await listImportableSessions(options)
+      : undefined,
+    importSession: importSession
+      ? async (input, context) => {
+          const imported = await importSession(input, {
+            ...context,
+            config: {
+              ...context.config,
+              provider: inner.provider,
+            },
+            storedConfig: {
+              ...context.storedConfig,
+              provider: inner.provider,
+            },
+          });
+          const persistence = mapPersistenceHandle(provider, imported.persistence);
+          if (!persistence) {
+            throw new Error(`Provider '${provider}' import did not return persistence`);
+          }
+          return {
+            ...imported,
+            session: wrapSessionProvider(provider, imported.session),
+            config: {
+              ...imported.config,
+              provider,
+            },
+            persistence,
+          };
+        }
       : undefined,
     isAvailable: () => inner.isAvailable(),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
@@ -602,6 +612,7 @@ function addDerivedProviders(
                 env: override.env,
                 providerId,
                 label: override.label ?? providerId,
+                providerParams: override.params,
               })
             : new GenericACPAgentClient({
                 logger,
@@ -609,6 +620,7 @@ function addDerivedProviders(
                 env: override.env,
                 providerId,
                 label: override.label ?? providerId,
+                providerParams: override.params,
               }),
       });
       continue;

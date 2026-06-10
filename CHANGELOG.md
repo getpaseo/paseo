@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.92 - 2026-06-10
+
+### Added
+
+- **Skills autocomplete inside prompts**
+
+### Improved
+
+- Provider catalog is inline in Host settings ([#1423](https://github.com/getpaseo/paseo/pull/1423))
+- Manual update checks skip staged rollout delays
+- CodeWhale replaces DeepSeek TUI in the provider catalog
+- ACP provider catalog entries are updated for Cline, Codebuddy Code, DimCode, Factory Droid, Gemini, Nova, and Qoder
+- OMP has its own icon and website page
+- Model selector descriptions are clearer
+- ACP provider errors show the provider's real failure message
+
+### Fixed
+
+- New Paseo worktree branches can push their first commits
+- Imported sessions no longer open blank or in the wrong workspace
+- Windows Explorer opens the selected workspace instead of Documents ([#1412](https://github.com/getpaseo/paseo/pull/1412) by [@bjspi](https://github.com/bjspi))
+- Windows editor shortcuts installed as command shims launch correctly ([#1387](https://github.com/getpaseo/paseo/pull/1387) by [@Peter7896](https://github.com/Peter7896))
+- ACP providers that cannot use MCP servers can start correctly
+- Removed hosts no longer leave host pages stuck connecting
+- File preview links open in your external browser
+- Chat stays pinned to the latest message while output streams
+- The mobile composer send button no longer shifts while typing
+
 ## 0.1.91 - 2026-06-08
 
 ### Added

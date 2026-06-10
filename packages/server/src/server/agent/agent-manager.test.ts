@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
@@ -25,7 +25,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
-  PersistedAgentDescriptor,
+  ImportProviderSessionInput,
 } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
@@ -48,6 +48,7 @@ function deferred<T>(): Deferred<T> {
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
   supportsSessionPersistence: false,
+  supportsSessionListing: true,
   supportsDynamicModes: false,
   supportsMcpServers: false,
   supportsReasoningStream: false,
@@ -60,30 +61,6 @@ function createFeature(args: { id: string; label: string; value: boolean }): Age
     id: args.id,
     label: args.label,
     value: args.value,
-  };
-}
-
-function createPersistedDescriptor(args: {
-  cwd: string;
-  sessionId: string;
-  nativeHandle?: string;
-}): PersistedAgentDescriptor {
-  return {
-    provider: "codex",
-    sessionId: args.sessionId,
-    cwd: args.cwd,
-    title: null,
-    lastActivityAt: new Date("2026-01-01T00:00:00Z"),
-    persistence: {
-      provider: "codex",
-      sessionId: args.sessionId,
-      nativeHandle: args.nativeHandle,
-      metadata: {
-        provider: "codex",
-        cwd: args.cwd,
-      },
-    },
-    timeline: [],
   };
 }
 
@@ -1471,36 +1448,48 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
   });
 });
 
-test("findPersistedAgent returns matching descriptors by session id or native handle", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-find-persisted-"));
+test("importProviderSession imports the selected session without listing and publishes ready state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-session-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const events: AgentManagerEvent[] = [];
 
-  const descriptors: PersistedAgentDescriptor[] = [
-    createPersistedDescriptor({
-      cwd: workdir,
-      sessionId: "session-direct",
-      nativeHandle: "native-direct",
-    }),
-    createPersistedDescriptor({
-      cwd: workdir,
-      sessionId: "session-other",
-      nativeHandle: "native-match",
-    }),
-  ];
+  class ImportClient extends TestAgentClient {
+    listCalls = 0;
+    importInput: unknown = null;
 
-  class PersistedAgentsClient extends TestAgentClient {
-    lastLimit: number | undefined;
-    lastCwd: string | undefined;
+    async listImportableSessions() {
+      this.listCalls += 1;
+      return [];
+    }
 
-    override async listPersistedAgents(options?: { limit?: number; cwd?: string }) {
-      this.lastLimit = options?.limit;
-      this.lastCwd = options?.cwd;
-      return descriptors;
+    async importSession(input: ImportProviderSessionInput) {
+      this.importInput = input;
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [
+          {
+            item: { type: "user_message" as const, text: "Trace provider imports" },
+            timestamp: "2026-01-02T00:00:00.000Z",
+          },
+          {
+            item: { type: "assistant_message" as const, text: "Done" },
+            timestamp: "2026-01-02T00:00:01.000Z",
+          },
+        ],
+      };
     }
   }
 
-  const client = new PersistedAgentsClient();
+  const client = new ImportClient();
   const manager = new AgentManager({
     clients: {
       codex: client,
@@ -1508,15 +1497,32 @@ test("findPersistedAgent returns matching descriptors by session id or native ha
     registry: storage,
     logger,
   });
+  manager.subscribe((event) => events.push(event), { replayState: false });
 
-  await expect(manager.findPersistedAgent("codex", "session-direct")).resolves.toBe(descriptors[0]);
-  await expect(manager.findPersistedAgent("codex", "native-match")).resolves.toBe(descriptors[1]);
-  await expect(manager.findPersistedAgent("codex", "missing")).resolves.toBeNull();
-  await expect(
-    manager.findPersistedAgent("codex", "session-direct", { cwd: "/tmp/project" }),
-  ).resolves.toBe(descriptors[0]);
-  expect(client.lastLimit).toBe(200);
-  expect(client.lastCwd).toBe("/tmp/project");
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-selected",
+    cwd: workdir,
+  });
+
+  expect(client.listCalls).toBe(0);
+  expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
+  expect(imported.lifecycle).toBe("idle");
+  expect(imported.historyPrimed).toBe(true);
+  expect(manager.getTimeline(imported.id)).toEqual([
+    { type: "user_message", text: "Trace provider imports" },
+    { type: "assistant_message", text: "Done" },
+  ]);
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    type: "agent_state",
+    agent: {
+      id: imported.id,
+      lifecycle: "idle",
+      persistence: { nativeHandle: "thread-selected" },
+    },
+  });
+  expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
@@ -5711,17 +5717,16 @@ class RecordingPersistedAgentsClient implements AgentClient {
     return [];
   }
 
-  async listPersistedAgents(): Promise<PersistedAgentDescriptor[]> {
+  async listImportableSessions() {
     this.calls += 1;
     return [
       {
-        provider: this.provider,
-        sessionId: `${this.provider}-session`,
+        providerHandleId: `${this.provider}-session`,
         cwd: "/tmp/recent",
         title: null,
         lastActivityAt: new Date("2026-01-01T00:00:00Z"),
-        persistence: { provider: this.provider, sessionId: `${this.provider}-session` },
-        timeline: [],
+        firstPromptPreview: null,
+        lastPromptPreview: null,
       },
     ];
   }
@@ -5738,7 +5743,7 @@ test.each([
     },
   ],
 ])(
-  "listImportablePersistedAgents skips %s providers in fan-out",
+  "listImportableSessions skips %s providers in fan-out",
   async (_reason, includedProvider, skippedProvider, providerDefinitions) => {
     const includedClient = new RecordingPersistedAgentsClient(includedProvider);
     const skippedClient = new RecordingPersistedAgentsClient(skippedProvider);
@@ -5748,7 +5753,7 @@ test.each([
       logger,
     });
 
-    const result = await manager.listImportablePersistedAgents();
+    const result = await manager.listImportableSessions();
 
     expect(includedClient.calls).toBe(1);
     expect(skippedClient.calls).toBe(0);
@@ -5756,7 +5761,7 @@ test.each([
   },
 );
 
-test("listImportablePersistedAgents includes derived providers that list persisted agents", async () => {
+test("listImportableSessions includes derived providers that list persisted agents", async () => {
   const claudeClient = new RecordingPersistedAgentsClient("claude");
   const ompClient = new RecordingPersistedAgentsClient("omp");
   const manager = new AgentManager({
@@ -5768,14 +5773,14 @@ test("listImportablePersistedAgents includes derived providers that list persist
     logger,
   });
 
-  const result = await manager.listImportablePersistedAgents();
+  const result = await manager.listImportableSessions();
 
   expect(claudeClient.calls).toBe(1);
   expect(ompClient.calls).toBe(1);
   expect(result.map((d) => d.provider).sort()).toEqual(["claude", "omp"]);
 });
 
-test("listImportablePersistedAgents narrows to the providerFilter when supplied", async () => {
+test("listImportableSessions narrows to the providerFilter when supplied", async () => {
   const claudeClient = new RecordingPersistedAgentsClient("claude");
   const codexClient = new RecordingPersistedAgentsClient("codex");
   const manager = new AgentManager({
@@ -5787,12 +5792,39 @@ test("listImportablePersistedAgents narrows to the providerFilter when supplied"
     logger,
   });
 
-  const result = await manager.listImportablePersistedAgents({
+  const result = await manager.listImportableSessions({
     providerFilter: new Set(["claude"]),
   });
 
   expect(claudeClient.calls).toBe(1);
   expect(codexClient.calls).toBe(0);
+  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listImportableSessions skips providers that lack supportsSessionListing even when row listing is defined", async () => {
+  const listableClient = new RecordingPersistedAgentsClient("claude");
+  const nonListableClient = new RecordingPersistedAgentsClient("acp");
+  // Override capabilities to remove session listing support
+  Object.defineProperty(nonListableClient, "capabilities", {
+    value: {
+      ...TEST_CAPABILITIES,
+      supportsSessionListing: false,
+    },
+  });
+
+  const manager = new AgentManager({
+    clients: { claude: listableClient, acp: nonListableClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      acp: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listImportableSessions();
+
+  expect(listableClient.calls).toBe(1);
+  expect(nonListableClient.calls).toBe(0);
   expect(result.map((d) => d.provider)).toEqual(["claude"]);
 });
 

@@ -166,6 +166,25 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("keeps push available for a no-upstream Paseo worktree with local commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+      }),
+    );
+    const pushAction = actions.secondary.find((action) => action.id === "push");
+
+    expect(pushAction).toMatchObject({
+      disabled: false,
+      unavailableMessage: undefined,
+    });
+  });
+
   it("shows update-from-base only on feature branches that are behind the base branch", () => {
     const actions = buildGitActions(
       createInput({

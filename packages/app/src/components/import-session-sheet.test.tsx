@@ -71,7 +71,9 @@ vi.mock("lucide-react-native", () => {
     return Icon;
   };
   return {
+    ChevronDown: icon("ChevronDown"),
     Inbox: icon("Inbox"),
+    Layers: icon("Layers"),
     RotateCw: icon("RotateCw"),
   };
 });
@@ -81,35 +83,38 @@ vi.mock("@/components/ui/loading-spinner", () => ({
     React.createElement("span", { "data-testid": "import-session-loading-spinner" }),
 }));
 
-vi.mock("@/components/ui/segmented-control", () => ({
-  SegmentedControl: ({
+vi.mock("@/components/ui/combobox", () => ({
+  Combobox: ({
     options,
     value,
-    onValueChange,
-    testID,
+    onSelect,
+    open,
   }: {
-    options: ReadonlyArray<{ value: string; label: string; testID?: string }>;
+    options: ReadonlyArray<{ id: string; label: string }>;
     value: string;
-    onValueChange: (value: string) => void;
-    testID?: string;
-  }) =>
-    React.createElement(
+    onSelect: (id: string) => void;
+    open?: boolean;
+  }) => {
+    if (!open) return null;
+    return React.createElement(
       "div",
-      { "data-testid": testID },
+      { "data-testid": "import-session-combobox" },
       options.map((option) =>
         React.createElement(
           "button",
           {
-            key: option.value,
+            key: option.id,
             type: "button",
-            "data-testid": option.testID,
-            "data-selected": value === option.value,
-            onClick: () => onValueChange(option.value),
+            "data-testid": `import-session-filter-${option.id === "__all__" ? "all" : option.id}`,
+            "data-selected": value === option.id,
+            onClick: () => onSelect(option.id),
           },
           option.label,
         ),
       ),
-    ),
+    );
+  },
+  ComboboxItem: ({ label }: { label: string }) => React.createElement("span", null, label),
 }));
 
 vi.mock("@/components/adaptive-modal-sheet", () => ({
@@ -475,7 +480,13 @@ describe("ImportSessionSheet", () => {
   it("imports a selected session by provider handle and reports the imported agent", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
-      entries: [createProviderSessionEntry({ providerId: "claude", providerLabel: "Claude Code" })],
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          cwd: "/repo/paseo-realpath",
+        }),
+      ],
     }));
     const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
     const onClose = vi.fn();
@@ -499,7 +510,7 @@ describe("ImportSessionSheet", () => {
       expect(importAgent).toHaveBeenCalledWith({
         providerId: "claude",
         providerHandleId: "provider-thread-1",
-        cwd: "/repo/paseo",
+        cwd: "/repo/paseo-realpath",
       });
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
@@ -678,11 +689,13 @@ describe("ImportSessionSheet", () => {
     await screen.findByText("Session claude");
     await screen.findByText("Session codex");
 
+    fireEvent.click(screen.getByTestId("import-session-filter-trigger"));
     fireEvent.click(screen.getByTestId("import-session-filter-codex"));
 
     screen.getByText("Session codex");
     expect(screen.queryByText("Session claude")).toBeNull();
 
+    fireEvent.click(screen.getByTestId("import-session-filter-trigger"));
     fireEvent.click(screen.getByTestId("import-session-filter-all"));
 
     screen.getByText("Session claude");

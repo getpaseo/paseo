@@ -19,6 +19,7 @@ export function buildAcpProviderConfigPatch(
         description: entry.description,
         command: [...entry.command],
         env: entry.env ? { ...entry.env } : {},
+        ...(entry.params ? { params: { ...entry.params } } : {}),
       },
     },
   };
