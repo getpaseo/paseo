@@ -1768,7 +1768,7 @@ async function discoverSubRepos(dir: string): Promise<string[]> {
     }),
   );
 
-  return results.filter((p): p is string => p !== null);
+  return results.filter((p): p is string => p !== null).sort();
 }
 
 export async function getCheckoutStatus(
