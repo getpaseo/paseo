@@ -1246,6 +1246,16 @@ function ProjectHeaderRow({
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
 
+  const isMultiGit = project.projectKind === "multi_git" && project.subRepos.length > 0;
+
+  const projectTitleGroupStyle = useMemo(
+    () =>
+      isMultiGit
+        ? [styles.projectTitleGroup, styles.projectTitleGroupColumn]
+        : styles.projectTitleGroup,
+    [isMultiGit],
+  );
+
   const projectRowStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.projectRow,
@@ -1270,11 +1280,11 @@ function ProjectHeaderRow({
           isArchiving={isArchiving}
         />
 
-        <View style={styles.projectTitleGroup}>
+        <View style={projectTitleGroupStyle}>
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
-          {project.projectKind === "multi_git" && project.subRepos.length > 0 ? (
+          {isMultiGit ? (
             <Text style={styles.projectSubtitle} numberOfLines={1}>
               {project.subRepos.map((r) => r.split("/").pop() ?? r).join(" · ")}
             </Text>
@@ -2820,12 +2830,18 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[1],
+    flex: 1,
+    minWidth: 0,
+  },
+  projectTitleGroupColumn: {
     flexDirection: "column",
     alignItems: "flex-start",
     justifyContent: "center",
     gap: theme.spacing[0],
-    flex: 1,
-    minWidth: 0,
   },
   projectIcon: {
     width: "100%",
