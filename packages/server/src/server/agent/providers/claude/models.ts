@@ -215,11 +215,11 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
 
   // Fable uses a single-segment version (claude-fable-5), not the {major}-{minor}
   // scheme of opus/sonnet/haiku, so match it separately. This maps dated runtime
-  // strings (e.g. claude-fable-5-20260301) back to the catalog ID.
-  const fableMatch = trimmed.match(/(?:claude-)?fable[-_ ]+(\d+)(\[1m\])?/i);
+  // strings (e.g. claude-fable-5-20260301) back to the catalog ID. No [1m] variant:
+  // Fable 5 is natively 1M, so there is no 200K-default model to opt into 1M.
+  const fableMatch = trimmed.match(/(?:claude-)?fable[-_ ]+(\d+)/i);
   if (fableMatch) {
-    const suffix = fableMatch[2] ?? "";
-    return `claude-fable-${fableMatch[1]}${suffix}`;
+    return `claude-fable-${fableMatch[1]}`;
   }
 
   // Match: claude-{family}-{major}-{minor}[1m]? possibly followed by a date suffix
