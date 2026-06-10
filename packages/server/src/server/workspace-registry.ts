@@ -9,7 +9,7 @@ import type { PersistedProjectKind, PersistedWorkspaceKind } from "./workspace-r
 const PersistedProjectRecordSchema = z.object({
   projectId: z.string(),
   rootPath: z.string(),
-  kind: z.enum(["git", "non_git"]),
+  kind: z.enum(["git", "non_git", "multi_git"]),
   displayName: z.string(),
   // User-set override layered over the derived displayName. Reconciliation
   // never touches this. Null means "use the derived name". Added for #987.
@@ -18,6 +18,7 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  subRepos: z.array(z.string()).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -29,6 +30,15 @@ const PersistedWorkspaceRecordSchema = z.object({
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
   displayName: z.string(),
+  subRepoWorktrees: z
+    .array(
+      z.object({
+        name: z.string(),
+        repoPath: z.string(),
+        worktreePath: z.string(),
+      }),
+    )
+    .optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),

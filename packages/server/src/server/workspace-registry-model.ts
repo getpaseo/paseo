@@ -7,7 +7,7 @@ import type {
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
-export type PersistedProjectKind = "git" | "non_git";
+export type PersistedProjectKind = "git" | "non_git" | "multi_git";
 export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
 
 export interface DirectoryProjectMembership {
