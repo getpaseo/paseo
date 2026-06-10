@@ -3,7 +3,16 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  FolderGit2,
+  MoreVertical,
+  Pencil,
+  Plus,
+  X,
+} from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import type {
   PaseoConfigRaw,
@@ -271,6 +280,8 @@ function ProjectSettingsBody({
         onReload: handleReload,
         hasMultipleHosts,
         isHostGone,
+        projectKind: selectedHost.projectKind,
+        subRepos: selectedHost.subRepos,
       })}
     </View>
   );
@@ -287,6 +298,8 @@ interface RenderContentInput {
   onReload: () => void;
   hasMultipleHosts: boolean;
   isHostGone: boolean;
+  projectKind: ProjectHostEntry["projectKind"];
+  subRepos: string[];
 }
 
 function renderContent({
@@ -300,6 +313,8 @@ function renderContent({
   onReload,
   hasMultipleHosts,
   isHostGone,
+  projectKind,
+  subRepos,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -353,6 +368,8 @@ function renderContent({
       queryKey={queryKey}
       client={client}
       onReload={onReload}
+      projectKind={projectKind}
+      subRepos={subRepos}
     />
   );
 }
@@ -431,6 +448,8 @@ interface ProjectConfigFormProps {
   queryKey: readonly [string, string, string];
   client: DaemonClient;
   onReload: () => void;
+  projectKind: ProjectHostEntry["projectKind"];
+  subRepos: string[];
 }
 
 function ProjectConfigForm({
@@ -440,6 +459,8 @@ function ProjectConfigForm({
   queryKey,
   client,
   onReload,
+  projectKind,
+  subRepos,
 }: ProjectConfigFormProps) {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -636,6 +657,10 @@ function ProjectConfigForm({
 
   return (
     <View>
+      {projectKind === "multi_git" ? (
+        <RepositoriesGroup repoRoot={repoRoot} subRepos={subRepos} client={client} />
+      ) : null}
+
       <SettingsGroup
         title="Worktree lifecycle hooks"
         info={WORKTREE_GROUP_INFO}
@@ -1240,6 +1265,79 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
   );
 }
 
+function RepoRow({ repoPath, isFirst }: { repoPath: string; isFirst: boolean }) {
+  const parts = repoPath.split("/");
+  const folderName = parts[parts.length - 1] || repoPath;
+  const rowStyle = isFirst ? settingsStyles.row : styles.repoRowWithBorder;
+  return (
+    <View style={rowStyle}>
+      <FolderGit2 size={ICON_SIZE} color={styles.iconColor.color} style={styles.repoIcon} />
+      <View style={styles.repoRowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {folderName}
+        </Text>
+        <Text style={settingsStyles.rowHint} numberOfLines={1}>
+          {repoPath}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+interface RepositoriesGroupProps {
+  repoRoot: string;
+  subRepos: string[];
+  client: DaemonClient;
+}
+
+function RepositoriesGroup({ repoRoot, subRepos, client }: RepositoriesGroupProps) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+
+  const rescanMutation = useMutation({
+    mutationFn: () => client.openProject(repoRoot),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.show("Repositories refreshed", { variant: "success" });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Re-scan failed";
+      toast.show(message, { variant: "error" });
+    },
+  });
+
+  const handleRescan = useCallback(() => {
+    rescanMutation.mutate();
+  }, [rescanMutation]);
+
+  return (
+    <SettingsGroup title="Repositories" testID="repositories-group">
+      <View style={settingsStyles.card} testID="repositories-list">
+        {subRepos.length === 0 ? (
+          <View style={settingsStyles.row}>
+            <Text style={styles.emptyScripts}>No sub-repositories found.</Text>
+          </View>
+        ) : (
+          subRepos.map((repoPath, index) => (
+            <RepoRow key={repoPath} repoPath={repoPath} isFirst={index === 0} />
+          ))
+        )}
+      </View>
+      <View style={styles.rescanButtonRow}>
+        <Button
+          testID="repositories-rescan-button"
+          variant="secondary"
+          size="sm"
+          loading={rescanMutation.isPending}
+          onPress={handleRescan}
+        >
+          Re-scan repos
+        </Button>
+      </View>
+    </SettingsGroup>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   noTargetContainer: {
     padding: theme.spacing[4],
@@ -1456,5 +1554,27 @@ const styles = StyleSheet.create((theme) => ({
   },
   spinnerColor: {
     color: theme.colors.foregroundMuted,
+  },
+  repoIcon: {
+    marginRight: theme.spacing[3],
+    flexShrink: 0,
+  },
+  repoRowWithBorder: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  repoRowContent: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
+  },
+  rescanButtonRow: {
+    marginTop: theme.spacing[2],
+    flexDirection: "row",
   },
 }));

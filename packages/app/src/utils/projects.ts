@@ -17,6 +17,8 @@ export interface ProjectHostEntry {
   repoRoot: string;
   workspaceCount: number;
   workspaces: WorkspaceSummary[];
+  projectKind: WorkspaceDescriptor["projectKind"];
+  subRepos: string[];
   gitRuntime?: WorkspaceDescriptor["gitRuntime"];
   githubRuntime?: WorkspaceDescriptor["githubRuntime"];
 }
@@ -128,6 +130,8 @@ function toHostEntry(group: HostGroup): ProjectHostEntry {
     repoRoot,
     workspaceCount: group.workspaces.length,
     workspaces: group.workspaces.map(toWorkspaceSummary),
+    projectKind: canonical?.projectKind ?? "git",
+    subRepos: canonical?.project?.subRepos ?? [],
     gitRuntime: canonical?.gitRuntime,
     githubRuntime: canonical?.githubRuntime,
   };

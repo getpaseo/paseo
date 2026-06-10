@@ -213,6 +213,8 @@ function hostEntry(overrides: Partial<ProjectHostEntry> = {}): ProjectHostEntry 
     repoRoot: "/home/me/proj",
     workspaceCount: 1,
     workspaces: [workspaceSummary()],
+    projectKind: "git",
+    subRepos: [],
     ...overrides,
   };
 }
