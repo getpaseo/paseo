@@ -33,6 +33,10 @@ export interface CreatePaseoWorktreeResult {
   workspace: PersistedWorkspaceRecord;
   repoRoot: string;
   created: boolean;
+  /** Root path of the project that owns this worktree.  For multi_git projects
+   *  this is the parent folder that contains paseo.json; for standard git
+   *  projects it equals repoRoot. */
+  projectRootPath: string;
 }
 
 export type CreatePaseoWorktreeFn = (
@@ -60,7 +64,7 @@ export async function createPaseoWorktree(
 ): Promise<CreatePaseoWorktreeResult> {
   const createdWorktree = await createWorktreeCore(input, deps);
   maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
-  const workspace = await upsertWorkspaceForWorktree({
+  const { workspace, projectRootPath } = await upsertWorkspaceForWorktree({
     inputCwd: input.cwd,
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
@@ -76,6 +80,7 @@ export async function createPaseoWorktree(
     workspace,
     repoRoot: createdWorktree.repoRoot,
     created: createdWorktree.created,
+    projectRootPath,
   };
 }
 
@@ -196,7 +201,7 @@ async function upsertWorkspaceForWorktree(options: {
   repoRoot: string;
   worktree: WorktreeConfig;
   deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
-}): Promise<PersistedWorkspaceRecord> {
+}): Promise<{ workspace: PersistedWorkspaceRecord; projectRootPath: string }> {
   const normalizedCwd = normalizeWorkspaceId(options.worktree.worktreePath);
   const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
   const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
@@ -239,7 +244,9 @@ async function upsertWorkspaceForWorktree(options: {
   });
 
   await options.deps.workspaceRegistry.upsert(workspace);
-  return (await options.deps.workspaceRegistry.get(workspace.workspaceId)) ?? workspace;
+  const persistedWorkspace =
+    (await options.deps.workspaceRegistry.get(workspace.workspaceId)) ?? workspace;
+  return { workspace: persistedWorkspace, projectRootPath: sourceProject.rootPath };
 }
 
 interface SourceProjectForWorktree {

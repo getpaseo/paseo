@@ -46,6 +46,9 @@ export interface RunAsyncWorktreeBootstrapOptions {
   appendTimelineItem: (item: AgentTimelineItem) => Promise<boolean>;
   emitLiveTimelineItem?: (item: AgentTimelineItem) => Promise<boolean>;
   logger?: Logger;
+  /** For multi_git projects: the parent folder that contains paseo.json.
+   *  When set, config is read from this path instead of worktree.worktreePath. */
+  projectRootPath?: string;
 }
 
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
@@ -500,7 +503,8 @@ async function runWorktreeTerminalBootstrap(
   options: RunAsyncWorktreeBootstrapOptions,
   runtimeEnv: WorktreeRuntimeEnv,
 ): Promise<void> {
-  const terminalSpecs = getWorktreeTerminalSpecs(options.worktree.worktreePath);
+  const configRoot = options.projectRootPath ?? options.worktree.worktreePath;
+  const terminalSpecs = getWorktreeTerminalSpecs(configRoot);
   if (terminalSpecs.length === 0) {
     return;
   }
@@ -637,6 +641,7 @@ export async function runAsyncWorktreeBootstrap(
       branchName: options.worktree.branchName,
       cleanupOnFailure: false,
       runtimeEnv,
+      ...(options.projectRootPath ? { configRootPath: options.projectRootPath } : {}),
       onEvent: (event) => {
         applyWorktreeSetupProgressEvent(progressAccumulator, event);
         queueLiveRunningEmit();
