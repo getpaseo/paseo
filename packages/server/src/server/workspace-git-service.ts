@@ -218,11 +218,10 @@ interface WorkspaceGitRefreshRequest {
   notify: boolean;
 }
 
-interface QueuedWorkspaceGitRefresh {
-  force: boolean;
-  includeGitHub: boolean;
-  reason: string;
-  notify: boolean;
+interface ScheduledWorkspaceGitRefreshOptions {
+  force?: boolean;
+  includeGitHub?: boolean;
+  reason?: string;
 }
 
 type WorkspaceGitRefreshState =
@@ -234,7 +233,7 @@ type WorkspaceGitRefreshState =
       promise: Promise<WorkspaceGitRuntimeSnapshot>;
       force: boolean;
       includeGitHub: boolean;
-      queued: QueuedWorkspaceGitRefresh | null;
+      queued: WorkspaceGitRefreshRequest | null;
     };
 
 interface WorkspaceGitServiceDependencies {
@@ -269,7 +268,7 @@ interface WorkspaceGitTarget {
   listeners: Set<WorkspaceGitListener>;
   watchers: FSWatcher[];
   debounceTimer: NodeJS.Timeout | null;
-  pendingDebounceOptions: { force?: boolean; includeGitHub?: boolean; reason?: string } | null;
+  pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
   selfHealTimer: NodeJS.Timeout | null;
   githubPollSubscription: { unsubscribe: () => void } | null;
   githubPollKey: string | null;
@@ -815,7 +814,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       listeners: new Set(),
       watchers: [],
       debounceTimer: null,
-      pendingDebounceOptions: null,
+      pendingDebounceRequest: null,
       selfHealTimer: null,
       githubPollSubscription: null,
       githubPollKey: null,
@@ -1117,7 +1116,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private scheduleWorkspaceRefresh(
     targetOrCwd: WorkspaceGitTarget | string,
-    options?: { force?: boolean; includeGitHub?: boolean; reason?: string },
+    options?: ScheduledWorkspaceGitRefreshOptions,
   ): void {
     const target =
       typeof targetOrCwd === "string"
@@ -1127,9 +1126,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
-    target.pendingDebounceOptions = this.mergeDebounceOptions(
-      target.pendingDebounceOptions,
-      options,
+    const request = this.buildScheduledRefreshRequest(options);
+    target.pendingDebounceRequest = this.mergeRefreshRequests(
+      target.pendingDebounceRequest,
+      request,
     );
 
     if (target.debounceTimer) {
@@ -1141,14 +1141,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         return;
       }
       target.debounceTimer = null;
-      const merged = target.pendingDebounceOptions;
-      target.pendingDebounceOptions = null;
-      void this.refreshWorkspaceTarget(target, {
-        force: merged?.force === true,
-        includeGitHub: merged?.includeGitHub ?? false,
-        reason: merged?.reason ?? "watch",
-        notify: true,
-      });
+      const merged = target.pendingDebounceRequest;
+      target.pendingDebounceRequest = null;
+      if (merged) {
+        void this.refreshWorkspaceTarget(target, merged);
+      }
     }, WORKSPACE_GIT_WATCH_DEBOUNCE_MS);
   }
 
@@ -1484,7 +1481,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const needsGitHubRefresh =
         request.force && request.includeGitHub && !target.refreshState.includeGitHub;
       if (needsForcedRefresh || needsGitHubRefresh) {
-        target.refreshState.queued = this.mergeQueuedRefresh(target.refreshState.queued, request);
+        target.refreshState.queued = this.mergeRefreshRequests(target.refreshState.queued, request);
       }
       return target.refreshState.promise;
     }
@@ -1556,44 +1553,33 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return this.deps.now().getTime() - target.lastShellOutAtMs < WORKSPACE_GIT_INTERNAL_MIN_GAP_MS;
   }
 
-  private mergeQueuedRefresh(
-    queued: QueuedWorkspaceGitRefresh | null,
-    request: WorkspaceGitRefreshRequest,
-  ): QueuedWorkspaceGitRefresh {
-    if (!queued) {
-      return {
-        force: request.force,
-        includeGitHub: request.includeGitHub,
-        reason: request.reason,
-        notify: request.notify,
-      };
-    }
-
-    const force = queued.force || request.force;
-    const upgradesForce = request.force && !queued.force;
-    const upgradesGitHub = request.includeGitHub && !queued.includeGitHub;
+  private buildScheduledRefreshRequest(
+    options: ScheduledWorkspaceGitRefreshOptions | undefined,
+  ): WorkspaceGitRefreshRequest {
     return {
-      force,
-      includeGitHub: queued.includeGitHub || request.includeGitHub,
-      reason: upgradesForce || upgradesGitHub ? request.reason : queued.reason,
-      notify: queued.notify || request.notify,
+      force: options?.force === true,
+      includeGitHub: options?.includeGitHub ?? false,
+      reason: options?.reason ?? "watch",
+      notify: true,
     };
   }
 
-  private mergeDebounceOptions(
-    pending: { force?: boolean; includeGitHub?: boolean; reason?: string } | null,
-    incoming: { force?: boolean; includeGitHub?: boolean; reason?: string } | undefined,
-  ): { force?: boolean; includeGitHub?: boolean; reason?: string } {
+  private mergeRefreshRequests(
+    pending: WorkspaceGitRefreshRequest | null,
+    request: WorkspaceGitRefreshRequest,
+  ): WorkspaceGitRefreshRequest {
     if (!pending) {
-      return incoming ?? {};
+      return request;
     }
-    if (!incoming) {
-      return pending;
-    }
+
+    const force = pending.force || request.force;
+    const upgradesForce = request.force && !pending.force;
+    const upgradesGitHub = request.includeGitHub && !pending.includeGitHub;
     return {
-      force: pending.force || incoming.force,
-      includeGitHub: pending.includeGitHub || incoming.includeGitHub,
-      reason: incoming.force && !pending.force ? incoming.reason : pending.reason,
+      force,
+      includeGitHub: pending.includeGitHub || request.includeGitHub,
+      reason: upgradesForce || upgradesGitHub ? request.reason : pending.reason,
+      notify: pending.notify || request.notify,
     };
   }
 
