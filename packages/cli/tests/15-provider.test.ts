@@ -46,6 +46,11 @@ interface ProviderListRow {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-fable-5",
+    model: "Fable 5",
+    descriptionFragment: "Most powerful",
+  },
+  {
     id: "claude-opus-4-8[1m]",
     model: "Opus 4.8 1M",
     descriptionFragment: "1M context window",

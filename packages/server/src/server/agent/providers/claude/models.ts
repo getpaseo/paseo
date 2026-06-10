@@ -23,6 +23,13 @@ const CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS = [
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
+    id: "claude-fable-5",
+    label: "Fable 5",
+    description: "Fable 5 · Most powerful model",
+    thinkingOptions: [...CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
     id: "claude-opus-4-8[1m]",
     label: "Opus 4.8 1M",
     description: "Opus 4.8 with 1M context window",
@@ -204,6 +211,15 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   // Check for exact match first (handles claude-opus-4-6[1m] directly)
   if (CLAUDE_MODELS.some((model) => model.id === trimmed)) {
     return trimmed;
+  }
+
+  // Fable uses a single-segment version (claude-fable-5), not the {major}-{minor}
+  // scheme of opus/sonnet/haiku, so match it separately. This maps dated runtime
+  // strings (e.g. claude-fable-5-20260301) back to the catalog ID.
+  const fableMatch = trimmed.match(/(?:claude-)?fable[-_ ]+(\d+)(\[1m\])?/i);
+  if (fableMatch) {
+    const suffix = fableMatch[2] ?? "";
+    return `claude-fable-${fableMatch[1]}${suffix}`;
   }
 
   // Match: claude-{family}-{major}-{minor}[1m]? possibly followed by a date suffix

@@ -408,6 +408,7 @@ describe("ClaudeAgentClient.listModels", () => {
       const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
       expect(models.map((m) => m.id)).toEqual([
+        "claude-fable-5",
         "claude-opus-4-8[1m]",
         "claude-opus-4-8",
         "claude-opus-4-7[1m]",
