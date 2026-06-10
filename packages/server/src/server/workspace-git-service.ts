@@ -77,6 +77,8 @@ export interface WorkspaceGitRuntimeSnapshot {
     behindOfOrigin: number | null;
     hasRemote: boolean;
     diffStat: { additions: number; deletions: number } | null;
+    isMultiGit?: boolean;
+    subRepos?: string[];
   };
   github: {
     featuresEnabled: boolean;
@@ -643,6 +645,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       mainRepoRoot: snapshot.git.mainRepoRoot,
       currentBranch: snapshot.git.currentBranch,
       remoteUrl: snapshot.git.remoteUrl,
+      isMultiGit: snapshot.git.isMultiGit,
+      subRepos: snapshot.git.subRepos,
     });
   }
 
@@ -1623,7 +1627,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const context: CheckoutContext = { ...baseContext, facts };
     const checkoutStatus = await this.deps.getCheckoutStatus(cwd, context);
     if (!checkoutStatus.isGit) {
-      target.latestGit = buildNotGitSnapshot(cwd).git;
+      target.latestGit = {
+        ...buildNotGitSnapshot(cwd).git,
+        ...(checkoutStatus.isMultiGit
+          ? { isMultiGit: true, subRepos: checkoutStatus.subRepos }
+          : {}),
+      };
       target.latestGitLoadedAtMs = this.deps.now().getTime();
       target.cachedGitHubRemote = null;
       target.latestGithub = buildGitHubUnavailableSnapshot();
