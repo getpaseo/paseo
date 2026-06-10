@@ -170,6 +170,7 @@ function MultiGitConfirmationStep({
       <View style={styles.multiGitActions}>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Continue setup"
           onPress={onConfirm}
           style={styles.multiGitContinueButton}
           testID="multi-git-confirm-continue"
@@ -178,6 +179,7 @@ function MultiGitConfirmationStep({
         </Pressable>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Cancel"
           onPress={onCancel}
           style={styles.multiGitCancelButton}
           testID="multi-git-confirm-cancel"
@@ -262,7 +264,10 @@ export function WorkspaceSetupDialog() {
     void (async () => {
       const payload = await client.openProject(sourceDirectory);
       if (cancelled) return;
-      if (!payload.workspace || payload.error) return;
+      if (!payload.workspace || payload.error) {
+        setErrorMessage(payload.error ?? "Failed to probe project");
+        return;
+      }
       const normalized = normalizeWorkspaceDescriptor(payload.workspace);
       if (normalized.projectKind !== "multi_git") return;
       const subRepos = payload.workspace.project?.subRepos ?? [];
