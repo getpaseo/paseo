@@ -12,6 +12,8 @@ import type {
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
+import { normalizeWorkspaceId } from "../workspace-registry-model.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
@@ -22,6 +24,7 @@ export interface AutoArchiveArchiveOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get">;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -85,11 +88,31 @@ export async function archiveIfSafe(input: {
       return;
     }
 
+    // For multi_git workspaces the workspace record carries subRepoWorktrees.
+    // Look it up so the archive step can clean up all sub-repo worktrees, and so
+    // we can bypass the Paseo-ownership check (workspaceRoot is not under the
+    // Paseo worktrees base root — it lives next to the project directory).
+    let subRepoWorktrees:
+      | Array<{ name: string; repoPath: string; worktreePath: string }>
+      | undefined;
+    if (options.workspaceRegistry) {
+      try {
+        const workspaceId = normalizeWorkspaceId(cwd);
+        const workspace = await options.workspaceRegistry.get(workspaceId);
+        if (workspace?.subRepoWorktrees?.length) {
+          subRepoWorktrees = workspace.subRepoWorktrees;
+        }
+      } catch {
+        // best-effort: if lookup fails, proceed without subRepoWorktrees
+      }
+    }
+    const isMultiGit = subRepoWorktrees !== undefined;
+
     const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
       paseoHome: options.paseoHome,
       worktreesRoot: options.worktreesRoot,
     });
-    if (!ownership.allowed) {
+    if (!ownership.allowed && !isMultiGit) {
       return;
     }
 
@@ -125,6 +148,7 @@ export async function archiveIfSafe(input: {
           worktreesRoot: ownership.worktreeRoot,
           worktreesBaseRoot: options.worktreesRoot,
           requestId: "auto-archive-on-merge",
+          subRepoWorktrees,
         },
       );
       log.info({ cwd }, "Auto-archived worktree after PR merge");

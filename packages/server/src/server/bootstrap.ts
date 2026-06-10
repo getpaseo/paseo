@@ -676,6 +676,7 @@ export async function createPaseoDaemon(
     agentManager,
     agentStorage,
     terminalManager,
+    workspaceRegistry: workspaceRegistry ?? undefined,
     logger,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
@@ -703,6 +704,7 @@ export async function createPaseoDaemon(
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,
         clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+        workspaceRegistry: workspaceRegistry ?? undefined,
         createPaseoWorktree: async (input, serviceOptions) => {
           return createPaseoWorktreeWorkflow(
             {

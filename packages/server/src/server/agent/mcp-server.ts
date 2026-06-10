@@ -72,6 +72,7 @@ import {
 } from "./lifecycle-command.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 import { WorktreeRequestError } from "../worktree-errors.js";
 import {
   archivePaseoWorktreeCommand,
@@ -98,6 +99,7 @@ export interface AgentMcpServerOptions {
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get">;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -2426,6 +2428,7 @@ function archiveWorktreeDependencies(
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
     clearWorkspaceArchiving: options.clearWorkspaceArchiving,
+    workspaceRegistry: options.workspaceRegistry,
     isPathWithinRoot: isSameOrDescendantPath,
     killTerminalsUnderPath: (rootPath: string) =>
       killTerminalsUnderPath(
