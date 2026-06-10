@@ -23,7 +23,7 @@ import { addWaitOptions, runWaitCommand } from "./commands/agent/wait.js";
 import { addArchiveOptions, runArchiveCommand } from "./commands/agent/archive.js";
 import { addAttachOptions, runAttachCommand } from "./commands/agent/attach.js";
 import { addImportOptions, runImportCommand } from "./commands/agent/import.js";
-import { withOutput } from "./output/index.js";
+import { withOutput, type CommandOptions } from "./output/index.js";
 import { onboardCommand } from "./commands/onboard.js";
 import {
   addDaemonHostOption,
@@ -34,7 +34,7 @@ import { resolveCliVersion } from "./version.js";
 
 const VERSION = resolveCliVersion();
 
-function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
+export function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
   if (typeof hostnames === "string") return hostnames;
   if (typeof allowedHosts === "string") return allowedHosts;
   return undefined;
@@ -127,7 +127,7 @@ export function createCli(): Command {
     .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
     .action(
       withOutput((...args) => {
-        const [options, command] = args.slice(-2) as [(typeof args)[number], Command];
+        const [options, command] = args.slice(-2) as [CommandOptions, Command];
         return runDaemonRestartCommand(
           {
             ...options,

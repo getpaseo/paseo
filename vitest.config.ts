@@ -5,7 +5,7 @@ import { configDefaults, defineConfig } from "vitest/config";
 const appDir = path.resolve(__dirname, "packages/app");
 const appNodeModules = path.resolve(appDir, "node_modules");
 const rootNodeModules = path.resolve(__dirname, "node_modules");
-const resolvePackageEntry = (packageName: string) => {
+const resolvePackageEntry = (packageName: string): string => {
   const appPackagePath = path.resolve(appNodeModules, packageName);
   return fs.existsSync(appPackagePath)
     ? appPackagePath
