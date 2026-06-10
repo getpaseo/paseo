@@ -40,6 +40,7 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
     iconWorkingDir: "/repo",
     canCreateWorktree: overrides.canCreateWorktree ?? projectKind === "git",
     workspaces: [workspace()],
+    subRepos: [],
     ...overrides,
   };
 }

@@ -18,6 +18,7 @@ function structureProject(input: Partial<WorkspaceStructureProject>): WorkspaceS
     projectKind: input.projectKind ?? "git",
     iconWorkingDir: input.iconWorkingDir ?? "/repo/a",
     workspaceKeys: input.workspaceKeys ?? ["workspace-a"],
+    subRepos: input.subRepos ?? [],
   };
 }
 
@@ -30,6 +31,7 @@ function hostProject(input: Partial<HostProjectListItem>): HostProjectListItem {
     iconWorkingDir: input.iconWorkingDir ?? "/repo/a",
     workspaceKeys: input.workspaceKeys ?? ["workspace-a"],
     canCreateWorktree: input.canCreateWorktree ?? true,
+    subRepos: input.subRepos ?? [],
   };
 }
 

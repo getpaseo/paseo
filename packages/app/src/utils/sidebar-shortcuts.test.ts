@@ -48,6 +48,7 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
     iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
     canCreateWorktree: true,
     workspaces,
+    subRepos: [],
   };
 }
 

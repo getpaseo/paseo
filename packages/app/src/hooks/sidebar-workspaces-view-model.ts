@@ -38,6 +38,7 @@ export interface SidebarProjectEntry {
   iconWorkingDir: string;
   canCreateWorktree: boolean;
   workspaces: SidebarWorkspaceEntry[];
+  subRepos: string[];
 }
 
 function createStructuralWorkspaceEntry(input: {
@@ -80,6 +81,7 @@ export function buildSidebarProjectsFromStructure(input: {
       iconWorkingDir: project.iconWorkingDir,
       workspaceKeys: project.workspaceKeys,
       canCreateWorktree: canCreateWorktreeForProjectKind(project.projectKind),
+      subRepos: project.subRepos,
     })),
   });
 }
@@ -97,6 +99,7 @@ export function buildSidebarProjectsFromHostProjects(input: {
     projectKind: project.projectKind,
     iconWorkingDir: project.iconWorkingDir,
     canCreateWorktree: project.canCreateWorktree,
+    subRepos: project.subRepos,
     workspaces: project.workspaceKeys.map((workspaceId) =>
       createStructuralWorkspaceEntry({
         serverId: project.serverId,

@@ -30,6 +30,7 @@ function project(input: {
     projectKind: input.projectKind ?? "git",
     iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
     workspaceKeys: input.workspaceKeys,
+    subRepos: [],
   };
 }
 

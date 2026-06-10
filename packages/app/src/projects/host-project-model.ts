@@ -9,6 +9,7 @@ export interface HostProjectListItem {
   iconWorkingDir: string;
   workspaceKeys: string[];
   canCreateWorktree: boolean;
+  subRepos: string[];
 }
 
 export interface HostProjectRouteContext {
@@ -41,6 +42,7 @@ export function buildHostProjectList(input: {
     iconWorkingDir: project.iconWorkingDir,
     workspaceKeys: project.workspaceKeys,
     canCreateWorktree: canCreateWorktreeForProjectKind(project.projectKind),
+    subRepos: project.subRepos,
   }));
 }
 
@@ -58,6 +60,7 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
     iconWorkingDir,
     workspaceKeys: [],
     canCreateWorktree: true,
+    subRepos: [],
   };
 }
 
@@ -81,6 +84,7 @@ export function hostProjectFromWorkspace(input: {
     iconWorkingDir,
     workspaceKeys: [input.workspace.id],
     canCreateWorktree: canCreateWorktreeForProjectKind(input.workspace.projectKind),
+    subRepos: input.workspace.project?.subRepos ?? [],
   };
 }
 

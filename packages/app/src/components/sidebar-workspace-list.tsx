@@ -1274,6 +1274,11 @@ function ProjectHeaderRow({
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
+          {project.projectKind === "multi_git" && project.subRepos.length > 0 ? (
+            <Text style={styles.projectSubtitle} numberOfLines={1}>
+              {project.subRepos.map((r) => r.split("/").pop() ?? r).join(" · ")}
+            </Text>
+          ) : null}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -2815,9 +2820,10 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectTitleGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
+    flexDirection: "column",
+    alignItems: "flex-start",
+    justifyContent: "center",
+    gap: theme.spacing[0],
     flex: 1,
     minWidth: 0,
   },
@@ -2848,6 +2854,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: "400",
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  projectSubtitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
     minWidth: 0,
     flexShrink: 1,
   },

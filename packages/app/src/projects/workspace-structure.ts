@@ -7,6 +7,7 @@ export interface WorkspaceStructureProject {
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
   workspaceKeys: string[];
+  subRepos: string[];
 }
 
 export interface WorkspaceStructure {
@@ -68,6 +69,7 @@ export function buildWorkspaceStructureProjects(input: {
         projectKind: workspace.projectKind,
         iconWorkingDir: workspace.projectRootPath,
         workspaceKeys: [],
+        subRepos: workspace.project?.subRepos ?? [],
         workspaces: [],
       } satisfies WorkspaceStructureProject & {
         workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
