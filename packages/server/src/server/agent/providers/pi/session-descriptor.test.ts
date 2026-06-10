@@ -114,3 +114,59 @@ test("Pi import config can infer model from assistant messages", async () => {
     model: "google/gemini-2.5-pro",
   });
 });
+
+test("Pi import config preserves thinking before a later model in large sessions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-large-thinking-"));
+  const cwd = path.join(root, "repo");
+  const fillerMessages = Array.from({ length: 2_100 }, (_, index) => ({
+    type: "message",
+    id: `filler-${index}`,
+    timestamp: `2026-06-09T00:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: `filler ${index}` }],
+    },
+  }));
+  const sessionFile = await writeSession(root, [
+    {
+      type: "session",
+      version: 3,
+      id: "session-3",
+      timestamp: "2026-06-09T00:00:00.000Z",
+      cwd,
+    },
+    {
+      type: "message",
+      id: "user-1",
+      timestamp: "2026-06-09T00:00:01.000Z",
+      message: { role: "user", content: "hello" },
+    },
+    ...fillerMessages,
+    {
+      type: "thinking_level_change",
+      id: "thinking-1",
+      timestamp: "2026-06-09T01:00:00.000Z",
+      thinkingLevel: "low",
+    },
+    {
+      type: "model_change",
+      id: "model-1",
+      timestamp: "2026-06-09T01:00:01.000Z",
+      provider: "openrouter",
+      modelId: "google/gemini-2.5-pro",
+    },
+    {
+      type: "session_info",
+      id: "info-1",
+      timestamp: "2026-06-09T01:00:02.000Z",
+      name: "large session",
+    },
+  ]);
+
+  const importConfig = await readPiImportSessionConfig(sessionFile);
+
+  expect(importConfig).toEqual({
+    model: "openrouter/google/gemini-2.5-pro",
+    thinkingOptionId: "low",
+  });
+});

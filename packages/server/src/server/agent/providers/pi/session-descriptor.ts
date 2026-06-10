@@ -310,15 +310,7 @@ function parseSessionTail(tail: string): PiSessionTail {
       fallbackTimestamp = entryTimestamp;
     }
 
-    if (entry.type !== "message") {
-      if (
-        hasCompleteTailInfo({ title, lastActivityAt, lastUserMessage, model, thinkingOptionId })
-      ) {
-        break;
-      }
-
-      continue;
-    }
+    if (entry.type !== "message") continue;
 
     if (!lastActivityAt && entryTimestamp) {
       lastActivityAt = entryTimestamp;
@@ -326,10 +318,6 @@ function parseSessionTail(tail: string): PiSessionTail {
 
     if (!lastUserMessage && isRecord(entry.message) && entry.message.role === "user") {
       lastUserMessage = extractMessageText(entry.message.content);
-    }
-
-    if (hasCompleteTailInfo({ title, lastActivityAt, lastUserMessage, model, thinkingOptionId })) {
-      break;
     }
   }
 
@@ -340,10 +328,6 @@ function parseSessionTail(tail: string): PiSessionTail {
     model,
     thinkingOptionId,
   };
-}
-
-function hasCompleteTailInfo(info: PiSessionTail): boolean {
-  return Boolean(info.title && info.lastActivityAt && info.lastUserMessage && info.model);
 }
 
 async function scanSessionHead(filePath: string): Promise<PiSessionHead> {
@@ -378,7 +362,7 @@ async function scanSessionHead(filePath: string): Promise<PiSessionHead> {
       }
     }
 
-    if (title && firstUserMessage && model) {
+    if (title && firstUserMessage && model && thinkingOptionId) {
       break;
     }
     if (lineCount >= FULL_SCAN_LINE_LIMIT && firstUserMessage) {
