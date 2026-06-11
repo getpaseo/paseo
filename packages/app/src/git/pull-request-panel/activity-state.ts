@@ -80,12 +80,36 @@ export function getVisibleEntries(
 
 export function getCollapsedEntryIds(
   state: PullRequestActivityState,
-  input: { prNumber: number },
+  input: { prNumber: number; entries?: readonly PrTimelineEntry[] },
 ): ReadonlySet<string> {
   const prefix = `${input.prNumber}:`;
-  return new Set(
+  const collapsedIds = new Set(
     state.collapsedKeys
       .filter((key) => key.startsWith(prefix))
       .map((key) => key.slice(prefix.length)),
   );
+
+  addDefaultCollapsedEntryIds(collapsedIds, state, input.prNumber, input.entries ?? []);
+
+  return collapsedIds;
+}
+
+function addDefaultCollapsedEntryIds(
+  collapsedIds: Set<string>,
+  state: PullRequestActivityState,
+  prNumber: number,
+  entries: readonly PrTimelineEntry[],
+) {
+  for (const entry of entries) {
+    const key = getActivityStateKey({ prNumber, activityId: entry.id });
+    if (shouldCollapseByDefault(entry) && !state.expandedKeys.includes(key)) {
+      collapsedIds.add(entry.id);
+    }
+    if (state.expandedKeys.includes(key)) {
+      collapsedIds.delete(entry.id);
+    }
+    if (entry.kind === "review") {
+      addDefaultCollapsedEntryIds(collapsedIds, state, prNumber, entry.threads);
+    }
+  }
 }

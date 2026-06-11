@@ -10,6 +10,7 @@ const CHECK_ANNOTATION_PAGE_MAX = 20;
 const CHECK_LOG_TAIL_MAX_LINES = 200;
 const CHECK_LOG_TAIL_MAX_BYTES = 16 * 1024;
 const CHECK_LOG_TAIL_CACHE_MAX_ENTRIES = 128;
+const ACTIONS_JOB_PAGE_MAX = 100;
 const FAILED_CHECK_JOB_LIMIT = 5;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
@@ -1310,13 +1311,19 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           if (typeof workflowRunId === "number") {
             const jobs = parseGitHubActionsJobs(
               await run(
-                ["api", `${repoPath}/actions/runs/${workflowRunId}/jobs`, "-f", "per_page=100"],
+                [
+                  "api",
+                  `${repoPath}/actions/runs/${workflowRunId}/jobs`,
+                  "-f",
+                  `per_page=${ACTIONS_JOB_PAGE_MAX}`,
+                ],
                 {
                   cwd: input.cwd,
                 },
               ),
             );
             const failed = jobs.filter(isFailedActionsJob);
+            truncated ||= jobs.length >= ACTIONS_JOB_PAGE_MAX;
             truncated ||= failed.length > FAILED_CHECK_JOB_LIMIT;
             for (const job of failed.slice(0, FAILED_CHECK_JOB_LIMIT)) {
               const log = await getCachedCheckLogTail({

@@ -1500,6 +1500,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   return (
     <MarkdownRenderer
       text={text}
+      enableHtmlish={false}
       rules={rules}
       markdownit={parser}
       onLinkPress={onLinkPress}

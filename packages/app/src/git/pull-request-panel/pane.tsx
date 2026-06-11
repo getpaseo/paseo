@@ -232,8 +232,8 @@ export function PullRequestPane({
     [activityState, data.number, timelineEntries],
   );
   const collapsedEntryIds = useMemo(
-    () => getCollapsedEntryIds(activityState, { prNumber: data.number }),
-    [activityState, data.number],
+    () => getCollapsedEntryIds(activityState, { prNumber: data.number, entries: timelineEntries }),
+    [activityState, data.number, timelineEntries],
   );
   const attachEnabled = workspaceAttachmentScopeKey !== undefined;
 

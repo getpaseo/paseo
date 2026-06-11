@@ -1738,6 +1738,44 @@ describe("GitHubService", () => {
     expect(details.truncated).toBe(true);
   });
 
+  it("marks check details truncated when workflow jobs hit the page cap", async () => {
+    const jobs = Array.from({ length: 100 }, (_, index) => ({
+      id: 900 + index,
+      name: `job-${index + 1}`,
+      status: "completed",
+      conclusion: "success",
+      html_url: `https://github.com/acme/repo/actions/runs/456/job/${900 + index}`,
+      completed_at: `2026-04-02T13:52:${String(index % 60).padStart(2, "0")}Z`,
+    }));
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: { id: 456 } },
+      }),
+      JSON.stringify([]),
+      JSON.stringify({ jobs }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const details = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+
+    expect(details.failedJobs).toEqual([]);
+    expect(details.truncated).toBe(true);
+  });
+
   it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {
     const runner = createScriptedRunner([
       {

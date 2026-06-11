@@ -3,6 +3,7 @@ import {
   collapseActivity,
   expandActivity,
   getActivityState,
+  getCollapsedEntryIds,
   getVisibleEntries,
 } from "./activity-state";
 import type { PrTimelineEntry } from "./timeline";
@@ -41,6 +42,15 @@ function threadEntry(id: string, resolved = false, outdated = false): PrTimeline
     id: `thread:${id}`,
     location: { path: "a.ts", line: 1, isResolved: resolved, isOutdated: outdated },
     comments: [activity(id)],
+  };
+}
+
+function reviewEntry(id: string, threads: PrTimelineEntry[]): PrTimelineEntry {
+  return {
+    kind: "review",
+    id,
+    review: activity(id, { kind: "review", reviewState: "commented" }),
+    threads: threads.filter((entry) => entry.kind === "thread"),
   };
 }
 
@@ -100,5 +110,31 @@ describe("pull request activity state", () => {
 
     const visible = getVisibleEntries(collapsed, { prNumber: 42, entries });
     expect(visible[0].collapsed).toBe(true);
+  });
+
+  it("includes default-collapsed nested review threads in collapsed IDs", () => {
+    const entries = [
+      reviewEntry("review", [
+        threadEntry("thread-normal"),
+        threadEntry("thread-resolved", true),
+        threadEntry("thread-outdated", false, true),
+      ]),
+    ];
+
+    const collapsedIds = getCollapsedEntryIds(getActivityState(), { prNumber: 42, entries });
+
+    expect([...collapsedIds].sort()).toEqual(["thread:thread-outdated", "thread:thread-resolved"]);
+  });
+
+  it("lets user expand a default-collapsed nested review thread", () => {
+    const entries = [reviewEntry("review", [threadEntry("thread-resolved", true)])];
+    const expanded = expandActivity(getActivityState(), {
+      prNumber: 42,
+      activityId: "thread:thread-resolved",
+    });
+
+    const collapsedIds = getCollapsedEntryIds(expanded, { prNumber: 42, entries });
+
+    expect(collapsedIds.has("thread:thread-resolved")).toBe(false);
   });
 });
