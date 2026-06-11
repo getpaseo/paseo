@@ -26,13 +26,14 @@ import type {
 } from "@/git/pr-pane-data";
 
 const COLLAPSED_LINES = 4;
+const TRUNCATION_CHAR_THRESHOLD = 180;
 
 function rowPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.row, Boolean(hovered) && styles.hoverable];
 }
 
-function activityPressableStyle({ hovered }: { hovered?: boolean }) {
-  return [styles.activityRow, Boolean(hovered) && styles.hoverable];
+function activityContentPressableStyle({ hovered }: { hovered?: boolean }) {
+  return [styles.activityContent, Boolean(hovered) && styles.hoverable];
 }
 
 export function PrPane({ data }: { data: PrPaneData }) {
@@ -272,9 +273,10 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
-  const [truncated, setTruncated] = useState(false);
   const verb = getTranslatedActivityVerb(item, t);
   const age = item.age === "just now" ? t("workspace.git.pr.time.justNow") : item.age;
+  // Estimate truncation by character count (4 lines at fontSize.sm in sidebar ≈ 180 chars).
+  const truncated = item.body.length > TRUNCATION_CHAR_THRESHOLD;
 
   const handleToggleExpand = useCallback(() => {
     setExpanded((prev) => !prev);
@@ -284,58 +286,46 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
     void openExternalUrl(item.url);
   }, [item.url]);
 
-  const handleTextLayout = useCallback((e: { nativeEvent: { lines: unknown[] } }) => {
-    if (e.nativeEvent.lines.length > COLLAPSED_LINES) {
-      setTruncated(true);
-    }
-  }, []);
-
   const avatarStyle = useMemo(
     () => [styles.avatar, { backgroundColor: item.avatarColor }],
     [item.avatarColor],
   );
 
   return (
-    <Pressable
-      onPress={handleToggleExpand}
-      style={activityPressableStyle}
-      testID="pr-pane-activity-row"
-    >
-      <View style={avatarStyle}>
-        <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
-      </View>
-      <View style={styles.activityMain}>
-        <View style={styles.activityHeaderRow}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
-            {item.author}
+    <View style={styles.activityRow} testID="pr-pane-activity-row">
+      <Pressable onPress={handleToggleExpand} style={activityContentPressableStyle}>
+        <View style={avatarStyle}>
+          <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={styles.activityMain}>
+          <View style={styles.activityHeaderRow}>
+            <Text style={styles.rowTitle} numberOfLines={1}>
+              {item.author}
+            </Text>
+            {truncated && (
+              <View style={styles.expandIndicator}>
+                {expanded ? (
+                  <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <ChevronRight size={12} color={theme.colors.foregroundMuted} />
+                )}
+              </View>
+            )}
+          </View>
+          <View style={styles.activityMetaRow}>
+            <Text style={styles.rowMetaMid}>{verb}</Text>
+            <Text style={styles.activityMetaSep}>·</Text>
+            <Text style={styles.activityAge}>{age}</Text>
+          </View>
+          <Text style={styles.rowBody} numberOfLines={expanded ? undefined : COLLAPSED_LINES}>
+            {item.body}
           </Text>
-          {truncated && (
-            <View style={styles.expandIndicator}>
-              {expanded ? (
-                <ChevronDown size={12} color={theme.colors.foregroundMuted} />
-              ) : (
-                <ChevronRight size={12} color={theme.colors.foregroundMuted} />
-              )}
-            </View>
-          )}
         </View>
-        <View style={styles.activityMetaRow}>
-          <Text style={styles.rowMetaMid}>{verb}</Text>
-          <Text style={styles.rowMetaSep}>·</Text>
-          <Text style={styles.rowMeta}>{age}</Text>
-          <Pressable onPress={handleOpenUrl} hitSlop={8}>
-            <ExternalLink size={11} color={theme.colors.foregroundMuted} />
-          </Pressable>
-        </View>
-        <Text
-          style={styles.rowBody}
-          numberOfLines={expanded ? undefined : COLLAPSED_LINES}
-          onTextLayout={handleTextLayout}
-        >
-          {item.body}
-        </Text>
-      </View>
-    </Pressable>
+      </Pressable>
+      <Pressable onPress={handleOpenUrl} hitSlop={8} style={styles.externalLinkButton}>
+        <ExternalLink size={11} color={theme.colors.foregroundMuted} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -451,6 +441,17 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },
+  activityContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
+  externalLinkButton: {
+    padding: 2,
+    marginTop: 1,
+  },
   activityMain: { flex: 1, minWidth: 0, gap: 2 },
   activityHeaderRow: {
     flexDirection: "row",
@@ -487,7 +488,11 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: "auto",
     marginRight: -4,
   },
-  rowMetaSep: {
+  activityMetaSep: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  activityAge: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
