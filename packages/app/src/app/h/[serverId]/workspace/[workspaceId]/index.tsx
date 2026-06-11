@@ -7,15 +7,24 @@ import {
   type ActiveWorkspaceSelection,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
+import {
+  areWorkspaceSelectionListsEqual,
+  areWorkspaceSelectionsEqual,
+  getWorkspaceSelectionKey,
+  pruneMountedWorkspaceSelections,
+  WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+} from "@/screens/workspace/workspace-deck-retention";
 import {
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
 import { isWeb } from "@/constants/platform";
 
 function getParamValue(value: string | string[] | undefined): string {
@@ -152,30 +161,44 @@ function HostWorkspaceRouteContent() {
   return <WorkspaceDeck />;
 }
 
-function areWorkspaceSelectionsEqual(
-  left: ActiveWorkspaceSelection | null,
-  right: ActiveWorkspaceSelection | null,
-): boolean {
-  return left?.serverId === right?.serverId && left?.workspaceId === right?.workspaceId;
-}
-
 function WorkspaceDeck() {
   const activeSelection = useActiveWorkspaceSelection();
+  const activeServerId = activeSelection?.serverId ?? null;
+  const workspaces = useSessionStore((state) =>
+    activeServerId ? state.sessions[activeServerId]?.workspaces : undefined,
+  );
+  const hasHydratedWorkspaces = useSessionStore((state) =>
+    activeServerId ? (state.sessions[activeServerId]?.hasHydratedWorkspaces ?? false) : false,
+  );
   const [mountedSelections, setMountedSelections] = useState<ActiveWorkspaceSelection[]>(() =>
     activeSelection ? [activeSelection] : [],
   );
 
   useEffect(() => {
-    if (!activeSelection) {
-      return;
-    }
     setMountedSelections((current) => {
-      if (current.some((selection) => areWorkspaceSelectionsEqual(selection, activeSelection))) {
+      const next = pruneMountedWorkspaceSelections({
+        currentSelections: current,
+        activeSelection,
+        maxMountedWorkspaces: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+        shouldPruneInactiveSelections: hasHydratedWorkspaces,
+        canRetainInactiveSelection: (selection) => {
+          if (selection.serverId !== activeServerId) {
+            return false;
+          }
+          return Boolean(
+            resolveWorkspaceMapKeyByIdentity({
+              workspaces,
+              workspaceId: selection.workspaceId,
+            }),
+          );
+        },
+      });
+      if (areWorkspaceSelectionListsEqual(current, next)) {
         return current;
       }
-      return [...current, activeSelection];
+      return next;
     });
-  }, [activeSelection]);
+  }, [activeSelection, activeServerId, hasHydratedWorkspaces, workspaces]);
 
   if (!activeSelection) {
     return null;
@@ -187,7 +210,7 @@ function WorkspaceDeck() {
         const isActive = areWorkspaceSelectionsEqual(selection, activeSelection);
         return (
           <View
-            key={`${selection.serverId}:${selection.workspaceId}`}
+            key={getWorkspaceSelectionKey(selection)}
             style={isActive ? styles.activeDeckEntry : styles.inactiveDeckEntry}
             testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
           >
