@@ -16,6 +16,7 @@ import { isWeb } from "@/constants/platform";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -296,6 +297,10 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     ? Math.min(activeQuestionIndex, questions.length - 1)
     : 0;
   const activeQuestion = questions?.[resolvedActiveQuestionIndex];
+  const activeQuestionAnswered = activeQuestion
+    ? isQuestionAnswered(activeQuestion, resolvedActiveQuestionIndex, selections, otherTexts)
+    : false;
+  const isLastQuestion = questions ? resolvedActiveQuestionIndex === questions.length - 1 : true;
 
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
@@ -340,6 +345,15 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     setActiveQuestionIndex(index);
   }, []);
 
+  const handlePrimaryAction = useCallback(() => {
+    if (!isLastQuestion) {
+      if (!activeQuestionAnswered || isResponding) return;
+      setActiveQuestionIndex((index) => Math.min(index + 1, (questions?.length ?? 1) - 1));
+      return;
+    }
+    handleSubmit();
+  }, [activeQuestionAnswered, handleSubmit, isLastQuestion, isResponding, questions?.length]);
+
   const dismissButtonStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.actionButton,
@@ -352,18 +366,19 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     [theme.colors.surface2, theme.colors.surface1, theme.colors.borderAccent],
   );
 
-  const submitDisabled = !allAnswered || isResponding;
+  const primaryDisabled = isResponding || (isLastQuestion ? !allAnswered : !activeQuestionAnswered);
+  const primaryActionLabel = isLastQuestion ? "Submit" : "Next";
   const submitButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.actionButton,
       {
         backgroundColor: theme.colors.accent,
         borderColor: theme.colors.accent,
-        opacity: submitDisabled ? 0.5 : 1,
+        opacity: primaryDisabled ? 0.5 : 1,
       },
-      pressed && !submitDisabled ? styles.optionItemPressed : null,
+      pressed && !primaryDisabled ? styles.optionItemPressed : null,
     ],
-    [submitDisabled, theme.colors.accent],
+    [primaryDisabled, theme.colors.accent],
   );
 
   const containerStyle = useMemo(
@@ -458,7 +473,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
               placeholder={getQuestionInputPlaceholder(activeQuestion)}
               isResponding={isResponding}
               onChange={setOtherText}
-              onSubmit={handleSubmit}
+              onSubmit={handlePrimaryAction}
             />
           ) : null}
         </View>
@@ -485,10 +500,10 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
         <Pressable
           style={submitButtonStyle}
-          onPress={handleSubmit}
-          disabled={submitDisabled}
+          onPress={handlePrimaryAction}
+          disabled={primaryDisabled}
           accessibilityRole="button"
-          accessibilityLabel="Submit"
+          accessibilityLabel={primaryActionLabel}
           testID="question-form-primary-action"
         >
           {respondingAction === "submit" ? (
@@ -496,7 +511,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
           ) : (
             <View style={styles.actionContent}>
               <Check size={14} color={submitActionTextColor} />
-              <Text style={submitActionTextStyle}>Submit</Text>
+              <Text style={submitActionTextStyle}>{primaryActionLabel}</Text>
             </View>
           )}
         </Pressable>
