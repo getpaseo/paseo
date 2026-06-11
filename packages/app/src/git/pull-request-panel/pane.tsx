@@ -458,6 +458,7 @@ export function PullRequestPane({
                 <CheckRow
                   key={checkKey}
                   check={check}
+                  attachEnabled={attachEnabled}
                   isAddingLogsToChat={loadingCheckKeys.has(checkKey)}
                   onAddLogsToChat={handleAddCheckLogsToChat}
                 />
@@ -575,10 +576,12 @@ function summaryPillTextStyle(variant: "success" | "danger" | "warning" | "muted
 
 function CheckRow({
   check,
+  attachEnabled,
   isAddingLogsToChat,
   onAddLogsToChat,
 }: {
   check: PrPaneCheck;
+  attachEnabled: boolean;
   isAddingLogsToChat: boolean;
   onAddLogsToChat: (check: PrPaneCheck) => void;
 }) {
@@ -604,7 +607,7 @@ function CheckRow({
         </Text>
       )}
       <View style={styles.checkTrailing}>
-        {canAddPullRequestCheckLogsToChat(check) ? (
+        {attachEnabled && canAddPullRequestCheckLogsToChat(check) ? (
           <Button
             variant="ghost"
             size="xs"
