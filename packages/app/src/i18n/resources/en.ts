@@ -1417,6 +1417,10 @@ export const en = {
           zhCN: "Simplified Chinese",
         },
       },
+      notificationSound: {
+        label: "Notification sound",
+        description: "Play a chime when an agent finishes while Paseo is in the background",
+      },
     },
     diagnostics: {
       title: "Diagnostics",

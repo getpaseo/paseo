@@ -48,6 +48,8 @@ import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
+import { playNotificationSound } from "@/utils/notification-sound";
+import { useAppSettings } from "@/hooks/use-settings";
 import {
   getInitKey,
   getInitDeferred,
@@ -821,6 +823,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useClientActivity({ client, focusedAgentId, focusedTerminalId, onAppResumed: handleAppResumed });
   usePushTokenRegistration({ client, serverId });
 
+  const { settings } = useAppSettings();
+
   const notifyAgentAttention = useCallback(
     (params: {
       agentId: string;
@@ -868,8 +872,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         body: notification.body,
         data: notification.data,
       });
+
+      if (settings.notificationSound) {
+        playNotificationSound();
+      }
     },
-    [serverId],
+    [serverId, settings.notificationSound],
   );
 
   // Initialize session in store
@@ -1670,6 +1678,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
         },
       });
+
+      if (settings.notificationSound) {
+        playNotificationSound();
+      }
     });
 
     return () => {

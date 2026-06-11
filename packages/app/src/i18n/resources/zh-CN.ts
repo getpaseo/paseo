@@ -1394,6 +1394,10 @@ export const zhCN: TranslationResources = {
           zhCN: "简体中文",
         },
       },
+      notificationSound: {
+        label: "通知提示音",
+        description: "当 Paseo 在后台运行且 Agent 完成任务时播放提示音",
+      },
     },
     diagnostics: {
       title: "诊断",

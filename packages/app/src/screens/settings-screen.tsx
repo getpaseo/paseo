@@ -78,6 +78,7 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -255,6 +256,7 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
+  handleNotificationSoundChange: (value: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -311,6 +313,7 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
+  handleNotificationSoundChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
   const { t, i18n } = useTranslation();
@@ -446,6 +449,21 @@ function GeneralSection({
             selectTextOnFocus
             style={styles.terminalScrollbackInput}
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
+          />
+        </View>
+        <View style={ROW_WITH_BORDER_STYLE}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.notificationSound.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.general.notificationSound.description")}
+            </Text>
+          </View>
+          <Switch
+            value={settings.notificationSound}
+            onValueChange={handleNotificationSoundChange}
+            accessibilityLabel={t("settings.general.notificationSound.label")}
           />
         </View>
       </View>
@@ -1317,6 +1335,13 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     [updateSettings],
   );
 
+  const handleNotificationSoundChange = useCallback(
+    (notificationSound: boolean) => {
+      void updateSettings({ notificationSound });
+    },
+    [updateSettings],
+  );
+
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1518,6 +1543,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
               handleLanguageChange={handleLanguageChange}
               handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+              handleNotificationSoundChange={handleNotificationSoundChange}
             />
           );
         case "daemon":

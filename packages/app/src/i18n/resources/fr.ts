@@ -1451,6 +1451,10 @@ export const fr: TranslationResources = {
           zhCN: "中文",
         },
       },
+      notificationSound: {
+        label: "Son de notification",
+        description: "Émettre un son lorsqu'un agent termine alors que Paseo est en arrière-plan",
+      },
     },
     diagnostics: {
       title: "Diagnostic",

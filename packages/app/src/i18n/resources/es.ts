@@ -1448,6 +1448,10 @@ export const es: TranslationResources = {
           zhCN: "中文",
         },
       },
+      notificationSound: {
+        label: "Sonido de notificación",
+        description: "Reproducir un sonido cuando un agente termine mientras Paseo está en segundo plano",
+      },
     },
     diagnostics: {
       title: "Diagnóstico",

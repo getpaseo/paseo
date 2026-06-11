@@ -1412,6 +1412,10 @@ export const ar: TranslationResources = {
           zhCN: "中文",
         },
       },
+      notificationSound: {
+        label: "صوت الإشعار",
+        description: "تشغيل نغمة عند انتهاء الوكيل أثناء تشغيل Paseo في الخلفية",
+      },
     },
     diagnostics: {
       title: "التشخيص",

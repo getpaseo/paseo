@@ -1438,6 +1438,10 @@ export const ru: TranslationResources = {
           zhCN: "中文",
         },
       },
+      notificationSound: {
+        label: "Звук уведомления",
+        description: "Воспроизводить звуковой сигнал при завершении агента, когда Paseo работает в фоновом режиме",
+      },
     },
     diagnostics: {
       title: "Диагностика",
