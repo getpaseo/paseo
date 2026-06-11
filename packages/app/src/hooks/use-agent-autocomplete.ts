@@ -440,9 +440,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
           command: activeSlashCommand,
           commandName: selected.id,
         });
-        const shouldAppendSpace =
-          activeSlashCommand.position === "start" && activeSlashCommand.end === userInput.length;
-        setUserInput(shouldAppendSpace ? `${nextInput} ` : nextInput);
+        setUserInput(nextInput);
         onAutocompleteApplied?.();
         return;
       }

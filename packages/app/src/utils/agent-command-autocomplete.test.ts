@@ -95,6 +95,30 @@ describe("applySlashCommandReplacement", () => {
       }),
     ).toBe("use /taste before implementation");
   });
+
+  it("commits an inline slash token at the prompt tail", () => {
+    const text = "use /tas";
+
+    expect(
+      applySlashCommandReplacement({
+        text,
+        command: { start: 4, end: text.length, query: "tas", position: "inline" },
+        commandName: "taste",
+      }),
+    ).toBe("use /taste ");
+  });
+
+  it("commits a start slash token at the prompt tail", () => {
+    const text = "/tas";
+
+    expect(
+      applySlashCommandReplacement({
+        text,
+        command: { start: 0, end: text.length, query: "tas", position: "start" },
+        commandName: "taste",
+      }),
+    ).toBe("/taste ");
+  });
 });
 
 describe("filterInlineSkillCommandEntries", () => {
