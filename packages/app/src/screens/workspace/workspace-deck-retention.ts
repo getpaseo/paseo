@@ -6,8 +6,12 @@ interface PruneMountedWorkspaceSelectionsInput {
   currentSelections: ActiveWorkspaceSelection[];
   activeSelection: ActiveWorkspaceSelection | null;
   maxMountedWorkspaces?: number;
-  shouldPruneInactiveSelections: boolean;
-  canRetainInactiveSelection: (selection: ActiveWorkspaceSelection) => boolean;
+}
+
+interface WorkspaceDeckEntryMountInput {
+  isActive: boolean;
+  hasHydratedWorkspaces: boolean;
+  workspaceExists: boolean;
 }
 
 export function getWorkspaceSelectionKey(selection: ActiveWorkspaceSelection): string {
@@ -37,8 +41,6 @@ export function pruneMountedWorkspaceSelections({
   currentSelections,
   activeSelection,
   maxMountedWorkspaces = WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
-  shouldPruneInactiveSelections,
-  canRetainInactiveSelection,
 }: PruneMountedWorkspaceSelectionsInput): ActiveWorkspaceSelection[] {
   if (!activeSelection) {
     return [];
@@ -66,11 +68,22 @@ export function pruneMountedWorkspaceSelections({
     if (areWorkspaceSelectionsEqual(selection, activeSelection)) {
       continue;
     }
-    if (shouldPruneInactiveSelections && !canRetainInactiveSelection(selection)) {
-      continue;
-    }
     appendSelection(selection);
   }
 
   return nextSelections;
+}
+
+export function shouldKeepWorkspaceDeckEntryMounted({
+  isActive,
+  hasHydratedWorkspaces,
+  workspaceExists,
+}: WorkspaceDeckEntryMountInput): boolean {
+  if (isActive) {
+    return true;
+  }
+  if (!hasHydratedWorkspaces) {
+    return true;
+  }
+  return workspaceExists;
 }
