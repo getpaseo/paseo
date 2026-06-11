@@ -175,6 +175,9 @@ function WorkspaceDeck() {
   }, []);
 
   useEffect(() => {
+    if (!activeSelection) {
+      return;
+    }
     setMountedSelections((current) => {
       const next = pruneMountedWorkspaceSelections({
         currentSelections: current,
