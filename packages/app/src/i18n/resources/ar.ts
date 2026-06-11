@@ -271,6 +271,7 @@ export const ar: TranslationResources = {
     },
     question: {
       submit: "يُقدِّم",
+      next: "التالي",
       answerPlaceholder: "اكتب إجابتك...",
       otherPlaceholder: "آخر...",
     },

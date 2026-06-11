@@ -274,6 +274,7 @@ export const fr: TranslationResources = {
     },
     question: {
       submit: "Soumettre",
+      next: "Suivant",
       answerPlaceholder: "Tapez votre réponse...",
       otherPlaceholder: "Autre...",
     },

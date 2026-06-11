@@ -274,6 +274,7 @@ export const es: TranslationResources = {
     },
     question: {
       submit: "Entregar",
+      next: "Siguiente",
       answerPlaceholder: "Escribe tu respuesta...",
       otherPlaceholder: "Otro...",
     },

@@ -273,6 +273,7 @@ export const ru: TranslationResources = {
     },
     question: {
       submit: "Представлять на рассмотрение",
+      next: "Далее",
       answerPlaceholder: "Введите ответ...",
       otherPlaceholder: "Другой...",
     },
