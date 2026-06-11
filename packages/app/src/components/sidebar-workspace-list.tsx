@@ -1343,6 +1343,7 @@ function ProjectHeaderRow({
           <SidebarWorkspaceShortcutBadge number={shortcutNumber} />
         </View>
       ) : null}
+      {selected && <View style={styles.sidebarSelectedAccent} />}
     </>
   );
 
@@ -1501,6 +1502,7 @@ function WorkspaceRowInner({
                   onRename={onRename}
                 />
               </SidebarWorkspaceRowContent>
+              {selected && <View style={styles.sidebarSelectedAccent} />}
             </Pressable>
           </View>
         );
@@ -3056,6 +3058,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarRowSelected: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  sidebarSelectedAccent: {
+    position: "absolute",
+    right: 0,
+    top: theme.spacing[1],
+    bottom: theme.spacing[1],
+    width: 3,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
   },
   workspaceRowContainer: {
     position: "relative",

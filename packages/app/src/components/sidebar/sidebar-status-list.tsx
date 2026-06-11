@@ -656,6 +656,7 @@ function StatusWorkspaceRowInner({
                   />
                 ) : null}
               </SidebarWorkspaceRowContent>
+              {selected && <View style={styles.sidebarSelectedAccent} />}
             </Pressable>
           </View>
         );
@@ -921,6 +922,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarRowSelected: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  sidebarSelectedAccent: {
+    position: "absolute",
+    right: 0,
+    top: theme.spacing[1],
+    bottom: theme.spacing[1],
+    width: 3,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
   },
   kebabButton: {
     padding: 2,
