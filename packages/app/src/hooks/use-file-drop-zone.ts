@@ -4,8 +4,19 @@ import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
 import { isWeb } from "@/constants/platform";
 
+export interface DroppedFileItem {
+  kind: "web-file";
+  file: File;
+}
+export interface DroppedPathItem {
+  kind: "desktop-path";
+  path: string;
+}
+export type DroppedItem = DroppedFileItem | DroppedPathItem;
+
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
+  onGenericFilesDropped?: (items: DroppedItem[]) => void;
   disabled?: boolean;
 }
 
@@ -83,17 +94,23 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
 
 export function useFileDropZone({
   onFilesDropped,
+  onGenericFilesDropped,
   disabled = false,
 }: UseFileDropZoneOptions): UseFileDropZoneReturn {
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLElement | null>(null);
   const dragCounterRef = useRef(0);
   const onFilesDroppedRef = useRef(onFilesDropped);
+  const onGenericFilesDroppedRef = useRef(onGenericFilesDropped);
 
-  // Keep callback ref up to date
+  // Keep callback refs up to date
   useEffect(() => {
     onFilesDroppedRef.current = onFilesDropped;
   }, [onFilesDropped]);
+
+  useEffect(() => {
+    onGenericFilesDroppedRef.current = onGenericFilesDropped;
+  }, [onGenericFilesDropped]);
 
   // Reset drag state when disabled changes
   useEffect(() => {
@@ -155,6 +172,15 @@ export function useFileDropZone({
           setIsDragging(false);
 
           if (disabled) return;
+
+          const items: DroppedPathItem[] = payload.paths.map((path) => ({
+            kind: "desktop-path",
+            path,
+          }));
+
+          if (onGenericFilesDroppedRef.current && items.length > 0) {
+            onGenericFilesDroppedRef.current(items);
+          }
 
           const imagePaths = payload.paths.filter(isImagePath);
           if (imagePaths.length === 0) {
@@ -238,6 +264,15 @@ export function useFileDropZone({
         if (disabled) return;
 
         const files = Array.from(e.dataTransfer?.files ?? []);
+        const genericItems: DroppedItem[] = files.map((file) => ({
+          kind: "web-file",
+          file,
+        }));
+
+        if (onGenericFilesDroppedRef.current && genericItems.length > 0) {
+          onGenericFilesDroppedRef.current(genericItems);
+        }
+
         const imageFiles = files.filter(isImageFile);
 
         if (imageFiles.length === 0) return;

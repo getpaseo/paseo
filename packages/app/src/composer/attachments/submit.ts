@@ -12,7 +12,7 @@ export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachmen
   attachments: AgentAttachment[];
 } {
   const images: ImageAttachment[] = [];
-  const reviewAttachments: AgentAttachment[] = [];
+  const agentAttachments: AgentAttachment[] = [];
 
   for (const attachment of attachments) {
     if (attachment.kind === "image") {
@@ -20,22 +20,27 @@ export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachmen
       continue;
     }
 
+    if (attachment.kind === "file") {
+      agentAttachments.push(attachment.attachment);
+      continue;
+    }
+
     if (isWorkspaceAttachment(attachment)) {
       const workspaceAttachment = workspaceAttachmentToSubmitAttachment(attachment);
       if (workspaceAttachment) {
-        reviewAttachments.push(workspaceAttachment);
+        agentAttachments.push(workspaceAttachment);
       }
       continue;
     }
 
     const reviewAttachment = buildGitHubAttachmentFromSearchItem(attachment.item);
     if (reviewAttachment) {
-      reviewAttachments.push(reviewAttachment);
+      agentAttachments.push(reviewAttachment);
     }
   }
 
   return {
     images,
-    attachments: reviewAttachments,
+    attachments: agentAttachments,
   };
 }

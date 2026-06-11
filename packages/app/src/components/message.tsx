@@ -466,6 +466,8 @@ function getUserMessageAttachmentLabel(
       return `Issue #${attachment.number}`;
     case "text":
       return attachment.title ?? t("message.attachments.textAttachment");
+    case "uploaded_file":
+      return attachment.fileName;
     default:
       return "";
   }

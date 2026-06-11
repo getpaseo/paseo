@@ -1,4 +1,8 @@
-import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  GitHubSearchItem,
+  UploadedFileAttachment,
+} from "@getpaseo/protocol/messages";
 
 export type AttachmentStorageType = "web-indexeddb" | "desktop-file" | "native-file";
 
@@ -43,6 +47,7 @@ export interface BrowserElementAttachment {
 
 export type ComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
+  | { kind: "file"; attachment: UploadedFileAttachment }
   | { kind: "github_issue"; item: GitHubSearchItem }
   | { kind: "github_pr"; item: GitHubSearchItem }
   | {
