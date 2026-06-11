@@ -25,6 +25,8 @@ import type {
   PrState,
 } from "@/git/pr-pane-data";
 
+const COLLAPSED_LINES = 4;
+
 function rowPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.row, Boolean(hovered) && styles.hoverable];
 }
@@ -268,29 +270,68 @@ function CheckStatusIcon({ status }: { status: CheckStatus }) {
 
 function ActivityRow({ item }: { item: PrPaneActivity }) {
   const { t } = useTranslation();
+  const { theme } = useUnistyles();
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const verb = getTranslatedActivityVerb(item, t);
   const age = item.age === "just now" ? t("workspace.git.pr.time.justNow") : item.age;
-  const handlePress = useCallback(() => {
+
+  const handleToggleExpand = useCallback(() => {
+    setExpanded((prev) => !prev);
+  }, []);
+
+  const handleOpenUrl = useCallback(() => {
     void openExternalUrl(item.url);
   }, [item.url]);
+
+  const handleTextLayout = useCallback((e: { nativeEvent: { lines: unknown[] } }) => {
+    if (e.nativeEvent.lines.length > COLLAPSED_LINES) {
+      setTruncated(true);
+    }
+  }, []);
+
   const avatarStyle = useMemo(
     () => [styles.avatar, { backgroundColor: item.avatarColor }],
     [item.avatarColor],
   );
+
   return (
-    <Pressable onPress={handlePress} style={activityPressableStyle} testID="pr-pane-activity-row">
+    <Pressable
+      onPress={handleToggleExpand}
+      style={activityPressableStyle}
+      testID="pr-pane-activity-row"
+    >
       <View style={avatarStyle}>
         <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
       </View>
       <View style={styles.activityMain}>
-        <View style={styles.activityHeader}>
+        <View style={styles.activityHeaderRow}>
           <Text style={styles.rowTitle} numberOfLines={1}>
             {item.author}
           </Text>
-          <Text style={styles.rowMetaMid}>{verb}</Text>
-          <Text style={styles.rowMeta}>{age}</Text>
+          {truncated && (
+            <View style={styles.expandIndicator}>
+              {expanded ? (
+                <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+              ) : (
+                <ChevronRight size={12} color={theme.colors.foregroundMuted} />
+              )}
+            </View>
+          )}
         </View>
-        <Text style={styles.rowBody} numberOfLines={2}>
+        <View style={styles.activityMetaRow}>
+          <Text style={styles.rowMetaMid}>{verb}</Text>
+          <Text style={styles.rowMetaSep}>·</Text>
+          <Text style={styles.rowMeta}>{age}</Text>
+          <Pressable onPress={handleOpenUrl} hitSlop={8}>
+            <ExternalLink size={11} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        </View>
+        <Text
+          style={styles.rowBody}
+          numberOfLines={expanded ? undefined : COLLAPSED_LINES}
+          onTextLayout={handleTextLayout}
+        >
           {item.body}
         </Text>
       </View>
@@ -411,10 +452,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   activityMain: { flex: 1, minWidth: 0, gap: 2 },
-  activityHeader: {
+  activityHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+  },
+  activityMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    marginBottom: 2,
   },
   rowTitle: {
     fontSize: theme.fontSize.sm,
@@ -433,9 +479,17 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   rowBody: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 20,
+  },
+  expandIndicator: {
+    marginLeft: "auto",
+    marginRight: -4,
+  },
+  rowMetaSep: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    lineHeight: 16,
   },
   avatar: {
     width: 20,
