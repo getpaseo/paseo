@@ -3,10 +3,11 @@ import {
   collapseActivity,
   expandActivity,
   getActivityState,
-  getVisibleActivities,
+  getVisibleEntries,
   hideActivity,
   showHiddenActivities,
 } from "./activity-state";
+import type { PrTimelineEntry } from "./timeline";
 import type { PrPaneActivity } from "./data";
 
 function activity(id: string, overrides: Partial<PrPaneActivity> = {}): PrPaneActivity {
@@ -21,6 +22,10 @@ function activity(id: string, overrides: Partial<PrPaneActivity> = {}): PrPaneAc
     url: `https://github.com/getpaseo/paseo/pull/42#${id}`,
     ...overrides,
   };
+}
+
+function singleEntry(id: string): PrTimelineEntry {
+  return { kind: "single", id, activity: activity(id) };
 }
 
 describe("pull request activity state", () => {
@@ -48,14 +53,14 @@ describe("pull request activity state", () => {
       collapseActivity(getActivityState(), { prNumber: 42, activityId: "comment-1" }),
       { prNumber: 99, activityId: "comment-1" },
     );
-    const activities = [activity("comment-1"), activity("comment-2")];
+    const entries = [singleEntry("comment-1"), singleEntry("comment-2")];
 
-    expect(getVisibleActivities(state, { prNumber: 42, activities })).toEqual([
-      { activity: activities[0], collapsed: true },
-      { activity: activities[1], collapsed: false },
+    expect(getVisibleEntries(state, { prNumber: 42, entries })).toEqual([
+      { entry: entries[0], collapsed: true },
+      { entry: entries[1], collapsed: false },
     ]);
-    expect(getVisibleActivities(state, { prNumber: 99, activities })).toEqual([
-      { activity: activities[1], collapsed: false },
+    expect(getVisibleEntries(state, { prNumber: 99, entries })).toEqual([
+      { entry: entries[1], collapsed: false },
     ]);
   });
 });

@@ -28,6 +28,13 @@ function formatPathAndLines(location: NonNullable<PrPaneActivity["location"]>): 
   return location.path;
 }
 
+/** Path-and-line label for a review thread header, e.g. "src/foo.ts:12-14". */
+export function formatPullRequestThreadPath(
+  location: NonNullable<PrPaneActivity["location"]>,
+): string {
+  return formatPathAndLines(location);
+}
+
 function formatThreadState(location: NonNullable<PrPaneActivity["location"]>): string[] | null {
   const state = [];
   if (location.isResolved !== undefined) {

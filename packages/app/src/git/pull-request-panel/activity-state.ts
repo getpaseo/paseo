@@ -1,4 +1,4 @@
-import type { PrPaneActivity } from "./data";
+import type { PrTimelineEntry } from "./timeline";
 
 export interface PullRequestActivityIdentity {
   prNumber: number;
@@ -10,8 +10,8 @@ export interface PullRequestActivityState {
   hiddenKeys: readonly string[];
 }
 
-export interface VisiblePullRequestActivity {
-  activity: PrPaneActivity;
+export interface VisiblePullRequestEntry {
+  entry: PrTimelineEntry;
   collapsed: boolean;
 }
 
@@ -61,16 +61,16 @@ export function showHiddenActivities(
   return { ...state, hiddenKeys: state.hiddenKeys.filter((key) => !key.startsWith(prefix)) };
 }
 
-export function getVisibleActivities(
+export function getVisibleEntries(
   state: PullRequestActivityState,
-  input: { prNumber: number; activities: readonly PrPaneActivity[] },
-): VisiblePullRequestActivity[] {
-  return input.activities.flatMap((activity) => {
-    const key = getActivityStateKey({ prNumber: input.prNumber, activityId: activity.id });
+  input: { prNumber: number; entries: readonly PrTimelineEntry[] },
+): VisiblePullRequestEntry[] {
+  return input.entries.flatMap((entry) => {
+    const key = getActivityStateKey({ prNumber: input.prNumber, activityId: entry.id });
     if (state.hiddenKeys.includes(key)) {
       return [];
     }
-    return [{ activity, collapsed: state.collapsedKeys.includes(key) }];
+    return [{ entry, collapsed: state.collapsedKeys.includes(key) }];
   });
 }
 
