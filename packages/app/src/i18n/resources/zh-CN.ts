@@ -432,7 +432,8 @@ export const zhCN: TranslationResources = {
       menu: {
         openFor: "打开 {{label}} 的菜单",
         copyResumeCommand: "复制恢复命令",
-        copyAgentId: "复制 Agent ID",
+        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyFilePath: "Copy file path",
         rename: "重命名",
         closeAbove: "关闭上方标签",
         closeBelow: "关闭下方标签",
@@ -465,6 +466,7 @@ export const zhCN: TranslationResources = {
         copyFailed: "复制失败",
         agentIdCopiedLabel: "Agent ID",
         resumeCommandCopiedLabel: "恢复命令",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "恢复 ID 不可用",
         resumeCommandUnavailable: "恢复命令不可用",
         reloadingAgent: "正在重新加载 Agent...",

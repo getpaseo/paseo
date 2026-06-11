@@ -435,7 +435,8 @@ export const es: TranslationResources = {
       menu: {
         openFor: "Menú abierto para{{label}}",
         copyResumeCommand: "Copiar comando de reanudación",
-        copyAgentId: "Copiar ID del agente",
+        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyFilePath: "Copy file path",
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",
         closeBelow: "Cerrar pestañas a continuación",
@@ -469,6 +470,7 @@ export const es: TranslationResources = {
         copyFailed: "Copia fallida",
         agentIdCopiedLabel: "AgentID",
         resumeCommandCopiedLabel: "reanudar el comando",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReanudarIDno disponible",
         resumeCommandUnavailable: "Comando de reanudación no disponible",
         reloadingAgent: "Agente de recarga...",

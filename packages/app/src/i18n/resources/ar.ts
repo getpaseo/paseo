@@ -432,7 +432,8 @@ export const ar: TranslationResources = {
       menu: {
         openFor: "فتح القائمة لـ{{label}}",
         copyResumeCommand: "نسخ أمر السيرة الذاتية",
-        copyAgentId: "نسخ معرف الوكيل",
+        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyFilePath: "Copy file path",
         rename: "إعادة تسمية",
         closeAbove: "إغلاق علامات التبويب أعلاه",
         closeBelow: "إغلاق علامات التبويب أدناه",
@@ -465,6 +466,7 @@ export const ar: TranslationResources = {
         copyFailed: "فشل النسخ",
         agentIdCopiedLabel: "AgentID",
         resumeCommandCopiedLabel: "أمر الاستئناف",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "السيرة الذاتية ID غير متوفرة",
         resumeCommandUnavailable: "أمر الاستئناف غير متوفر",
         reloadingAgent: "وكيل إعادة التحميل...",

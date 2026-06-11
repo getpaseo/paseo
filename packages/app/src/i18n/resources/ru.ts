@@ -435,7 +435,8 @@ export const ru: TranslationResources = {
       menu: {
         openFor: "Открыть меню для{{label}}",
         copyResumeCommand: "Копировать команду возобновления",
-        copyAgentId: "Скопировать идентификатор агента",
+        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyFilePath: "Copy file path",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
         closeBelow: "Закройте вкладки ниже",
@@ -468,6 +469,7 @@ export const ru: TranslationResources = {
         copyFailed: "Не удалось скопировать",
         agentIdCopiedLabel: "AgentID",
         resumeCommandCopiedLabel: "команда возобновления",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Резюме ID недоступно",
         resumeCommandUnavailable: "Команда возобновления недоступна",
         reloadingAgent: "Перезагрузка агента...",
