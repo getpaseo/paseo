@@ -42,6 +42,8 @@ export interface PrPaneActivity {
   body: string;
   age: string;
   url: string;
+  /** For inline review comments: the review this comment was submitted with. */
+  reviewId?: string;
   location?: {
     path: string;
     line?: number;
@@ -219,6 +221,7 @@ function mapActivity(item: PullRequestTimelineItem, nowMs: number): PrPaneActivi
         body: item.body,
         age: formatAge(item.createdAt, nowMs),
         url: item.url,
+        reviewId: item.reviewId,
         location: item.location,
       },
     ];

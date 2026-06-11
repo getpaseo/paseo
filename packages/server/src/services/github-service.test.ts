@@ -944,6 +944,7 @@ describe("GitHubService", () => {
                       url: "https://github.com/inline-reviewer",
                       avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
                     },
+                    pullRequestReview: { id: "PRR_empty_commented" },
                   },
                 ],
                 pageInfo: { hasNextPage: true },
@@ -983,6 +984,7 @@ describe("GitHubService", () => {
       body: "This should include line context.",
       createdAt: Date.parse("2026-04-02T13:51:00Z"),
       url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+      reviewId: "PRR_empty_commented",
       location: {
         path: "packages/app/src/git/pull-request-panel/data.ts",
         line: 24,
@@ -992,6 +994,7 @@ describe("GitHubService", () => {
         isOutdated: false,
       },
     });
+    expect(runner.calls[0]?.args[3]).toContain("pullRequestReview");
   });
 
   it("uses the passed parent repository identity for fork PR timelines", async () => {

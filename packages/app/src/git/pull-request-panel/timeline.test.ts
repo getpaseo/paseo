@@ -67,4 +67,56 @@ describe("buildPrTimeline", () => {
     expect(entries[0]).toMatchObject({ comments: [a, a2] });
     expect(entries[1]).toMatchObject({ comments: [b] });
   });
+
+  it("nests threads under the review they were submitted with", () => {
+    const review = activity({
+      id: "R1",
+      kind: "review",
+      reviewState: "changes_requested",
+      body: "Please fix these.",
+    });
+    const thread = activity({
+      id: "t1",
+      reviewId: "R1",
+      location: { path: "src/a.ts", line: 4, threadId: "T1" },
+    });
+    const reply = activity({
+      id: "t1-reply",
+      reviewId: "R2-later",
+      location: { path: "src/a.ts", line: 4, threadId: "T1" },
+    });
+    const unrelated = activity({
+      id: "t2",
+      reviewId: "R-unknown",
+      location: { path: "src/b.ts", threadId: "T2" },
+    });
+
+    expect(buildPrTimeline([review, thread, reply, unrelated])).toEqual([
+      {
+        kind: "review",
+        id: "R1",
+        review,
+        threads: [
+          {
+            kind: "thread",
+            id: "thread:T1",
+            location: { path: "src/a.ts", line: 4, threadId: "T1" },
+            comments: [thread, reply],
+          },
+        ],
+      },
+      {
+        kind: "thread",
+        id: "thread:T2",
+        location: { path: "src/b.ts", threadId: "T2" },
+        comments: [unrelated],
+      },
+    ]);
+  });
+
+  it("keeps reviews without threads as single entries", () => {
+    const review = activity({ id: "R1", kind: "review", reviewState: "approved" });
+
+    expect(buildPrTimeline([review])).toEqual([{ kind: "single", id: "R1", activity: review }]);
+  });
 });

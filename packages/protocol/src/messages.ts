@@ -3300,6 +3300,10 @@ const PullRequestTimelineCommentItemSchema = z.object({
   body: z.string().optional().default(""),
   createdAt: z.number().optional().default(0),
   url: z.string().optional().default(""),
+  // GitHub review id this inline comment belongs to; lets clients nest review
+  // threads under their parent review. Absent on issue comments and on
+  // timelines from daemons that predate the field.
+  reviewId: z.string().optional(),
   location: z
     .object({
       path: z.string(),

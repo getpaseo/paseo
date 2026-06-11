@@ -30,8 +30,13 @@ import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { splitHtmlishMarkdown, type MarkdownDisplayPart } from "./html-ish";
+import {
+  splitHtmlishMarkdown,
+  type MarkdownDisplayPart,
+  type MarkdownInlineImagePart,
+} from "./html-ish";
 import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-image-size";
+import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
 
 export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
@@ -85,7 +90,6 @@ export function MarkdownRenderer({
     () => (enableHtmlish ? splitHtmlishMarkdown(text) : [{ kind: "markdown" as const, text }]),
     [enableHtmlish, text],
   );
-  const keyedParts = useMemo(() => keyMarkdownParts(parts), [parts]);
   const rendererProps = useMemo(
     () => ({
       compact,
@@ -107,22 +111,48 @@ export function MarkdownRenderer({
 
   return (
     <AppearanceStyleBoundary>
-      {keyedParts.map(({ key, part }) => (
-        <MarkdownPart key={key} part={part} rendererProps={rendererProps} />
-      ))}
+      <MarkdownPartList parts={parts} rendererProps={rendererProps} />
     </AppearanceStyleBoundary>
   );
 }
 
-function keyMarkdownParts(
-  parts: MarkdownDisplayPart[],
-): { key: string; part: MarkdownDisplayPart }[] {
+type MarkdownPartRendererProps = Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
+  rules: RenderRules;
+};
+
+function MarkdownPartList({
+  parts,
+  rendererProps,
+}: {
+  parts: MarkdownDisplayPart[];
+  rendererProps: MarkdownPartRendererProps;
+}) {
+  const keyedGroups = useMemo(() => keyMarkdownGroups(groupMarkdownParts(parts)), [parts]);
+  return (
+    <>
+      {keyedGroups.map(({ key, group }) =>
+        group.kind === "part" ? (
+          <MarkdownPart key={key} part={group.part} rendererProps={rendererProps} />
+        ) : (
+          <MarkdownImageTextGroup key={key} group={group} rendererProps={rendererProps} />
+        ),
+      )}
+    </>
+  );
+}
+
+function keyMarkdownGroups(
+  groups: MarkdownPartGroup[],
+): { key: string; group: MarkdownPartGroup }[] {
   const seen = new Map<string, number>();
-  return parts.map((part) => {
-    const identity = getMarkdownPartIdentity(part);
+  return groups.map((group) => {
+    const identity =
+      group.kind === "part"
+        ? getMarkdownPartIdentity(group.part)
+        : `imageText:${group.images.map((i) => i.src).join(",")}:${group.lead.slice(0, 80)}`;
     const seenCount = seen.get(identity) ?? 0;
     seen.set(identity, seenCount + 1);
-    return { key: `${identity}:${seenCount}`, part };
+    return { key: `${identity}:${seenCount}`, group };
   });
 }
 
@@ -141,9 +171,7 @@ function MarkdownPart({
   rendererProps,
 }: {
   part: MarkdownDisplayPart;
-  rendererProps: Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
-    rules: RenderRules;
-  };
+  rendererProps: MarkdownPartRendererProps;
 }) {
   if (part.kind === "details") {
     return <MarkdownDetails part={part} rendererProps={rendererProps} />;
@@ -184,6 +212,42 @@ function MarkdownFragment({
   );
 }
 
+function useNaturalImageDimensions(part: MarkdownInlineImagePart): {
+  natural: InlineImageDimensions | null;
+  failed: boolean;
+  setFailed: (failed: boolean) => void;
+} {
+  const [natural, setNatural] = useState<InlineImageDimensions | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (part.width && part.height) {
+      return;
+    }
+
+    let cancelled = false;
+    Image.getSize(
+      part.src,
+      (width, height) => {
+        if (!cancelled) {
+          setNatural({ width, height });
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setFailed(true);
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [part.height, part.src, part.width]);
+
+  return { natural, failed, setFailed };
+}
+
 function MarkdownInlineImage({
   part,
   onLinkPress,
@@ -191,11 +255,11 @@ function MarkdownInlineImage({
   part: Extract<MarkdownDisplayPart, { kind: "inlineImage" }>;
   onLinkPress?: (url: string) => boolean;
 }) {
+  const { natural: naturalDimensions } = useNaturalImageDimensions(part);
   const explicitDimensions = useMemo(
     () => ({ width: part.width, height: part.height }),
     [part.height, part.width],
   );
-  const [naturalDimensions, setNaturalDimensions] = useState<InlineImageDimensions | null>(null);
   const handlePress = useCallback(() => {
     if (!part.href) return;
     if (onLinkPress?.(part.href) === false) return;
@@ -207,31 +271,6 @@ function MarkdownInlineImage({
     [explicitDimensions, naturalDimensions],
   );
   const imageStyle = useMemo(() => [detailsStyles.inlineImage, imageSize], [imageSize]);
-
-  useEffect(() => {
-    if (explicitDimensions.width && explicitDimensions.height) {
-      return;
-    }
-
-    let cancelled = false;
-    Image.getSize(
-      part.src,
-      (width, height) => {
-        if (!cancelled) {
-          setNaturalDimensions({ width, height });
-        }
-      },
-      () => {
-        if (!cancelled) {
-          setNaturalDimensions(null);
-        }
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [explicitDimensions.height, explicitDimensions.width, part.src]);
 
   const image = (
     <Image
@@ -253,14 +292,93 @@ function MarkdownInlineImage({
   );
 }
 
+const FLOW_IMAGE_MAX_HEIGHT = 18;
+
+function MarkdownFlowImage({
+  part,
+  onLinkPress,
+}: {
+  part: MarkdownInlineImagePart;
+  onLinkPress?: (url: string) => boolean;
+}) {
+  const { natural, failed, setFailed } = useNaturalImageDimensions(part);
+  const handlePress = useCallback(() => {
+    if (!part.href) return;
+    if (onLinkPress?.(part.href) === false) return;
+    void openExternalUrl(part.href);
+  }, [onLinkPress, part.href]);
+  const handleError = useCallback(() => setFailed(true), [setFailed]);
+  const source = useMemo(() => ({ uri: part.src }), [part.src]);
+  const imageSize = useMemo(() => {
+    const size = resolveInlineImageSize({
+      explicit: { width: part.width, height: part.height },
+      natural,
+    });
+    const scale = Math.min(1, FLOW_IMAGE_MAX_HEIGHT / size.height);
+    return { width: Math.round(size.width * scale), height: Math.round(size.height * scale) };
+  }, [natural, part.height, part.width]);
+  const imageStyle = useMemo(() => [detailsStyles.flowImage, imageSize], [imageSize]);
+
+  if (failed) {
+    if (!part.alt) {
+      return null;
+    }
+    return (
+      <View style={detailsStyles.flowImageFallback}>
+        <Text style={detailsStyles.flowImageFallbackText}>{part.alt}</Text>
+      </View>
+    );
+  }
+
+  const image = (
+    <Image
+      source={source}
+      style={imageStyle}
+      resizeMode="contain"
+      accessibilityLabel={part.alt || undefined}
+      onError={handleError}
+    />
+  );
+
+  if (!part.href) {
+    return image;
+  }
+
+  return (
+    <Pressable onPress={handlePress} accessibilityRole="link">
+      {image}
+    </Pressable>
+  );
+}
+
+function MarkdownImageTextGroup({
+  group,
+  rendererProps,
+}: {
+  group: Extract<MarkdownPartGroup, { kind: "imageText" }>;
+  rendererProps: MarkdownPartRendererProps;
+}) {
+  return (
+    <>
+      <View style={detailsStyles.imageTextRow}>
+        {group.images.map((image) => (
+          <MarkdownFlowImage key={image.src} part={image} onLinkPress={rendererProps.onLinkPress} />
+        ))}
+        <View style={detailsStyles.imageTextRowContent}>
+          <MarkdownFragment text={group.lead} {...rendererProps} />
+        </View>
+      </View>
+      {group.rest ? <MarkdownFragment text={group.rest} {...rendererProps} /> : null}
+    </>
+  );
+}
+
 function MarkdownDetails({
   part,
   rendererProps,
 }: {
   part: Extract<MarkdownDisplayPart, { kind: "details" }>;
-  rendererProps: Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
-    rules: RenderRules;
-  };
+  rendererProps: MarkdownPartRendererProps;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => setOpen((current) => !current), []);
@@ -268,7 +386,6 @@ function MarkdownDetails({
     () => part.bodyParts ?? [{ kind: "markdown" as const, text: part.body }],
     [part.body, part.bodyParts],
   );
-  const keyedBodyParts = useMemo(() => keyMarkdownParts(bodyParts), [bodyParts]);
   return (
     <View style={detailsStyles.container}>
       <Pressable style={detailsStyles.summaryRow} onPress={toggle} accessibilityRole="button">
@@ -281,9 +398,7 @@ function MarkdownDetails({
       </Pressable>
       {open ? (
         <View style={detailsStyles.body}>
-          {keyedBodyParts.map(({ key, part: bodyPart }) => (
-            <MarkdownPart key={key} part={bodyPart} rendererProps={rendererProps} />
-          ))}
+          <MarkdownPartList parts={bodyParts} rendererProps={rendererProps} />
         </View>
       ) : null}
     </View>
@@ -616,4 +731,28 @@ const detailsStyles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   inlineImage: {},
+  imageTextRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[3],
+  },
+  imageTextRowContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  flowImage: {
+    marginTop: 2,
+  },
+  flowImageFallback: {
+    marginTop: 2,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+  },
+  flowImageFallbackText: {
+    fontSize: 10,
+    lineHeight: 14,
+    color: theme.colors.foregroundMuted,
+  },
 }));

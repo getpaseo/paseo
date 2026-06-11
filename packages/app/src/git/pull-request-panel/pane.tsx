@@ -1,5 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, Text, View, type GestureResponderEvent } from "react-native";
+import {
+  Image,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type GestureResponderEvent,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ChevronDown,
@@ -10,7 +18,6 @@ import {
   CircleX,
   Copy,
   ExternalLink,
-  EyeOff,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -42,22 +49,26 @@ import {
   collapseActivity,
   expandActivity,
   getActivityState,
+  getCollapsedEntryIds,
   getVisibleEntries,
-  hasHiddenActivities,
-  hideActivity,
-  showHiddenActivities,
 } from "./activity-state";
 import { formatPullRequestThreadPath } from "./activity-location";
 import {
   buildPullRequestCommentContextAttachment,
   buildPullRequestCheckContextAttachment,
   buildPullRequestReviewContextAttachment,
+  buildPullRequestThreadContextAttachment,
   canAddPullRequestActivityToChat,
   canAddPullRequestCheckLogsToChat,
 } from "./context-attachment";
 import { getActivityVerb, getStateLabel } from "./data";
 import type { CheckStatus, PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
-import { buildPrTimeline, type PrTimelineEntry } from "./timeline";
+import {
+  buildPrTimeline,
+  type PrReviewEntry,
+  type PrThreadEntry,
+  type PrTimelineEntry,
+} from "./timeline";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -67,7 +78,6 @@ const ThemedCircleSlash = withUnistyles(CircleSlash);
 const ThemedCircleX = withUnistyles(CircleX);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedExternalLink = withUnistyles(ExternalLink);
-const ThemedEyeOff = withUnistyles(EyeOff);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedGitPullRequestClosed = withUnistyles(GitPullRequestClosed);
@@ -108,7 +118,6 @@ const ADD_TO_CHAT_MENU_ICON = (
 );
 const COPY_MENU_ICON = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const OPEN_MENU_ICON = <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />;
-const HIDE_MENU_ICON = <ThemedEyeOff size={14} uniProps={foregroundMutedColorMapping} />;
 
 function handleMarkdownLinkPress(url: string): boolean {
   void openExternalUrl(url);
@@ -213,19 +222,24 @@ export function PullRequestPane({
       item.kind === "comment" || (item.kind === "review" && item.reviewState === "commented"),
   ).length;
 
+  const timelineEntries = useMemo(() => buildPrTimeline(data.activity), [data.activity]);
   const visibleEntries = useMemo(
     () =>
       getVisibleEntries(activityState, {
         prNumber: data.number,
-        entries: buildPrTimeline(data.activity),
+        entries: timelineEntries,
       }),
-    [activityState, data.activity, data.number],
+    [activityState, data.number, timelineEntries],
   );
-  const hasHidden = hasHiddenActivities(activityState, { prNumber: data.number });
+  const collapsedEntryIds = useMemo(
+    () => getCollapsedEntryIds(activityState, { prNumber: data.number }),
+    [activityState, data.number],
+  );
+  const attachEnabled = workspaceAttachmentScopeKey !== undefined;
 
   const handleAddActivityToChat = useCallback(
     (activity: PrPaneActivity) => {
-      if (!workspaceAttachmentScopeKey) {
+      if (!workspaceAttachmentScopeKey || !canAddPullRequestActivityToChat(activity)) {
         return;
       }
       const input = {
@@ -254,6 +268,53 @@ export function PullRequestPane({
       workspaceAttachmentScopeKey,
     ],
   );
+
+  const handleAddThreadToChat = useCallback(
+    (thread: PrThreadEntry) => {
+      if (!workspaceAttachmentScopeKey) {
+        return;
+      }
+      const attachment = buildPullRequestThreadContextAttachment({
+        provider: data.provider,
+        pullRequest: { number: data.number, title: data.title, url: data.url },
+        thread,
+      });
+      if (!attachment) {
+        return;
+      }
+      addWorkspaceAttachment({
+        scopeKey: workspaceAttachmentScopeKey,
+        attachment,
+      });
+    },
+    [
+      addWorkspaceAttachment,
+      data.number,
+      data.provider,
+      data.title,
+      data.url,
+      workspaceAttachmentScopeKey,
+    ],
+  );
+
+  const handleAddAllToChat = useCallback(() => {
+    for (const { entry } of visibleEntries) {
+      if (entry.kind === "single") {
+        handleAddActivityToChat(entry.activity);
+        continue;
+      }
+      if (entry.kind === "review") {
+        handleAddActivityToChat(entry.review);
+      }
+      const threads = entry.kind === "thread" ? [entry] : entry.threads;
+      for (const thread of threads) {
+        if (thread.location.isResolved === true) {
+          continue;
+        }
+        handleAddThreadToChat(thread);
+      }
+    }
+  }, [handleAddActivityToChat, handleAddThreadToChat, visibleEntries]);
 
   const handleAddCheckLogsToChat = useCallback(
     async (check: PrPaneCheck) => {
@@ -327,19 +388,6 @@ export function PullRequestPane({
     },
     [data.number],
   );
-
-  const handleHideEntry = useCallback(
-    (entryId: string) => {
-      setActivityState((current) =>
-        hideActivity(current, { prNumber: data.number, activityId: entryId }),
-      );
-    },
-    [data.number],
-  );
-
-  const handleShowHidden = useCallback(() => {
-    setActivityState((current) => showHiddenActivities(current, { prNumber: data.number }));
-  }, [data.number]);
 
   const statePresentation = PR_STATE_PRESENTATION[data.state];
   const StateIcon = statePresentation.Icon;
@@ -432,14 +480,19 @@ export function PullRequestPane({
             </>
           }
         >
-          {hasHidden ? (
-            <View style={styles.showHiddenRow}>
-              <Button variant="ghost" size="xs" onPress={handleShowHidden}>
-                Show hidden
+          {timelineEntries.length > 0 && attachEnabled && visibleEntries.length > 0 ? (
+            <View style={styles.activityToolbar}>
+              <Button
+                variant="ghost"
+                size="xs"
+                leftIcon={MessageSquarePlus}
+                onPress={handleAddAllToChat}
+              >
+                Add all to chat
               </Button>
             </View>
           ) : null}
-          {visibleEntries.length === 0 && !hasHidden ? (
+          {visibleEntries.length === 0 ? (
             <Text style={styles.emptyText}>No activity yet</Text>
           ) : (
             visibleEntries.map(({ entry, collapsed }) => (
@@ -447,9 +500,11 @@ export function PullRequestPane({
                 key={entry.id}
                 entry={entry}
                 collapsed={collapsed}
+                collapsedEntryIds={collapsedEntryIds}
+                attachEnabled={attachEnabled}
                 onAddToChat={handleAddActivityToChat}
+                onAddThreadToChat={handleAddThreadToChat}
                 onToggleCollapsed={handleToggleEntryCollapsed}
-                onHide={handleHideEntry}
               />
             ))
           )}
@@ -549,17 +604,19 @@ function CheckRow({
         </Text>
       )}
       <View style={styles.checkTrailing}>
-        {check.duration && <Text style={styles.checkDuration}>{check.duration}</Text>}
         {canAddPullRequestCheckLogsToChat(check) ? (
           <Button
             variant="ghost"
             size="xs"
+            leftIcon={MessageSquarePlus}
             loading={isAddingLogsToChat}
             onPress={handleAddLogsToChat}
+            style={styles.checkAddButton}
           >
-            {isAddingLogsToChat ? "Adding logs" : "Add logs to chat"}
+            {isAddingLogsToChat ? "Adding..." : "Add to chat"}
           </Button>
         ) : null}
+        {check.duration && <Text style={styles.checkDuration}>{check.duration}</Text>}
       </View>
     </Pressable>
   );
@@ -573,41 +630,36 @@ function CheckStatusIcon({ status }: { status: CheckStatus }) {
 }
 
 interface TimelineEntryCallbacks {
+  attachEnabled: boolean;
   onAddToChat: (activity: PrPaneActivity) => void;
+  onAddThreadToChat: (thread: PrThreadEntry) => void;
   onToggleCollapsed: (entryId: string, collapsed: boolean) => void;
-  onHide: (entryId: string) => void;
 }
 
 function TimelineEntryCard({
   entry,
   collapsed,
-  onAddToChat,
-  onToggleCollapsed,
-  onHide,
+  collapsedEntryIds,
+  ...callbacks
 }: TimelineEntryCallbacks & {
   entry: PrTimelineEntry;
   collapsed: boolean;
+  collapsedEntryIds: ReadonlySet<string>;
 }) {
   if (entry.kind === "thread") {
+    return <ThreadCard entry={entry} collapsed={collapsed} {...callbacks} />;
+  }
+  if (entry.kind === "review") {
     return (
-      <ThreadCard
+      <ReviewCard
         entry={entry}
         collapsed={collapsed}
-        onAddToChat={onAddToChat}
-        onToggleCollapsed={onToggleCollapsed}
-        onHide={onHide}
+        collapsedEntryIds={collapsedEntryIds}
+        {...callbacks}
       />
     );
   }
-  return (
-    <SingleActivityCard
-      entry={entry}
-      collapsed={collapsed}
-      onAddToChat={onAddToChat}
-      onToggleCollapsed={onToggleCollapsed}
-      onHide={onHide}
-    />
-  );
+  return <SingleActivityCard entry={entry} collapsed={collapsed} {...callbacks} />;
 }
 
 function useRevealOnHover() {
@@ -623,15 +675,15 @@ function useRevealOnHover() {
 function ActivityKebab({
   activity,
   visible,
+  attachEnabled,
   onMenuOpenChange,
   onAddToChat,
-  onHide,
 }: {
   activity: PrPaneActivity;
   visible: boolean;
+  attachEnabled: boolean;
   onMenuOpenChange: (open: boolean) => void;
   onAddToChat: (activity: PrPaneActivity) => void;
-  onHide?: () => void;
 }) {
   const handleAddToChat = useCallback(() => onAddToChat(activity), [activity, onAddToChat]);
   const handleCopy = useCallback(() => {
@@ -652,7 +704,7 @@ function ActivityKebab({
           {renderKebabTriggerIcon}
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" width={200}>
-          {canAddPullRequestActivityToChat(activity) ? (
+          {attachEnabled && canAddPullRequestActivityToChat(activity) ? (
             <DropdownMenuItem leading={ADD_TO_CHAT_MENU_ICON} onSelect={handleAddToChat}>
               Add to chat
             </DropdownMenuItem>
@@ -665,11 +717,6 @@ function ActivityKebab({
           <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpen}>
             Open on GitHub
           </DropdownMenuItem>
-          {onHide ? (
-            <DropdownMenuItem leading={HIDE_MENU_ICON} onSelect={onHide}>
-              Hide
-            </DropdownMenuItem>
-          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
     </View>
@@ -757,9 +804,9 @@ function ActivityHeader({
 function SingleActivityCard({
   entry,
   collapsed,
+  attachEnabled,
   onAddToChat,
   onToggleCollapsed,
-  onHide,
 }: TimelineEntryCallbacks & {
   entry: Extract<PrTimelineEntry, { kind: "single" }>;
   collapsed: boolean;
@@ -768,7 +815,7 @@ function SingleActivityCard({
   const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
     useRevealOnHover();
   const hasBody = activity.body.trim() !== "";
-  const handleHide = useCallback(() => onHide(entry.id), [entry.id, onHide]);
+  const handleAddToChat = useCallback(() => onAddToChat(activity), [activity, onAddToChat]);
   const handleHeaderPress = useCallback(() => {
     if (hasBody) {
       onToggleCollapsed(entry.id, collapsed);
@@ -790,9 +837,9 @@ function SingleActivityCard({
             <ActivityKebab
               activity={activity}
               visible={actionsVisible}
+              attachEnabled={attachEnabled}
               onMenuOpenChange={setMenuOpen}
               onAddToChat={onAddToChat}
-              onHide={handleHide}
             />
           </ActivityHeader>
         </Pressable>
@@ -812,16 +859,30 @@ function SingleActivityCard({
           <ActivityKebab
             activity={activity}
             visible={actionsVisible}
+            attachEnabled={attachEnabled}
             onMenuOpenChange={setMenuOpen}
             onAddToChat={onAddToChat}
-            onHide={handleHide}
           />
         </ActivityHeader>
       </Pressable>
       {collapsed ? null : (
-        <View style={styles.cardBody}>
-          <MarkdownRenderer text={activity.body} compact onLinkPress={handleMarkdownLinkPress} />
-        </View>
+        <>
+          <View style={styles.cardBody}>
+            <MarkdownRenderer text={activity.body} compact onLinkPress={handleMarkdownLinkPress} />
+          </View>
+          {attachEnabled && canAddPullRequestActivityToChat(activity) ? (
+            <View style={styles.cardFooter}>
+              <Button
+                variant="ghost"
+                size="xs"
+                leftIcon={MessageSquarePlus}
+                onPress={handleAddToChat}
+              >
+                Add to chat
+              </Button>
+            </View>
+          ) : null}
+        </>
       )}
     </View>
   );
@@ -830,24 +891,49 @@ function SingleActivityCard({
 function ThreadCard({
   entry,
   collapsed,
+  attachEnabled,
   onAddToChat,
+  onAddThreadToChat,
   onToggleCollapsed,
-  onHide,
 }: TimelineEntryCallbacks & {
-  entry: Extract<PrTimelineEntry, { kind: "thread" }>;
+  entry: PrThreadEntry;
   collapsed: boolean;
 }) {
+  return (
+    <View style={styles.card} testID="pr-pane-activity-row">
+      <ThreadBlock
+        thread={entry}
+        collapsed={collapsed}
+        attachEnabled={attachEnabled}
+        onAddToChat={onAddToChat}
+        onAddThreadToChat={onAddThreadToChat}
+        onToggleCollapsed={onToggleCollapsed}
+      />
+    </View>
+  );
+}
+
+function ReviewCard({
+  entry,
+  collapsed,
+  collapsedEntryIds,
+  attachEnabled,
+  onAddToChat,
+  onAddThreadToChat,
+  onToggleCollapsed,
+}: TimelineEntryCallbacks & {
+  entry: PrReviewEntry;
+  collapsed: boolean;
+  collapsedEntryIds: ReadonlySet<string>;
+}) {
+  const { review, threads } = entry;
   const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
     useRevealOnHover();
+  const hasBody = review.body.trim() !== "";
+  const handleAddToChat = useCallback(() => onAddToChat(review), [onAddToChat, review]);
   const handleHeaderPress = useCallback(() => {
     onToggleCollapsed(entry.id, collapsed);
   }, [collapsed, entry.id, onToggleCollapsed]);
-  const handleHide = useCallback(() => onHide(entry.id), [entry.id, onHide]);
-  const handleOpenThread = useCallback(() => {
-    void openExternalUrl(entry.comments[0].url);
-  }, [entry.comments]);
-
-  const [root, ...replies] = entry.comments;
 
   return (
     <View
@@ -856,17 +942,118 @@ function ThreadCard({
       onPointerLeave={handlePointerLeave}
       testID="pr-pane-activity-row"
     >
+      <Pressable onPress={handleHeaderPress} style={entryHeaderPressableStyle}>
+        <ActivityHeader activity={review} avatarSize={20}>
+          {collapsed && attachEnabled && canAddPullRequestActivityToChat(review) ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              leftIcon={MessageSquarePlus}
+              onPress={handleAddToChat}
+              style={styles.checkAddButton}
+            >
+              Add to chat
+            </Button>
+          ) : null}
+          {collapsed ? (
+            <View style={styles.threadCount}>
+              <ThemedMessageSquare size={11} uniProps={foregroundMutedColorMapping} />
+              <Text style={styles.ageText}>{threads.length}</Text>
+            </View>
+          ) : null}
+          <ActivityKebab
+            activity={review}
+            visible={actionsVisible}
+            attachEnabled={attachEnabled}
+            onMenuOpenChange={setMenuOpen}
+            onAddToChat={onAddToChat}
+          />
+        </ActivityHeader>
+      </Pressable>
+      {collapsed ? null : (
+        <>
+          {hasBody ? (
+            <View style={styles.cardBody}>
+              <MarkdownRenderer text={review.body} compact onLinkPress={handleMarkdownLinkPress} />
+            </View>
+          ) : null}
+          {attachEnabled && canAddPullRequestActivityToChat(review) ? (
+            <View style={styles.cardFooter}>
+              <Button
+                variant="ghost"
+                size="xs"
+                leftIcon={MessageSquarePlus}
+                onPress={handleAddToChat}
+              >
+                Add to chat
+              </Button>
+            </View>
+          ) : null}
+          {threads.length > 0 ? (
+            <View style={styles.nestedThreadsContainer}>
+              {threads.map((thread) => (
+                <View key={thread.id} style={styles.nestedThread}>
+                  <ThreadBlock
+                    thread={thread}
+                    collapsed={collapsedEntryIds.has(thread.id)}
+                    attachEnabled={attachEnabled}
+                    onAddToChat={onAddToChat}
+                    onAddThreadToChat={onAddThreadToChat}
+                    onToggleCollapsed={onToggleCollapsed}
+                  />
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </>
+      )}
+    </View>
+  );
+}
+
+function ThreadBlock({
+  thread,
+  collapsed,
+  attachEnabled,
+  onAddToChat,
+  onAddThreadToChat,
+  onToggleCollapsed,
+}: {
+  thread: PrThreadEntry;
+  collapsed: boolean;
+  attachEnabled: boolean;
+  onAddToChat: (activity: PrPaneActivity) => void;
+  onAddThreadToChat: (thread: PrThreadEntry) => void;
+  onToggleCollapsed: (entryId: string, collapsed: boolean) => void;
+}) {
+  const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
+    useRevealOnHover();
+  const handleHeaderPress = useCallback(() => {
+    onToggleCollapsed(thread.id, collapsed);
+  }, [collapsed, onToggleCollapsed, thread.id]);
+  const handleAddThreadToChat = useCallback(
+    () => onAddThreadToChat(thread),
+    [onAddThreadToChat, thread],
+  );
+  const handleOpenThread = useCallback(() => {
+    void openExternalUrl(thread.comments[0].url);
+  }, [thread.comments]);
+
+  const [root, ...replies] = thread.comments;
+
+  return (
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable onPress={handleHeaderPress} style={threadHeaderPressableStyle}>
         <Text style={styles.threadPath} numberOfLines={1}>
-          {formatPullRequestThreadPath(entry.location)}
+          {formatPullRequestThreadPath(thread.location)}
         </Text>
-        {entry.location.isResolved ? <StatusBadge label="Resolved" variant="success" /> : null}
-        {entry.location.isOutdated ? <StatusBadge label="Outdated" /> : null}
+        {thread.location.isResolved ? <StatusBadge label="Resolved" variant="success" /> : null}
+        {thread.location.isOutdated ? <StatusBadge label="Outdated" /> : null}
         <View style={styles.headerTrailing}>
           {collapsed ? (
             <View style={styles.threadCount}>
               <ThemedMessageSquare size={11} uniProps={foregroundMutedColorMapping} />
-              <Text style={styles.ageText}>{entry.comments.length}</Text>
+              <Text style={styles.ageText}>{thread.comments.length}</Text>
             </View>
           ) : null}
           <View
@@ -885,9 +1072,6 @@ function ThreadCard({
                 <DropdownMenuItem leading={OPEN_MENU_ICON} onSelect={handleOpenThread}>
                   Open on GitHub
                 </DropdownMenuItem>
-                <DropdownMenuItem leading={HIDE_MENU_ICON} onSelect={handleHide}>
-                  Hide
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </View>
@@ -895,12 +1079,31 @@ function ThreadCard({
       </Pressable>
       {collapsed ? null : (
         <>
-          <ThreadComment comment={root} onAddToChat={onAddToChat} />
+          <ThreadComment comment={root} attachEnabled={attachEnabled} onAddToChat={onAddToChat} />
           {replies.length > 0 ? (
             <View style={styles.replyRail}>
               {replies.map((reply) => (
-                <ThreadComment key={reply.id} comment={reply} onAddToChat={onAddToChat} />
+                <View key={reply.id} style={styles.replyCard}>
+                  <ThreadComment
+                    comment={reply}
+                    attachEnabled={attachEnabled}
+                    onAddToChat={onAddToChat}
+                    contentStyle={styles.replyThreadComment}
+                  />
+                </View>
               ))}
+            </View>
+          ) : null}
+          {attachEnabled ? (
+            <View style={styles.cardFooter}>
+              <Button
+                variant="ghost"
+                size="xs"
+                leftIcon={MessageSquarePlus}
+                onPress={handleAddThreadToChat}
+              >
+                Add to chat
+              </Button>
             </View>
           ) : null}
         </>
@@ -913,18 +1116,26 @@ function threadHeaderPressableStyle({ hovered }: { hovered?: boolean }) {
   return [styles.threadHeader, Boolean(hovered) && styles.hoverable];
 }
 
+function threadCommentStyle(contentStyle?: ViewStyle) {
+  return contentStyle ? [styles.threadComment, contentStyle] : styles.threadComment;
+}
+
 function ThreadComment({
   comment,
+  attachEnabled,
   onAddToChat,
+  contentStyle,
 }: {
   comment: PrPaneActivity;
+  attachEnabled: boolean;
   onAddToChat: (activity: PrPaneActivity) => void;
+  contentStyle?: ViewStyle;
 }) {
   const { actionsVisible, handlePointerEnter, handlePointerLeave, setMenuOpen } =
     useRevealOnHover();
   return (
     <View
-      style={styles.threadComment}
+      style={threadCommentStyle(contentStyle)}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
@@ -933,6 +1144,7 @@ function ThreadComment({
           <ActivityKebab
             activity={comment}
             visible={actionsVisible}
+            attachEnabled={attachEnabled}
             onMenuOpenChange={setMenuOpen}
             onAddToChat={onAddToChat}
           />
@@ -1102,10 +1314,27 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  showHiddenRow: {
-    alignItems: "flex-start",
-    paddingHorizontal: theme.spacing[3],
+  checkAddButton: {
+    paddingVertical: 0,
+  },
+  activityToolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 28,
+    paddingRight: theme.spacing[3],
     paddingBottom: theme.spacing[2],
+  },
+  toolbarTrailing: {
+    marginLeft: "auto",
+  },
+  filterTriggerContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  filterHiddenCount: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   eventRow: {
     marginHorizontal: theme.spacing[3],
@@ -1181,7 +1410,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   cardBody: {
     paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[3],
+  },
+  cardFooter: {
+    flexDirection: "row",
+    paddingLeft: 0,
+    paddingRight: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+  },
+  nestedThreadsContainer: {
+    paddingTop: theme.spacing[1],
+    paddingBottom: theme.spacing[1],
+  },
+  nestedThread: {
+    marginHorizontal: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    overflow: "hidden",
   },
   threadHeader: {
     flexDirection: "row",
@@ -1214,15 +1462,27 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
     minHeight: 32,
   },
   threadCommentBody: {
     paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
   },
   replyRail: {
-    marginLeft: theme.spacing[4],
-    borderLeftWidth: 2,
-    borderLeftColor: theme.colors.border,
+    marginHorizontal: theme.spacing[3],
+    marginTop: theme.spacing[2],
+  },
+  replyCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface1,
+    marginBottom: theme.spacing[2],
+    overflow: "hidden",
+  },
+  replyThreadComment: {
+    borderTopWidth: 0,
   },
   avatar: {
     alignItems: "center",

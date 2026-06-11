@@ -1,7 +1,11 @@
 import type { CheckoutGithubCheckDetails } from "@getpaseo/protocol/messages";
 import type { PullRequestContextAttachment } from "@/attachments/types";
-import { formatPullRequestActivityLocation } from "./activity-location";
+import {
+  formatPullRequestActivityLocation,
+  formatPullRequestThreadPath,
+} from "./activity-location";
 import type { PrPaneActivity, PrPaneCheck, PullRequestProviderMetadata, ReviewState } from "./data";
+import type { PrThreadEntry } from "./timeline";
 
 export interface PullRequestContextMetadata {
   number: number;
@@ -13,6 +17,12 @@ export interface PullRequestContextBuilderInput {
   provider: PullRequestProviderMetadata;
   pullRequest: PullRequestContextMetadata;
   activity: PrPaneActivity;
+}
+
+export interface PullRequestThreadContextBuilderInput {
+  provider: PullRequestProviderMetadata;
+  pullRequest: PullRequestContextMetadata;
+  thread: PrThreadEntry;
 }
 
 export interface PullRequestGithubCheckContextBuilderInput {
@@ -67,6 +77,47 @@ export function buildPullRequestReviewContextAttachment(
       reviewState: input.activity.reviewState,
     }),
     url: input.activity.url,
+  };
+}
+
+/**
+ * Attaches a whole review thread (root comment plus replies) as one
+ * attachment, so the agent gets the full conversation around a code location.
+ */
+export function buildPullRequestThreadContextAttachment(
+  input: PullRequestThreadContextBuilderInput,
+): PullRequestContextAttachment | null {
+  const comments = input.thread.comments.filter((comment) => comment.body.trim().length > 0);
+  const root = input.thread.comments[0];
+  if (comments.length === 0 || !root) {
+    return null;
+  }
+
+  const lines = [
+    `${input.provider.label} pull request review thread`,
+    `Pull request: #${input.pullRequest.number} ${input.pullRequest.title}`,
+    `Pull request URL: ${input.pullRequest.url}`,
+    `URL: ${root.url}`,
+    `Location: ${formatPullRequestThreadPath(input.thread.location)}`,
+  ];
+  if (input.thread.location.isResolved !== undefined) {
+    lines.push(`Thread state: ${input.thread.location.isResolved ? "resolved" : "unresolved"}`);
+  }
+  if (input.thread.location.isOutdated) {
+    lines.push("Note: this thread is outdated (the code it refers to has changed)");
+  }
+
+  const conversation = comments.map(
+    (comment) => `${comment.author} (${comment.age}):\n${comment.body.trim()}`,
+  );
+
+  return {
+    kind: "github.pull_request_comment",
+    id: `${input.pullRequest.number}:${input.thread.id}`,
+    title: formatPullRequestThreadPath(input.thread.location),
+    subtitle: formatPullRequestSubtitle(input.pullRequest),
+    text: [...lines, "", conversation.join("\n\n---\n\n")].join("\n"),
+    url: root.url,
   };
 }
 

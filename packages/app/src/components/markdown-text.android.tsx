@@ -39,7 +39,7 @@ interface MarkdownParagraphViewProps {
   children: ReactNode;
 }
 
-const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
+const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 
 // Paragraph stays a <View>, not a <Text>, for layout fidelity. RN Android's
 // text engine *does* accept inline View children (TextInlineViewPlaceholderSpan

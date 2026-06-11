@@ -41,6 +41,7 @@ describe("splitHtmlishMarkdown", () => {
       kind: "inlineImage",
       alt: "Priority",
       src: "https://example.com/assets/priority.svg?v=9",
+      flowsWithText: true,
     });
     expect(text).toEqual({
       kind: "markdown",
@@ -53,6 +54,31 @@ describe("splitHtmlishMarkdown", () => {
         'const isBrowser = userAgent.includes("Mozilla");',
         "```",
       ].join("\n"),
+    });
+  });
+
+  it("flags both images as flowsWithText when two inline images precede title text on the same line", () => {
+    const twoImageBody = [
+      '<a href="#"><img alt="Priority" src="https://example.com/priority.svg" align="top"></a> <a href="#"><img alt="Security" src="https://example.com/security.svg" align="top"></a> **Title text here**',
+      "",
+      "Body paragraph.",
+    ].join("\n");
+
+    const parts = splitHtmlishMarkdown(twoImageBody);
+    const [first, second, third] = parts;
+
+    expect(first).toEqual({
+      kind: "inlineImage",
+      alt: "Priority",
+      src: "https://example.com/priority.svg",
+      flowsWithText: true,
+    });
+    expect(second).toEqual({ kind: "markdown", text: " " });
+    expect(third).toEqual({
+      kind: "inlineImage",
+      alt: "Security",
+      src: "https://example.com/security.svg",
+      flowsWithText: true,
     });
   });
 
@@ -103,11 +129,33 @@ describe("splitHtmlishMarkdown", () => {
             alt: "Icon",
             src: "https://example.com/icon.svg",
             href: "https://example.com/page",
+            flowsWithText: true,
           },
           { kind: "markdown", text: " Inline text" },
         ],
       },
     ]);
+  });
+
+  it("does not flag standalone inline images as flowing with text", () => {
+    expect(
+      splitHtmlishMarkdown('<img alt="Shot" src="https://example.com/shot.png">\n\nCaption below'),
+    ).toEqual([
+      { kind: "inlineImage", alt: "Shot", src: "https://example.com/shot.png" },
+      { kind: "markdown", text: "\n\nCaption below" },
+    ]);
+  });
+
+  it("does not flag mid-line inline images as flowing with text", () => {
+    const [, image] = splitHtmlishMarkdown(
+      'Before <img alt="Icon" src="https://example.com/icon.png"> after',
+    );
+
+    expect(image).toEqual({
+      kind: "inlineImage",
+      alt: "Icon",
+      src: "https://example.com/icon.png",
+    });
   });
 
   it("leaves ordinary markdown images on the markdown path", () => {

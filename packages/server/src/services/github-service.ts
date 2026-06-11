@@ -239,7 +239,13 @@ const PullRequestTimelineCommentNodeSchema = z.object({
   author: TimelineAuthorSchema,
 });
 
-const PullRequestReviewThreadCommentNodeSchema = PullRequestTimelineCommentNodeSchema;
+const PullRequestReviewThreadCommentNodeSchema = PullRequestTimelineCommentNodeSchema.extend({
+  pullRequestReview: z
+    .object({ id: z.string().catch("") })
+    .nullable()
+    .optional()
+    .catch(null),
+});
 
 const PullRequestReviewThreadNodeSchema = z.object({
   id: z.string().catch(""),
@@ -453,6 +459,9 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
                 url
                 avatarUrl
               }
+              pullRequestReview {
+                id
+              }
             }
             pageInfo {
               hasNextPage
@@ -601,6 +610,7 @@ export type PullRequestTimelineItem =
     })
   | (PullRequestTimelineItemBase & {
       kind: "comment";
+      reviewId?: string;
       location?: PullRequestTimelineCommentLocation;
     });
 
@@ -2268,6 +2278,7 @@ function toPullRequestTimelineReviewThreadItems(
 ): PullRequestTimelineItem[] {
   return thread.comments.nodes.map((comment) => ({
     ...toPullRequestTimelineCommentItem(comment),
+    ...(comment.pullRequestReview?.id ? { reviewId: comment.pullRequestReview.id } : {}),
     location: {
       path: thread.path,
       ...(thread.line !== null && thread.line !== undefined ? { line: thread.line } : {}),

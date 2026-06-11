@@ -3,11 +3,13 @@ import {
   buildPullRequestCheckContextAttachment,
   buildPullRequestCommentContextAttachment,
   buildPullRequestReviewContextAttachment,
+  buildPullRequestThreadContextAttachment,
   canAddPullRequestActivityToChat,
   canAddPullRequestCheckLogsToChat,
   type PullRequestContextBuilderInput,
 } from "./context-attachment";
 import type { PrPaneActivity, PrPaneCheck } from "./data";
+import type { PrThreadEntry } from "./timeline";
 
 const baseInput: Omit<PullRequestContextBuilderInput, "activity"> = {
   provider: { id: "github", label: "GitHub" },
@@ -259,5 +261,57 @@ describe("pull request context attachments", () => {
         "Check URL: https://github.com/getpaseo/paseo/status/context",
       ].join("\n"),
     });
+  });
+});
+
+describe("buildPullRequestThreadContextAttachment", () => {
+  function thread(overrides: Partial<PrThreadEntry> = {}): PrThreadEntry {
+    return {
+      kind: "thread",
+      id: "thread:PRRT_1",
+      location: { path: "src/a.ts", line: 12, threadId: "PRRT_1", isResolved: false },
+      comments: [
+        comment({
+          id: "t1",
+          body: "This is frozen after initial registration.",
+          url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+        }),
+        comment({ id: "t2", author: "mo", age: "1d ago", body: "Good catch, fixing." }),
+      ],
+      ...overrides,
+    };
+  }
+
+  it("bundles the whole thread conversation into one attachment", () => {
+    expect(buildPullRequestThreadContextAttachment({ ...baseInput, thread: thread() })).toEqual({
+      kind: "github.pull_request_comment",
+      id: "42:thread:PRRT_1",
+      title: "src/a.ts:12",
+      subtitle: "#42 Fix flaky build",
+      url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+      text: [
+        "GitHub pull request review thread",
+        "Pull request: #42 Fix flaky build",
+        "Pull request URL: https://github.com/getpaseo/paseo/pull/42",
+        "URL: https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+        "Location: src/a.ts:12",
+        "Thread state: unresolved",
+        "",
+        "octocat (3d ago):\nThis is frozen after initial registration.",
+        "",
+        "---",
+        "",
+        "mo (1d ago):\nGood catch, fixing.",
+      ].join("\n"),
+    });
+  });
+
+  it("returns null when no comment has a body", () => {
+    expect(
+      buildPullRequestThreadContextAttachment({
+        ...baseInput,
+        thread: thread({ comments: [comment({ body: "  " })] }),
+      }),
+    ).toBeNull();
   });
 });

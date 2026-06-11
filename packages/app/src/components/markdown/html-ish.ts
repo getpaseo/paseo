@@ -19,6 +19,8 @@ export interface MarkdownInlineImagePart {
   href?: string;
   width?: number;
   height?: number;
+  /** The image starts a line and text continues on that same line. */
+  flowsWithText?: boolean;
 }
 
 export type MarkdownDisplayPart = MarkdownTextPart | MarkdownDetailsPart | MarkdownInlineImagePart;
@@ -99,7 +101,11 @@ function splitHtmlishTokens(tokens: HtmlToken[]): MarkdownDisplayPart[] {
 
     const inlineImage = parseInlineImageAt(tokens, cursor);
     if (inlineImage) {
-      parts.push(inlineImage.part);
+      parts.push(
+        flowsWithFollowingText(tokens, cursor, inlineImage.end)
+          ? { ...inlineImage.part, flowsWithText: true }
+          : inlineImage.part,
+      );
       cursor = inlineImage.end;
       continue;
     }
@@ -141,6 +147,50 @@ function parseInlineImageAt(tokens: HtmlToken[], start: number): InlineImagePars
 
   const inlineImage = imageTokenToInlineImage(image, safeHref(token.attributes.href));
   return inlineImage ? { part: inlineImage, end: closeIndex + 1 } : null;
+}
+
+function flowsWithFollowingText(tokens: HtmlToken[], start: number, end: number): boolean {
+  const previous = tokens[start - 1];
+  // At line start if nothing precedes this image, or the preceding token ends with only
+  // whitespace since the last newline (covers a bare space between two images on the same line).
+  const atLineStart =
+    previous === undefined ||
+    (previous.kind === "text" && /(?:^|[\n\r])[ \t]*$/.test(previous.value));
+  if (!atLineStart) {
+    return false;
+  }
+
+  // Scan forward past same-line whitespace-only text tokens and inline images to find
+  // the first substantive text token, without crossing a newline.
+  let cursor = end;
+  while (cursor < tokens.length) {
+    const token = tokens[cursor];
+    if (token === undefined) {
+      break;
+    }
+    if (token.kind === "text") {
+      const sameLine = token.value.split(/\r?\n/, 1)[0] ?? "";
+      if (sameLine.trim().length > 0) {
+        return true;
+      }
+      // Whitespace-only on this line — keep scanning only if no newline was crossed.
+      if (token.value.includes("\n") || token.value.includes("\r")) {
+        return false;
+      }
+      cursor += 1;
+      continue;
+    }
+    // An inline image tag — skip over it (the image itself and its possible wrapping close tag).
+    if (token.kind === "tag") {
+      const imageResult = parseInlineImageAt(tokens, cursor);
+      if (imageResult) {
+        cursor = imageResult.end;
+        continue;
+      }
+    }
+    break;
+  }
+  return false;
 }
 
 function findNextInlineImageIndex(tokens: HtmlToken[], start: number): number | null {
