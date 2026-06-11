@@ -94,7 +94,13 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
-import { LANGUAGE_OPTIONS, type AppLanguage } from "@/i18n/locales";
+import {
+  LANGUAGE_OPTIONS,
+  formatLanguageOptionLabel,
+  parseAppLanguage,
+  type AppLanguage,
+  type SupportedLocale,
+} from "@/i18n/locales";
 import {
   HostConnectionsPage,
   HostAgentsPage,
@@ -226,6 +232,11 @@ function getServiceUrlBehaviorLabel(t: TFunction, value: ServiceUrlBehavior): st
   return labels[value];
 }
 
+function getActiveLocale(language: string | undefined): SupportedLocale {
+  const parsed = parseAppLanguage(language);
+  return parsed && parsed !== "system" ? parsed : "en";
+}
+
 const SERVICE_URL_BEHAVIOR_VALUES: ServiceUrlBehavior[] = ["ask", "in-app", "external"];
 
 // ---------------------------------------------------------------------------
@@ -266,17 +277,20 @@ function ServiceUrlBehaviorMenuItem({
 
 interface LanguageMenuItemProps {
   value: AppLanguage;
+  activeLocale: SupportedLocale;
   selected: boolean;
   onChange: (value: AppLanguage) => void;
 }
 
-function LanguageMenuItem({ value, selected, onChange }: LanguageMenuItemProps) {
+function LanguageMenuItem({ value, activeLocale, selected, onChange }: LanguageMenuItemProps) {
   const { t } = useTranslation();
   const handleSelect = useCallback(() => {
     onChange(value);
   }, [onChange, value]);
   const option = LANGUAGE_OPTIONS.find((entry) => entry.value === value);
-  const label = option ? t(option.labelKey) : value;
+  const label = option
+    ? formatLanguageOptionLabel(option, activeLocale, t(option.labelKey))
+    : value;
 
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect}>
@@ -294,14 +308,19 @@ function GeneralSection({
   handleTerminalScrollbackLinesChange,
 }: GeneralSectionProps) {
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const activeLocale = getActiveLocale(i18n.language);
   const iconColor = theme.colors.foregroundMuted;
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
   );
   const selectedLanguageLabel = selectedLanguageOption
-    ? t(selectedLanguageOption.labelKey)
+    ? formatLanguageOptionLabel(
+        selectedLanguageOption,
+        activeLocale,
+        t(selectedLanguageOption.labelKey),
+      )
     : settings.language;
   const [terminalScrollbackValue, setTerminalScrollbackValue] = useState(
     String(settings.terminalScrollbackLines),
@@ -364,6 +383,7 @@ function GeneralSection({
                 <LanguageMenuItem
                   key={option.value}
                   value={option.value}
+                  activeLocale={activeLocale}
                   selected={settings.language === option.value}
                   onChange={handleLanguageChange}
                 />

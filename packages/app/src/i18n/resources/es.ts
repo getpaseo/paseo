@@ -523,7 +523,7 @@ export const es: TranslationResources = {
       },
     },
     scripts: {
-      title: "Guiones",
+      title: "Scripts",
       actions: {
         run: "Correr",
         view: "Vista",
@@ -1115,8 +1115,8 @@ export const es: TranslationResources = {
     favorites: "Favoritos",
     favoriteModel: "modelo favorito",
     unfavoriteModel: "Modelo no favorito",
-    modelCount: "modelo{{count}}",
-    modelCountPlural: "Modelos{{count}}",
+    modelCount: "{{count}} modelo",
+    modelCountPlural: "{{count}} modelos",
     retry: "Rever",
     retrying: "Reintentando...",
     noMatches: "Ningún modelo coincide con tu búsqueda",
@@ -1408,9 +1408,9 @@ export const es: TranslationResources = {
         },
       },
       terminalScrollback: {
-        label: "desplazamiento hacia atrásTerminal",
+        label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",
-        accessibilityLabel: "Líneas de desplazamiento hacia atrásTerminal",
+        accessibilityLabel: "Líneas del historial de terminal",
       },
       language: {
         label: "Idioma",
@@ -1716,7 +1716,7 @@ export const es: TranslationResources = {
       },
       models: {
         one: "1 modelo",
-        many: "Modelos{{count}}",
+        many: "{{count}} modelos",
         addModel: "Agregar modelo",
         addCustomTitle: "Agregar modelo personalizado",
         modelId: "ModeloID",
@@ -1785,7 +1785,7 @@ export const es: TranslationResources = {
         teardownAccessibility: "Comandos de desmontaje del árbol de trabajo",
       },
       scripts: {
-        title: "Guiones",
+        title: "Scripts",
         info: "Servicios de larga duración y comandos únicos que puede iniciar desde cualquier agente en este proyecto",
         empty: "Aún no hay guiones.",
         untitled: "Guión sin título",

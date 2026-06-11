@@ -127,6 +127,25 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
   });
 
+  it("keeps reported Spanish settings and scripts labels clean", () => {
+    expect(es.workspace.scripts.title).toBe("Scripts");
+    expect(es.settings.general.terminalScrollback.label).toBe("Historial de terminal");
+    expect(es.settings.project.scripts.title).toBe("Scripts");
+  });
+
+  it("keeps model count labels spaced around the count", () => {
+    expect(ar.modelSelector.modelCountPlural).toBe("{{count}} نماذج");
+    expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
+    expect(fr.modelSelector.modelCountPlural).toBe("{{count}} modèles");
+    expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
+    expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
+    expect(ar.settings.providers.models.many).toBe("{{count}} نماذج");
+    expect(es.settings.providers.models.many).toBe("{{count}} modelos");
+    expect(fr.settings.providers.models.many).toBe("{{count}} modèles");
+    expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
+    expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
+  });
+
   it("keeps local connection fallback errors translated", () => {
     expect(findUntranslatedConnectionErrors()).toEqual([]);
   });
