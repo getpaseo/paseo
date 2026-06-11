@@ -64,7 +64,7 @@ function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
   }
   if (isPullRequestContextAttachment(attachment)) {
     return JSON.stringify({
-      type: attachment.kind,
+      kind: attachment.kind,
       id: attachment.id,
     });
   }

@@ -1,5 +1,5 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
-import { prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
+import { prPaneTimelineQueryKind } from "./pull-request-panel";
 
 interface CheckoutQueryIdentity {
   serverId: string;
