@@ -69,6 +69,7 @@ import {
 import { isNative } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
+import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -1300,6 +1301,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setWorkspaces(serverId, (prev) => patchWorkspaceScripts(prev, message.payload));
     });
 
+    const unsubCheckoutStatusUpdate = client.on("checkout_status_update", (message) => {
+      if (message.type !== "checkout_status_update") return;
+      applyCheckoutStatusUpdateFromEvent({ queryClient, serverId, message });
+    });
+
     const unsubWorkspaceSetupProgress = client.on("workspace_setup_progress", (message) => {
       if (message.type !== "workspace_setup_progress") return;
       applyWorkspaceSetupProgress(message.payload);
@@ -1648,6 +1654,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubAgentTimeline();
       unsubWorkspaceUpdate();
       unsubScriptStatusUpdate();
+      unsubCheckoutStatusUpdate();
       unsubWorkspaceSetupProgress();
       unsubWorkspaceSetupStatusResponse();
       unsubStatus();

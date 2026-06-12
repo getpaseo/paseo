@@ -102,6 +102,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
+import { fetchCheckoutStatus } from "@/git/checkout-status-cache";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -1713,10 +1714,16 @@ function useWorkspaceCheckoutStatus(input: {
       if (!input.client || !input.workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return await input.client.getCheckoutStatus(input.workspaceDirectory);
+      return await fetchCheckoutStatus({
+        client: input.client,
+        serverId: input.normalizedServerId,
+        cwd: input.workspaceDirectory,
+      });
     },
     staleTime: Infinity,
-    refetchOnMount: false,
+    // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
+    // useCheckoutStatusQuery for the rationale.
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });
