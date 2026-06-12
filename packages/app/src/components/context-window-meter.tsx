@@ -13,7 +13,6 @@ interface ContextWindowMeterProps {
   totalCostUsd?: number | null;
   showPercentage?: boolean;
   serverId?: string;
-  selectedModel?: string | null;
   /** The Paseo provider key, e.g. "claude", "gemini", "codex" */
   provider?: string | null;
 }
@@ -407,16 +406,22 @@ function PlanUsageSection({
 
   const render = QUOTA_RENDERERS[p];
   const quotaData = providerQuota ? providerQuota[p as keyof ProviderQuota] : null;
-  const content = quotaData ? (
-    render(quotaData, theme)
-  ) : (
-    <Text style={styles.tooltipDetail}>Loading plan usage…</Text>
-  );
+
+  if (!providerQuota) {
+    return (
+      <>
+        <View style={styles.tooltipDivider} />
+        <Text style={styles.tooltipDetail}>Loading plan usage…</Text>
+      </>
+    );
+  }
+
+  if (!quotaData) return null;
 
   return (
     <>
       <View style={styles.tooltipDivider} />
-      {content}
+      {render(quotaData, theme)}
     </>
   );
 }
@@ -427,7 +432,6 @@ export function ContextWindowMeter({
   totalCostUsd,
   showPercentage = false,
   serverId,
-  selectedModel: _selectedModel,
   provider,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
