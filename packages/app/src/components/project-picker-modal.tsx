@@ -17,6 +17,7 @@ import { shortenPath } from "@/utils/shorten-path";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
+import type { OpenProjectFailure, OpenProjectResult } from "@/hooks/open-project";
 import { isNative } from "@/constants/platform";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
 import {
@@ -30,6 +31,21 @@ interface PathRowProps {
   active: boolean;
   openPathLabel: string;
   onSelect: (path: string) => void;
+}
+
+type ProjectPickerErrorCode = NonNullable<OpenProjectFailure["errorCode"]>;
+
+function getProjectPickerErrorMessage(
+  result: OpenProjectResult | undefined,
+  translateErrorCode: (errorCode: ProjectPickerErrorCode) => string,
+): string | null {
+  if (result?.ok !== false) {
+    return null;
+  }
+  if (result.errorCode) {
+    return translateErrorCode(result.errorCode);
+  }
+  return result.error;
 }
 
 function PathRow({ option, active, openPathLabel, onSelect }: PathRowProps) {
@@ -95,14 +111,9 @@ export function ProjectPickerModal() {
   });
   const { mutate: submitPath, reset: resetSubmit, isPending: isSubmitting } = openProjectMutation;
   const submitResult = openProjectMutation.data;
-  let errorMessage: string | null = null;
-  if (submitResult?.ok === false) {
-    if (submitResult.errorCode) {
-      errorMessage = t(`projectPicker.errors.${submitResult.errorCode}`);
-    } else {
-      errorMessage = submitResult.error;
-    }
-  }
+  const errorMessage = getProjectPickerErrorMessage(submitResult, (errorCode) =>
+    t(`projectPicker.errors.${errorCode}`),
+  );
 
   const directorySuggestionsQuery = useQuery({
     queryKey: ["project-picker-directory-suggestions", serverId, query],
