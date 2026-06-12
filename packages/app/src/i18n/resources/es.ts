@@ -435,7 +435,7 @@ export const es: TranslationResources = {
       menu: {
         openFor: "Menú abierto para{{label}}",
         copyResumeCommand: "Copiar comando de reanudación",
-        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyAgentId: "Copiar ID del agente",
         copyFilePath: "Copy file path",
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",

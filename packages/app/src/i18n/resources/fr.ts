@@ -435,7 +435,7 @@ export const fr: TranslationResources = {
       menu: {
         openFor: "Ouvrir le menu pour{{label}}",
         copyResumeCommand: "Copier la commande de reprise",
-        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyAgentId: "Copier l'identifiant de l'agent",
         copyFilePath: "Copy file path",
         rename: "Rebaptiser",
         closeAbove: "Fermer les onglets ci-dessus",

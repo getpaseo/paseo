@@ -432,7 +432,7 @@ export const ar: TranslationResources = {
       menu: {
         openFor: "فتح القائمة لـ{{label}}",
         copyResumeCommand: "نسخ أمر السيرة الذاتية",
-        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyAgentId: "نسخ معرف الوكيل",
         copyFilePath: "Copy file path",
         rename: "إعادة تسمية",
         closeAbove: "إغلاق علامات التبويب أعلاه",

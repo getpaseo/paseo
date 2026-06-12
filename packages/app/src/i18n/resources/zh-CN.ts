@@ -432,7 +432,7 @@ export const zhCN: TranslationResources = {
       menu: {
         openFor: "打开 {{label}} 的菜单",
         copyResumeCommand: "复制恢复命令",
-        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyAgentId: "复制 Agent ID",
         copyFilePath: "Copy file path",
         rename: "重命名",
         closeAbove: "关闭上方标签",

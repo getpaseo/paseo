@@ -435,7 +435,7 @@ export const ru: TranslationResources = {
       menu: {
         openFor: "Открыть меню для{{label}}",
         copyResumeCommand: "Копировать команду возобновления",
-        copyAgentId: "COPY_AGENT_ID_PLACEHOLDER",
+        copyAgentId: "Скопировать идентификатор агента",
         copyFilePath: "Copy file path",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
