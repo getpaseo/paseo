@@ -326,6 +326,9 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (canPull(input)) {
     return "pull";
   }
+  if (canPush(input)) {
+    return "push";
+  }
   if (canMergePr(input)) {
     return getDefaultDirectPullRequestMergeActionId(input);
   }
@@ -337,9 +340,6 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   }
   if (input.shipDefault === "pr" && canUsePullRequestActionAsShipDefault(input)) {
     return "pr";
-  }
-  if (canPush(input)) {
-    return "push";
   }
   if (!input.isOnBaseBranch && input.aheadCount > 0) {
     return "merge-branch";
