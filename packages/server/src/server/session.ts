@@ -534,6 +534,17 @@ interface AudioBufferState {
   totalPCMBytes: number;
 }
 
+export interface SessionFileSystem {
+  isDirectory(path: string): Promise<boolean>;
+}
+
+const nodeSessionFileSystem: SessionFileSystem = {
+  async isDirectory(path) {
+    const stats = await stat(path).catch(() => null);
+    return stats?.isDirectory() ?? false;
+  },
+};
+
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
@@ -565,6 +576,7 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  filesystem?: SessionFileSystem;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
@@ -784,6 +796,7 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly filesystem: SessionFileSystem;
   private readonly chatService: FileBackedChatService;
   private readonly scheduleService: ScheduleService;
   private readonly loopService: LoopService;
@@ -858,6 +871,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      filesystem,
       chatService,
       scheduleService,
       loopService,
@@ -907,6 +921,7 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.chatService = chatService;
     this.scheduleService = scheduleService;
     this.loopService = loopService;
@@ -7189,8 +7204,8 @@ export class Session {
   ): Promise<void> {
     const requestedCwd = request.cwd;
     const cwd = expandTilde(requestedCwd);
-    const cwdStats = await stat(cwd).catch(() => null);
-    if (!cwdStats?.isDirectory()) {
+    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+    if (!directoryExists) {
       this.sessionLogger.info(
         { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
         "Open project rejected",
