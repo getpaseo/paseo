@@ -172,6 +172,49 @@ describe("createTerminal", () => {
     expect(humanizeProcessTitle("/bin/bash /tmp/dev.sh")).toBe("dev.sh");
   });
 
+  it("builds terminal env from an explicit base env", () => {
+    const env = buildTerminalEnvironment({
+      baseEnv: {
+        PASEO_BASE_MARKER: "daemon-env",
+        PASEO_NODE_ENV: "test",
+        SHARED_MARKER: "base-env",
+        OMITTED_MARKER: undefined,
+      },
+      shell: "/bin/sh",
+      env: {
+        SHARED_MARKER: "terminal-env",
+        TERMINAL_MARKER: "terminal-only",
+      },
+    });
+
+    expect(env.PASEO_BASE_MARKER).toBe("daemon-env");
+    expect(env.SHARED_MARKER).toBe("terminal-env");
+    expect(env.TERMINAL_MARKER).toBe("terminal-only");
+    expect(env.TERM).toBe("xterm-256color");
+    expect(env.TERM_PROGRAM).toBe("kitty");
+    expect(env).not.toHaveProperty("PASEO_NODE_ENV");
+    expect(env).not.toHaveProperty("OMITTED_MARKER");
+  });
+
+  it("falls back to process env when no explicit base env is provided", () => {
+    const previousMarker = process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST;
+    process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST = "process-env";
+    try {
+      const env = buildTerminalEnvironment({
+        shell: "/bin/sh",
+        env: {},
+      });
+
+      expect(env.PASEO_TERMINAL_BASE_FALLBACK_TEST).toBe("process-env");
+    } finally {
+      if (previousMarker === undefined) {
+        delete process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST;
+      } else {
+        process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST = previousMarker;
+      }
+    }
+  });
+
   // macOS-only: node-pty ships the spawn-helper prebuild only for darwin.
   it.runIf(isPlatform("darwin"))("ensures darwin prebuild spawn-helper is executable", () => {
     const packageRoot = mkdtempSync(join(tmpdir(), "terminal-node-pty-helper-"));

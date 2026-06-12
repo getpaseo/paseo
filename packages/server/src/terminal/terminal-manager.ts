@@ -1,5 +1,6 @@
 import {
   createTerminal,
+  type CreateTerminalOptions,
   type TerminalSession,
   type TerminalStateSnapshot,
   type TerminalStateSnapshotOptions,
@@ -22,17 +23,19 @@ export interface TerminalsChangedEvent {
 
 export type TerminalsChangedListener = (input: TerminalsChangedEvent) => void;
 
+export interface CreateManagedTerminalOptions {
+  id?: string;
+  cwd: string;
+  name?: string;
+  title?: string;
+  env?: Record<string, string>;
+  command?: string;
+  args?: string[];
+}
+
 export interface TerminalManager {
   getTerminals(cwd: string): Promise<TerminalSession[]>;
-  createTerminal(options: {
-    id?: string;
-    cwd: string;
-    name?: string;
-    title?: string;
-    env?: Record<string, string>;
-    command?: string;
-    args?: string[];
-  }): Promise<TerminalSession>;
+  createTerminal(options: CreateManagedTerminalOptions): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
   getTerminalState(
@@ -54,7 +57,18 @@ export interface TerminalManager {
   subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void;
 }
 
+export interface InProcessTerminalManager extends TerminalManager {
+  createTerminalWithBaseEnv(
+    options: CreateManagedTerminalOptions,
+    internalOptions: Pick<CreateTerminalOptions, "baseEnv">,
+  ): Promise<TerminalSession>;
+}
+
 export function createTerminalManager(): TerminalManager {
+  return createInProcessTerminalManager();
+}
+
+export function createInProcessTerminalManager(): InProcessTerminalManager {
   const terminalsByCwd = new Map<string, TerminalSession[]>();
   const terminalsById = new Map<string, TerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
@@ -166,6 +180,36 @@ export function createTerminalManager(): TerminalManager {
     }
   }
 
+  async function createManagedTerminal(
+    options: CreateManagedTerminalOptions,
+    internalOptions: Pick<CreateTerminalOptions, "baseEnv"> = {},
+  ): Promise<TerminalSession> {
+    assertAbsolutePath(options.cwd);
+
+    const terminals = terminalsByCwd.get(options.cwd) ?? [];
+    const defaultName = `Terminal ${terminals.length + 1}`;
+    const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
+    const mergedEnv = inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
+    const session = registerSession(
+      await createTerminal({
+        ...(options.id ? { id: options.id } : {}),
+        cwd: options.cwd,
+        ...(internalOptions.baseEnv ? { baseEnv: internalOptions.baseEnv } : {}),
+        name: options.name ?? defaultName,
+        ...(options.title ? { title: options.title } : {}),
+        ...(options.command ? { command: options.command } : {}),
+        ...(options.args ? { args: options.args } : {}),
+        ...(mergedEnv ? { env: mergedEnv } : {}),
+      }),
+    );
+
+    terminals.push(session);
+    terminalsByCwd.set(options.cwd, terminals);
+    emitTerminalsChanged({ cwd: options.cwd });
+
+    return session;
+  }
+
   return {
     async getTerminals(cwd: string): Promise<TerminalSession[]> {
       assertAbsolutePath(cwd);
@@ -182,39 +226,8 @@ export function createTerminalManager(): TerminalManager {
       return sessions;
     },
 
-    async createTerminal(options: {
-      id?: string;
-      cwd: string;
-      name?: string;
-      title?: string;
-      env?: Record<string, string>;
-      command?: string;
-      args?: string[];
-    }): Promise<TerminalSession> {
-      assertAbsolutePath(options.cwd);
-
-      const terminals = terminalsByCwd.get(options.cwd) ?? [];
-      const defaultName = `Terminal ${terminals.length + 1}`;
-      const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
-      const mergedEnv =
-        inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
-      const session = registerSession(
-        await createTerminal({
-          ...(options.id ? { id: options.id } : {}),
-          cwd: options.cwd,
-          name: options.name ?? defaultName,
-          ...(options.title ? { title: options.title } : {}),
-          ...(options.command ? { command: options.command } : {}),
-          ...(options.args ? { args: options.args } : {}),
-          ...(mergedEnv ? { env: mergedEnv } : {}),
-        }),
-      );
-
-      terminals.push(session);
-      terminalsByCwd.set(options.cwd, terminals);
-      emitTerminalsChanged({ cwd: options.cwd });
-
-      return session;
+    async createTerminal(options: CreateManagedTerminalOptions): Promise<TerminalSession> {
+      return createManagedTerminal(options);
     },
 
     registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void {
@@ -292,5 +305,6 @@ export function createTerminalManager(): TerminalManager {
         terminalsChangedListeners.delete(listener);
       };
     },
+    createTerminalWithBaseEnv: createManagedTerminal,
   };
 }

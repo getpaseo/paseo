@@ -285,6 +285,53 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
   expect(unhandledRejections).toEqual([]);
 });
 
+it("sends daemon process env when asking the worker to create a terminal", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    forkWorker: () => worker,
+  });
+  const previousMarker = process.env.PASEO_TERMINAL_DAEMON_ENV_TEST;
+  process.env.PASEO_TERMINAL_DAEMON_ENV_TEST = "daemon-current-env";
+
+  try {
+    const createPromise = manager.createTerminal({
+      cwd: "/tmp",
+      env: {
+        PASEO_TERMINAL_DAEMON_ENV_TEST: "terminal-overlay",
+      },
+    });
+    const createRequest = worker.sentMessages.find(
+      (message): message is Extract<TerminalWorkerRequest, { type: "createTerminal" }> =>
+        message.type === "createTerminal",
+    );
+    expect(createRequest).toBeDefined();
+    if (!createRequest) {
+      throw new Error("Expected worker createTerminal request");
+    }
+    expect(createRequest?.options.baseEnv?.PASEO_TERMINAL_DAEMON_ENV_TEST).toBe(
+      "daemon-current-env",
+    );
+    expect(createRequest?.options.env?.PASEO_TERMINAL_DAEMON_ENV_TEST).toBe("terminal-overlay");
+
+    worker.emitWorkerMessage({
+      type: "response",
+      requestId: createRequest.requestId,
+      ok: true,
+      result: {
+        terminal: { id: "terminal-1", name: "Terminal", cwd: "/tmp" },
+        state: createTerminalState(),
+      },
+    });
+    await createPromise;
+  } finally {
+    if (previousMarker === undefined) {
+      delete process.env.PASEO_TERMINAL_DAEMON_ENV_TEST;
+    } else {
+      process.env.PASEO_TERMINAL_DAEMON_ENV_TEST = previousMarker;
+    }
+  }
+});
+
 it("keeps registered cwd env inheritance behind the worker manager interface", async () => {
   manager = createWorkerTerminalManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-env-"));

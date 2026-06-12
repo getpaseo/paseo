@@ -20,6 +20,7 @@ export interface WorkerCreateTerminalOptions {
   cwd: string;
   name?: string;
   title?: string;
+  baseEnv?: Record<string, string | undefined>;
   env?: Record<string, string>;
   command?: string;
   args?: string[];

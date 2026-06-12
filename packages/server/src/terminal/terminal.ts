@@ -102,6 +102,7 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   shell?: string;
+  baseEnv?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   env?: Record<string, string>;
   rows?: number;
   cols?: number;
@@ -112,6 +113,7 @@ export interface CreateTerminalOptions {
 }
 
 interface BuildTerminalEnvironmentInput {
+  baseEnv?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   shell: string;
   env: Record<string, string>;
   zshShellIntegrationDir?: string;
@@ -238,10 +240,14 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
-  const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
-    TERM: "xterm-256color",
-    TERM_PROGRAM: "kitty",
-  });
+  const baseEnv: Record<string, string> = createExternalProcessEnv(
+    input.baseEnv ?? process.env,
+    input.env,
+    {
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "kitty",
+    },
+  );
 
   if (basename(input.shell) !== "zsh") {
     return baseEnv;
@@ -585,6 +591,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const {
     cwd,
     shell,
+    baseEnv,
     env = {},
     rows = 24,
     cols = 80,
@@ -635,7 +642,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     cols,
     rows,
     cwd,
-    env: buildTerminalEnvironment({ shell: spawnCommand, env }),
+    env: buildTerminalEnvironment({ baseEnv, shell: spawnCommand, env }),
   });
 
   function emitTitleChange(nextTitle: string | undefined): void {
