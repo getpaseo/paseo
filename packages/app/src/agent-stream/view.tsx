@@ -2,6 +2,7 @@ import React, {
   forwardRef,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -80,6 +81,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
+import { MountedTabActiveContext } from "@/components/split-container";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -364,15 +366,29 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
 
+    // Freeze stream data while this tab slot is hidden to prevent offscreen FlatList
+    // cell-window renders on every 48ms flush from background agents.
+    // When isActive flips back to true, the context change triggers a re-render and
+    // the component reads the current (fresh) streamItems/streamHead from props.
+    const isActive = useContext(MountedTabActiveContext);
+    const frozenStreamItemsRef = useRef(streamItems);
+    const frozenStreamHeadRef = useRef(streamHead);
+    if (isActive) {
+      frozenStreamItemsRef.current = streamItems;
+      frozenStreamHeadRef.current = streamHead;
+    }
+    const effectiveStreamItems = isActive ? streamItems : frozenStreamItemsRef.current;
+    const effectiveStreamHead = isActive ? streamHead : frozenStreamHeadRef.current;
+
     const baseRenderModel = useMemo(() => {
       return buildAgentStreamRenderModel({
         agentStatus: agent.status,
-        tail: streamItems,
-        head: streamHead ?? EMPTY_STREAM_HEAD,
+        tail: effectiveStreamItems,
+        head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
       });
-    }, [agent.status, isMobile, streamHead, streamItems]);
+    }, [agent.status, isMobile, effectiveStreamHead, effectiveStreamItems]);
     const streamLayout = useMemo(
       () =>
         layoutStream({
@@ -684,14 +700,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (item) => renderHistoryRow(item),
       [renderHistoryRow],
     );
-    const renderLiveHeadRow = useCallback<StreamSegmentRenderers["renderLiveHeadRow"]>(
-      (item) =>
+    // useStableEvent keeps the function reference stable across flushes.
+    // layoutLiveHeadItemById and renderStreamItem are read from the ref at call time,
+    // so the live-head render always uses the latest layout without causing renderers
+    // to be a new object on every text-chunk flush.
+    const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
+      (item: StreamItem) =>
         renderLiveHeadStreamItem({
           item,
           layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
         }),
-      [layoutLiveHeadItemById, renderStreamItem],
     );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       return renderLiveAuxiliaryNode({

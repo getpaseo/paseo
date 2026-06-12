@@ -70,12 +70,14 @@ const docsMarkdownComponents: Components = {
 
 export function DocsMarkdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={docsRemarkPlugins}
-      rehypePlugins={docsRehypePlugins}
-      components={docsMarkdownComponents}
-    >
-      {children}
-    </ReactMarkdown>
+    <div className="docs-prose">
+      <ReactMarkdown
+        remarkPlugins={docsRemarkPlugins}
+        rehypePlugins={docsRehypePlugins}
+        components={docsMarkdownComponents}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
   );
 }

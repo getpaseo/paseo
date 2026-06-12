@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useSyncExternalStore,
   type ReactNode,
@@ -57,22 +58,27 @@ export function useVoice() {
 export function useVoiceOptional(): VoiceContextValue | null {
   const runtime = useContext(VoiceRuntimeContext);
   const snapshot = useSyncExternalStore(
-    runtime ? runtime.subscribe.bind(runtime) : noopSubscribe,
-    runtime ? runtime.getSnapshot.bind(runtime) : getEmptySnapshot,
-    runtime ? runtime.getSnapshot.bind(runtime) : getEmptySnapshot,
+    runtime ? runtime.subscribe : noopSubscribe,
+    runtime ? runtime.getSnapshot : getEmptySnapshot,
+    runtime ? runtime.getSnapshot : getEmptySnapshot,
   );
 
-  if (!runtime) {
-    return null;
-  }
-
-  return {
-    ...snapshot,
-    startVoice: runtime.startVoice.bind(runtime),
-    stopVoice: runtime.stopVoice.bind(runtime),
-    isVoiceModeForAgent: runtime.isVoiceModeForAgent.bind(runtime),
-    toggleMute: runtime.toggleMute.bind(runtime),
-  };
+  // Methods on the runtime object literal close over factory-local state; they
+  // don't use `this`, so no binding is needed. Memoising on [snapshot, runtime]
+  // keeps the returned object reference stable across re-renders that don't
+  // change either, preventing downstream memo/useMemo misses.
+  return useMemo(() => {
+    if (!runtime) {
+      return null;
+    }
+    return {
+      ...snapshot,
+      startVoice: runtime.startVoice,
+      stopVoice: runtime.stopVoice,
+      isVoiceModeForAgent: runtime.isVoiceModeForAgent,
+      toggleMute: runtime.toggleMute,
+    };
+  }, [snapshot, runtime]);
 }
 
 export function useVoiceTelemetry() {

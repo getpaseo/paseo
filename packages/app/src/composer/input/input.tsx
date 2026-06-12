@@ -54,7 +54,7 @@ import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
 import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
-import { formatShortcut } from "@/utils/format-shortcut";
+import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
@@ -67,7 +67,9 @@ import {
   resolveVoiceAccessibilityLabel,
   resolveVoiceTooltipText,
 } from "./labels";
-import { computeCanStartDictation } from "./state";
+import { computeCanStartDictation, runAlternateSendAction, runDefaultSendAction } from "./state";
+
+const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 
 export interface AttachmentMenuItem {
   id: string;
@@ -1123,32 +1125,6 @@ function computeSendButtonState(input: SendButtonStateInput): SendButtonStateOut
   return { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues };
 }
 
-interface DefaultSendActionContext {
-  defaultSendBehavior: "interrupt" | "queue";
-  isAgentRunning: boolean;
-  onQueue: ((payload: MessagePayload) => void) | undefined;
-  handleSendMessage: () => void;
-  handleQueueMessage: () => void;
-}
-
-function runDefaultSendAction(ctx: DefaultSendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
-    ctx.handleQueueMessage();
-    return;
-  }
-  ctx.handleSendMessage();
-}
-
-function runAlternateSendAction(ctx: DefaultSendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue") {
-    ctx.handleSendMessage();
-    return;
-  }
-  if (ctx.onQueue) {
-    ctx.handleQueueMessage();
-  }
-}
-
 interface ResolvedMessageInputProps {
   value: string;
   onChangeText: (text: string) => void;
@@ -1282,7 +1258,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
     const toast = useToast();
     const voice = useVoiceOptional();
-    const sendKeys = useShortcutKeys("message-input-send");
     const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
     const dictationToggleKeys = useShortcutKeys("dictation-toggle");
     const focusInputKeys = useShortcutKeys("focus-message-input");
@@ -1898,7 +1873,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 isSubmitLoading={isSubmitLoading}
                 submitIcon={submitIcon}
                 buttonIconSize={buttonIconSize}
-                sendKeys={sendKeys}
+                sendKeys={DEFAULT_SEND_KEYS}
                 sendTooltipLabel={sendTooltipLabel}
               />
             </View>

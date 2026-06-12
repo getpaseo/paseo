@@ -20,12 +20,15 @@ import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
-import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import {
+  ProfileDraft,
+  TerminalProfileEditModal,
+} from "@/screens/settings/terminal-profile-edit-modal";
 import { startDesktopDaemon, stopDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
@@ -1109,126 +1112,7 @@ function parseArgsString(raw: string): string[] | undefined {
     .filter(Boolean);
 }
 
-interface ProfileDraft {
-  name: string;
-  command: string;
-  args: string;
-}
-
 const EMPTY_PROFILE_DRAFT: ProfileDraft = { name: "", command: "", args: "" };
-
-interface TerminalProfileEditModalProps {
-  visible: boolean;
-  title: string;
-  initialDraft: ProfileDraft;
-  onClose: () => void;
-  onSave: (draft: ProfileDraft) => void;
-}
-
-function TerminalProfileEditModal({
-  visible,
-  title,
-  initialDraft,
-  onClose,
-  onSave,
-}: TerminalProfileEditModalProps) {
-  const { t } = useTranslation();
-  const [name, setName] = useState(initialDraft.name);
-  const [command, setCommand] = useState(initialDraft.command);
-  const [args, setArgs] = useState(initialDraft.args);
-  const sheetHeader = useMemo<SheetHeader>(() => ({ title }), [title]);
-
-  useEffect(() => {
-    if (!visible) return;
-    setName(initialDraft.name);
-    setCommand(initialDraft.command);
-    setArgs(initialDraft.args);
-  }, [visible, initialDraft.name, initialDraft.command, initialDraft.args]);
-
-  const handleSave = useCallback(() => {
-    onSave({ name, command, args });
-  }, [onSave, name, command, args]);
-
-  const canSave = name.trim().length > 0 && command.trim().length > 0;
-
-  return (
-    <AdaptiveModalSheet
-      visible={visible}
-      header={sheetHeader}
-      onClose={onClose}
-      testID="terminal-profile-edit-modal"
-      desktopMaxWidth={480}
-    >
-      <View style={profileModalStyles.body}>
-        <View style={profileModalStyles.fieldGroup}>
-          <Text style={profileModalStyles.fieldLabel}>
-            {t("settings.host.terminalProfiles.nameLabel")}
-          </Text>
-          <AdaptiveTextInput
-            initialValue={initialDraft.name}
-            resetKey={visible ? "open" : "closed"}
-            onChangeText={setName}
-            placeholder={t("settings.host.terminalProfiles.namePlaceholder")}
-            autoCapitalize="none"
-            autoCorrect={false}
-            testID="terminal-profile-name-input"
-          />
-        </View>
-        <View style={profileModalStyles.fieldGroup}>
-          <Text style={profileModalStyles.fieldLabel}>
-            {t("settings.host.terminalProfiles.commandLabel")}
-          </Text>
-          <AdaptiveTextInput
-            initialValue={initialDraft.command}
-            resetKey={visible ? "open" : "closed"}
-            onChangeText={setCommand}
-            placeholder={t("settings.host.terminalProfiles.commandPlaceholder")}
-            autoCapitalize="none"
-            autoCorrect={false}
-            testID="terminal-profile-command-input"
-          />
-        </View>
-        <View style={profileModalStyles.fieldGroup}>
-          <Text style={profileModalStyles.fieldLabel}>
-            {t("settings.host.terminalProfiles.argsLabel")}
-          </Text>
-          <AdaptiveTextInput
-            initialValue={initialDraft.args}
-            resetKey={visible ? "open" : "closed"}
-            onChangeText={setArgs}
-            placeholder={t("settings.host.terminalProfiles.argsPlaceholder")}
-            autoCapitalize="none"
-            autoCorrect={false}
-            testID="terminal-profile-args-input"
-          />
-          <Text style={profileModalStyles.fieldHint}>
-            {t("settings.host.terminalProfiles.argsHint")}
-          </Text>
-        </View>
-        <View style={profileModalStyles.actions}>
-          <Button
-            variant="secondary"
-            size="sm"
-            style={profileModalStyles.actionButton}
-            onPress={onClose}
-          >
-            {t("common.actions.cancel")}
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            style={profileModalStyles.actionButton}
-            onPress={handleSave}
-            disabled={!canSave}
-            testID="terminal-profile-save-button"
-          >
-            {t("settings.host.terminalProfiles.save")}
-          </Button>
-        </View>
-      </View>
-    </AdaptiveModalSheet>
-  );
-}
 
 interface TerminalProfileRowProps {
   profile: TerminalProfile;
@@ -1338,7 +1222,6 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
     draft: ProfileDraft;
   } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
 
   const profiles = useMemo(
     () => (config ? resolveTerminalProfiles(config.terminalProfiles) : null),
@@ -1347,38 +1230,28 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
 
   const saveProfiles = useCallback(
     async (next: TerminalProfile[]) => {
-      setIsSaving(true);
-      try {
-        await patchConfig({ terminalProfiles: next });
-      } catch (error) {
-        Alert.alert(
-          t("common.errors.unableToSave"),
-          error instanceof Error ? error.message : String(error),
-        );
-      } finally {
-        setIsSaving(false);
-      }
+      await patchConfig({ terminalProfiles: next });
     },
-    [patchConfig, t],
+    [patchConfig],
   );
 
   const handleAddOpen = useCallback(() => setIsAdding(true), []);
   const handleAddClose = useCallback(() => setIsAdding(false), []);
 
   const handleAddSave = useCallback(
-    (draft: ProfileDraft) => {
+    async (draft: ProfileDraft) => {
       const current = profiles ? [...profiles] : [];
       const next: TerminalProfile[] = [
         ...current,
         {
           id: generateProfileId(),
-          name: draft.name.trim(),
-          command: draft.command.trim(),
+          name: draft.name,
+          command: draft.command,
           args: parseArgsString(draft.args),
         },
       ];
+      await saveProfiles(next);
       setIsAdding(false);
-      void saveProfiles(next);
     },
     [profiles, saveProfiles],
   );
@@ -1402,20 +1275,20 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   const handleEditClose = useCallback(() => setEditingProfile(null), []);
 
   const handleEditSave = useCallback(
-    (draft: ProfileDraft) => {
+    async (draft: ProfileDraft) => {
       if (!editingProfile || !profiles) return;
       const next: TerminalProfile[] = profiles.map((p) =>
         p.id === editingProfile.id
           ? {
               ...p,
-              name: draft.name.trim(),
-              command: draft.command.trim(),
+              name: draft.name,
+              command: draft.command,
               args: parseArgsString(draft.args),
             }
           : p,
       );
+      await saveProfiles(next);
       setEditingProfile(null);
-      void saveProfiles(next);
     },
     [editingProfile, profiles, saveProfiles],
   );
@@ -1432,9 +1305,16 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         confirmLabel: t("settings.host.terminalProfiles.remove"),
         cancelLabel: t("common.actions.cancel"),
         destructive: true,
-      }).then((confirmed) => {
+      }).then(async (confirmed) => {
         if (!confirmed || !profiles) return;
-        void saveProfiles(profiles.filter((p) => p.id !== id));
+        try {
+          await saveProfiles(profiles.filter((p) => p.id !== id));
+        } catch (error) {
+          Alert.alert(
+            t("common.errors.unableToSave"),
+            error instanceof Error ? error.message : String(error),
+          );
+        }
         return;
       });
     },
@@ -1442,29 +1322,43 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   );
 
   const handleMoveUp = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (!profiles) return;
       const index = profiles.findIndex((p) => p.id === id);
       if (index <= 0) return;
       const next = [...profiles];
       const [item] = next.splice(index, 1);
       next.splice(index - 1, 0, item);
-      void saveProfiles(next);
+      try {
+        await saveProfiles(next);
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     },
-    [profiles, saveProfiles],
+    [profiles, saveProfiles, t],
   );
 
   const handleMoveDown = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (!profiles) return;
       const index = profiles.findIndex((p) => p.id === id);
       if (index < 0 || index >= profiles.length - 1) return;
       const next = [...profiles];
       const [item] = next.splice(index, 1);
       next.splice(index + 1, 0, item);
-      void saveProfiles(next);
+      try {
+        await saveProfiles(next);
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     },
-    [profiles, saveProfiles],
+    [profiles, saveProfiles, t],
   );
 
   const addButton = useMemo(
@@ -1474,11 +1368,11 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         size="sm"
         leftIcon={addProfileIcon}
         onPress={handleAddOpen}
-        disabled={isSaving || !isConnected || !profiles}
+        disabled={!isConnected || !profiles}
         testID="terminal-profiles-add-button"
       />
     ),
-    [handleAddOpen, isSaving, isConnected, profiles],
+    [handleAddOpen, isConnected, profiles],
   );
 
   if (!isConnected) {
@@ -1530,6 +1424,7 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         initialDraft={EMPTY_PROFILE_DRAFT}
         onClose={handleAddClose}
         onSave={handleAddSave}
+        testID="terminal-profile-edit-modal"
       />
 
       {editingProfile ? (
@@ -1582,34 +1477,6 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     textAlign: "center",
-  },
-}));
-
-const profileModalStyles = StyleSheet.create((theme) => ({
-  body: {
-    gap: theme.spacing[4],
-    paddingBottom: theme.spacing[2],
-  },
-  fieldGroup: {
-    gap: theme.spacing[1.5],
-  },
-  fieldLabel: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
-  },
-  fieldHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-  },
-  actions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    marginTop: theme.spacing[2],
-  },
-  actionButton: {
-    flex: 1,
   },
 }));
 

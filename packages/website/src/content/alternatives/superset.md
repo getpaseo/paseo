@@ -2,7 +2,7 @@
 title: Superset Alternative With Linux, Windows, and Mobile
 description: Paseo is open source under an OSI license, has no login wall, ships native mobile, and runs on macOS, Linux, and Windows. Superset is source-available, macOS only, and gates the desktop app on a Superset login.
 nav: Superset
-order: 101
+order: 51
 ---
 
 # Paseo vs Superset
@@ -113,4 +113,4 @@ Superset is free for one seat with local workspaces only. Team features and sync
 | Local voice (on-device)      | Yes                                                   | —                                      |
 | Self-hosted daemon           | Yes                                                   | —                                      |
 
-See also: [Paseo vs Conductor](/docs/alternatives/conductor), [Paseo vs OpenChamber](/docs/alternatives/openchamber), [Paseo vs Happy Coder](/docs/alternatives/happy-coder).
+See also: [Paseo vs Conductor](/alternatives/conductor), [Paseo vs OpenChamber](/alternatives/openchamber), [Paseo vs Happy Coder](/alternatives/happy-coder).

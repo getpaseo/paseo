@@ -2,7 +2,7 @@
 title: Happy Coder Alternative With a Desktop App and Git Worktrees
 description: Paseo ships a native desktop app, runs agents in isolated git worktrees, and supports 30+ agents. Happy Coder is mobile and web only, wraps the agent CLI, and supports Claude Code and Codex.
 nav: Happy Coder
-order: 104
+order: 53
 ---
 
 # Paseo vs Happy Coder
@@ -96,4 +96,4 @@ Paseo's speech-to-text and text-to-speech run locally on your device. Nothing le
 | CLI                          | Run, `--host`, ls, send, schedule, loop                         | Launch wrapped session |
 | Local voice (on-device)      | Yes                                                             | —                      |
 
-See also: [Paseo vs Conductor](/docs/alternatives/conductor), [Paseo vs Superset](/docs/alternatives/superset), [Paseo vs OpenChamber](/docs/alternatives/openchamber).
+See also: [Paseo vs Conductor](/alternatives/conductor), [Paseo vs Superset](/alternatives/superset), [Paseo vs OpenChamber](/alternatives/openchamber).

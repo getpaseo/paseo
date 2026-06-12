@@ -99,12 +99,15 @@ export const ar: TranslationResources = {
     },
     attachments: {
       addImage: "أضف صورة",
+      addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       dropImagesHere: "إسقاط الصور هنا",
+      dropFilesHere: "Drop files here",
       editQueuedMessage: "تحرير الرسالة في قائمة الانتظار",
       sendQueuedMessageNow: "إرسال رسالة في قائمة الانتظار الآن",
       openImage: "فتح مرفق الصورة",
       removeImage: "إزالة مرفق الصورة",
+      removeFile: "Remove file attachment",
       openGithub: "افتح{{kind}}#{{number}}",
       removeGithub: "إزالة{{kind}}#{{number}}",
       browserElement: "العنصر ·{{tag}}",
@@ -119,6 +122,8 @@ export const ar: TranslationResources = {
       noHostSelected: "لم يتم تحديد مضيف",
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",
+      uploadFailed: "Failed to upload file",
+      fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
       archiveAgent: "أرشفة الوكيل الحالي",
@@ -585,16 +590,16 @@ export const ar: TranslationResources = {
           success: "مؤرشف",
         },
         mergePr: {
-          squash: "الاسكواش والاندماج",
-          merge: "إنشاء التزام الدمج",
-          rebase: "إعادة الأساس والدمج",
+          squash: "دمج",
+          merge: "دمج",
+          rebase: "دمج",
           pending: "دمج PR...",
           success: "تم دمج PR",
         },
         autoMerge: {
-          enableSquash: "تمكين الدمج التلقائي مع الاسكواش",
-          enableMerge: "تمكين الدمج التلقائي مع التزام الدمج",
-          enableRebase: "تمكين الدمج التلقائي مع rebase",
+          enableSquash: "دمج تلقائي",
+          enableMerge: "دمج تلقائي",
+          enableRebase: "دمج تلقائي",
           enabled: "تم تمكين الدمج التلقائي",
           enabling: "تمكين الدمج التلقائي...",
           disabling: "تعطيل الدمج التلقائي...",
@@ -1020,6 +1025,11 @@ export const ar: TranslationResources = {
     placeholder: "اكتب مسار الدليل...",
     opening: "افتتاح المشروع...",
     empty: "ابدأ بكتابة المسار",
+    errors: {
+      directory_not_found: "لم يتم العثور على الدليل.",
+      open_failed: "تعذر فتح المشروع.",
+    },
+    openPath: "فتح المسار",
   },
   branchSwitcher: {
     currentBranch: "الفرع الحالي:{{branchName}}. اضغط لتبديل الفرع.",
@@ -1362,7 +1372,11 @@ export const ar: TranslationResources = {
       title: "عام",
       defaultSend: {
         label: "إرسال افتراضي",
-        description: "ماذا يحدث عند الضغط على Enter أثناء تشغيل الوكيل",
+        descriptions: {
+          interrupt:
+            "عند تشغيل الوكيل، يوقف Enter التشغيل. Command/Ctrl+Enter يضيف إلى قائمة الانتظار.",
+          queue: "عند تشغيل الوكيل، يضيف Enter إلى قائمة الانتظار. Command/Ctrl+Enter يرسل.",
+        },
         options: {
           interrupt: "مقاطعة",
           queue: "طابور",
@@ -1638,7 +1652,10 @@ export const ar: TranslationResources = {
         nameLabel: "Name",
         commandLabel: "Command",
         argsLabel: "Arguments",
+        nameRequired: "Name is required",
+        commandRequired: "Command is required",
         argsHint: "Space-separated arguments passed to the command",
+        saving: "Saving...",
         remove: "Remove",
         removeConfirmTitle: "Remove profile?",
         removeConfirmMessage: 'Remove "{{name}}"?',

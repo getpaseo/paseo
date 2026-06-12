@@ -2,7 +2,8 @@
 title: Git worktrees
 description: Run agents in isolated git worktrees with setup hooks, scripts, and long-running services.
 nav: Git worktrees
-order: 4
+order: 11
+category: Workspaces
 ---
 
 # Git worktrees

@@ -244,7 +244,9 @@ export function usePrPaneData({
     },
     enabled: shouldFetchTimeline,
     staleTime: Infinity,
-    refetchOnMount: false,
+    // Refetch on mount only after explicit invalidation (reconnect, or a pushed PR status
+    // change) — see useCheckoutStatusQuery for the rationale.
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,

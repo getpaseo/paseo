@@ -1,4 +1,5 @@
-import { useMemo, useCallback, useSyncExternalStore } from "react";
+import { useMemo, useCallback, useRef, useSyncExternalStore } from "react";
+import equal from "fast-deep-equal";
 import { useShallow } from "zustand/shallow";
 import { useSessionStore } from "@/stores/session-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
@@ -44,6 +45,13 @@ export function useAggregatedAgents(options?: {
     runtime.refreshAllAgentDirectories();
   }, [runtime]);
 
+  // Keyed by "serverId:agentId" — reuse the previous AggregatedAgent object when
+  // none of its fields changed, so downstream memo/shallow comparisons can bail early.
+  const prevAgentsRef = useRef<Map<string, AggregatedAgent>>(new Map());
+  // Preserved sorted array — returned as-is when every element kept its identity
+  // and order, so callers using reference equality skip re-renders entirely.
+  const prevSortedRef = useRef<AggregatedAgent[]>([]);
+
   const result = useMemo(() => {
     // runtimeVersion is referenced so the memo recomputes when runtime state changes.
     void runtimeVersion;
@@ -79,7 +87,11 @@ export function useAggregatedAgents(options?: {
           createdAt: agent.createdAt,
           labels: agent.labels,
         };
-        allAgents.push(nextAgent);
+        const cacheKey = `${serverId}:${agent.id}`;
+        const prev = prevAgentsRef.current.get(cacheKey);
+        // Preserve object identity when fields are unchanged so callers can use
+        // reference equality (useShallow, memo) to skip re-renders.
+        allAgents.push(prev !== undefined && equal(prev, nextAgent) ? prev : nextAgent);
       }
     }
 
@@ -98,8 +110,25 @@ export function useAggregatedAgents(options?: {
       return rightTime - leftTime;
     });
 
+    // Update the identity cache for the next render pass.
+    const nextCache = new Map<string, AggregatedAgent>();
+    for (const agent of allAgents) {
+      nextCache.set(`${agent.serverId}:${agent.id}`, agent);
+    }
+    prevAgentsRef.current = nextCache;
+
+    // If every element kept its reference identity and the order is the same,
+    // return the previous array so downstream reference comparisons can bail.
+    const prevSorted = prevSortedRef.current;
+    const stableAgents =
+      allAgents.length === prevSorted.length &&
+      allAgents.every((agent, i) => agent === prevSorted[i])
+        ? prevSorted
+        : allAgents;
+    prevSortedRef.current = stableAgents;
+
     // Check if we have any cached data
-    const hasAnyData = allAgents.length > 0;
+    const hasAnyData = stableAgents.length > 0;
 
     // Align list loading with the runtime directory-sync machine.
     const isLoading = daemons.some((daemon) => {
@@ -111,7 +140,7 @@ export function useAggregatedAgents(options?: {
     const isRevalidating = isLoading && hasAnyData;
 
     return {
-      agents: allAgents,
+      agents: stableAgents,
       isLoading,
       isInitialLoad,
       isRevalidating,

@@ -2,7 +2,7 @@
 title: Open Source Codex App Alternative With Linux, Mobile, and Multi-Provider Support
 description: Paseo is an open source alternative to Codex App for developers who want Linux, native mobile apps, a self-hosted daemon, and Codex alongside Claude Code, OpenCode, Copilot, and more.
 nav: Codex App
-order: 105
+order: 54
 ---
 
 # Paseo vs Codex App
@@ -107,4 +107,4 @@ Paseo supports dictation and realtime voice mode. Speech-to-text and text-to-spe
 | Voice                        | Dictation and realtime voice                                    | Dictation                    |
 | Self-hosted daemon           | Yes                                                             | No                           |
 
-See also: [Paseo vs Claude Desktop](/docs/alternatives/claude-desktop), [Paseo vs OpenCode Desktop](/docs/alternatives/opencode-desktop), [Supported providers](/docs/supported-providers).
+See also: [Paseo vs Claude Desktop](/alternatives/claude-desktop), [Paseo vs OpenCode Desktop](/alternatives/opencode-desktop), [Supported providers](/docs/supported-providers).

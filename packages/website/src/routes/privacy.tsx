@@ -14,7 +14,7 @@ export const Route = createFileRoute("/privacy")({
 
 function Privacy() {
   return (
-    <SiteShell>
+    <SiteShell width="default">
       <h1 className="text-3xl font-medium mb-8">Privacy Policy</h1>
 
       <div className="space-y-6 text-white/70 leading-relaxed">

@@ -49,6 +49,18 @@ export interface ComposerSendClient {
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
   ) => Promise<void>;
+  uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
+    requestId: string;
+    file: {
+      type: "uploaded_file";
+      id: string;
+      fileName: string;
+      mimeType: string;
+      size: number;
+      path: string;
+    } | null;
+    error: string | null;
+  }>;
 }
 
 export interface ComposerCancelClient {
@@ -93,6 +105,23 @@ export async function pickAndPersistImages(input: {
       });
     }),
   );
+}
+
+export async function uploadFileAttachments(input: {
+  client: ComposerSendClient;
+  files: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }>;
+}): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
+  const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
+
+  for (const file of input.files) {
+    const response = await input.client.uploadFile(file);
+    if (response.error || !response.file) {
+      throw new Error(response.error ?? "Upload failed.");
+    }
+    result.push({ kind: "file", attachment: response.file });
+  }
+
+  return result;
 }
 
 export function removeComposerAttachmentAtIndex<T extends ComposerAttachment>(input: {
@@ -297,6 +326,9 @@ export function openComposerAttachment(input: OpenComposerAttachmentInput): void
     input.setLightboxMetadata(input.attachment.metadata);
     return;
   }
+  if (input.attachment.kind === "file") {
+    return;
+  }
   if (isWorkspaceAttachment(input.attachment)) {
     input.openWorkspaceAttachment({ attachment: input.attachment });
     return;
@@ -308,12 +340,18 @@ export function buildGithubAttachment(item: GitHubSearchItem): UserComposerAttac
   return item.kind === "pr" ? { kind: "github_pr", item } : { kind: "github_issue", item };
 }
 
+function isGithubAttachment(
+  attachment: UserComposerAttachment,
+): attachment is Extract<UserComposerAttachment, { kind: "github_issue" } | { kind: "github_pr" }> {
+  return attachment.kind === "github_issue" || attachment.kind === "github_pr";
+}
+
 export function toggleGithubAttachment(
   current: UserComposerAttachment[],
   item: GitHubSearchItem,
 ): UserComposerAttachment[] {
   const matches = (attachment: UserComposerAttachment) =>
-    attachment.kind !== "image" &&
+    isGithubAttachment(attachment) &&
     attachment.item.kind === item.kind &&
     attachment.item.number === item.number;
   if (current.some(matches)) {
@@ -335,7 +373,7 @@ export function toggleGithubAttachmentFromPicker({
 }: ToggleGithubAttachmentFromPickerInput): UserComposerAttachment[] {
   const existingAttachment = current.find(
     (attachment) =>
-      attachment.kind !== "image" &&
+      isGithubAttachment(attachment) &&
       attachment.item.kind === item.kind &&
       attachment.item.number === item.number,
   );
@@ -358,7 +396,7 @@ export function isAttachmentSelectedForGithubItem(
 ): boolean {
   return userAttachmentsOnly(current).some(
     (attachment) =>
-      attachment.kind !== "image" &&
+      isGithubAttachment(attachment) &&
       attachment.item.kind === item.kind &&
       attachment.item.number === item.number,
   );

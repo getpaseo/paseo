@@ -27,8 +27,10 @@ import {
   Pencil,
   AudioLines,
   CircleDot,
+  FileText,
   GitPullRequest,
   Github,
+  Image as ImageIcon,
   Paperclip,
 } from "lucide-react-native";
 import Animated from "react-native-reanimated";
@@ -41,6 +43,7 @@ import {
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
+import { useFilePicker } from "@/hooks/use-file-picker";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -59,6 +62,7 @@ import {
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
   toggleGithubAttachmentFromPicker,
+  uploadFileAttachments,
   type AgentStreamWriter,
   type QueueWriter,
   type QueuedComposerMessage,
@@ -114,6 +118,7 @@ type AttachmentListUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 function noop() {}
+const noopCallback = () => {};
 
 function resolveComposerButtonIconSize(): number {
   return isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
@@ -265,6 +270,7 @@ interface RenderAttachmentTrayArgs {
   labels: {
     openImage: string;
     removeImage: string;
+    removeFile: string;
     openGithub: (kind: string, number: number) => string;
     removeGithub: (kind: string, number: number) => string;
   };
@@ -362,6 +368,18 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         onRemove={onRemove}
         openLabel={labels.openImage}
         removeLabel={labels.removeImage}
+      />
+    );
+  }
+  if (attachment.kind === "file") {
+    return (
+      <FileAttachmentPill
+        key={attachment.attachment.id}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onRemove={onRemove}
+        removeLabel={labels.removeFile}
       />
     );
   }
@@ -648,6 +666,45 @@ function GithubAttachmentPill({
   );
 }
 
+interface FileAttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "file" }>;
+  index: number;
+  disabled: boolean;
+  onRemove: (index: number) => void;
+  removeLabel: string;
+}
+
+function FileAttachmentPill({
+  attachment,
+  index,
+  disabled,
+  onRemove,
+  removeLabel,
+}: FileAttachmentPillProps) {
+  const handleRemove = useCallback(() => {
+    onRemove(index);
+  }, [onRemove, index]);
+  return (
+    <AttachmentPill
+      testID="composer-file-attachment-pill"
+      onOpen={noopCallback}
+      onRemove={handleRemove}
+      openAccessibilityLabel={attachment.attachment.fileName}
+      removeAccessibilityLabel={removeLabel}
+      disabled={disabled}
+    >
+      <View style={styles.filePillBody}>
+        <View style={styles.filePillIcon}>
+          <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+        </View>
+        <Text style={styles.filePillText} numberOfLines={1}>
+          {attachment.attachment.fileName}
+        </Text>
+      </View>
+    </AttachmentPill>
+  );
+}
+
 interface GithubPickerOptionProps {
   label: string;
   testID: string;
@@ -719,6 +776,8 @@ interface ComposerProps {
   autoFocus?: boolean;
   /** Callback to expose the addImages function to parent components */
   onAddImages?: (addImages: (images: ImageAttachment[]) => void) => void;
+  /** Callback to expose the addFiles function to parent components */
+  onAddFiles?: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   /** Callback to expose a focus function to parent components (desktop only). */
   onFocusInput?: (focus: () => void) => void;
   /** Optional draft context for listing commands before an agent exists. */
@@ -739,6 +798,8 @@ interface ComposerProps {
   /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
   isCompactLayout?: boolean;
 }
+
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const StableMessageInput = memo(MessageInput);
@@ -904,6 +965,7 @@ function ComposerVoiceModeButton({
   );
 }
 
+// oxlint-disable-next-line complexity
 export function Composer({
   agentId,
   serverId,
@@ -927,6 +989,7 @@ export function Composer({
   clearDraft,
   autoFocus = false,
   onAddImages,
+  onAddFiles,
   onFocusInput,
   commandDraftConfig,
   onMessageSent,
@@ -1003,6 +1066,7 @@ export function Composer({
   });
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
@@ -1079,6 +1143,7 @@ export function Composer({
   }, [userInput.length]);
 
   const { pickImages } = useImageAttachmentPicker();
+  const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef<
     ((agentId: string, text: string, attachments: ComposerAttachment[]) => Promise<void>) | null
@@ -1099,6 +1164,20 @@ export function Composer({
   useEffect(() => {
     onAddImages?.(addImages);
   }, [addImages, onAddImages]);
+
+  // Expose addFiles function to parent for drag-and-drop support
+  const addFiles = useCallback(
+    (files: UserComposerAttachment[]) => {
+      setSelectedAttachments((prev) => [...prev, ...files]);
+    },
+    [setSelectedAttachments],
+  );
+
+  /* oxlint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    onAddFiles?.(addFiles);
+  }, [addFiles, onAddFiles]);
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   const focusInput = useCallback(() => {
     if (isNative) return;
@@ -1294,6 +1373,36 @@ export function Composer({
     if (newImages.length === 0) return;
     addImages(newImages);
   }, [addImages, pickImages]);
+
+  const handlePickFile = useCallback(async () => {
+    if (!client) {
+      toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
+      return;
+    }
+    try {
+      const files = await pickFiles();
+      if (!files || files.length === 0) return;
+
+      const oversized = files.find((f) => f.bytes.byteLength > MAX_FILE_SIZE_BYTES);
+      if (oversized) {
+        toastErrorRef.current(
+          t("composer.errors.fileTooLarge", { size: "50MB", fileName: oversized.fileName }),
+        );
+        return;
+      }
+
+      setIsUploadingFile(true);
+      const uploaded = await uploadFileAttachments({ client, files });
+      addFiles(uploaded);
+    } catch (error) {
+      console.error("[Composer] Failed to upload file:", error);
+      toastErrorRef.current(
+        error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
+      );
+    } finally {
+      setIsUploadingFile(false);
+    }
+  }, [client, pickFiles, addFiles, t]);
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
@@ -1598,7 +1707,7 @@ export function Composer({
       {
         id: "image",
         label: t("composer.attachments.addImage"),
-        icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        icon: <ThemedImageIcon size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
         onSelect: () => {
           void handlePickImage();
         },
@@ -1611,8 +1720,20 @@ export function Composer({
           setIsGithubPickerOpen(true);
         },
       },
+      ...(!isNative
+        ? [
+            {
+              id: "file",
+              label: t("composer.attachments.addFile"),
+              icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+              onSelect: () => {
+                void handlePickFile();
+              },
+            },
+          ]
+        : []),
     ],
-    [handlePickImage, t],
+    [handlePickImage, handlePickFile, t],
   );
 
   const handleToggleGithubItem = useCallback(
@@ -1713,6 +1834,7 @@ export function Composer({
         labels: {
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
+          removeFile: t("composer.attachments.removeFile"),
           openGithub: (kind: string, number: number) =>
             t("composer.attachments.openGithub", { kind, number }),
           removeGithub: (kind: string, number: number) =>
@@ -1736,7 +1858,7 @@ export function Composer({
 
   const messageInputContainerRef = useRef<View>(null);
 
-  const isSubmitBusy = isProcessing || isSubmitLoading;
+  const isSubmitBusy = isProcessing || isSubmitLoading || isUploadingFile;
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
@@ -1976,6 +2098,20 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  filePillBody: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  filePillIcon: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  filePillText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 1,
+  },
   githubPillText: {
     minWidth: 0,
     flexShrink: 1,
@@ -2045,6 +2181,8 @@ const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
+const ThemedImageIcon = withUnistyles(ImageIcon);
+const ThemedFileText = withUnistyles(FileText);
 const ThemedGithub = withUnistyles(Github);
 
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });

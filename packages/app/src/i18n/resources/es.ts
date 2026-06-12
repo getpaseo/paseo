@@ -99,12 +99,15 @@ export const es: TranslationResources = {
     },
     attachments: {
       addImage: "Agregar imagen",
+      addFile: "Upload file",
       addIssueOrPr: "Agregar problema oPR",
       dropImagesHere: "Suelta imágenes aquí",
+      dropFilesHere: "Drop files here",
       editQueuedMessage: "Editar mensaje en cola",
       sendQueuedMessageNow: "Enviar mensaje en cola ahora",
       openImage: "Abrir imagen adjunta",
       removeImage: "Quitar imagen adjunta",
+      removeFile: "Remove file attachment",
       openGithub: "Abrir{{kind}}#{{number}}",
       removeGithub: "Quitar{{kind}}#{{number}}",
       browserElement: "Elemento ·{{tag}}",
@@ -119,6 +122,8 @@ export const es: TranslationResources = {
       noHostSelected: "Ningún anfitrión seleccionado",
       initialPromptRequired: "Se requiere aviso inicial",
       alreadyLoading: "Ya cargando",
+      uploadFailed: "Failed to upload file",
+      fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
       archiveAgent: "Archivar el agente actual",
@@ -590,16 +595,16 @@ export const es: TranslationResources = {
           success: "Archivado",
         },
         mergePr: {
-          squash: "Aplastar y fusionar",
-          merge: "Crear una confirmación de fusión",
-          rebase: "Rebase y fusionar",
+          squash: "Fusionar",
+          merge: "Fusionar",
+          rebase: "Fusionar",
           pending: "FusionandoPR...",
           success: "PRfusionado",
         },
         autoMerge: {
-          enableSquash: "Habilitar la fusión automática con squash",
-          enableMerge: "Habilitar la fusión automática con confirmación de fusión",
-          enableRebase: "Habilitar la fusión automática con rebase",
+          enableSquash: "Fusión automática",
+          enableMerge: "Fusión automática",
+          enableRebase: "Fusión automática",
           enabled: "Combinación automática habilitada",
           enabling: "Habilitando la fusión automática...",
           disabling: "Desactivando la fusión automática...",
@@ -1052,6 +1057,11 @@ export const es: TranslationResources = {
     placeholder: "Escriba una ruta de directorio...",
     opening: "Proyecto de apertura...",
     empty: "Comience a escribir una ruta",
+    errors: {
+      directory_not_found: "No se encontró el directorio.",
+      open_failed: "No se pudo abrir el proyecto.",
+    },
+    openPath: "Abrir ruta",
   },
   branchSwitcher: {
     currentBranch: "Sucursal actual:{{branchName}}. Presione para cambiar de rama.",
@@ -1397,7 +1407,12 @@ export const es: TranslationResources = {
       title: "General",
       defaultSend: {
         label: "Envío predeterminado",
-        description: "¿Qué sucede cuando presiona Enter mientras el agente se está ejecutando?",
+        descriptions: {
+          interrupt:
+            "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
+          queue:
+            "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
+        },
         options: {
           interrupt: "Interrumpir",
           queue: "Cola",
@@ -1675,7 +1690,10 @@ export const es: TranslationResources = {
         nameLabel: "Name",
         commandLabel: "Command",
         argsLabel: "Arguments",
+        nameRequired: "Name is required",
+        commandRequired: "Command is required",
         argsHint: "Space-separated arguments passed to the command",
+        saving: "Saving...",
         remove: "Remove",
         removeConfirmTitle: "Remove profile?",
         removeConfirmMessage: 'Remove "{{name}}"?',

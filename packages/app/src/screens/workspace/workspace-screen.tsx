@@ -60,7 +60,7 @@ import {
   FloatingPanelPortalHostNameProvider,
 } from "@/components/ui/floating-panel-portal";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
-import { SplitContainer } from "@/components/split-container";
+import { MountedTabActiveContext, SplitContainer } from "@/components/split-container";
 import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-icon";
 import { WorkspaceGitActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
@@ -102,6 +102,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
+import { fetchCheckoutStatus } from "@/git/checkout-status-cache";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -855,13 +856,15 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
 
   return (
     <RenderProfile id={`MobileMountedTabSlot:${tabDescriptor.kind}:${tabDescriptor.tabId}`}>
-      <View style={slotStyle} pointerEvents={isVisible ? "auto" : "none"}>
-        <WorkspacePaneContent
-          content={content}
-          isWorkspaceFocused={isWorkspaceFocused}
-          isPaneFocused={isPaneFocused}
-        />
-      </View>
+      <MountedTabActiveContext value={isVisible}>
+        <View style={slotStyle} pointerEvents={isVisible ? "auto" : "none"}>
+          <WorkspacePaneContent
+            content={content}
+            isWorkspaceFocused={isWorkspaceFocused}
+            isPaneFocused={isPaneFocused}
+          />
+        </View>
+      </MountedTabActiveContext>
     </RenderProfile>
   );
 });
@@ -1103,31 +1106,6 @@ function WorkspaceHeaderMenu({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
-        <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
-        <DropdownMenuItem
-          testID="workspace-header-new-terminal"
-          leading={menuNewTerminalIcon}
-          disabled={createTerminalDisabled}
-          onSelect={onCreateTerminal}
-        >
-          {t("workspace.header.actions.newTerminal")}
-        </DropdownMenuItem>
-        {profiles.map((profile) => (
-          <HeaderMenuProfileItem
-            key={profile.id}
-            profile={profile}
-            disabled={createTerminalDisabled}
-            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
-          />
-        ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          testID="workspace-header-edit-terminal-profiles"
-          onSelect={handleEditProfiles}
-        >
-          {t("workspace.tabs.actions.editTerminalProfiles")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"
@@ -1174,6 +1152,31 @@ function WorkspaceHeaderMenu({
             </DropdownMenuItem>
           </>
         ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
+        <DropdownMenuItem
+          testID="workspace-header-new-terminal"
+          leading={menuNewTerminalIcon}
+          disabled={createTerminalDisabled}
+          onSelect={onCreateTerminal}
+        >
+          {t("workspace.header.actions.newTerminal")}
+        </DropdownMenuItem>
+        {profiles.map((profile) => (
+          <HeaderMenuProfileItem
+            key={profile.id}
+            profile={profile}
+            disabled={createTerminalDisabled}
+            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
+          />
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          testID="workspace-header-edit-terminal-profiles"
+          onSelect={handleEditProfiles}
+        >
+          {t("workspace.tabs.actions.editTerminalProfiles")}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -1713,10 +1716,16 @@ function useWorkspaceCheckoutStatus(input: {
       if (!input.client || !input.workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return await input.client.getCheckoutStatus(input.workspaceDirectory);
+      return await fetchCheckoutStatus({
+        client: input.client,
+        serverId: input.normalizedServerId,
+        cwd: input.workspaceDirectory,
+      });
     },
     staleTime: Infinity,
-    refetchOnMount: false,
+    // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
+    // useCheckoutStatusQuery for the rationale.
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });

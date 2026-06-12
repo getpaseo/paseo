@@ -1,5 +1,6 @@
 import { generateMessageId } from "@/types/stream";
 import { isAbsolutePath } from "@/utils/path";
+import { isRasterImageMimeType } from "./file-types";
 
 export function generateAttachmentId(): string {
   return `att_${generateMessageId()}`;
@@ -52,7 +53,7 @@ export function parseImageDataUrl(
 
   try {
     const parsed = parseDataUrl(uri);
-    if (!parsed.mimeType.toLowerCase().startsWith("image/")) {
+    if (!isRasterImageMimeType(parsed.mimeType)) {
       return null;
     }
     const fingerprint = `${parsed.mimeType}\0${parsed.base64.length}\0${parsed.base64.slice(0, 64)}\0${parsed.base64.slice(-64)}`;

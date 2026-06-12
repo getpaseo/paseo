@@ -2,7 +2,7 @@
 title: OpenChamber Alternative With Linux, Windows, and Mobile
 description: Paseo ships native iOS and Android apps, runs on macOS, Linux, and Windows, and supports 30+ agents. OpenChamber is macOS only with a PWA and is built around OpenCode.
 nav: OpenChamber
-order: 103
+order: 52
 ---
 
 # Paseo vs OpenChamber
@@ -90,4 +90,4 @@ Paseo's speech-to-text and text-to-speech run locally on your device. OpenChambe
 | Local voice (on-device)      | Yes                                                             | —                 |
 | Self-hosted daemon           | Yes                                                             | —                 |
 
-See also: [Paseo vs Conductor](/docs/alternatives/conductor), [Paseo vs Superset](/docs/alternatives/superset), [Paseo vs Happy Coder](/docs/alternatives/happy-coder).
+See also: [Paseo vs Conductor](/alternatives/conductor), [Paseo vs Superset](/alternatives/superset), [Paseo vs Happy Coder](/alternatives/happy-coder).

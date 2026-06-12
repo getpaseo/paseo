@@ -681,7 +681,7 @@ function findClosingBacktickRun(
 }
 
 function mergeProtectedRanges(ranges: ProtectedMarkdownRange[]): ProtectedMarkdownRange[] {
-  const sorted = ranges.toSorted((a, b) => a.start - b.start);
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
   const merged: ProtectedMarkdownRange[] = [];
 
   for (const range of sorted) {

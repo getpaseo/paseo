@@ -2,6 +2,7 @@ import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { realpathSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { z } from "zod";
@@ -533,6 +534,17 @@ interface AudioBufferState {
   totalPCMBytes: number;
 }
 
+export interface SessionFileSystem {
+  isDirectory(path: string): Promise<boolean>;
+}
+
+const nodeSessionFileSystem: SessionFileSystem = {
+  async isDirectory(path) {
+    const stats = await stat(path).catch(() => null);
+    return stats?.isDirectory() ?? false;
+  },
+};
+
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
@@ -564,6 +576,7 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  filesystem?: SessionFileSystem;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   loopService: LoopService;
@@ -719,6 +732,19 @@ interface AgentTimelineProjectionSelection {
   hasNewer: boolean;
 }
 
+type RegistryTransition = "created" | "unarchived" | "existing";
+
+interface ArchivedRecordSnapshot {
+  archivedAt?: string | null;
+}
+
+function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
+  if (!record) {
+    return "created";
+  }
+  return record.archivedAt ? "unarchived" : "existing";
+}
+
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -770,6 +796,7 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly filesystem: SessionFileSystem;
   private readonly chatService: FileBackedChatService;
   private readonly scheduleService: ScheduleService;
   private readonly loopService: LoopService;
@@ -844,6 +871,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      filesystem,
       chatService,
       scheduleService,
       loopService,
@@ -893,6 +921,7 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.chatService = chatService;
     this.scheduleService = scheduleService;
     this.loopService = loopService;
@@ -6755,15 +6784,32 @@ export class Session {
   }
 
   private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
+    const archiveTimestamp = archivedAt ?? new Date().toISOString();
     const existingWorkspace = await archivePersistedWorkspaceRecord({
       workspaceId,
-      archivedAt,
+      archivedAt: archiveTimestamp,
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
     });
     if (!existingWorkspace) {
       this.removeWorkspaceGitSubscription(workspaceId);
       return;
+    }
+
+    if (!existingWorkspace.archivedAt) {
+      const activeSiblings = (await this.workspaceRegistry.list()).filter(
+        (workspace) => workspace.projectId === existingWorkspace.projectId && !workspace.archivedAt,
+      );
+      this.sessionLogger.info(
+        {
+          workspaceId,
+          workspaceCwd: existingWorkspace.cwd,
+          projectId: existingWorkspace.projectId,
+          projectArchived: activeSiblings.length === 0,
+          archivedAt: archiveTimestamp,
+        },
+        "Workspace archived",
+      );
     }
 
     await this.removeWorkspaceGitWatchTarget(existingWorkspace.cwd);
@@ -7156,11 +7202,58 @@ export class Session {
   private async handleOpenProjectRequest(
     request: Extract<SessionInboundMessage, { type: "open_project_request" }>,
   ): Promise<void> {
+    const requestedCwd = request.cwd;
+    const cwd = expandTilde(requestedCwd);
+    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+    if (!directoryExists) {
+      this.sessionLogger.info(
+        { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
+        "Open project rejected",
+      );
+      this.emit({
+        type: "open_project_response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          error: `Directory not found: ${cwd}`,
+          errorCode: "directory_not_found",
+        },
+      });
+      return;
+    }
+
     try {
-      const workspace = await this.findOrCreateWorkspaceForDirectory(request.cwd);
+      const projectsBefore = new Map<string, PersistedProjectRecord>();
+      for (const project of await this.projectRegistry.list()) {
+        projectsBefore.set(project.projectId, project);
+      }
+      const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
+      for (const workspaceRecord of await this.workspaceRegistry.list()) {
+        workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
+      }
+      const workspace = await this.findOrCreateWorkspaceForDirectory(cwd);
+      const project = await this.projectRegistry.get(workspace.projectId);
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
       await this.emitWorkspaceUpdateForCwd(workspace.cwd);
+      this.sessionLogger.info(
+        {
+          requestedCwd,
+          resolvedCwd: cwd,
+          workspaceCwd: workspace.cwd,
+          workspaceId: workspace.workspaceId,
+          workspaceKind: workspace.kind,
+          workspaceTransition: describeRegistryTransition(
+            workspacesBefore.get(workspace.workspaceId) ?? null,
+          ),
+          projectId: workspace.projectId,
+          projectKind: project?.kind ?? null,
+          projectTransition: describeRegistryTransition(
+            projectsBefore.get(workspace.projectId) ?? null,
+          ),
+        },
+        "Project opened",
+      );
       this.emit({
         type: "open_project_response",
         payload: {
@@ -7183,7 +7276,7 @@ export class Session {
         });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to open project";
-      this.sessionLogger.error({ err: error, cwd: request.cwd }, "Failed to open project");
+      this.sessionLogger.error({ err: error, cwd }, "Failed to open project");
       this.emit({
         type: "open_project_response",
         payload: {

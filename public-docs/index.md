@@ -3,6 +3,7 @@ title: Getting started
 description: Install Paseo and start running coding agents from anywhere.
 nav: Getting started
 order: 1
+category: Getting started
 ---
 
 # Getting started

@@ -2,7 +2,8 @@
 title: Voice
 description: Paseo voice architecture, local-first model execution, and provider configuration.
 nav: Voice
-order: 13
+order: 41
+category: Configuration
 ---
 
 # Voice
