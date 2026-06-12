@@ -15,6 +15,7 @@ import type { Logger } from "pino";
 import type { ProviderQuotaMessage, ProviderQuotaWindow } from "../server/messages.js";
 
 const execFileAsync = promisify(execFile);
+const CURSOR_SQLITE_TIMEOUT_MS = 2_000;
 
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -387,10 +388,11 @@ async function readCursorTokenFromSqlite(): Promise<string | null> {
   for (const p of dbPaths) {
     if (!existsSync(p)) continue;
     try {
-      const { stdout } = await execFileAsync("sqlite3", [
-        p,
-        "SELECT value FROM ItemTable WHERE key = 'cursorAuthStatus'",
-      ]);
+      const { stdout } = await execFileAsync(
+        "sqlite3",
+        [p, "SELECT value FROM ItemTable WHERE key = 'cursorAuthStatus'"],
+        { timeout: CURSOR_SQLITE_TIMEOUT_MS },
+      );
       if (stdout) {
         const parsed = JSON.parse(stdout.trim());
         if (parsed?.accessToken) return parsed.accessToken;
@@ -747,8 +749,6 @@ export class QuotaFetcherService {
         this.logger.debug({ err: result.reason, providerId: provider.id }, "Quota fetch failed");
       }
     }
-
-    if (Object.keys(payload).length <= 1) return;
 
     const next: ProviderQuotaMessage = {
       type: "provider_quota",

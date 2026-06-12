@@ -159,13 +159,14 @@ describe("QuotaFetcherService", () => {
       expect(claude?.plan).toBe("Pro 1x");
     });
 
-    it("skips Claude when credentials file is missing", async () => {
+    it("does not call Claude when credentials file is missing", async () => {
       // no writeCreds — file absent
       globalThis.fetch = vi.fn() as never; // should not be called
 
       await service.triggerFetch();
 
-      expect(broadcasts).toHaveLength(0);
+      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts[0].payload.claude).toBeUndefined();
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
@@ -208,7 +209,8 @@ describe("QuotaFetcherService", () => {
 
       await service.triggerFetch();
 
-      expect(broadcasts).toHaveLength(0);
+      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts[0].payload.claude).toBeUndefined();
     });
   });
 
@@ -425,6 +427,20 @@ describe("QuotaFetcherService", () => {
   // ── Broadcast behaviour ────────────────────────────────────────────────
 
   describe("broadcast deduplication", () => {
+    it("broadcasts a fetched marker when no provider has quota data", async () => {
+      globalThis.fetch = mockFetch(new Map());
+
+      await service.triggerFetch();
+
+      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts[0]).toMatchObject({
+        type: "provider_quota",
+        payload: {
+          fetchedAt: expect.any(String),
+        },
+      });
+    });
+
     it("broadcasts only once when payload is unchanged", async () => {
       writeCreds(claudeHome, "at_valid");
       globalThis.fetch = mockFetch(
