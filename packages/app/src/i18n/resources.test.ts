@@ -236,7 +236,7 @@ describe("translation resources", () => {
   });
 
   it("includes workspace Git and review keys for the Batch 4B migration", () => {
-    expect(en.workspace.tabs.actions.newAgent).toBe("New agent tab");
+    expect(en.workspace.tabs.actions.newAgent).toBe("New agent");
     expect(en.workspace.header.actions.copyPath).toBe("Copy workspace path");
     expect(en.workspace.scripts.actions.run).toBe("Run");
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
