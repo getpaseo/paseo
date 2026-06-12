@@ -1332,7 +1332,7 @@ export const fr: TranslationResources = {
   },
   renameModal: {
     rename: "Rebaptiser",
-    saving: "Économie...",
+    saving: "Sauvegarde...",
   },
   sidebarCallout: {
     dismiss: "Rejeter",
@@ -1850,7 +1850,7 @@ export const fr: TranslationResources = {
         tryAgain: "Essayer à nouveau",
         save: "Sauvegarder",
         saved: "Projet enregistré",
-        saving: "Économie...",
+        saving: "Sauvegarde...",
         cancel: "Annuler",
       },
     },

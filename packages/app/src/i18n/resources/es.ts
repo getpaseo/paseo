@@ -1329,7 +1329,7 @@ export const es: TranslationResources = {
   },
   renameModal: {
     rename: "Rebautizar",
-    saving: "Ahorro...",
+    saving: "Guardando...",
   },
   sidebarCallout: {
     dismiss: "Despedir",
@@ -1840,9 +1840,9 @@ export const es: TranslationResources = {
       actions: {
         reload: "Recargar",
         tryAgain: "Intentar otra vez",
-        save: "Ahorrar",
+        save: "Guardar",
         saved: "Proyecto guardado",
-        saving: "Ahorro...",
+        saving: "Guardando...",
         cancel: "Cancelar",
       },
     },

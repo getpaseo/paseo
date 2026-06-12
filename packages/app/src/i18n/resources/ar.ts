@@ -1294,7 +1294,7 @@ export const ar: TranslationResources = {
   },
   renameModal: {
     rename: "إعادة تسمية",
-    saving: "توفير...",
+    saving: "جارٍ الحفظ...",
   },
   sidebarCallout: {
     dismiss: "رفض",
@@ -1799,9 +1799,9 @@ export const ar: TranslationResources = {
       actions: {
         reload: "إعادة تحميل",
         tryAgain: "حاول ثانية",
-        save: "يحفظ",
+        save: "حفظ",
         saved: "تم حفظ المشروع",
-        saving: "توفير...",
+        saving: "جارٍ الحفظ...",
         cancel: "يلغي",
       },
     },
