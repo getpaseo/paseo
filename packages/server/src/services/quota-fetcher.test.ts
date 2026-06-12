@@ -369,6 +369,30 @@ describe("QuotaFetcherService", () => {
       expect(grok?.creditUsage).toBe(12000);
     });
 
+    it("preserves zero values from Grok quota responses", async () => {
+      writeCreds(claudeHome, "at_valid");
+      process.env["GROK_API_KEY"] = "grok_test_token";
+      globalThis.fetch = mockFetch(
+        new Map([
+          ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+          [
+            "https://cli-chat-proxy.grok.com/v1/billing",
+            () =>
+              jsonResponse({
+                config: { monthlyLimit: { val: 0 } },
+                usage: { creditUsage: 0 },
+              }),
+          ],
+        ]),
+      );
+
+      await service.triggerFetch();
+
+      const { grok } = broadcasts[0].payload;
+      expect(grok?.monthlyLimit).toBe(0);
+      expect(grok?.creditUsage).toBe(0);
+    });
+
     it("returns kimi quota when KIMI_TOKEN is set and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["KIMI_TOKEN"] = "kimi_test_token";

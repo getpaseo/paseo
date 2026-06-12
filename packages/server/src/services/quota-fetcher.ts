@@ -597,8 +597,8 @@ export class GrokQuotaProvider implements QuotaProvider {
       usage?: { creditUsage?: number };
     };
     return {
-      monthlyLimit: resp.config?.monthlyLimit?.val || null,
-      creditUsage: resp.usage?.creditUsage || null,
+      monthlyLimit: resp.config?.monthlyLimit?.val ?? null,
+      creditUsage: resp.usage?.creditUsage ?? null,
     };
   }
 
