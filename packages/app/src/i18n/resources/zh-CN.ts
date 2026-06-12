@@ -1593,6 +1593,10 @@ export const zhCN: TranslationResources = {
           sheetTitle: "追加 system prompt",
           accessibilityLabel: "追加 system prompt",
           placeholder: "始终保持回复简洁。",
+          edit: "编辑",
+          reset: "重置",
+          save: "保存",
+          saving: "保存中...",
         },
       },
       agents: {
@@ -1606,10 +1610,12 @@ export const zhCN: TranslationResources = {
           editLabel: "编辑标签",
           title: "重命名 Host",
           placeholder: "我的 Host",
+          submit: "重命名",
         },
         restart: {
           title: "重启 Daemon",
           hint: "重启 Daemon 进程。应用会自动重新连接",
+          confirm: "重启",
           confirmTitle: "重启 {{name}}",
           confirmMessage: "这会重启 Daemon。其上运行的 Agent 会继续运行；应用会自动重新连接。",
           restarting: "正在重启...",

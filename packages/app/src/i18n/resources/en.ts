@@ -1618,6 +1618,10 @@ export const en = {
           sheetTitle: "Append system prompt",
           accessibilityLabel: "Append system prompt",
           placeholder: "Always keep replies concise.",
+          edit: "Edit",
+          reset: "Reset",
+          save: "Save",
+          saving: "Saving...",
         },
       },
       agents: {
@@ -1631,10 +1635,12 @@ export const en = {
           editLabel: "Edit label",
           title: "Rename host",
           placeholder: "My Host",
+          submit: "Rename",
         },
         restart: {
           title: "Restart daemon",
           hint: "Restarts the daemon process. The app will reconnect automatically",
+          confirm: "Restart",
           confirmTitle: "Restart {{name}}",
           confirmMessage:
             "This will restart the daemon. Agents running on it will keep going; the app will reconnect automatically.",

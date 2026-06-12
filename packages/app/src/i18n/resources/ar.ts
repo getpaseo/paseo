@@ -1611,6 +1611,10 @@ export const ar: TranslationResources = {
           sheetTitle: "إلحاق موجه النظام",
           accessibilityLabel: "إلحاق موجه النظام",
           placeholder: "اجعل الردود موجزة دائمًا.",
+          edit: "تحرير",
+          reset: "إعادة ضبط",
+          save: "حفظ",
+          saving: "جارٍ الحفظ...",
         },
       },
       agents: {
@@ -1624,10 +1628,12 @@ export const ar: TranslationResources = {
           editLabel: "تحرير التسمية",
           title: "إعادة تسمية المضيف",
           placeholder: "بلدي Host",
+          submit: "إعادة تسمية",
         },
         restart: {
           title: "إعادة تشغيل البرنامج الخفي",
           hint: "إعادة تشغيل عملية البرنامج الخفي. سيتم إعادة الاتصال بالتطبيق تلقائيًا",
+          confirm: "إعادة التشغيل",
           confirmTitle: "أعد تشغيل{{name}}",
           confirmMessage:
             "سيؤدي هذا إلى إعادة تشغيل البرنامج الخفي. سيستمر العملاء الذين يعملون عليه؛ سيتم إعادة الاتصال بالتطبيق تلقائيًا.",
