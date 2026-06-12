@@ -447,10 +447,18 @@ export async function createPaseoDaemon(
    * to prevent ERR_INVALID_CHAR from Node.js HTTP parser.
    */
   function formatContentDisposition(fileName: string): string {
-    // Strip characters that are unsafe in header values
-    const sanitized = fileName.replace(/["\r\n]/g, "_");
+    // Strip characters that are unsafe in header values.
+    // Backslash is an escape character in HTTP quoted-strings (RFC 7230 §3.2.6).
+    const sanitized = fileName.replace(/["\\\r\n]/g, "_");
     // ASCII-only filenames can use the simple form
-    if (encodeURIComponent(sanitized) === sanitized) {
+    let hasNonAscii = false;
+    for (let i = 0; i < sanitized.length; i++) {
+      if (sanitized.charCodeAt(i) > 127) {
+        hasNonAscii = true;
+        break;
+      }
+    }
+    if (!hasNonAscii) {
       return `attachment; filename="${sanitized}"`;
     }
     // Non-ASCII: RFC 5987 encoding with ASCII fallback
