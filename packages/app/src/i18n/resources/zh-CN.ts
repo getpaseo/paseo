@@ -1005,6 +1005,10 @@ export const zhCN: TranslationResources = {
     placeholder: "输入目录路径...",
     opening: "正在打开 project...",
     empty: "开始输入路径",
+    errors: {
+      directory_not_found: "找不到目录。",
+    },
+    openPath: "打开路径",
   },
   branchSwitcher: {
     currentBranch: "当前分支：{{branchName}}。按下以切换分支。",

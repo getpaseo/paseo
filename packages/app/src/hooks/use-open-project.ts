@@ -4,9 +4,11 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { openProjectDirectly } from "@/hooks/open-project";
+import { openProjectDirectly, type OpenProjectResult } from "@/hooks/open-project";
 
-export function useOpenProject(serverId: string | null): (path: string) => Promise<boolean> {
+export function useOpenProject(
+  serverId: string | null,
+): (path: string) => Promise<OpenProjectResult> {
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);

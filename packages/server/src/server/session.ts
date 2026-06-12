@@ -2,6 +2,7 @@ import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { realpathSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { z } from "zod";
@@ -7156,8 +7157,23 @@ export class Session {
   private async handleOpenProjectRequest(
     request: Extract<SessionInboundMessage, { type: "open_project_request" }>,
   ): Promise<void> {
+    const cwd = expandTilde(request.cwd);
+    const cwdStats = await stat(cwd).catch(() => null);
+    if (!cwdStats?.isDirectory()) {
+      this.emit({
+        type: "open_project_response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          error: `Directory not found: ${cwd}`,
+          errorCode: "directory_not_found",
+        },
+      });
+      return;
+    }
+
     try {
-      const workspace = await this.findOrCreateWorkspaceForDirectory(request.cwd);
+      const workspace = await this.findOrCreateWorkspaceForDirectory(cwd);
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
       await this.emitWorkspaceUpdateForCwd(workspace.cwd);
@@ -7183,7 +7199,7 @@ export class Session {
         });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to open project";
-      this.sessionLogger.error({ err: error, cwd: request.cwd }, "Failed to open project");
+      this.sessionLogger.error({ err: error, cwd }, "Failed to open project");
       this.emit({
         type: "open_project_response",
         payload: {

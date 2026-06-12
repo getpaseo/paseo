@@ -1052,6 +1052,10 @@ export const es: TranslationResources = {
     placeholder: "Escriba una ruta de directorio...",
     opening: "Proyecto de apertura...",
     empty: "Comience a escribir una ruta",
+    errors: {
+      directory_not_found: "No se encontró el directorio.",
+    },
+    openPath: "Abrir ruta",
   },
   branchSwitcher: {
     currentBranch: "Sucursal actual:{{branchName}}. Presione para cambiar de rama.",

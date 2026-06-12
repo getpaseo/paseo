@@ -1054,6 +1054,10 @@ export const fr: TranslationResources = {
     placeholder: "Tapez un chemin de répertoire...",
     opening: "Projet d'ouverture...",
     empty: "Commencez à taper un chemin",
+    errors: {
+      directory_not_found: "Répertoire introuvable.",
+    },
+    openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
     currentBranch: "Branche actuelle:{{branchName}}. Appuyez pour changer de branche.",

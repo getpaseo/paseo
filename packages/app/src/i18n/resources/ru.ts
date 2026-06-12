@@ -1042,6 +1042,10 @@ export const ru: TranslationResources = {
     placeholder: "Введите путь к каталогу...",
     opening: "Открытие проекта...",
     empty: "Начните вводить путь",
+    errors: {
+      directory_not_found: "Каталог не найден.",
+    },
+    openPath: "Открыть путь",
   },
   branchSwitcher: {
     currentBranch: "Текущая ветка:{{branchName}}. Нажмите, чтобы переключить ветку.",

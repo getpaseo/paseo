@@ -2622,6 +2622,8 @@ export const OpenProjectResponseMessageSchema = z.object({
     requestId: z.string(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
+    // Unknown codes from newer daemons degrade to null; clients fall back to `error`.
+    errorCode: z.enum(["directory_not_found"]).nullish().catch(null),
   }),
 });
 
