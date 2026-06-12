@@ -29,6 +29,7 @@ import { runGitCommand } from "./run-git-command.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
+import { repoCommandBinPathOverlay } from "./env-path.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { expandTilde } from "./path.js";
@@ -606,7 +607,11 @@ export async function runWorktreeSetupCommands(options: {
       branchName: options.branchName,
       ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
     }));
-  const setupEnv = createExternalProcessEnv(process.env, runtimeEnv);
+  const setupEnv = createExternalProcessEnv(
+    process.env,
+    runtimeEnv,
+    repoCommandBinPathOverlay(options.worktreePath),
+  );
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
@@ -714,17 +719,21 @@ export async function runWorktreeTeardownCommands(options: {
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
   const worktreePort = readPaseoWorktreeRuntimePort(options.worktreePath);
 
-  const teardownEnv: NodeJS.ProcessEnv = createExternalProcessEnv(process.env, {
-    // Source checkout path is the original git repo root (shared across worktrees), not the
-    // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
-    // from the source checkout.
-    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
-    // Backward-compatible alias.
-    PASEO_ROOT_PATH: repoRootPath,
-    PASEO_WORKTREE_PATH: options.worktreePath,
-    PASEO_BRANCH_NAME: branchName,
-    ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
-  });
+  const teardownEnv: NodeJS.ProcessEnv = createExternalProcessEnv(
+    process.env,
+    {
+      // Source checkout path is the original git repo root (shared across worktrees), not the
+      // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
+      // from the source checkout.
+      PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+      // Backward-compatible alias.
+      PASEO_ROOT_PATH: repoRootPath,
+      PASEO_WORKTREE_PATH: options.worktreePath,
+      PASEO_BRANCH_NAME: branchName,
+      ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
+    },
+    repoCommandBinPathOverlay(options.worktreePath),
+  );
 
   const results: WorktreeTeardownCommandResult[] = [];
   for (const cmd of teardownCommands) {

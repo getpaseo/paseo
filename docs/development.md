@@ -166,7 +166,12 @@ defaults. The default rotation is `10m` x `3` files everywhere.
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
-of commands. Both run sequentially.
+of commands. Both run sequentially. All repo-configured commands — setup, teardown, `scripts`
+entries, and `worktree.terminals` — run with `<cwd>/node_modules/.bin` prepended to `PATH`
+(matching the local-bin lookup behavior of `npm run`; ancestor directories are not walked), so
+locally installed CLI tools like `cross-env` resolve no matter how the daemon was started.
+Resolution is guaranteed; shadowing priority is not — a login-shell profile or macOS
+`path_helper` may reorder entries.
 
 ```json
 {

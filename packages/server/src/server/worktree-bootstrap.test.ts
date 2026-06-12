@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { delimiter, join } from "path";
 import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
@@ -236,6 +236,7 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     let readyAt = 0;
     let sendAt = 0;
+    let terminalEnv: Record<string, string> | undefined;
     let outputListener: ((chunk: { data: string }) => void) | null = null;
 
     await runAsyncWorktreeBootstrap({
@@ -248,6 +249,7 @@ describe("runAsyncWorktreeBootstrap", () => {
           return [];
         },
         async createTerminal(options) {
+          terminalEnv = options.env;
           setTimeout(() => {
             readyAt = Date.now();
             outputListener?.({ data: "$ " });
@@ -303,6 +305,15 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(readyAt).toBeGreaterThan(0);
     expect(sendAt).toBeGreaterThan(0);
     expect(sendAt).toBeGreaterThanOrEqual(readyAt);
+
+    const terminalPathKeys = Object.keys(terminalEnv ?? {}).filter(
+      (key) => key.toUpperCase() === "PATH",
+    );
+    expect(terminalPathKeys).toHaveLength(1);
+    expect(terminalEnv?.[terminalPathKeys[0] ?? ""]?.split(delimiter)[0]).toBe(
+      join(worktreeBootstrap.worktree.worktreePath, "node_modules", ".bin"),
+    );
+    expect(terminalEnv?.PASEO_WORKTREE_PATH).toBe(worktreeBootstrap.worktree.worktreePath);
   });
 
   interface CreateTerminalCall {
@@ -502,7 +513,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     });
   }
 
-  it("spawns plain scripts in persistent shell terminals without env injection or routes", async () => {
+  it("spawns plain scripts in persistent shell terminals without service env or routes", async () => {
     commitPaseoScripts({
       web: {
         command: "npm run dev",
@@ -532,7 +543,13 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
     expect(createTerminalCalls[0]?.name).toBe("web");
     expect(createTerminalCalls[0]?.title).toBe("web");
-    expect(createTerminalCalls[0]?.env).toBeUndefined();
+    const scriptEnv = createTerminalCalls[0]?.env ?? {};
+    const scriptEnvKeys = Object.keys(scriptEnv);
+    expect(scriptEnvKeys).toHaveLength(1);
+    expect(scriptEnvKeys[0]?.toUpperCase()).toBe("PATH");
+    expect(scriptEnv[scriptEnvKeys[0] ?? ""]?.split(delimiter)[0]).toBe(
+      join(repoDir, "node_modules", ".bin"),
+    );
     expect(terminalRecords[0]?.sentInputs).toEqual(["npm run dev\r"]);
     expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "web" })).toMatchObject({
       type: "script",

@@ -17,6 +17,7 @@ import {
   type WorktreeRuntimeEnv,
 } from "../utils/worktree.js";
 import { findFreePort, type ServiceProxySubsystem } from "./service-proxy.js";
+import { repoCommandBinPathOverlay } from "../utils/env-path.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { AgentTimelineItem, ToolCallDetail } from "./agent/agent-sdk-types.js";
 import {
@@ -542,7 +543,7 @@ async function runWorktreeTerminalBootstrap(
         const terminal = await terminalManager.createTerminal({
           cwd: options.worktree.worktreePath,
           name: spec.name,
-          env: runtimeEnv,
+          env: { ...runtimeEnv, ...repoCommandBinPathOverlay(options.worktree.worktreePath) },
           workspaceId: options.workspaceId,
         });
         await waitForTerminalBootstrapReadiness(terminal);
@@ -903,7 +904,7 @@ export async function spawnWorkspaceScript(
       repoRoot,
       workspaceId,
       scriptName,
-      env,
+      env: { ...env, ...repoCommandBinPathOverlay(repoRoot) },
     });
 
     runtimeStore.set({

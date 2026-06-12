@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import path from "node:path";
+import { findEnvKey, prependEnvPath } from "../../../../../utils/env-path.js";
 
 export type SherpaLoaderEnvKey = "LD_LIBRARY_PATH" | "DYLD_LIBRARY_PATH" | "PATH";
 
@@ -39,14 +40,6 @@ export function sherpaLoaderEnvKey(
   return null;
 }
 
-export function prependEnvPath(existing: string | undefined, value: string): string {
-  const parts = (existing ?? "").split(path.delimiter).filter(Boolean);
-  if (parts.includes(value)) {
-    return parts.join(path.delimiter);
-  }
-  return [value, ...parts].join(path.delimiter);
-}
-
 export function resolveSherpaLoaderEnv(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
@@ -68,21 +61,6 @@ export function resolveSherpaLoaderEnv(
   } catch {
     return null;
   }
-}
-
-/**
- * Find the actual case-sensitive key in a plain object that matches the given
- * key case-insensitively. On Windows, `{...process.env}` produces a plain
- * (case-sensitive) object where PATH is typically stored as `Path`. Using a
- * hardcoded `"PATH"` would miss the existing key and create a duplicate,
- * breaking the child process's PATH.
- */
-function findEnvKey(env: NodeJS.ProcessEnv, key: string): string {
-  const lower = key.toLowerCase();
-  for (const k of Object.keys(env)) {
-    if (k.toLowerCase() === lower) return k;
-  }
-  return key;
 }
 
 export function applySherpaLoaderEnv(

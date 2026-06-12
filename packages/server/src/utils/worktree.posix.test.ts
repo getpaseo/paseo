@@ -18,6 +18,7 @@ import {
   resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
+  runWorktreeTeardownCommands,
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
@@ -34,7 +35,7 @@ import {
   writeFileSync,
   readFileSync,
 } from "fs";
-import { dirname, join } from "path";
+import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
 
@@ -734,6 +735,51 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(progressEvents.some((event) => event.type === "command_started")).toBe(true);
       expect(progressEvents.some((event) => event.type === "output")).toBe(true);
       expect(progressEvents.some((event) => event.type === "command_completed")).toBe(true);
+    });
+
+    it("prepends the worktree's node_modules/.bin to PATH for setup commands", async () => {
+      const paseoConfig = {
+        worktree: {
+          setup: ['printf "%s" "$PATH"'],
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add path setup"], {
+        cwd: repoDir,
+      });
+
+      const results = await runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        cleanupOnFailure: false,
+      });
+
+      expect(results).toHaveLength(1);
+      const pathEntries = (results[0]?.stdout ?? "").trim().split(delimiter);
+      expect(pathEntries).toContain(join(repoDir, "node_modules", ".bin"));
+    });
+
+    it("prepends the worktree's node_modules/.bin to PATH for teardown commands", async () => {
+      const paseoConfig = {
+        worktree: {
+          teardown: ['printf "%s" "$PATH"'],
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add path teardown"], {
+        cwd: repoDir,
+      });
+
+      const results = await runWorktreeTeardownCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+      });
+
+      expect(results).toHaveLength(1);
+      const pathEntries = (results[0]?.stdout ?? "").trim().split(delimiter);
+      expect(pathEntries).toContain(join(repoDir, "node_modules", ".bin"));
     });
 
     it("reuses persisted worktree runtime port across resolutions", async () => {
