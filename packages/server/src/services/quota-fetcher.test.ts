@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -253,6 +253,47 @@ describe("QuotaFetcherService", () => {
       await service.triggerFetch();
 
       expect(broadcasts[0].payload.codex).toBeUndefined();
+    });
+
+    it("persists refreshed tokens to the Codex auth file that was read", async () => {
+      writeCreds(claudeHome, "at_claude");
+      const alternateCodexHome = mkdtempSync(join(tmpdir(), "quota-test-codex-alt-"));
+      process.env["CODEX_HOME"] = alternateCodexHome;
+      writeFileSync(join(alternateCodexHome, "auth.json"), JSON.stringify({ tokens: {} }));
+      writeCodexAuth(codexHome, "at_codex_stale", "rt_codex_valid");
+
+      let usageCalls = 0;
+      globalThis.fetch = mockFetch(
+        new Map([
+          ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () => {
+              usageCalls += 1;
+              if (usageCalls === 1) return new Response(null, { status: 401 });
+              return jsonResponse(makeCodexResponse());
+            },
+          ],
+          [
+            "https://auth.openai.com/oauth/token",
+            () => jsonResponse({ access_token: "at_codex_fresh", refresh_token: "rt_codex_fresh" }),
+          ],
+        ]),
+      );
+
+      try {
+        await service.triggerFetch();
+
+        const refreshedAuth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf8"));
+        const untouchedAuth = JSON.parse(
+          readFileSync(join(alternateCodexHome, "auth.json"), "utf8"),
+        );
+        expect(refreshedAuth.tokens.access_token).toBe("at_codex_fresh");
+        expect(refreshedAuth.tokens.refresh_token).toBe("rt_codex_fresh");
+        expect(untouchedAuth.tokens.access_token).toBeUndefined();
+      } finally {
+        rmSync(alternateCodexHome, { recursive: true, force: true });
+      }
     });
   });
 

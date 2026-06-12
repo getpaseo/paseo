@@ -188,6 +188,11 @@ interface CodexAuth {
   };
 }
 
+interface CodexAuthRecord {
+  auth: CodexAuth;
+  path: string;
+}
+
 interface CodexWindow {
   used_percent?: number;
   reset_at?: number;
@@ -225,7 +230,10 @@ export class CodexQuotaProvider implements QuotaProvider {
   }
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["codex"]> {
-    const auth = await this.readCodexAuth();
+    const authRecord = await this.readCodexAuth();
+    if (!authRecord) return undefined;
+
+    const auth = authRecord.auth;
     if (!auth?.tokens?.access_token) return undefined;
 
     const { access_token, refresh_token, account_id } = auth.tokens;
@@ -237,7 +245,7 @@ export class CodexQuotaProvider implements QuotaProvider {
       const refreshed = await this.refreshCodexToken(refresh_token);
       if (!refreshed?.access_token) return undefined;
 
-      await this.saveCodexAuth(auth, refreshed);
+      await this.saveCodexAuth(authRecord.path, auth, refreshed);
       resp = await this.callCodexApi(refreshed.access_token, account_id);
       if (resp === "NEEDS_AUTH") return undefined;
     }
@@ -266,7 +274,7 @@ export class CodexQuotaProvider implements QuotaProvider {
     };
   }
 
-  private async readCodexAuth(): Promise<CodexAuth | null> {
+  private async readCodexAuth(): Promise<CodexAuthRecord | null> {
     const candidates = [
       ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
       join(homedir(), ".config", "codex", "auth.json"),
@@ -277,7 +285,7 @@ export class CodexQuotaProvider implements QuotaProvider {
       try {
         const raw = await fs.readFile(p, "utf8");
         const auth = JSON.parse(raw) as CodexAuth;
-        if (auth.tokens?.access_token) return auth;
+        if (auth.tokens?.access_token) return { auth, path: p };
       } catch {
         continue;
       }
@@ -319,28 +327,23 @@ export class CodexQuotaProvider implements QuotaProvider {
     return res.json() as Promise<CodexTokenRefresh>;
   }
 
-  private async saveCodexAuth(original: CodexAuth, refreshed: CodexTokenRefresh): Promise<void> {
-    const candidates = [
-      ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
-      join(homedir(), ".config", "codex", "auth.json"),
-      join(this.codexHome, "auth.json"),
-    ];
-    for (const p of candidates) {
-      if (!existsSync(p)) continue;
-      try {
-        const updated: CodexAuth = {
-          ...original,
-          tokens: {
-            ...original.tokens,
-            access_token: refreshed.access_token ?? original.tokens?.access_token,
-            refresh_token: refreshed.refresh_token ?? original.tokens?.refresh_token,
-          },
-        };
-        await fs.writeFile(p, JSON.stringify(updated, null, 2), { mode: 0o600 });
-      } catch {
-        // Non-fatal
-      }
-      break;
+  private async saveCodexAuth(
+    authPath: string,
+    original: CodexAuth,
+    refreshed: CodexTokenRefresh,
+  ): Promise<void> {
+    try {
+      const updated: CodexAuth = {
+        ...original,
+        tokens: {
+          ...original.tokens,
+          access_token: refreshed.access_token ?? original.tokens?.access_token,
+          refresh_token: refreshed.refresh_token ?? original.tokens?.refresh_token,
+        },
+      };
+      await fs.writeFile(authPath, JSON.stringify(updated, null, 2), { mode: 0o600 });
+    } catch {
+      // Non-fatal
     }
   }
 }
