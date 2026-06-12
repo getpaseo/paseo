@@ -16,6 +16,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -132,6 +133,21 @@ afterEach(async () => {
 function trackSession(session: TerminalSession): TerminalSession {
   sessions.push(session);
   return session;
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs: number,
+  intervalMs = 25,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 async function waitForScheduledTimers(expectedTimerCount: number): Promise<void> {
@@ -284,6 +300,61 @@ describe("createTerminal", () => {
     );
 
     expect(session.id).toBeDefined();
+  });
+
+  it("resolves the default shell from baseEnv instead of the worker environment", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "terminal-default-shell-env-"));
+    temporaryDirs.push(dir);
+    const markerPath = join(dir, "marker.txt");
+    const preloadPath = join(dir, "base-shell-preload.cjs");
+    writeFileSync(
+      preloadPath,
+      "require('fs').writeFileSync(process.env.PASEO_DEFAULT_SHELL_MARKER, 'base-shell'); process.exit(0);\n",
+    );
+
+    const originalShell = process.env.SHELL;
+    const originalComSpec = process.env.ComSpec;
+    const originalCOMSPEC = process.env.COMSPEC;
+    try {
+      if (isPlatform("win32")) {
+        process.env.ComSpec = "C:\\paseo-worker-stale-shell\\missing.cmd";
+        delete process.env.COMSPEC;
+      } else {
+        process.env.SHELL = "/paseo-worker-stale-shell/missing";
+      }
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: dir,
+          baseEnv: {
+            ...process.env,
+            NODE_OPTIONS: "--require ./base-shell-preload.cjs",
+            PASEO_DEFAULT_SHELL_MARKER: markerPath,
+            ...(isPlatform("win32") ? { ComSpec: process.execPath } : { SHELL: process.execPath }),
+          },
+        }),
+      );
+
+      await waitForCondition(() => existsSync(markerPath), 5000);
+      expect(readFileSync(markerPath, "utf8")).toBe("base-shell");
+      expect(session.id).toBeDefined();
+    } finally {
+      if (originalShell === undefined) {
+        delete process.env.SHELL;
+      } else {
+        process.env.SHELL = originalShell;
+      }
+      if (originalComSpec === undefined) {
+        delete process.env.ComSpec;
+      } else {
+        process.env.ComSpec = originalComSpec;
+      }
+      if (originalCOMSPEC === undefined) {
+        delete process.env.COMSPEC;
+      } else {
+        process.env.COMSPEC = originalCOMSPEC;
+      }
+    }
   });
 
   it("uses default rows and cols", async () => {
