@@ -1056,6 +1056,7 @@ export const fr: TranslationResources = {
     empty: "Commencez à taper un chemin",
     errors: {
       directory_not_found: "Répertoire introuvable.",
+      open_failed: "Impossible d’ouvrir le projet.",
     },
     openPath: "Ouvrir le chemin",
   },

@@ -1007,6 +1007,7 @@ export const zhCN: TranslationResources = {
     empty: "开始输入路径",
     errors: {
       directory_not_found: "找不到目录。",
+      open_failed: "无法打开项目。",
     },
     openPath: "打开路径",
   },

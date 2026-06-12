@@ -37,15 +37,20 @@ type ProjectPickerErrorCode = NonNullable<OpenProjectFailure["errorCode"]>;
 
 function getProjectPickerErrorMessage(
   result: OpenProjectResult | undefined,
+  thrownError: Error | null,
   translateErrorCode: (errorCode: ProjectPickerErrorCode) => string,
+  translateOpenFailed: () => string,
 ): string | null {
-  if (result?.ok !== false) {
-    return null;
+  if (result?.ok === false) {
+    if (result.errorCode) {
+      return translateErrorCode(result.errorCode);
+    }
+    return result.error;
   }
-  if (result.errorCode) {
-    return translateErrorCode(result.errorCode);
+  if (thrownError) {
+    return thrownError.message || translateOpenFailed();
   }
-  return result.error;
+  return null;
 }
 
 function PathRow({ option, active, openPathLabel, onSelect }: PathRowProps) {
@@ -111,8 +116,11 @@ export function ProjectPickerModal() {
   });
   const { mutate: submitPath, reset: resetSubmit, isPending: isSubmitting } = openProjectMutation;
   const submitResult = openProjectMutation.data;
-  const errorMessage = getProjectPickerErrorMessage(submitResult, (errorCode) =>
-    t(`projectPicker.errors.${errorCode}`),
+  const errorMessage = getProjectPickerErrorMessage(
+    submitResult,
+    openProjectMutation.error,
+    (errorCode) => t(`projectPicker.errors.${errorCode}`),
+    () => t("projectPicker.errors.open_failed"),
   );
 
   const directorySuggestionsQuery = useQuery({

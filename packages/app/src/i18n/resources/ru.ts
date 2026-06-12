@@ -1044,6 +1044,7 @@ export const ru: TranslationResources = {
     empty: "Начните вводить путь",
     errors: {
       directory_not_found: "Каталог не найден.",
+      open_failed: "Не удалось открыть проект.",
     },
     openPath: "Открыть путь",
   },

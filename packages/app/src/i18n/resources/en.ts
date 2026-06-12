@@ -1027,6 +1027,7 @@ export const en = {
     empty: "Start typing a path",
     errors: {
       directory_not_found: "Directory not found.",
+      open_failed: "Could not open project.",
     },
     openPath: "Open path",
   },
