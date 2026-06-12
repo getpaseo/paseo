@@ -26,19 +26,6 @@ interface TerminalProfileEditModalProps {
   testID?: string;
 }
 
-export function generateProfileId(): string {
-  return `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-}
-
-export function parseArgsString(raw: string): string[] | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  return trimmed
-    .split(/\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 export function TerminalProfileEditModal({
   visible,
   title,
@@ -114,7 +101,7 @@ export function TerminalProfileEditModal({
 
     setIsPending(true);
     try {
-      await onSave({ name, command, args });
+      await onSave({ name: name.trim(), command: command.trim(), args });
       onClose();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : t("common.errors.unableToSave"));

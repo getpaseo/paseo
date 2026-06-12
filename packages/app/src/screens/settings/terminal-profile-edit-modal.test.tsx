@@ -268,8 +268,8 @@ describe("TerminalProfileEditModal", () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith({
-      name: "  Codex  ",
-      command: "  codex  ",
+      name: "Codex",
+      command: "codex",
       args: "  --flag  ",
     });
     expect(onClose).toHaveBeenCalledTimes(1);

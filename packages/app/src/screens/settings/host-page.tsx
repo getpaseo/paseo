@@ -26,8 +26,6 @@ import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
-  generateProfileId,
-  parseArgsString,
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
@@ -1101,6 +1099,19 @@ function RemoveHostSection({
 // Terminal Profiles
 // ---------------------------------------------------------------------------
 
+function generateProfileId(): string {
+  return `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function parseArgsString(raw: string): string[] | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 const EMPTY_PROFILE_DRAFT: ProfileDraft = { name: "", command: "", args: "" };
 
 interface TerminalProfileRowProps {
@@ -1234,8 +1245,8 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         ...current,
         {
           id: generateProfileId(),
-          name: draft.name.trim(),
-          command: draft.command.trim(),
+          name: draft.name,
+          command: draft.command,
           args: parseArgsString(draft.args),
         },
       ];
@@ -1270,8 +1281,8 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
         p.id === editingProfile.id
           ? {
               ...p,
-              name: draft.name.trim(),
-              command: draft.command.trim(),
+              name: draft.name,
+              command: draft.command,
               args: parseArgsString(draft.args),
             }
           : p,
