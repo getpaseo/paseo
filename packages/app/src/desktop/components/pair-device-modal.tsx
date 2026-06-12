@@ -14,7 +14,7 @@ const SNAP_POINTS: string[] = ["82%", "94%"];
 export function PairDeviceModal({ visible, onClose, testID }: PairDeviceModalProps) {
   const { t } = useTranslation();
   const header = useMemo<SheetHeader>(
-    () => ({ title: t("settings.integrations.pairDevices.rowTitle") }),
+    () => ({ title: t("settings.host.pairDevices.rowTitle") }),
     [t],
   );
 

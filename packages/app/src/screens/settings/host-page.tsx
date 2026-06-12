@@ -1,9 +1,26 @@
-import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronRight,
+  Globe,
+  Monitor,
+  Pencil,
+  Plus,
+  RotateCw,
+  SquareTerminal,
+  Trash2,
+} from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import {
+  getTerminalProfileIcon,
+  resolveTerminalProfiles,
+} from "@getpaseo/protocol/terminal-profiles";
+import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
@@ -33,6 +50,38 @@ import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { formatLatency } from "@/utils/latency";
+import { ICON_SIZE } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
+import { getProviderIcon } from "@/components/provider-icons";
+
+const ThemedArrowUp = withUnistyles(ArrowUp);
+const ThemedArrowDown = withUnistyles(ArrowDown);
+const ThemedProfilePencil = withUnistyles(Pencil);
+const ThemedTrash2 = withUnistyles(Trash2);
+const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
+const ThemedPlus = withUnistyles(Plus);
+
+interface DynamicProviderIconProps {
+  iconKey: string;
+  size: number;
+  color?: string;
+}
+
+function DynamicProviderIcon({ iconKey, size, color = "" }: DynamicProviderIconProps) {
+  const Icon = getProviderIcon(iconKey);
+  return <Icon size={size} color={color} />;
+}
+
+const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
+
+const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+
+const moveUpIcon = <ThemedArrowUp size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const moveDownIcon = <ThemedArrowDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const editProfileIcon = <ThemedProfilePencil size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const removeProfileIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
+const addProfileIcon = <ThemedPlus size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 
 function formatHostConnectionLabel(connection: HostConnection, t: TFunction): string {
   if (connection.type === "relay") {
@@ -1042,6 +1091,527 @@ function RemoveHostSection({
     </SettingsSection>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Terminal Profiles
+// ---------------------------------------------------------------------------
+
+function generateProfileId(): string {
+  return `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function parseArgsString(raw: string): string[] | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+interface ProfileDraft {
+  name: string;
+  command: string;
+  args: string;
+}
+
+const EMPTY_PROFILE_DRAFT: ProfileDraft = { name: "", command: "", args: "" };
+
+interface TerminalProfileEditModalProps {
+  visible: boolean;
+  title: string;
+  initialDraft: ProfileDraft;
+  onClose: () => void;
+  onSave: (draft: ProfileDraft) => void;
+}
+
+function TerminalProfileEditModal({
+  visible,
+  title,
+  initialDraft,
+  onClose,
+  onSave,
+}: TerminalProfileEditModalProps) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(initialDraft.name);
+  const [command, setCommand] = useState(initialDraft.command);
+  const [args, setArgs] = useState(initialDraft.args);
+  const sheetHeader = useMemo<SheetHeader>(() => ({ title }), [title]);
+
+  useEffect(() => {
+    if (!visible) return;
+    setName(initialDraft.name);
+    setCommand(initialDraft.command);
+    setArgs(initialDraft.args);
+  }, [visible, initialDraft.name, initialDraft.command, initialDraft.args]);
+
+  const handleSave = useCallback(() => {
+    onSave({ name, command, args });
+  }, [onSave, name, command, args]);
+
+  const canSave = name.trim().length > 0 && command.trim().length > 0;
+
+  return (
+    <AdaptiveModalSheet
+      visible={visible}
+      header={sheetHeader}
+      onClose={onClose}
+      testID="terminal-profile-edit-modal"
+      desktopMaxWidth={480}
+    >
+      <View style={profileModalStyles.body}>
+        <View style={profileModalStyles.fieldGroup}>
+          <Text style={profileModalStyles.fieldLabel}>
+            {t("settings.host.terminalProfiles.nameLabel")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialDraft.name}
+            resetKey={visible ? "open" : "closed"}
+            onChangeText={setName}
+            placeholder={t("settings.host.terminalProfiles.namePlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="terminal-profile-name-input"
+          />
+        </View>
+        <View style={profileModalStyles.fieldGroup}>
+          <Text style={profileModalStyles.fieldLabel}>
+            {t("settings.host.terminalProfiles.commandLabel")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialDraft.command}
+            resetKey={visible ? "open" : "closed"}
+            onChangeText={setCommand}
+            placeholder={t("settings.host.terminalProfiles.commandPlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="terminal-profile-command-input"
+          />
+        </View>
+        <View style={profileModalStyles.fieldGroup}>
+          <Text style={profileModalStyles.fieldLabel}>
+            {t("settings.host.terminalProfiles.argsLabel")}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialDraft.args}
+            resetKey={visible ? "open" : "closed"}
+            onChangeText={setArgs}
+            placeholder={t("settings.host.terminalProfiles.argsPlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="terminal-profile-args-input"
+          />
+          <Text style={profileModalStyles.fieldHint}>
+            {t("settings.host.terminalProfiles.argsHint")}
+          </Text>
+        </View>
+        <View style={profileModalStyles.actions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            style={profileModalStyles.actionButton}
+            onPress={onClose}
+          >
+            {t("common.actions.cancel")}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            style={profileModalStyles.actionButton}
+            onPress={handleSave}
+            disabled={!canSave}
+            testID="terminal-profile-save-button"
+          >
+            {t("settings.host.terminalProfiles.save")}
+          </Button>
+        </View>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
+interface TerminalProfileRowProps {
+  profile: TerminalProfile;
+  isFirst: boolean;
+  isLast: boolean;
+  onEdit: (id: string) => void;
+  onRemove: (id: string) => void;
+  onMoveUp: (id: string) => void;
+  onMoveDown: (id: string) => void;
+}
+
+function TerminalProfileRow({
+  profile,
+  isFirst,
+  isLast,
+  onEdit,
+  onRemove,
+  onMoveUp,
+  onMoveDown,
+}: TerminalProfileRowProps) {
+  const { t } = useTranslation();
+
+  const handleEdit = useCallback(() => onEdit(profile.id), [onEdit, profile.id]);
+  const handleRemove = useCallback(() => onRemove(profile.id), [onRemove, profile.id]);
+  const handleMoveUp = useCallback(() => onMoveUp(profile.id), [onMoveUp, profile.id]);
+  const handleMoveDown = useCallback(() => onMoveDown(profile.id), [onMoveDown, profile.id]);
+
+  const commandText =
+    profile.args && profile.args.length > 0
+      ? `${profile.command} ${profile.args.join(" ")}`
+      : profile.command;
+
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, !isFirst && settingsStyles.rowBorder, terminalProfileStyles.row],
+    [isFirst],
+  );
+
+  const icon = getTerminalProfileIcon(profile);
+
+  return (
+    <View style={rowStyle} testID={`terminal-profile-row-${profile.id}`}>
+      <View style={terminalProfileStyles.iconWrapper}>
+        {icon ? (
+          <ThemedDynamicProviderIcon
+            iconKey={icon}
+            size={ICON_SIZE.md}
+            uniProps={mutedColorMapping}
+          />
+        ) : (
+          <ThemedProfileSquareTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />
+        )}
+      </View>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {profile.name}
+        </Text>
+        <Text style={settingsStyles.rowHint} numberOfLines={1}>
+          {commandText}
+        </Text>
+      </View>
+      <View style={terminalProfileStyles.rowActions}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={moveUpIcon}
+          onPress={handleMoveUp}
+          disabled={isFirst}
+          accessibilityLabel={t("settings.host.terminalProfiles.moveUp")}
+          testID={`terminal-profile-move-up-${profile.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={moveDownIcon}
+          onPress={handleMoveDown}
+          disabled={isLast}
+          accessibilityLabel={t("settings.host.terminalProfiles.moveDown")}
+          testID={`terminal-profile-move-down-${profile.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={editProfileIcon}
+          onPress={handleEdit}
+          accessibilityLabel={t("settings.host.terminalProfiles.editProfile")}
+          testID={`terminal-profile-edit-${profile.id}`}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={removeProfileIcon}
+          onPress={handleRemove}
+          accessibilityLabel={t("settings.host.terminalProfiles.remove")}
+          testID={`terminal-profile-remove-${profile.id}`}
+        />
+      </View>
+    </View>
+  );
+}
+
+function TerminalProfilesSection({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const [editingProfile, setEditingProfile] = useState<{
+    id: string;
+    draft: ProfileDraft;
+  } | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const profiles = useMemo(
+    () => (config ? resolveTerminalProfiles(config.terminalProfiles) : null),
+    [config],
+  );
+
+  const saveProfiles = useCallback(
+    async (next: TerminalProfile[]) => {
+      setIsSaving(true);
+      try {
+        await patchConfig({ terminalProfiles: next });
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [patchConfig, t],
+  );
+
+  const handleAddOpen = useCallback(() => setIsAdding(true), []);
+  const handleAddClose = useCallback(() => setIsAdding(false), []);
+
+  const handleAddSave = useCallback(
+    (draft: ProfileDraft) => {
+      const current = profiles ? [...profiles] : [];
+      const next: TerminalProfile[] = [
+        ...current,
+        {
+          id: generateProfileId(),
+          name: draft.name.trim(),
+          command: draft.command.trim(),
+          args: parseArgsString(draft.args),
+        },
+      ];
+      setIsAdding(false);
+      void saveProfiles(next);
+    },
+    [profiles, saveProfiles],
+  );
+
+  const handleEditOpen = useCallback(
+    (id: string) => {
+      const profile = profiles?.find((p) => p.id === id);
+      if (!profile) return;
+      setEditingProfile({
+        id,
+        draft: {
+          name: profile.name,
+          command: profile.command,
+          args: profile.args ? profile.args.join(" ") : "",
+        },
+      });
+    },
+    [profiles],
+  );
+
+  const handleEditClose = useCallback(() => setEditingProfile(null), []);
+
+  const handleEditSave = useCallback(
+    (draft: ProfileDraft) => {
+      if (!editingProfile || !profiles) return;
+      const next: TerminalProfile[] = profiles.map((p) =>
+        p.id === editingProfile.id
+          ? {
+              ...p,
+              name: draft.name.trim(),
+              command: draft.command.trim(),
+              args: parseArgsString(draft.args),
+            }
+          : p,
+      );
+      setEditingProfile(null);
+      void saveProfiles(next);
+    },
+    [editingProfile, profiles, saveProfiles],
+  );
+
+  const handleRemove = useCallback(
+    (id: string) => {
+      const profile = profiles?.find((p) => p.id === id);
+      if (!profile) return;
+      void confirmDialog({
+        title: t("settings.host.terminalProfiles.removeConfirmTitle"),
+        message: t("settings.host.terminalProfiles.removeConfirmMessage", {
+          name: profile.name,
+        }),
+        confirmLabel: t("settings.host.terminalProfiles.remove"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      }).then((confirmed) => {
+        if (!confirmed || !profiles) return;
+        void saveProfiles(profiles.filter((p) => p.id !== id));
+        return;
+      });
+    },
+    [profiles, saveProfiles, t],
+  );
+
+  const handleMoveUp = useCallback(
+    (id: string) => {
+      if (!profiles) return;
+      const index = profiles.findIndex((p) => p.id === id);
+      if (index <= 0) return;
+      const next = [...profiles];
+      const [item] = next.splice(index, 1);
+      next.splice(index - 1, 0, item);
+      void saveProfiles(next);
+    },
+    [profiles, saveProfiles],
+  );
+
+  const handleMoveDown = useCallback(
+    (id: string) => {
+      if (!profiles) return;
+      const index = profiles.findIndex((p) => p.id === id);
+      if (index < 0 || index >= profiles.length - 1) return;
+      const next = [...profiles];
+      const [item] = next.splice(index, 1);
+      next.splice(index + 1, 0, item);
+      void saveProfiles(next);
+    },
+    [profiles, saveProfiles],
+  );
+
+  const addButton = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={addProfileIcon}
+        onPress={handleAddOpen}
+        disabled={isSaving || !isConnected || !profiles}
+        testID="terminal-profiles-add-button"
+      />
+    ),
+    [handleAddOpen, isSaving, isConnected, profiles],
+  );
+
+  if (!isConnected) {
+    return (
+      <View style={settingsStyles.card} testID="terminal-profiles-unavailable">
+        <View style={terminalProfileStyles.emptyCard}>
+          <Text style={terminalProfileStyles.emptyText}>
+            {t("settings.host.terminalProfiles.unavailable")}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <SettingsSection
+        title={t("settings.host.terminalProfiles.sectionTitle")}
+        trailing={addButton}
+        testID="terminal-profiles-section"
+      >
+        <View style={settingsStyles.card} testID="terminal-profiles-card">
+          {profiles && profiles.length > 0 ? (
+            profiles.map((profile, index) => (
+              <TerminalProfileRow
+                key={profile.id}
+                profile={profile}
+                isFirst={index === 0}
+                isLast={index === profiles.length - 1}
+                onEdit={handleEditOpen}
+                onRemove={handleRemove}
+                onMoveUp={handleMoveUp}
+                onMoveDown={handleMoveDown}
+              />
+            ))
+          ) : (
+            <View style={terminalProfileStyles.emptyCard}>
+              <Text style={terminalProfileStyles.emptyText}>
+                {t("settings.host.terminalProfiles.emptyState")}
+              </Text>
+            </View>
+          )}
+        </View>
+      </SettingsSection>
+
+      <TerminalProfileEditModal
+        visible={isAdding}
+        title={t("settings.host.terminalProfiles.addProfileTitle")}
+        initialDraft={EMPTY_PROFILE_DRAFT}
+        onClose={handleAddClose}
+        onSave={handleAddSave}
+      />
+
+      {editingProfile ? (
+        <TerminalProfileEditModal
+          visible
+          title={t("settings.host.terminalProfiles.editProfileTitle")}
+          initialDraft={editingProfile.draft}
+          onClose={handleEditClose}
+          onSave={handleEditSave}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function HostTerminalsPage({ serverId }: { serverId: string }) {
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <View>
+      <TerminalProfilesSection serverId={serverId} />
+    </View>
+  );
+}
+
+const terminalProfileStyles = StyleSheet.create((theme) => ({
+  row: {
+    gap: theme.spacing[2],
+    minHeight: 56,
+  },
+  iconWrapper: {
+    width: theme.iconSize.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 0,
+  },
+  emptyCard: {
+    padding: theme.spacing[4],
+    alignItems: "center",
+  },
+  emptyText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+  },
+}));
+
+const profileModalStyles = StyleSheet.create((theme) => ({
+  body: {
+    gap: theme.spacing[4],
+    paddingBottom: theme.spacing[2],
+  },
+  fieldGroup: {
+    gap: theme.spacing[1.5],
+  },
+  fieldLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  fieldHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginTop: theme.spacing[2],
+  },
+  actionButton: {
+    flex: 1,
+  },
+}));
 
 const styles = StyleSheet.create((theme) => ({
   identityEditButton: {

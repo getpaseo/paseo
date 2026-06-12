@@ -259,12 +259,13 @@ describe("resolveStartupRoute", () => {
     ).toEqual({ kind: "redirect", href: "/h/server-1/workspace/workspace-a" });
   });
 
-  it("does not restore a workspace whose host is no longer saved", () => {
+  it("falls back to a saved host when the restored workspace host is no longer saved", () => {
     expect(
       resolveStartupRoute({
         ...baseIndexInput,
         workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
         hosts: [{ serverId: "server-next" }],
+        hasGivenUpWaitingForHost: true,
       }),
     ).toEqual({ kind: "redirect", href: "/h/server-next" });
   });
@@ -288,7 +289,7 @@ describe("resolveStartupRoute", () => {
     ).toEqual({ kind: "redirect", href: "/h/server-saved" });
   });
 
-  it("shows welcome only after the host registry is ready and no host exists", () => {
+  it("shows welcome after root startup gives up and no host exists", () => {
     expect(
       resolveStartupRoute({
         ...baseIndexInput,

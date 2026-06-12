@@ -308,6 +308,7 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
                 author: {
                   login: "reviewer",
                   url: "https://github.com/reviewer",
+                  avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
                 },
               },
               {
@@ -331,6 +332,7 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
                 author: {
                   login: "commenter",
                   url: "https://github.com/commenter",
+                  avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
                 },
               },
             ],
@@ -873,6 +875,8 @@ describe("GitHubService", () => {
     });
     expect(runner.calls[0]?.args[3]).toContain("reviews(first: 100)");
     expect(runner.calls[0]?.args[3]).toContain("comments(first: 100)");
+    expect(runner.calls[0]?.args[3]).toContain("avatarUrl");
+    expect(runner.calls[0]?.args[3]).toContain("reviewThreads(first: 100)");
     expect(timeline).toEqual({
       prNumber: 42,
       repoOwner: "parentOwner",
@@ -885,6 +889,7 @@ describe("GitHubService", () => {
           id: "PRR_empty_commented",
           author: "unknown",
           authorUrl: null,
+          avatarUrl: null,
           body: "",
           createdAt: Date.parse("2026-04-02T13:50:00Z"),
           url: "https://github.com/parentOwner/parentRepo/pull/42#pullrequestreview-2",
@@ -895,6 +900,7 @@ describe("GitHubService", () => {
           id: "PRR_approved",
           author: "reviewer",
           authorUrl: "https://github.com/reviewer",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
           body: "Looks good to me.",
           createdAt: Date.parse("2026-04-02T13:52:14Z"),
           url: "https://github.com/parentOwner/parentRepo/pull/42#pullrequestreview-1",
@@ -905,11 +911,182 @@ describe("GitHubService", () => {
           id: "IC_later",
           author: "commenter",
           authorUrl: "https://github.com/commenter",
+          avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
           body: "Can we add a regression test?",
           createdAt: Date.parse("2026-04-02T13:55:00Z"),
           url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-3",
         },
       ],
+    });
+  });
+
+  it("maps inline review thread comments as chronological PR timeline comments with location", async () => {
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        reviewThreads: {
+          nodes: [
+            {
+              id: "PRRT_1",
+              path: "packages/app/src/git/pull-request-panel/data.ts",
+              line: 24,
+              startLine: 20,
+              isResolved: true,
+              isOutdated: false,
+              comments: {
+                nodes: [
+                  {
+                    id: "PRRC_1",
+                    body: "This should include line context.",
+                    url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+                    createdAt: "2026-04-02T13:51:00Z",
+                    author: {
+                      login: "inline-reviewer",
+                      url: "https://github.com/inline-reviewer",
+                      avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+                    },
+                    pullRequestReview: { id: "PRR_empty_commented" },
+                  },
+                ],
+                pageInfo: { hasNextPage: true },
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.truncated).toBe(true);
+    expect(timeline.items.map((item) => item.id)).toEqual([
+      "PRR_empty_commented",
+      "PRRC_1",
+      "PRR_approved",
+      "IC_later",
+    ]);
+    expect(timeline.items[1]).toEqual({
+      kind: "comment",
+      id: "PRRC_1",
+      author: "inline-reviewer",
+      authorUrl: "https://github.com/inline-reviewer",
+      avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+      body: "This should include line context.",
+      createdAt: Date.parse("2026-04-02T13:51:00Z"),
+      url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+      reviewId: "PRR_empty_commented",
+      location: {
+        path: "packages/app/src/git/pull-request-panel/data.ts",
+        line: 24,
+        startLine: 20,
+        threadId: "PRRT_1",
+        isResolved: true,
+        isOutdated: false,
+      },
+    });
+    expect(runner.calls[0]?.args[3]).toContain("pullRequestReview");
+  });
+
+  it("keeps inline review thread comments once when they also appear in PR comments", async () => {
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        comments: {
+          nodes: [
+            {
+              id: "PRRC_1",
+              body: "This should include line context.",
+              url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+              createdAt: "2026-04-02T13:51:00Z",
+              author: {
+                login: "inline-reviewer",
+                url: "https://github.com/inline-reviewer",
+                avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+              },
+            },
+            {
+              id: "IC_later",
+              body: "Can we add a regression test?",
+              url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-3",
+              createdAt: "2026-04-02T13:55:00Z",
+              author: {
+                login: "commenter",
+                url: "https://github.com/commenter",
+                avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+        reviewThreads: {
+          nodes: [
+            {
+              id: "PRRT_1",
+              path: "packages/app/src/git/pull-request-panel/data.ts",
+              line: 24,
+              startLine: 20,
+              isResolved: false,
+              isOutdated: false,
+              comments: {
+                nodes: [
+                  {
+                    id: "PRRC_1",
+                    body: "This should include line context.",
+                    url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+                    createdAt: "2026-04-02T13:51:00Z",
+                    author: {
+                      login: "inline-reviewer",
+                      url: "https://github.com/inline-reviewer",
+                      avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+                    },
+                    pullRequestReview: { id: "PRR_empty_commented" },
+                  },
+                ],
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.items.map((item) => item.id)).toEqual([
+      "PRR_empty_commented",
+      "PRRC_1",
+      "PRR_approved",
+      "IC_later",
+    ]);
+    expect(timeline.items[1]).toMatchObject({
+      id: "PRRC_1",
+      reviewId: "PRR_empty_commented",
+      location: {
+        path: "packages/app/src/git/pull-request-panel/data.ts",
+        line: 24,
+        startLine: 20,
+        threadId: "PRRT_1",
+      },
     });
   });
 
@@ -1336,6 +1513,7 @@ describe("GitHubService", () => {
         statusCheckRollup: [
           {
             __typename: "CheckRun",
+            databaseId: 12345,
             completedAt: "2026-04-02T13:52:14Z",
             conclusion: "SUCCESS",
             detailsUrl: "https://github.com/acme/repo/actions/runs/123",
@@ -1390,6 +1568,8 @@ describe("GitHubService", () => {
           url: "https://github.com/acme/repo/actions/runs/123",
           workflow: "Server CI",
           duration: "2m 14s",
+          checkRunId: 12345,
+          workflowRunId: 123,
         },
         {
           name: "deploy/preview",
@@ -1400,6 +1580,293 @@ describe("GitHubService", () => {
       checksStatus: "success",
       reviewDecision: "pending",
     });
+  });
+
+  it("fetches GitHub check details with capped failed job log tails and reuses cached logs", async () => {
+    const longLog = Array.from({ length: 220 }, (_, index) => `line ${index + 1}`).join("\n");
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        details_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        output: {
+          title: "Tests failed",
+          summary: "1 failure",
+          text: "Assertion failed",
+        },
+        check_suite: {
+          workflow_run: {
+            id: 456,
+          },
+        },
+      }),
+      JSON.stringify([
+        {
+          path: "packages/server/src/index.ts",
+          start_line: 10,
+          end_line: 12,
+          annotation_level: "failure",
+          message: "Expected true",
+          title: "server test failed",
+          raw_details: "stack trace",
+        },
+      ]),
+      JSON.stringify({
+        jobs: [
+          {
+            id: 789,
+            name: "test",
+            status: "completed",
+            conclusion: "failure",
+            html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+            completed_at: "2026-04-02T13:52:14Z",
+          },
+          {
+            id: 790,
+            name: "lint",
+            status: "completed",
+            conclusion: "success",
+            html_url: "https://github.com/acme/repo/actions/runs/456/job/790",
+            completed_at: "2026-04-02T13:52:15Z",
+          },
+        ],
+      }),
+      longLog,
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: { id: 456 } },
+      }),
+      JSON.stringify([]),
+      JSON.stringify({
+        jobs: [
+          {
+            id: 789,
+            name: "test",
+            status: "completed",
+            conclusion: "failure",
+            html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+            completed_at: "2026-04-02T13:52:14Z",
+          },
+        ],
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const first = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+    const second = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+      force: true,
+      reason: "verify-log-cache",
+    });
+
+    expect(first).toEqual({
+      checkRunId: 12345,
+      workflowRunId: 456,
+      name: "server-tests",
+      status: "completed",
+      conclusion: "failure",
+      url: "https://github.com/acme/repo/actions/runs/456/job/789",
+      detailsUrl: "https://github.com/acme/repo/actions/runs/456/job/789",
+      output: {
+        title: "Tests failed",
+        summary: "1 failure",
+        text: "Assertion failed",
+      },
+      annotations: [
+        {
+          path: "packages/server/src/index.ts",
+          startLine: 10,
+          endLine: 12,
+          annotationLevel: "failure",
+          message: "Expected true",
+          title: "server test failed",
+          rawDetails: "stack trace",
+        },
+      ],
+      failedJobs: [
+        {
+          jobId: 789,
+          name: "test",
+          status: "completed",
+          conclusion: "failure",
+          url: "https://github.com/acme/repo/actions/runs/456/job/789",
+          logTail: Array.from({ length: 200 }, (_, index) => `line ${index + 21}`).join("\n"),
+          logTruncated: true,
+        },
+      ],
+      truncated: true,
+    });
+    expect(second.failedJobs[0]?.logTail).toBe(first.failedJobs[0]?.logTail);
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["api", "repos/acme/repo/check-runs/12345"],
+      ["api", "repos/acme/repo/check-runs/12345/annotations", "-f", "per_page=20"],
+      ["api", "repos/acme/repo/actions/runs/456/jobs", "-f", "per_page=100"],
+      ["api", "repos/acme/repo/actions/jobs/789/logs"],
+      ["api", "repos/acme/repo/check-runs/12345"],
+      ["api", "repos/acme/repo/check-runs/12345/annotations", "-f", "per_page=20"],
+      ["api", "repos/acme/repo/actions/runs/456/jobs", "-f", "per_page=100"],
+    ]);
+  });
+
+  it("caps failed check jobs at five and caps each log tail to 16 KiB", async () => {
+    const oversizedLog = "x".repeat(20 * 1024);
+    const failedJobs = Array.from({ length: 6 }, (_, index) => ({
+      id: 800 + index,
+      name: `failed-${index + 1}`,
+      status: "completed",
+      conclusion: "failure",
+      html_url: `https://github.com/acme/repo/actions/runs/456/job/${800 + index}`,
+      completed_at: `2026-04-02T13:52:${10 + index}Z`,
+    }));
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: { id: 456 } },
+      }),
+      JSON.stringify([]),
+      JSON.stringify({ jobs: failedJobs }),
+      oversizedLog,
+      oversizedLog,
+      oversizedLog,
+      oversizedLog,
+      oversizedLog,
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const details = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+
+    expect(details.failedJobs.map((job) => job.jobId)).toEqual([800, 801, 802, 803, 804]);
+    expect(details.failedJobs.map((job) => job.logTruncated)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(details.failedJobs.map((job) => Buffer.byteLength(job.logTail ?? "", "utf8"))).toEqual([
+      16 * 1024,
+      16 * 1024,
+      16 * 1024,
+      16 * 1024,
+      16 * 1024,
+    ]);
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["api", "repos/acme/repo/check-runs/12345"],
+      ["api", "repos/acme/repo/check-runs/12345/annotations", "-f", "per_page=20"],
+      ["api", "repos/acme/repo/actions/runs/456/jobs", "-f", "per_page=100"],
+      ["api", "repos/acme/repo/actions/jobs/800/logs"],
+      ["api", "repos/acme/repo/actions/jobs/801/logs"],
+      ["api", "repos/acme/repo/actions/jobs/802/logs"],
+      ["api", "repos/acme/repo/actions/jobs/803/logs"],
+      ["api", "repos/acme/repo/actions/jobs/804/logs"],
+    ]);
+    expect(details.truncated).toBe(true);
+  });
+
+  it("marks check details truncated when annotations hit the page cap", async () => {
+    const annotations = Array.from({ length: 20 }, (_, index) => ({
+      path: `packages/server/src/file-${index}.ts`,
+      start_line: index + 1,
+      annotation_level: "failure",
+      message: `Failure ${index + 1}`,
+    }));
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: { id: 456 } },
+      }),
+      JSON.stringify(annotations),
+      JSON.stringify({ jobs: [] }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const details = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+
+    expect(details.annotations).toHaveLength(20);
+    expect(details.truncated).toBe(true);
+  });
+
+  it("marks check details truncated when workflow jobs hit the page cap", async () => {
+    const jobs = Array.from({ length: 100 }, (_, index) => ({
+      id: 900 + index,
+      name: `job-${index + 1}`,
+      status: "completed",
+      conclusion: "success",
+      html_url: `https://github.com/acme/repo/actions/runs/456/job/${900 + index}`,
+      completed_at: `2026-04-02T13:52:${String(index % 60).padStart(2, "0")}Z`,
+    }));
+    const runner = createRunner([
+      JSON.stringify({
+        id: 12345,
+        name: "server-tests",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/acme/repo/actions/runs/456/job/789",
+        check_suite: { workflow_run: { id: 456 } },
+      }),
+      JSON.stringify([]),
+      JSON.stringify({ jobs }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const details = await service.getGitHubCheckDetails({
+      cwd: "/repo",
+      repoOwner: "acme",
+      repoName: "repo",
+      checkRunId: 12345,
+    });
+
+    expect(details.failedJobs).toEqual([]);
+    expect(details.truncated).toBe(true);
   });
 
   it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {

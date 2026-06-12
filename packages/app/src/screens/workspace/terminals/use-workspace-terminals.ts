@@ -16,9 +16,18 @@ import {
   upsertCreatedTerminalPayload,
 } from "@/screens/workspace/terminals/state";
 
+interface TerminalProfileInput {
+  name: string;
+  command: string;
+  args?: string[];
+}
+
 interface PendingTerminalCreateInput {
   paneId?: string;
+  profile?: TerminalProfileInput;
 }
+
+export type { TerminalProfileInput };
 
 interface UseWorkspaceTerminalsInput {
   client: DaemonClient | null;
@@ -109,6 +118,10 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     mutationFn: async (_input?: PendingTerminalCreateInput) => {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      if (_input?.profile) {
+        const { name, command, args } = _input.profile;
+        return await client.createTerminal(workspaceDirectory, name, undefined, { command, args });
       }
       return await client.createTerminal(workspaceDirectory);
     },

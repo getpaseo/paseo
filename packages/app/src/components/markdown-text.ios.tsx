@@ -49,7 +49,7 @@ interface MarkdownParagraphViewProps {
   children: ReactNode;
 }
 
-const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
+const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 
 // iOS-only: paragraph wraps in UITextView so the entire paragraph is one
 // native text view. That's what unlocks cross-inline drag selection — handles

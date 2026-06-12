@@ -327,6 +327,7 @@ function resolveStaticLoadConfigSettings(
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
+    terminalProfiles: persisted.daemon?.terminalProfiles,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
@@ -352,6 +353,7 @@ export function loadConfig(
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
     appendSystemPrompt,
+    terminalProfiles,
     hostnames,
     appBaseUrl,
   } = resolveStaticLoadConfigSettings(env, options?.cli, persisted);
@@ -385,6 +387,7 @@ export function loadConfig(
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
     appendSystemPrompt,
+    terminalProfiles,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),

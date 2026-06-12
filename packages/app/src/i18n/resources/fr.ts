@@ -419,7 +419,7 @@ export const fr: TranslationResources = {
       loadingAgentTitle: "Titre d'agent de chargement",
       emptyPane: "Aucun onglet dans ce volet.",
       fallback: {
-        newAgent: "NouveauAgent",
+        newAgent: "Nouvel agent",
         setup: "Installation",
         workspaceSetup: "ConfigurationWorkspace",
         terminal: "Terminal",
@@ -436,6 +436,7 @@ export const fr: TranslationResources = {
         openFor: "Ouvrir le menu pour{{label}}",
         copyResumeCommand: "Copier la commande de reprise",
         copyAgentId: "Copier l'identifiant de l'agent",
+        copyFilePath: "Copy file path",
         rename: "Rebaptiser",
         closeAbove: "Fermer les onglets ci-dessus",
         closeBelow: "Fermer les onglets ci-dessous",
@@ -450,13 +451,15 @@ export const fr: TranslationResources = {
         renameAgent: "Renommer l'agent",
       },
       actions: {
-        newAgent: "Nouvel onglet agent",
-        newTerminal: "Nouvel onglet de terminal",
+        newAgent: "Nouvel agent",
+        newTerminal: "Nouveau terminal",
         preparingTerminal: "Préparation de l'onglet du terminal",
         preparingTerminalTooltip: "Préparation du terminal...",
-        newBrowser: "Nouvel onglet du navigateur",
+        newBrowser: "Nouveau navigateur",
         splitRight: "Volet divisé à droite",
         splitDown: "Diviser le volet vers le bas",
+        terminalProfilesMenu: "Terminal profiles",
+        editTerminalProfiles: "Edit profiles…",
       },
       explorer: {
         open: "Ouvrir l'explorateur",
@@ -469,6 +472,7 @@ export const fr: TranslationResources = {
         copyFailed: "Échec de la copie",
         agentIdCopiedLabel: "AgentID",
         resumeCommandCopiedLabel: "reprendre la commande",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReprendreIDnon disponible",
         resumeCommandUnavailable: "Commande de reprise non disponible",
         reloadingAgent: "Agent de rechargement...",
@@ -1309,7 +1313,7 @@ export const fr: TranslationResources = {
   },
   panels: {
     draft: {
-      newAgent: "NouveauAgent",
+      newAgent: "Nouvel agent",
       creatingAgent: "Agent créateur",
     },
     file: {
@@ -1330,7 +1334,7 @@ export const fr: TranslationResources = {
   },
   renameModal: {
     rename: "Rebaptiser",
-    saving: "Économie...",
+    saving: "Sauvegarde...",
   },
   sidebarCallout: {
     dismiss: "Rejeter",
@@ -1389,14 +1393,19 @@ export const fr: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Fournisseurs",
+      terminals: "Terminals",
       host: "Host",
     },
     general: {
       title: "Général",
       defaultSend: {
         label: "Envoi par défaut",
-        description:
-          "Que se passe-t-il lorsque vous appuyez sur Entrée alors que l'agent est en cours d'exécution?",
+        descriptions: {
+          interrupt:
+            "Lorsque l'agent est en cours d'exécution, Entrée interrompt. Commande/Ctrl+Entrée met en file d'attente.",
+          queue:
+            "Lorsque l'agent est en cours d'exécution, Entrée met en file d'attente. Commande/Ctrl+Entrée envoie.",
+        },
         options: {
           interrupt: "Interrompre",
           queue: "File d'attente",
@@ -1652,6 +1661,10 @@ export const fr: TranslationResources = {
           sheetTitle: "Ajouter une invite système",
           accessibilityLabel: "Ajouter une invite système",
           placeholder: "Gardez toujours des réponses concises.",
+          edit: "Modifier",
+          reset: "Réinitialiser",
+          save: "Sauvegarder",
+          saving: "Sauvegarde...",
         },
       },
       agents: {
@@ -1660,15 +1673,38 @@ export const fr: TranslationResources = {
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
       },
+      terminalProfiles: {
+        unavailable: "Connect to this host to manage terminal profiles",
+        sectionTitle: "Terminal profiles",
+        editProfile: "Edit profile",
+        addProfileTitle: "Add terminal profile",
+        editProfileTitle: "Edit terminal profile",
+        namePlaceholder: "Claude Code",
+        commandPlaceholder: "claude",
+        argsPlaceholder: "--dangerously-skip-permissions",
+        nameLabel: "Name",
+        commandLabel: "Command",
+        argsLabel: "Arguments",
+        argsHint: "Space-separated arguments passed to the command",
+        remove: "Remove",
+        removeConfirmTitle: "Remove profile?",
+        removeConfirmMessage: 'Remove "{{name}}"?',
+        moveUp: "Move up",
+        moveDown: "Move down",
+        save: "Save",
+        emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
+      },
       daemon: {
         rename: {
           editLabel: "Modifier l'étiquette",
           title: "Renommer l'hôte",
           placeholder: "MonHost",
+          submit: "Renommer",
         },
         restart: {
           title: "Redémarrer le démon",
           hint: "Redémarre le processus démon. L'application se reconnectera automatiquement",
+          confirm: "Redémarrer",
           confirmTitle: "Redémarrer{{name}}",
           confirmMessage:
             "Cela redémarrera le démon. Les agents qui s'y exécutent continueront à fonctionner; l'application se reconnectera automatiquement.",
@@ -1842,7 +1878,7 @@ export const fr: TranslationResources = {
         tryAgain: "Essayer à nouveau",
         save: "Sauvegarder",
         saved: "Projet enregistré",
-        saving: "Économie...",
+        saving: "Sauvegarde...",
         cancel: "Annuler",
       },
     },

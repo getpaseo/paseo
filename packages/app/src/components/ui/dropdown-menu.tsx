@@ -901,8 +901,6 @@ const styles = StyleSheet.create((theme) => ({
   labelText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
   },
   separator: {
     height: 1,

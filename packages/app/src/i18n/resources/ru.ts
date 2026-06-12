@@ -419,7 +419,7 @@ export const ru: TranslationResources = {
       loadingAgentTitle: "Название агента загрузки",
       emptyPane: "На этой панели нет вкладок.",
       fallback: {
-        newAgent: "Новый Agent",
+        newAgent: "Новый агент",
         setup: "Настраивать",
         workspaceSetup: "Настройка Workspace",
         terminal: "Terminal",
@@ -436,6 +436,7 @@ export const ru: TranslationResources = {
         openFor: "Открыть меню для{{label}}",
         copyResumeCommand: "Копировать команду возобновления",
         copyAgentId: "Скопировать идентификатор агента",
+        copyFilePath: "Copy file path",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
         closeBelow: "Закройте вкладки ниже",
@@ -449,13 +450,15 @@ export const ru: TranslationResources = {
         renameAgent: "Переименовать агента",
       },
       actions: {
-        newAgent: "Новая вкладка агента",
-        newTerminal: "Новая вкладка терминала",
+        newAgent: "Новый агент",
+        newTerminal: "Новый терминал",
         preparingTerminal: "Подготовка вкладки терминала",
         preparingTerminalTooltip: "Подготовка терминала...",
-        newBrowser: "Новая вкладка браузера",
+        newBrowser: "Новый браузер",
         splitRight: "Разделить панель справа",
         splitDown: "Разделить панель вниз",
+        terminalProfilesMenu: "Terminal profiles",
+        editTerminalProfiles: "Edit profiles…",
       },
       explorer: {
         open: "Открыть проводник",
@@ -468,6 +471,7 @@ export const ru: TranslationResources = {
         copyFailed: "Не удалось скопировать",
         agentIdCopiedLabel: "AgentID",
         resumeCommandCopiedLabel: "команда возобновления",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "Резюме ID недоступно",
         resumeCommandUnavailable: "Команда возобновления недоступна",
         reloadingAgent: "Перезагрузка агента...",
@@ -1298,7 +1302,7 @@ export const ru: TranslationResources = {
   },
   panels: {
     draft: {
-      newAgent: "Новый Agent",
+      newAgent: "Новый агент",
       creatingAgent: "Создание агента",
     },
     file: {
@@ -1378,13 +1382,17 @@ export const ru: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Провайдеры",
+      terminals: "Terminals",
       host: "Host",
     },
     general: {
       title: "Общий",
       defaultSend: {
         label: "Отправка по умолчанию",
-        description: "Что произойдет, если вы нажмете Enter во время работы агента",
+        descriptions: {
+          interrupt: "Когда агент работает, Enter прерывает. Command/Ctrl+Enter ставит в очередь.",
+          queue: "Когда агент работает, Enter ставит в очередь. Command/Ctrl+Enter отправляет.",
+        },
         options: {
           interrupt: "Прерывать",
           queue: "Очередь",
@@ -1640,6 +1648,10 @@ export const ru: TranslationResources = {
           sheetTitle: "Добавить системное приглашение",
           accessibilityLabel: "Добавить системное приглашение",
           placeholder: "Всегда отвечайте кратко.",
+          edit: "Редактировать",
+          reset: "Сбросить",
+          save: "Сохранить",
+          saving: "Сохранение...",
         },
       },
       agents: {
@@ -1648,15 +1660,38 @@ export const ru: TranslationResources = {
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
       },
+      terminalProfiles: {
+        unavailable: "Connect to this host to manage terminal profiles",
+        sectionTitle: "Terminal profiles",
+        editProfile: "Edit profile",
+        addProfileTitle: "Add terminal profile",
+        editProfileTitle: "Edit terminal profile",
+        namePlaceholder: "Claude Code",
+        commandPlaceholder: "claude",
+        argsPlaceholder: "--dangerously-skip-permissions",
+        nameLabel: "Name",
+        commandLabel: "Command",
+        argsLabel: "Arguments",
+        argsHint: "Space-separated arguments passed to the command",
+        remove: "Remove",
+        removeConfirmTitle: "Remove profile?",
+        removeConfirmMessage: 'Remove "{{name}}"?',
+        moveUp: "Move up",
+        moveDown: "Move down",
+        save: "Save",
+        emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
+      },
       daemon: {
         rename: {
           editLabel: "Изменить ярлык",
           title: "Переименовать хост",
           placeholder: "Мой Host",
+          submit: "Переименовать",
         },
         restart: {
           title: "Перезапустить демон",
           hint: "Перезапускает процесс демона. Приложение автоматически переподключится",
+          confirm: "Перезапустить",
           confirmTitle: "Перезапустите{{name}}",
           confirmMessage:
             "Это перезапустит демон. Агенты, работающие на нем, будут продолжать работать; приложение автоматически повторно подключится.",

@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 import {
   gotoWorkspace,
   assertNewChatTileVisible,
-  assertTerminalTileVisible,
+  assertNewTabMenuTriggerVisible,
   assertSingleNewTabButton,
   pressNewTabShortcut,
   clickNewChat,
@@ -91,7 +91,7 @@ test.describe("Tab creation", () => {
     await gotoWorkspace(page, workspace.workspaceId);
     await assertSingleNewTabButton(page);
     await assertNewChatTileVisible(page);
-    await assertTerminalTileVisible(page);
+    await assertNewTabMenuTriggerVisible(page);
   });
 });
 

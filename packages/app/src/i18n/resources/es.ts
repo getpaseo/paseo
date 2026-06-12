@@ -419,7 +419,7 @@ export const es: TranslationResources = {
       loadingAgentTitle: "Título del agente de carga",
       emptyPane: "No hay pestañas en este panel.",
       fallback: {
-        newAgent: "NuevoAgent",
+        newAgent: "Nuevo agente",
         setup: "Configuración",
         workspaceSetup: "Configuración deWorkspace",
         terminal: "Terminal",
@@ -436,6 +436,7 @@ export const es: TranslationResources = {
         openFor: "Menú abierto para{{label}}",
         copyResumeCommand: "Copiar comando de reanudación",
         copyAgentId: "Copiar ID del agente",
+        copyFilePath: "Copy file path",
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",
         closeBelow: "Cerrar pestañas a continuación",
@@ -450,13 +451,15 @@ export const es: TranslationResources = {
         renameAgent: "Cambiar nombre del agente",
       },
       actions: {
-        newAgent: "Nueva pestaña de agente",
-        newTerminal: "Nueva pestaña de terminal",
+        newAgent: "Nuevo agente",
+        newTerminal: "Nueva terminal",
         preparingTerminal: "Preparando la pestaña del terminal",
         preparingTerminalTooltip: "Preparando terminal...",
-        newBrowser: "Nueva pestaña del navegador",
+        newBrowser: "Nuevo navegador",
         splitRight: "Panel dividido a la derecha",
         splitDown: "Dividir panel hacia abajo",
+        terminalProfilesMenu: "Terminal profiles",
+        editTerminalProfiles: "Edit profiles…",
       },
       explorer: {
         open: "Explorador abierto",
@@ -469,6 +472,7 @@ export const es: TranslationResources = {
         copyFailed: "Copia fallida",
         agentIdCopiedLabel: "AgentID",
         resumeCommandCopiedLabel: "reanudar el comando",
+        filePathCopiedLabel: "File path",
         resumeIdUnavailable: "ReanudarIDno disponible",
         resumeCommandUnavailable: "Comando de reanudación no disponible",
         reloadingAgent: "Agente de recarga...",
@@ -1306,7 +1310,7 @@ export const es: TranslationResources = {
   },
   panels: {
     draft: {
-      newAgent: "NuevoAgent",
+      newAgent: "Nuevo agente",
       creatingAgent: "Agente creador",
     },
     file: {
@@ -1327,7 +1331,7 @@ export const es: TranslationResources = {
   },
   renameModal: {
     rename: "Rebautizar",
-    saving: "Ahorro...",
+    saving: "Guardando...",
   },
   sidebarCallout: {
     dismiss: "Despedir",
@@ -1386,13 +1390,19 @@ export const es: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Proveedores",
+      terminals: "Terminals",
       host: "Host",
     },
     general: {
       title: "General",
       defaultSend: {
         label: "Envío predeterminado",
-        description: "¿Qué sucede cuando presiona Enter mientras el agente se está ejecutando?",
+        descriptions: {
+          interrupt:
+            "Cuando el agente se está ejecutando, Enter interrumpe. Command/Ctrl+Enter pone en cola.",
+          queue:
+            "Cuando el agente se está ejecutando, Enter pone en cola. Command/Ctrl+Enter envía.",
+        },
         options: {
           interrupt: "Interrumpir",
           queue: "Cola",
@@ -1646,6 +1656,10 @@ export const es: TranslationResources = {
           sheetTitle: "Agregar mensaje del sistema",
           accessibilityLabel: "Agregar mensaje del sistema",
           placeholder: "Mantenga siempre respuestas concisas.",
+          edit: "Editar",
+          reset: "Restablecer",
+          save: "Guardar",
+          saving: "Guardando...",
         },
       },
       agents: {
@@ -1654,15 +1668,38 @@ export const es: TranslationResources = {
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
       },
+      terminalProfiles: {
+        unavailable: "Connect to this host to manage terminal profiles",
+        sectionTitle: "Terminal profiles",
+        editProfile: "Edit profile",
+        addProfileTitle: "Add terminal profile",
+        editProfileTitle: "Edit terminal profile",
+        namePlaceholder: "Claude Code",
+        commandPlaceholder: "claude",
+        argsPlaceholder: "--dangerously-skip-permissions",
+        nameLabel: "Name",
+        commandLabel: "Command",
+        argsLabel: "Arguments",
+        argsHint: "Space-separated arguments passed to the command",
+        remove: "Remove",
+        removeConfirmTitle: "Remove profile?",
+        removeConfirmMessage: 'Remove "{{name}}"?',
+        moveUp: "Move up",
+        moveDown: "Move down",
+        save: "Save",
+        emptyState: "No profiles yet. Add one to launch terminals with a specific command.",
+      },
       daemon: {
         rename: {
           editLabel: "Editar etiqueta",
           title: "Cambiar nombre de host",
           placeholder: "MiHost",
+          submit: "Cambiar nombre",
         },
         restart: {
           title: "Reiniciar demonio",
           hint: "Reinicia el proceso del demonio. La aplicación se volverá a conectar automáticamente",
+          confirm: "Reiniciar",
           confirmTitle: "Reiniciar{{name}}",
           confirmMessage:
             "Esto reiniciará el demonio. Los agentes que se ejecutan en él seguirán funcionando; la aplicación se volverá a conectar automáticamente.",
@@ -1832,9 +1869,9 @@ export const es: TranslationResources = {
       actions: {
         reload: "Recargar",
         tryAgain: "Intentar otra vez",
-        save: "Ahorrar",
+        save: "Guardar",
         saved: "Proyecto guardado",
-        saving: "Ahorro...",
+        saving: "Guardando...",
         cancel: "Cancelar",
       },
     },

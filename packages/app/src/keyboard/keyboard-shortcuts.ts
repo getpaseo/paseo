@@ -154,8 +154,6 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
-  "message-input-send": "settings.shortcuts.help.sendMessage",
-  "message-input-queue": "settings.shortcuts.help.queueMessage",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
 };
 
@@ -953,52 +951,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       keys: ["Esc"],
     },
   },
-  {
-    id: "message-input-send-enter",
-    action: "message-input.action",
-    combo: "Enter",
-    when: { focusScope: "message-input", commandCenter: false },
-    payload: { type: "message-input", kind: "send" },
-    preventDefault: false,
-    stopPropagation: false,
-    help: {
-      id: "message-input-send",
-      section: "agent-input",
-      label: "Send message",
-      keys: ["Enter"],
-    },
-  },
-  {
-    id: "message-input-queue-cmd-enter-mac",
-    action: "message-input.action",
-    combo: "Cmd+Enter",
-    when: { mac: true, focusScope: "message-input", commandCenter: false },
-    payload: { type: "message-input", kind: "queue" },
-    preventDefault: false,
-    stopPropagation: false,
-    help: {
-      id: "message-input-queue",
-      section: "agent-input",
-      label: "Queue message",
-      keys: ["mod", "Enter"],
-    },
-  },
-  {
-    id: "message-input-queue-ctrl-enter-non-mac",
-    action: "message-input.action",
-    combo: "Ctrl+Enter",
-    when: { mac: false, focusScope: "message-input", commandCenter: false },
-    payload: { type: "message-input", kind: "queue" },
-    preventDefault: false,
-    stopPropagation: false,
-    help: {
-      id: "message-input-queue",
-      section: "agent-input",
-      label: "Queue message",
-      keys: ["mod", "Enter"],
-    },
-  },
-
   {
     id: "message-input-dictation-confirm-enter",
     action: "message-input.action",

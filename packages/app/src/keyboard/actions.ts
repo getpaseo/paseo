@@ -8,7 +8,6 @@ export type KeyboardFocusScope =
 export type MessageInputKeyboardActionKind =
   | "focus"
   | "send"
-  | "queue"
   | "dictation-toggle"
   | "dictation-cancel"
   | "dictation-confirm"

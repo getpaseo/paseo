@@ -41,6 +41,7 @@ import {
   Puzzle,
   Plus,
   FolderGit2,
+  SquareTerminal,
 } from "lucide-react-native";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
@@ -107,6 +108,7 @@ import {
   HostSettingsPage,
   HostProvidersPage,
   HostWorkspacesPage,
+  HostTerminalsPage,
 } from "@/screens/settings/host-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
@@ -173,6 +175,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
+  { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
   { id: "host", labelKey: "settings.hostSections.host", icon: Server },
 ];
 
@@ -189,6 +192,8 @@ function renderHostSettingsContent(
       return <HostWorkspacesPage serverId={view.serverId} />;
     case "providers":
       return <HostProvidersPage serverId={view.serverId} />;
+    case "terminals":
+      return <HostTerminalsPage serverId={view.serverId} />;
     case "host":
       return <HostSettingsPage serverId={view.serverId} onHostRemoved={onHostRemoved} />;
   }
@@ -312,6 +317,10 @@ function GeneralSection({
   const activeLocale = getActiveLocale(i18n.language);
   const iconColor = theme.colors.foregroundMuted;
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
+  const sendBehaviorDescriptionKey =
+    settings.sendBehavior === "interrupt"
+      ? "settings.general.defaultSend.descriptions.interrupt"
+      : "settings.general.defaultSend.descriptions.queue";
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
   );
@@ -353,9 +362,7 @@ function GeneralSection({
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{t("settings.general.defaultSend.label")}</Text>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.general.defaultSend.description")}
-            </Text>
+            <Text style={settingsStyles.rowHint}>{t(sendBehaviorDescriptionKey)}</Text>
           </View>
           <SegmentedControl
             size="sm"

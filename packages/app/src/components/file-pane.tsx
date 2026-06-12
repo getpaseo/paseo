@@ -1,31 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
-import Markdown, {
-  type ASTNode,
-  MarkdownIt,
-  type RenderRules,
-} from "react-native-markdown-display";
 import {
   ActivityIndicator,
   Image as RNImage,
   ScrollView as RNScrollView,
   Text,
-  type TextProps,
-  type TextStyle,
   View,
-  type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
-import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -33,9 +22,6 @@ import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
-import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
-import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -59,8 +45,6 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   imagePreviewUri: string | null;
 }
-
-type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -130,299 +114,6 @@ function clampLineSelection(input: {
     input.lineEnd && input.lineEnd >= input.lineStart ? input.lineEnd : input.lineStart;
   const lineEnd = Math.min(Math.floor(rawLineEnd), input.lineCount);
   return { lineStart, lineEnd: Math.max(lineStart, lineEnd) };
-}
-
-interface MarkdownInheritedTextProps {
-  inheritedStyles: TextStyle;
-  textStyle: TextStyle;
-  style?: TextStyle;
-  monoSurface?: boolean;
-  onPress?: TextProps["onPress"];
-  accessibilityRole?: TextProps["accessibilityRole"];
-  children: ReactNode;
-}
-
-function MarkdownInheritedText({
-  inheritedStyles,
-  textStyle,
-  style: overrideStyle,
-  monoSurface,
-  onPress,
-  accessibilityRole,
-  children,
-}: MarkdownInheritedTextProps) {
-  const style = useMemo(
-    () => [inheritedStyles, textStyle, overrideStyle],
-    [inheritedStyles, textStyle, overrideStyle],
-  );
-  return (
-    <MarkdownTextSpan
-      monoSurface={monoSurface}
-      onPress={onPress}
-      accessibilityRole={accessibilityRole}
-      style={style}
-    >
-      {children}
-    </MarkdownTextSpan>
-  );
-}
-
-interface MarkdownListItemContentProps {
-  contentStyle: ViewStyle;
-  children: ReactNode;
-}
-
-const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
-const EMPTY_TEXT_STYLE: TextStyle = {};
-
-function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemContentProps) {
-  const style = useMemo(() => [contentStyle, MARKDOWN_LIST_ITEM_CONTENT_FLEX], [contentStyle]);
-  return <View style={style}>{children}</View>;
-}
-
-interface MarkdownListViewProps {
-  baseStyle: ViewStyle;
-  spacing: { marginTop: number; marginBottom: number };
-  children: ReactNode;
-}
-
-function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProps) {
-  const style = useMemo(() => [baseStyle, spacing], [baseStyle, spacing]);
-  return <View style={style}>{children}</View>;
-}
-
-interface FilePreviewMarkdownLinkProps {
-  href: string;
-  inheritedStyles: TextStyle;
-  linkStyle: TextStyle;
-  onLinkPress?: (url: string) => boolean;
-  children: ReactNode;
-}
-
-function FilePreviewMarkdownLink({
-  href,
-  inheritedStyles,
-  linkStyle,
-  onLinkPress,
-  children,
-}: FilePreviewMarkdownLinkProps) {
-  const handlePress = useCallback(() => {
-    if (!href) return;
-    if (onLinkPress?.(href) === false) return;
-    void openExternalUrl(href);
-  }, [href, onLinkPress]);
-
-  return (
-    <MarkdownInheritedText
-      inheritedStyles={inheritedStyles}
-      textStyle={linkStyle}
-      accessibilityRole="link"
-      onPress={handlePress}
-    >
-      {children}
-    </MarkdownInheritedText>
-  );
-}
-
-function getMarkdownLinkHref(node: ASTNode): string {
-  const href = node.attributes?.href;
-  return typeof href === "string" ? href : "";
-}
-
-function createFilePreviewMarkdownRules(): RenderRules {
-  return {
-    text: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.text}
-      >
-        {node.content}
-      </MarkdownInheritedText>
-    ),
-    textgroup: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.textgroup}
-      >
-        {children}
-      </MarkdownInheritedText>
-    ),
-    strong: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.strong}
-      >
-        {children}
-      </MarkdownInheritedText>
-    ),
-    em: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText key={node.key} inheritedStyles={inheritedStyles} textStyle={styles.em}>
-        {children}
-      </MarkdownInheritedText>
-    ),
-    s: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText key={node.key} inheritedStyles={inheritedStyles} textStyle={styles.s}>
-        {children}
-      </MarkdownInheritedText>
-    ),
-    hardbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
-    softbreak: (node: ASTNode) => <MarkdownTextSpan key={node.key}>{"\n"}</MarkdownTextSpan>,
-    code_block: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <HighlightedCodeBlock
-        key={node.key}
-        code={node.content}
-        language={null}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.code_block}
-      />
-    ),
-    fence: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <HighlightedCodeBlock
-        key={node.key}
-        code={node.content}
-        language={node.sourceInfo}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.fence}
-      />
-    ),
-    code_inline: (
-      node: ASTNode,
-      _children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      inheritedStyles: TextStyle = {},
-    ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.code_inline}
-        monoSurface
-      >
-        {node.content ?? ""}
-      </MarkdownInheritedText>
-    ),
-    bullet_list: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownListView
-        key={node.key}
-        baseStyle={styles.bullet_list}
-        spacing={getMarkdownListSpacing(node, parent)}
-      >
-        {children}
-      </MarkdownListView>
-    ),
-    ordered_list: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownListView
-        key={node.key}
-        baseStyle={styles.ordered_list}
-        spacing={getMarkdownListSpacing(node, parent)}
-      >
-        {children}
-      </MarkdownListView>
-    ),
-    list_item: (
-      node: ASTNode,
-      children: ReactNode[],
-      parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => {
-      const { isOrdered, marker } = getMarkdownListMarker(node, parent);
-      const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
-      const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
-
-      return (
-        <View key={node.key} style={styles.list_item}>
-          <Text style={iconStyle}>{marker}</Text>
-          <MarkdownListItemContent contentStyle={contentStyle}>{children}</MarkdownListItemContent>
-        </View>
-      );
-    },
-    paragraph: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
-      <MarkdownParagraphView
-        key={node.key}
-        paragraphStyle={styles.paragraph}
-        containsImage={markdownNodeContainsType(node, "image")}
-      >
-        {children}
-      </MarkdownParagraphView>
-    ),
-    link: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-      onLinkPress?: (url: string) => boolean,
-    ) => (
-      <FilePreviewMarkdownLink
-        key={node.key}
-        href={getMarkdownLinkHref(node)}
-        inheritedStyles={EMPTY_TEXT_STYLE}
-        linkStyle={styles.link}
-        onLinkPress={onLinkPress}
-      >
-        {children}
-      </FilePreviewMarkdownLink>
-    ),
-  };
 }
 
 const CodeLine = React.memo(function CodeLine({
@@ -506,9 +197,6 @@ function FilePreviewBody({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const filePath = location.path;
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
-  const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
-  const markdownRules = useMemo(() => createFilePreviewMarkdownRules(), []);
   const isMarkdownFile =
     preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
 
@@ -591,11 +279,7 @@ function FilePreviewBody({
             scrollEventThrottle={16}
             showsVerticalScrollIndicator={!showDesktopWebScrollbar}
           >
-            <AppearanceStyleBoundary>
-              <Markdown style={markdownStyles} rules={markdownRules} markdownit={markdownParser}>
-                {preview.content ?? ""}
-              </Markdown>
-            </AppearanceStyleBoundary>
+            <MarkdownRenderer text={preview.content ?? ""} />
           </RNScrollView>
           {scrollbar.overlay}
         </View>

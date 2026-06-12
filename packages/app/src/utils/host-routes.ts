@@ -403,6 +403,7 @@ export const HOST_SECTION_SLUGS = [
   "agents",
   "workspaces",
   "providers",
+  "terminals",
   "host",
 ] as const;
 

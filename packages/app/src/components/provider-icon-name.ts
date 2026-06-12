@@ -1,38 +1,21 @@
-import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
-
-export type BuiltinProviderIconName =
-  | "claude"
-  | "codex"
-  | "copilot"
-  | "kiro"
-  | "omp"
-  | "opencode"
-  | "pi";
+import {
+  BUILTIN_PROVIDER_ICON_NAMES,
+  KNOWN_PROVIDER_ICON_NAMES,
+} from "@getpaseo/protocol/provider-icon-names";
 
 export type ProviderIconName =
-  | { kind: "builtin"; id: BuiltinProviderIconName }
+  | { kind: "builtin"; id: string }
   | { kind: "catalog"; id: string }
   | { kind: "bot" };
 
-const BUILTIN_PROVIDER_IDS: ReadonlySet<BuiltinProviderIconName> = new Set([
-  "claude",
-  "codex",
-  "copilot",
-  "kiro",
-  "omp",
-  "opencode",
-  "pi",
-]);
-
-const CATALOG_ICON_PROVIDER_IDS: ReadonlySet<string> = new Set(
-  ACP_PROVIDER_CATALOG.flatMap((entry) => (entry.iconSvg ? [entry.id] : [])),
-);
+const BUILTIN_PROVIDER_IDS = new Set(BUILTIN_PROVIDER_ICON_NAMES);
+const KNOWN_PROVIDER_IDS = new Set(KNOWN_PROVIDER_ICON_NAMES);
 
 export function resolveProviderIconName(provider: string): ProviderIconName {
-  if (BUILTIN_PROVIDER_IDS.has(provider as BuiltinProviderIconName)) {
-    return { kind: "builtin", id: provider as BuiltinProviderIconName };
+  if (BUILTIN_PROVIDER_IDS.has(provider)) {
+    return { kind: "builtin", id: provider };
   }
-  if (CATALOG_ICON_PROVIDER_IDS.has(provider)) {
+  if (KNOWN_PROVIDER_IDS.has(provider)) {
     return { kind: "catalog", id: provider };
   }
   return { kind: "bot" };

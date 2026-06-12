@@ -1952,6 +1952,89 @@ test("requests GitHub auto-merge disable via namespaced RPC", async () => {
   });
 });
 
+test("requests GitHub check details via namespaced RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.checkoutGithubGetCheckDetails(
+    {
+      cwd: "/tmp/project",
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      checkRunId: 12345,
+      workflowRunId: 456,
+    },
+    "req-check-details",
+  );
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "checkout.github.get_check_details.request",
+    cwd: "/tmp/project",
+    repoOwner: "getpaseo",
+    repoName: "paseo",
+    checkRunId: 12345,
+    workflowRunId: 456,
+    requestId: "req-check-details",
+  });
+
+  mock.triggerMessage(
+    JSON.stringify({
+      type: "session",
+      message: {
+        type: "checkout.github.get_check_details.response",
+        payload: {
+          cwd: "/tmp/project",
+          requestId: "req-check-details",
+          success: true,
+          details: {
+            checkRunId: 12345,
+            workflowRunId: 456,
+            name: "server-tests",
+            status: "completed",
+            conclusion: "failure",
+            annotations: [],
+            failedJobs: [],
+            truncated: false,
+          },
+          error: null,
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    cwd: "/tmp/project",
+    requestId: "req-check-details",
+    success: true,
+    details: {
+      checkRunId: 12345,
+      workflowRunId: 456,
+      name: "server-tests",
+      status: "completed",
+      conclusion: "failure",
+      annotations: [],
+      failedJobs: [],
+      truncated: false,
+    },
+    error: null,
+  });
+});
+
 test("requests checkout pull via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { useTranslation } from "react-i18next";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import * as React from "react";
 import {
   useState,
@@ -27,12 +26,8 @@ import {
   Children,
   cloneElement,
 } from "react";
-import type { ReactNode, ComponentType } from "react";
-import Markdown, {
-  MarkdownIt,
-  type ASTNode,
-  type RenderRules,
-} from "react-native-markdown-display";
+import type { ComponentType, ReactNode } from "react";
+import { MarkdownIt, type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -52,7 +47,7 @@ import {
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { type Theme } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -63,8 +58,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -113,8 +108,6 @@ import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 export type { InlinePathTarget } from "@/assistant-file-links";
 
-type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
-
 interface UserMessageProps {
   serverId?: string;
   agentId?: string;
@@ -161,22 +154,6 @@ const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
   "http://",
 ] as const;
 const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
-
-interface MarkdownWithStableRendererProps {
-  children: ReactNode;
-  style: ReturnType<typeof createMarkdownStyles>;
-  rules: RenderRules;
-  markdownit: MarkdownIt;
-  onLinkPress: (url: string) => boolean;
-  allowedImageHandlers: readonly string[];
-  topLevelMaxExceededItem: ReactNode;
-}
-
-const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
-const ThemedMarkdown = withUnistyles(MarkdownWithStableRenderer);
-const markdownStyleMapping = (theme: Theme): Partial<MarkdownWithStableRendererProps> => ({
-  style: createMarkdownStyles(theme),
-});
 
 const ThemedMicVocal = withUnistyles(MicVocal);
 const ThemedTodoCheckIcon = withUnistyles(Check);
@@ -1521,18 +1498,15 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
-    <AppearanceStyleBoundary>
-      <ThemedMarkdown
-        uniProps={markdownStyleMapping}
-        rules={rules}
-        markdownit={parser}
-        onLinkPress={onLinkPress}
-        allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
-        topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
-      >
-        {text}
-      </ThemedMarkdown>
-    </AppearanceStyleBoundary>
+    <MarkdownRenderer
+      text={text}
+      enableHtmlish={false}
+      rules={rules}
+      markdownit={parser}
+      onLinkPress={onLinkPress}
+      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+    />
   );
 });
 

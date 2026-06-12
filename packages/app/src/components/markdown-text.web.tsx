@@ -50,7 +50,7 @@ interface MarkdownParagraphViewProps {
   children: ReactNode;
 }
 
-const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
+const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 
 // Same shape as Android — paragraph is a View so block-level children (images)
 // keep their natural layout. Web text selection already spans nested inline
