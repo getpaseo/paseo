@@ -441,6 +441,27 @@ export async function createPaseoDaemon(
     });
   });
 
+  /**
+   * Build a RFC 5987 compliant Content-Disposition header value for file downloads.
+   * Non-ASCII characters (e.g. Chinese) are percent-encoded in the filename* parameter
+   * to prevent ERR_INVALID_CHAR from Node.js HTTP parser.
+   */
+  function formatContentDisposition(fileName: string): string {
+    // Strip characters that are unsafe in header values
+    const sanitized = fileName.replace(/["\r\n]/g, "_");
+    // ASCII-only filenames can use the simple form
+    if (encodeURIComponent(sanitized) === sanitized) {
+      return `attachment; filename="${sanitized}"`;
+    }
+    // Non-ASCII: RFC 5987 encoding with ASCII fallback
+    let asciiFallback = "";
+    for (let i = 0; i < sanitized.length; i++) {
+      asciiFallback += sanitized.charCodeAt(i) <= 127 ? sanitized[i] : "_";
+    }
+    const encoded = encodeURIComponent(sanitized);
+    return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+  }
+
   const handleFileDownload = async (req: express.Request, res: express.Response): Promise<void> => {
     const token =
       typeof req.query.token === "string" && req.query.token.trim().length > 0
@@ -467,9 +488,8 @@ export async function createPaseoDaemon(
         return;
       }
 
-      const safeFileName = entry.fileName.replace(/["\r\n]/g, "_");
       res.setHeader("Content-Type", entry.mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename="${safeFileName}"`);
+      res.setHeader("Content-Disposition", formatContentDisposition(entry.fileName));
       res.setHeader("Content-Length", fileStats.size.toString());
 
       const stream = fileHandle.createReadStream();
