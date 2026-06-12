@@ -2,7 +2,7 @@
 title: OpenCode Desktop Alternative With Native Mobile and Multi-Provider Orchestration
 description: Paseo is an OpenCode Desktop alternative for developers who want native mobile apps, a self-hosted daemon, and OpenCode alongside Claude Code, Codex, Copilot, and more.
 nav: OpenCode Desktop
-order: 107
+order: 56
 ---
 
 # Paseo vs OpenCode Desktop
@@ -113,4 +113,4 @@ Paseo supports dictation and realtime voice mode. Speech-to-text and text-to-spe
 | Local voice                  | Yes                                                             | No                              |
 | Self-hosted daemon           | Yes                                                             | OpenCode server / local runtime |
 
-See also: [Paseo vs Codex App](/docs/alternatives/codex-app), [Paseo vs Claude Desktop](/docs/alternatives/claude-desktop), [Paseo vs OpenChamber](/docs/alternatives/openchamber).
+See also: [Paseo vs Codex App](/alternatives/codex-app), [Paseo vs Claude Desktop](/alternatives/claude-desktop), [Paseo vs OpenChamber](/alternatives/openchamber).

@@ -1,3 +1,4 @@
+import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
 
 interface SiteFooterProps {
@@ -7,9 +8,10 @@ interface SiteFooterProps {
 export function SiteFooter({ width = "default" }: SiteFooterProps) {
   const widthClasses =
     width === "prose" ? "max-w-prose p-6 md:p-12 md:pt-0" : "max-w-5xl p-6 md:p-20 md:pt-0";
+  const alternatives = getAlternativePages();
   return (
     <footer className={`${widthClasses} mx-auto`}>
-      <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-4 gap-8 text-sm">
+      <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
         <div className="space-y-3">
           <p className="text-white/60 font-medium">Product</p>
           <div className="space-y-2">
@@ -78,6 +80,20 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
             >
               All providers
             </a>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <p className="text-white/60 font-medium">Alternatives</p>
+          <div className="space-y-2">
+            {alternatives.map((page) => (
+              <a
+                key={page.slug}
+                href={page.href}
+                className="block text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {page.name}
+              </a>
+            ))}
           </div>
         </div>
         <div className="space-y-3">

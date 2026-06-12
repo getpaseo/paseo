@@ -16,6 +16,7 @@
     "@tanstack/react-router": "^1.166.4",
     "@tanstack/react-start": "^1.166.4",
     "framer-motion": "^12.35.2",
+    "github-slugger": "^2.0.0",
     "lucide-react": "^1.7.0",
     "react": "^19.1.4",
     "react-dom": "^19.1.4",
