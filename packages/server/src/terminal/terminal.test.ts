@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { waitForCondition } from "../test-utils/wait.js";
 import {
   buildTerminalEnvironment,
   createTerminal,
@@ -133,21 +134,6 @@ afterEach(async () => {
 function trackSession(session: TerminalSession): TerminalSession {
   sessions.push(session);
   return session;
-}
-
-async function waitForCondition(
-  predicate: () => boolean,
-  timeoutMs: number,
-  intervalMs = 25,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 async function waitForScheduledTimers(expectedTimerCount: number): Promise<void> {

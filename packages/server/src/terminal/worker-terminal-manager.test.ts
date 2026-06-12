@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { waitForCondition } from "../test-utils/wait.js";
 import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
 import type { TerminalManager } from "./terminal-manager.js";
 import type { TerminalSession } from "./terminal.js";
@@ -17,21 +18,6 @@ function nodeTerminalCommand(script: string): { command: string; args: string[] 
     command: process.execPath,
     args: ["-e", script],
   };
-}
-
-async function waitForCondition(
-  predicate: () => boolean | Promise<boolean>,
-  timeoutMs: number,
-  intervalMs = 25,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 function getVisibleText(session: TerminalSession): string {

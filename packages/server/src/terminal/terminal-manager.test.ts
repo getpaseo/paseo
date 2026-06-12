@@ -1,5 +1,6 @@
 import { it, expect, afterEach } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { waitForCondition } from "../test-utils/wait.js";
 import {
   createInProcessTerminalManager,
   createTerminalManager,
@@ -12,21 +13,6 @@ import { tmpdir } from "node:os";
 
 if (isPlatform("win32") && !process.env.ComSpec && !process.env.COMSPEC) {
   process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
-}
-
-async function waitForCondition(
-  predicate: () => boolean,
-  timeoutMs: number,
-  intervalMs = 25,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 let manager: TerminalManager;

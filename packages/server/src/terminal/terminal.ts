@@ -243,7 +243,7 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
-  const baseEnv: Record<string, string> = createExternalProcessEnv(
+  const ptyEnv: Record<string, string> = createExternalProcessEnv(
     input.baseEnv ?? process.env,
     input.env,
     {
@@ -253,12 +253,12 @@ export function buildTerminalEnvironment(
   );
 
   if (basename(input.shell) !== "zsh") {
-    return baseEnv;
+    return ptyEnv;
   }
 
-  const originalZdotdir = baseEnv.ZDOTDIR ?? "";
+  const originalZdotdir = ptyEnv.ZDOTDIR ?? "";
   return {
-    ...baseEnv,
+    ...ptyEnv,
     PASEO_ZSH_ZDOTDIR: originalZdotdir,
     ZDOTDIR: prepareZshShellIntegrationRuntimeDir(input.zshShellIntegrationDir),
   };
