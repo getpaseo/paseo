@@ -1,5 +1,6 @@
 import { Gift } from "lucide-react-native";
 import { type ReactNode, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useUnistyles } from "react-native-unistyles";
 import {
   type SidebarCalloutAction,
@@ -18,10 +19,10 @@ import { openExternalUrl } from "@/utils/open-external-url";
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const CHANGELOG_URL = "https://paseo.sh/changelog";
 
-function renderBody(body: UpdateCalloutBody): ReactNode {
-  if (body.kind === "installing") return "Installing and restarting...";
+function renderBody(body: UpdateCalloutBody, t: ReturnType<typeof useTranslation>["t"]): ReactNode {
+  if (body.kind === "installing") return t("desktop.updates.callout.installingDescription");
   if (body.kind === "error") return body.message;
-  return <UpdateAvailableDescription versionLabel={body.versionLabel ?? undefined} />;
+  return <UpdateAvailableDescription versionLabel={body.versionLabel ?? undefined} t={t} />;
 }
 
 function materializeActions(
@@ -37,6 +38,7 @@ function materializeActions(
 }
 
 export function UpdateCalloutSource() {
+  const { t } = useTranslation();
   const callouts = useSidebarCallouts();
   const { theme } = useUnistyles();
   const {
@@ -90,7 +92,7 @@ export function UpdateCalloutSource() {
       dismissalKey: descriptor.dismissalKey,
       priority: descriptor.priority,
       title: descriptor.title,
-      description: renderBody(descriptor.body),
+      description: renderBody(descriptor.body, t),
       icon: descriptor.showGiftIcon ? (
         <Gift size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       ) : undefined,
@@ -114,21 +116,28 @@ export function UpdateCalloutSource() {
     status,
     theme.colors.foregroundMuted,
     theme.iconSize.sm,
+    t,
   ]);
 
   return null;
 }
 
-function UpdateAvailableDescription({ versionLabel }: { versionLabel?: string }) {
+function UpdateAvailableDescription({
+  versionLabel,
+  t,
+}: {
+  versionLabel?: string;
+  t: ReturnType<typeof useTranslation>["t"];
+}) {
   return (
     <>
       <SidebarCalloutDescriptionText>
         {versionLabel
-          ? `${versionLabel} is ready to install.`
-          : "A new version is ready to install."}
+          ? t("desktop.updates.callout.versionReady", { version: versionLabel })
+          : t("desktop.updates.callout.newVersionReady")}
       </SidebarCalloutDescriptionText>
       <SidebarCalloutDescriptionText>
-        Upgrading the app will stop running agents and close terminal sessions.
+        {t("desktop.updates.callout.restartWarning")}
       </SidebarCalloutDescriptionText>
     </>
   );

@@ -1,4 +1,5 @@
 import { useLocalSearchParams } from "expo-router";
+import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { NewWorkspaceScreen } from "@/screens/new-workspace-screen";
 
 export default function HostNewWorkspaceRoute() {
@@ -14,11 +15,13 @@ export default function HostNewWorkspaceRoute() {
   const projectId = typeof params.projectId === "string" ? params.projectId : undefined;
 
   return (
-    <NewWorkspaceScreen
-      serverId={serverId}
-      sourceDirectory={sourceDirectory}
-      displayName={displayName}
-      projectId={projectId}
-    />
+    <HostRouteBootstrapBoundary>
+      <NewWorkspaceScreen
+        serverId={serverId}
+        sourceDirectory={sourceDirectory}
+        displayName={displayName}
+        projectId={projectId}
+      />
+    </HostRouteBootstrapBoundary>
   );
 }

@@ -521,6 +521,7 @@ function createSessionForWorkspaceTests(
           unsubscribe: () => {},
         }),
         scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -631,6 +632,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
             unsubscribe: () => {},
           }),
           scheduleRefreshForCwd: () => {},
+          onWorkspaceStateMayHaveChanged: () => {},
           getMetrics: () => ({
             checkoutDiffTargetCount: 0,
             checkoutDiffSubscriptionCount: 0,
@@ -1013,6 +1015,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
           unsubscribe: () => {},
         }),
         scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -1373,6 +1376,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
           unsubscribe: () => {},
         }),
         scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -1562,6 +1566,7 @@ test("close_items_request archives stored agents that are not currently loaded",
           unsubscribe: () => {},
         }),
         scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -1712,6 +1717,7 @@ test("close_items_request continues after an archive failure", async () => {
           unsubscribe: () => {},
         }),
         scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,
@@ -2578,6 +2584,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
           unsubscribe: () => {},
         }),
         scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
         getMetrics: () => ({
           checkoutDiffTargetCount: 0,
           checkoutDiffSubscriptionCount: 0,

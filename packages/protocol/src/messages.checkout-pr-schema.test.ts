@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  CheckoutGithubGetCheckDetailsRequestSchema,
+  CheckoutGithubGetCheckDetailsResponseSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutPrMergeRequestSchema,
@@ -87,6 +89,47 @@ describe("checkout PR schemas", () => {
     });
   });
 
+  test("parses optional GitHub check identifiers on PR checks", () => {
+    expect(
+      CheckoutPrStatusSchema.parse({
+        number: 993,
+        url: "https://github.com/getpaseo/paseo/pull/993",
+        title: "Expose failed check logs",
+        state: "open",
+        baseRefName: "main",
+        headRefName: "phase-6",
+        isMerged: false,
+        checks: [
+          {
+            name: "server tests",
+            status: "failure",
+            url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+            checkRunId: 12345,
+            workflowRunId: 456,
+          },
+          {
+            name: "legacy context",
+            status: "success",
+            url: "https://example.com/context",
+          },
+        ],
+      }).checks,
+    ).toEqual([
+      {
+        name: "server tests",
+        status: "failure",
+        url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+        checkRunId: 12345,
+        workflowRunId: 456,
+      },
+      {
+        name: "legacy context",
+        status: "success",
+        url: "https://example.com/context",
+      },
+    ]);
+  });
+
   test.each(["merge", "squash", "rebase"] as const)(
     "accepts %s as a PR merge method",
     (mergeMethod) => {
@@ -171,6 +214,103 @@ describe("checkout PR schemas", () => {
     ).toEqual(payload);
   });
 
+  test("accepts GitHub check details requests and responses", () => {
+    expect(
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({
+        type: "checkout.github.get_check_details.request",
+        cwd: "/tmp/repo",
+        repoOwner: "getpaseo",
+        repoName: "paseo",
+        checkRunId: 12345,
+        workflowRunId: 456,
+        requestId: "request-check-details",
+      }),
+    ).toEqual({
+      type: "checkout.github.get_check_details.request",
+      cwd: "/tmp/repo",
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      checkRunId: 12345,
+      workflowRunId: 456,
+      requestId: "request-check-details",
+    });
+
+    expect(
+      CheckoutGithubGetCheckDetailsResponseSchema.parse({
+        type: "checkout.github.get_check_details.response",
+        payload: {
+          cwd: "/tmp/repo",
+          success: true,
+          details: {
+            checkRunId: 12345,
+            workflowRunId: 456,
+            name: "server tests",
+            status: "completed",
+            conclusion: "failure",
+            url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+            output: {
+              title: "Tests failed",
+              summary: "1 failure",
+              text: "Assertion failed",
+            },
+            annotations: [
+              {
+                path: "packages/server/src/index.ts",
+                startLine: 10,
+                endLine: 12,
+                annotationLevel: "failure",
+                message: "Expected true",
+              },
+            ],
+            failedJobs: [
+              {
+                jobId: 789,
+                name: "test",
+                status: "completed",
+                conclusion: "failure",
+                url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
+                logTail: "last line",
+                logTruncated: false,
+              },
+            ],
+            truncated: true,
+          },
+          error: null,
+          requestId: "request-check-details",
+        },
+      }).payload.details,
+    ).toMatchObject({
+      checkRunId: 12345,
+      workflowRunId: 456,
+      failedJobs: [{ jobId: 789, logTail: "last line" }],
+      truncated: true,
+    });
+  });
+
+  test("rejects invalid GitHub check details request identities", () => {
+    const request = {
+      type: "checkout.github.get_check_details.request",
+      cwd: "/tmp/repo",
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      checkRunId: 12345,
+      requestId: "request-check-details",
+    };
+
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, repoOwner: "../owner" }),
+    ).toThrow();
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, repoName: "" }),
+    ).toThrow();
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, checkRunId: 0 }),
+    ).toThrow();
+    expect(() =>
+      CheckoutGithubGetCheckDetailsRequestSchema.parse({ ...request, workflowRunId: 1.5 }),
+    ).toThrow();
+  });
+
   test("accepts the GitHub auto-merge server_info feature flag", () => {
     expect(
       ServerInfoStatusPayloadSchema.parse({
@@ -184,6 +324,20 @@ describe("checkout PR schemas", () => {
     ).toEqual({
       providersSnapshot: true,
       checkoutGithubSetAutoMerge: true,
+    });
+  });
+
+  test("accepts the GitHub check details server_info feature flag", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "srv_test",
+        features: {
+          githubCheckDetails: true,
+        },
+      }).features,
+    ).toEqual({
+      githubCheckDetails: true,
     });
   });
 });

@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useMemo } from "react";
 import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { TextInputProps } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
@@ -304,6 +305,7 @@ export function SheetHeaderView({
   testID?: string;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const titleStyle = useMemo(
     () => [styles.title, { color: theme.colors.foreground }],
     [theme.colors.foreground],
@@ -327,7 +329,7 @@ export function SheetHeaderView({
             hitSlop={8}
             style={styles.headerBackButton}
             accessibilityRole="button"
-            accessibilityLabel={back?.accessibilityLabel ?? back?.label ?? "Back"}
+            accessibilityLabel={back?.accessibilityLabel ?? back?.label ?? t("common.actions.back")}
             testID="sheet-header-back"
           >
             {({ pressed }) => (
@@ -347,7 +349,11 @@ export function SheetHeaderView({
         </View>
         {header.actions ? <View style={styles.headerActions}>{header.actions}</View> : null}
         {showCloseButton ? (
-          <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
+          <Pressable
+            accessibilityLabel={t("common.actions.close")}
+            style={styles.closeButton}
+            onPress={onClose}
+          >
             {({ pressed }) => (
               <X
                 size={16}
@@ -363,7 +369,7 @@ export function SheetHeaderView({
           <AdaptiveTextInput
             // @ts-expect-error - outlineStyle is web-only
             style={SEARCH_INPUT_STYLE}
-            placeholder={search.placeholder ?? "Search"}
+            placeholder={search.placeholder ?? t("common.actions.search")}
             resetKey={search.resetKey}
             onChangeText={handleSearchChange}
             autoCapitalize="none"
@@ -379,6 +385,7 @@ export function SheetHeaderView({
 
 export function InlineHeaderView({ header }: { header: SheetHeader }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const back = header.back;
   const handleBackPress = back?.onPress;
   const hasInlineRow = Boolean(handleBackPress || header.leading || header.actions);
@@ -393,7 +400,9 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
               hitSlop={8}
               style={styles.headerBackButton}
               accessibilityRole="button"
-              accessibilityLabel={back?.accessibilityLabel ?? back?.label ?? "Back"}
+              accessibilityLabel={
+                back?.accessibilityLabel ?? back?.label ?? t("common.actions.back")
+              }
               testID="sheet-header-back"
             >
               {({ pressed }) => (
@@ -417,7 +426,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
           <AdaptiveTextInput
             // @ts-expect-error - outlineStyle is web-only
             style={SEARCH_INPUT_STYLE}
-            placeholder={header.search.placeholder ?? "Search"}
+            placeholder={header.search.placeholder ?? t("common.actions.search")}
             resetKey={header.search.resetKey}
             onChangeText={header.search.onChange}
             autoCapitalize="none"
@@ -462,6 +471,7 @@ export function AdaptiveModalSheet({
   presentation,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
@@ -585,7 +595,11 @@ export function AdaptiveModalSheet({
 
   const desktopContent = (
     <View style={styles.desktopOverlay} testID={testID}>
-      <Pressable accessibilityLabel="Dismiss" style={ABSOLUTE_FILL_STYLE} onPress={onClose} />
+      <Pressable
+        accessibilityLabel={t("common.actions.dismiss")}
+        style={ABSOLUTE_FILL_STYLE}
+        onPress={onClose}
+      />
       <View style={desktopCardStyle}>
         {onFilesDropped ? (
           <FileDropZone onFilesDropped={onFilesDropped}>{cardInner}</FileDropZone>

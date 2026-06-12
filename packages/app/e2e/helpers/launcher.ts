@@ -69,34 +69,46 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
 
 // ─── Tab bar assertions ───────────────────────────────────────────────────
 
-/** Assert the new agent tab button is visible in the tab bar. */
+/** Assert the inline new-agent plus button is visible in the tab bar. */
 export async function assertNewChatTileVisible(page: Page): Promise<void> {
   await expect(
-    page.getByTestId("workspace-new-agent-tab").filter({ visible: true }).first(),
+    page.getByTestId("workspace-new-agent-tab-inline").filter({ visible: true }).first(),
   ).toBeVisible();
 }
 
-/** Assert the new terminal button is visible in the tab bar. */
-export async function assertTerminalTileVisible(page: Page): Promise<void> {
+/** Assert the new-tab dropdown trigger is visible in the tab bar. */
+export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> {
   await expect(
-    page.getByTestId("workspace-new-terminal").filter({ visible: true }).first(),
+    page.getByTestId("workspace-new-tab-menu-trigger").filter({ visible: true }).first(),
   ).toBeVisible();
 }
 
 // ─── Tab creation actions ─────────────────────────────────────────────────
 
-/** Click the new agent tab button to create a draft/chat tab. */
+/** Click the inline plus button to create a draft/chat tab. */
 export async function clickNewChat(page: Page): Promise<void> {
-  const button = page.getByTestId("workspace-new-agent-tab").filter({ visible: true }).first();
+  const button = page
+    .getByTestId("workspace-new-agent-tab-inline")
+    .filter({ visible: true })
+    .first();
   await expect(button).toBeVisible({ timeout: 10_000 });
   await button.click();
 }
 
-/** Click the new terminal button to create a terminal tab. */
+/** Open the new-tab menu and click "New terminal". */
 export async function clickNewTerminal(page: Page): Promise<void> {
-  const button = page.getByTestId("workspace-new-terminal").filter({ visible: true }).first();
-  await expect(button).toBeVisible({ timeout: 10_000 });
-  await button.click();
+  const trigger = page
+    .getByTestId("workspace-new-tab-menu-trigger")
+    .filter({ visible: true })
+    .first();
+  await expect(trigger).toBeVisible({ timeout: 10_000 });
+  await trigger.click();
+  const item = page
+    .getByTestId("workspace-new-tab-menu-terminal")
+    .filter({ visible: true })
+    .first();
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await item.click();
 }
 
 // ─── Tab title assertions ──────────────────────────────────────────────────
@@ -117,9 +129,9 @@ export async function waitForTabWithTitle(
   ).toBeVisible({ timeout });
 }
 
-/** Assert the new agent tab button is visible in the tab bar. */
+/** Assert the inline new-agent plus button is visible in the tab bar. */
 export async function assertSingleNewTabButton(page: Page): Promise<void> {
-  const buttons = page.getByTestId("workspace-new-agent-tab").filter({ visible: true });
+  const buttons = page.getByTestId("workspace-new-agent-tab-inline").filter({ visible: true });
   const count = await buttons.count();
   expect(count).toBeGreaterThanOrEqual(1);
 }

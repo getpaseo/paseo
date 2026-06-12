@@ -121,6 +121,7 @@ import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
+import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -131,7 +132,11 @@ import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
-import { createRequireBearerMiddleware, type DaemonAuthConfig } from "./auth.js";
+import {
+  createRequireBearerMiddleware,
+  isAgentMcpRequestAuthorized,
+  type DaemonAuthConfig,
+} from "./auth.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -235,6 +240,7 @@ export interface PaseoDaemonConfig {
   mcpInjectIntoAgents?: boolean;
   autoArchiveAfterMerge?: boolean;
   appendSystemPrompt?: string;
+  terminalProfiles?: TerminalProfile[];
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -310,6 +316,9 @@ export async function createPaseoDaemon(
       },
       autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
       appendSystemPrompt: config.appendSystemPrompt ?? "",
+      ...(config.terminalProfiles !== undefined
+        ? { terminalProfiles: config.terminalProfiles }
+        : {}),
     },
     logger,
   );
@@ -324,6 +333,15 @@ export async function createPaseoDaemon(
   const downloadTokenStore = new DownloadTokenStore({
     ttlMs: downloadTokenTtlMs,
   });
+
+  // Capability token authenticating the daemon's own agents to the loopback
+  // Agent MCP endpoint (/mcp/agents). Random per daemon run, injected only into
+  // local agent configs and the daemon's own MCP client — never sent to remote
+  // clients — so it cannot be replayed off-box. This lets the injected MCP
+  // authenticate even when the daemon password is set via the app (hash only,
+  // no plaintext available). Mirrors the /api/files/download capability-token
+  // pattern.
+  const agentMcpAuthToken = randomUUID();
 
   const listenTarget = parseListenString(config.listen);
 
@@ -547,6 +565,10 @@ export async function createPaseoDaemon(
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
+    onWorkspaceStateMayHaveChanged: ({ cwd }) => {
+      workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
+    },
+    mcpAuthToken: agentMcpAuthToken,
     logger,
   });
 
@@ -797,6 +819,20 @@ export async function createPaseoDaemon(
       req: express.Request,
       res: express.Response,
     ): Promise<void> => {
+      // This route is exempt from the global daemon-password middleware, so it
+      // authenticates here using the injected capability token (or a valid
+      // daemon password). Without this, a password-protected daemon would be
+      // wide open on its agent control plane.
+      if (
+        !(await isAgentMcpRequestAuthorized({
+          password: config.auth?.password,
+          capabilityToken: agentMcpAuthToken,
+          authorizationHeader: req.header("authorization"),
+        }))
+      ) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
       if (config.mcpDebug) {
         logger.debug(
           {

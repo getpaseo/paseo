@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import {
   applyProvidersSnapshotUpdate,
   fetchProvidersSnapshot,
@@ -195,6 +196,24 @@ describe("refreshAndApplyProvidersSnapshot", () => {
       queryClient.getQueryState(providersSnapshotQueryKey(serverId, "/repo-b"))?.isInvalidated,
     ).toBe(false);
   });
+
+  it("invalidates cached agent commands when refreshing providers", async () => {
+    const client = createClient({ snapshots: [providersSnapshot([])] });
+    const commandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd: "/repo-a" },
+    });
+    queryClient.setQueryData(commandsKey, [{ name: "compact", description: "", argumentHint: "" }]);
+
+    await refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId,
+      cwd: "/repo-a",
+    });
+
+    expect(queryClient.getQueryState(commandsKey)?.isInvalidated).toBe(true);
+  });
 });
 
 describe("applyProvidersSnapshotUpdate", () => {
@@ -270,6 +289,22 @@ describe("applyProvidersSnapshotUpdate", () => {
       generatedAt: "2026-01-01T00:00:01.000Z",
       requestId: "providers_snapshot_update",
     });
+  });
+
+  it("invalidates cached agent commands when a provider snapshot update arrives", () => {
+    const commandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd: "/repo-a" },
+    });
+    queryClient.setQueryData(commandsKey, [{ name: "compact", description: "", argumentHint: "" }]);
+
+    applyProvidersSnapshotUpdate({
+      serverId,
+      queryClient,
+      message: updateMessage([codexEntry("ready", [readyCodexModel])], "/repo-a"),
+    });
+
+    expect(queryClient.getQueryState(commandsKey)?.isInvalidated).toBe(true);
   });
 });
 

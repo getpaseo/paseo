@@ -10,6 +10,7 @@ import React, {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   View,
   Text,
@@ -157,6 +158,7 @@ function renderStreamItemWithTurnFooter(input: {
 function renderListEmptyComponent(input: {
   renderModel: AgentStreamRenderModel;
   emptyStateStyle: StyleProp<ViewStyle>;
+  emptyText: string;
 }): ReactNode {
   if (
     input.renderModel.boundary.hasVirtualizedHistory ||
@@ -170,7 +172,7 @@ function renderListEmptyComponent(input: {
 
   return (
     <View style={input.emptyStateStyle}>
-      <Text style={stylesheet.emptyStateText}>Start chatting with this agent...</Text>
+      <Text style={stylesheet.emptyStateText}>{input.emptyText}</Text>
     </View>
   );
 }
@@ -245,6 +247,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     },
     ref,
   ) {
+    const { t } = useTranslation();
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
@@ -637,8 +640,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
     const listEmptyComponent = useMemo(
-      () => renderListEmptyComponent({ renderModel, emptyStateStyle }),
-      [renderModel, emptyStateStyle],
+      () =>
+        renderListEmptyComponent({
+          renderModel,
+          emptyStateStyle,
+          emptyText: t("agentStream.empty"),
+        }),
+      [renderModel, emptyStateStyle, t],
     );
 
     const { boundary, auxiliary } = renderModel;
@@ -745,7 +753,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   style={stylesheet.scrollToBottomButton}
                   onPress={scrollToBottom}
                   accessibilityRole="button"
-                  accessibilityLabel="Scroll to bottom"
+                  accessibilityLabel={t("agentStream.scrollToBottom")}
                   testID="scroll-to-bottom-button"
                 >
                   <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
@@ -906,11 +914,14 @@ function PermissionRequestCard({
   permission: PendingPermission;
   client: DaemonClient | null;
 }) {
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
-  const title = isPlanRequest ? "Plan" : (request.title ?? request.name ?? "Permission Required");
+  const title = isPlanRequest
+    ? t("agentStream.permission.plan")
+    : (request.title ?? request.name ?? t("agentStream.permission.required"));
   const description = request.description ?? "";
   const resolvedToolCallDetail = useMemo(
     () =>
@@ -931,19 +942,21 @@ function PermissionRequestCard({
     return [
       {
         id: "reject",
-        label: "Deny",
+        label: t("agentStream.permission.deny"),
         behavior: "deny",
         variant: "danger",
         intent: "dismiss",
       },
       {
         id: "accept",
-        label: isPlanRequest ? "Implement" : "Accept",
+        label: isPlanRequest
+          ? t("agentStream.permission.implement")
+          : t("agentStream.permission.accept"),
         behavior: "allow",
         variant: "primary",
       },
     ];
-  }, [isPlanRequest, request]);
+  }, [isPlanRequest, request, t]);
 
   const planMarkdown = useMemo(() => {
     if (!request) {
@@ -968,7 +981,7 @@ function PermissionRequestCard({
       response: AgentPermissionResponse;
     }) => {
       if (!client) {
-        throw new Error("Daemon client unavailable");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return client.respondToPermissionAndWait(
         input.agentId,
@@ -1042,7 +1055,7 @@ function PermissionRequestCard({
   const footer = (
     <>
       <Text testID="permission-request-question" style={permissionStyles.question}>
-        How would you like to proceed?
+        {t("agentStream.permission.question")}
       </Text>
 
       <View style={optionsContainerStyle}>
@@ -1094,7 +1107,7 @@ function PermissionRequestCard({
 
       {planMarkdown ? (
         <PlanCard
-          title="Proposed plan"
+          title={t("agentStream.permission.proposedPlan")}
           text={planMarkdown}
           testID="permission-plan-card"
           disableOuterSpacing

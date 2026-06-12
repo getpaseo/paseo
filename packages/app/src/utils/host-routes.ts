@@ -355,27 +355,6 @@ export function buildHostOpenProjectRoute(serverId: string) {
   return `${base}/open-project` as const;
 }
 
-export type KnownHostRouteResolution =
-  | { kind: "render" }
-  | { kind: "redirect"; href: ReturnType<typeof buildHostOpenProjectRoute> | "/welcome" };
-
-export function resolveKnownHostRoute(input: {
-  routeServerId: string | null | undefined;
-  hosts: readonly { serverId: string }[];
-}): KnownHostRouteResolution {
-  const routeServerId = trimNonEmpty(input.routeServerId);
-  if (routeServerId && input.hosts.some((host) => host.serverId === routeServerId)) {
-    return { kind: "render" };
-  }
-
-  const fallbackServerId = input.hosts[0]?.serverId;
-  if (fallbackServerId) {
-    return { kind: "redirect", href: buildHostOpenProjectRoute(fallbackServerId) };
-  }
-
-  return { kind: "redirect", href: "/welcome" };
-}
-
 export function buildHostNewWorkspaceRoute(
   serverId: string,
   sourceDirectory?: string,
@@ -424,6 +403,7 @@ export const HOST_SECTION_SLUGS = [
   "agents",
   "workspaces",
   "providers",
+  "terminals",
   "host",
 ] as const;
 

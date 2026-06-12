@@ -1,4 +1,5 @@
 import { type ReactElement, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Pressable,
@@ -83,6 +84,7 @@ export function WorkspaceOpenInEditorButton({
   activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
+  const { t } = useTranslation();
   const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
@@ -157,7 +159,9 @@ export function WorkspaceOpenInEditorButton({
   const openMutation = useMutation({
     mutationFn: (target: OpenTarget) => Promise.resolve(target.onOpen()),
     onError: (error: unknown) => {
-      toast.error(error instanceof Error ? error.message : "Failed to open workspace");
+      toast.error(
+        error instanceof Error ? error.message : t("workspace.git.openInEditor.failedOpen"),
+      );
     },
   });
 
@@ -207,8 +211,13 @@ export function WorkspaceOpenInEditorButton({
           accessibilityRole="button"
           accessibilityLabel={
             activeFileName
-              ? `Open ${activeFileName} in ${primaryOption.label}`
-              : `Open workspace in ${primaryOption.label}`
+              ? t("workspace.git.openInEditor.openFileIn", {
+                  fileName: activeFileName,
+                  target: primaryOption.label,
+                })
+              : t("workspace.git.openInEditor.openIn", {
+                  target: primaryOption.label,
+                })
           }
         >
           {openMutation.isPending ? (
@@ -220,7 +229,9 @@ export function WorkspaceOpenInEditorButton({
           ) : (
             <View style={styles.splitButtonContent}>
               {primaryOption.icon}
-              {!hideLabels && <Text style={styles.splitButtonText}>Open</Text>}
+              {!hideLabels && (
+                <Text style={styles.splitButtonText}>{t("workspace.git.openInEditor.open")}</Text>
+              )}
             </View>
           )}
         </Pressable>
@@ -230,7 +241,7 @@ export function WorkspaceOpenInEditorButton({
               testID="workspace-open-in-editor-caret"
               style={caretTriggerStyle}
               accessibilityRole="button"
-              accessibilityLabel="Choose editor"
+              accessibilityLabel={t("workspace.git.openInEditor.chooseEditor")}
             >
               <ThemedChevronDown size={16} uniProps={mutedColorMapping} />
             </DropdownMenuTrigger>

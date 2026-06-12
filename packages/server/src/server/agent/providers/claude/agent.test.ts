@@ -999,6 +999,88 @@ describe("ClaudeAgentSession context window usage", () => {
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
   });
 
+  test("classifies Claude root-only commands separately from inline skills", async () => {
+    const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+      void prompt;
+      return {
+        next: async () => ({ done: true, value: undefined }),
+        interrupt: async () => undefined,
+        return: async () => undefined,
+        close: () => undefined,
+        setPermissionMode: async () => undefined,
+        setModel: async () => undefined,
+        supportedModels: async () => [],
+        supportedCommands: async () => [
+          {
+            name: "taste",
+            description: "Use when another skill needs the shared standard. (user)",
+            argumentHint: "",
+          },
+          {
+            name: "claude-api",
+            description: "Build, debug, and optimize Claude API apps with this skill.",
+            argumentHint: "",
+          },
+          {
+            name: "usage",
+            description: "Show the total cost and duration of the current session",
+            argumentHint: "",
+          },
+          {
+            name: "clear",
+            description: "Start a new session with empty context",
+            argumentHint: "",
+          },
+        ],
+        rewindFiles: async () => ({ canRewind: true }),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    const commands = await session.listCommands();
+    await session.close();
+
+    expect(commands).toEqual([
+      {
+        name: "claude-api",
+        description: "Build, debug, and optimize Claude API apps with this skill.",
+        argumentHint: "",
+        kind: "skill",
+      },
+      {
+        name: "clear",
+        description: "Start a new session with empty context",
+        argumentHint: "",
+        kind: "command",
+      },
+      {
+        name: "rewind",
+        description: "Rewind tracked files to a previous user message",
+        argumentHint: "[user_message_uuid]",
+      },
+      {
+        name: "taste",
+        description: "Use when another skill needs the shared standard. (user)",
+        argumentHint: "",
+        kind: "skill",
+      },
+      {
+        name: "usage",
+        description: "Show the total cost and duration of the current session",
+        argumentHint: "",
+        kind: "command",
+      },
+    ]);
+  });
+
   test("deletes the persisted session jsonl on close when persistSession=false", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-persist-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;

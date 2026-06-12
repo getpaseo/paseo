@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
+  getBindingIdForAction,
   resolveKeyboardShortcut,
   type ChordState,
   type KeyboardShortcutContext,
@@ -414,6 +415,16 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, focusScope: "terminal" },
     },
     {
+      name: "does not bind Cmd+Enter as a rebindable message queue shortcut",
+      event: { key: "Enter", code: "Enter", metaKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+    },
+    {
+      name: "does not bind Ctrl+Enter as a rebindable message queue shortcut",
+      event: { key: "Enter", code: "Enter", ctrlKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+    },
+    {
       name: "does not interrupt agent when terminal is focused",
       event: { key: "Escape", code: "Escape" },
       context: { focusScope: "terminal" },
@@ -585,5 +596,32 @@ describe("keyboard-shortcut help sections", () => {
     for (const [id, keys] of Object.entries(expectedKeys)) {
       expect(findRow(sections, id)?.keys).toEqual(keys);
     }
+  });
+
+  it("returns stable i18n keys for section titles and help rows", () => {
+    const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
+    const projects = sections.find((section) => section.id === "projects");
+    const panels = sections.find((section) => section.id === "panels");
+    const openProject = findRow(sections, "new-agent");
+    const showShortcuts = findRow(sections, "show-shortcuts");
+
+    expect(projects?.titleKey).toBe("settings.shortcuts.sections.projects");
+    expect(panels?.titleKey).toBe("settings.shortcuts.sections.panels");
+    expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
+    expect(openProject?.label).toBe("Open project");
+    expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
+  });
+
+  it("does not expose Enter send behavior as rebindable shortcut rows", () => {
+    const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
+
+    expect(findRow(sections, "message-input-send")).toBeNull();
+    expect(findRow(sections, "message-input-queue")).toBeNull();
+    expect(
+      getBindingIdForAction("message-input-send", { isMac: true, isDesktop: true }),
+    ).toBeNull();
+    expect(
+      getBindingIdForAction("message-input-queue", { isMac: true, isDesktop: true }),
+    ).toBeNull();
   });
 });

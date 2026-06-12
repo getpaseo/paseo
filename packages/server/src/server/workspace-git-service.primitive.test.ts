@@ -509,7 +509,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     for (let index = 0; index < 5; index += 1) {
       service.scheduleRefreshForCwd(REPO_CWD);
     }
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_000);
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
@@ -644,7 +644,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const forcePromise = service.getSnapshot(REPO_CWD, { force: true, reason: "test" });
     await flushPromises();
     service.scheduleRefreshForCwd(REPO_CWD);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_000);
     await flushPromises();
 
     forcedRefresh.resolve(createCheckoutStatus(REPO_CWD));
@@ -776,7 +776,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     subscription.unsubscribe();
     watchCallbacks[0]?.();
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_000);
     await flushPromises();
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(callsBeforeStaleCallback);
@@ -1728,4 +1728,67 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       }
     },
   );
+
+  test("onWorkspaceStateMayHaveChanged invalidates github cache and schedules a forced github-inclusive refresh", async () => {
+    const github = createGitHubServiceStub();
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const service = createService({
+      getCheckoutStatus,
+      getPullRequestStatus,
+      github,
+    });
+
+    await service.getSnapshot(REPO_CWD);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.onWorkspaceStateMayHaveChanged(REPO_CWD);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REPO_CWD });
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
+
+    service.dispose();
+  });
+
+  test("onWorkspaceStateMayHaveChanged preserves includeGitHub when a file watcher fires within the debounce window", async () => {
+    const github = createGitHubServiceStub();
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const service = createService({
+      getCheckoutStatus,
+      getPullRequestStatus,
+      github,
+    });
+
+    await service.getSnapshot(REPO_CWD);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+
+    service.onWorkspaceStateMayHaveChanged(REPO_CWD);
+    // File watcher fires 200ms later (before debounce expires)
+    await vi.advanceTimersByTimeAsync(200);
+    service.scheduleRefreshForCwd(REPO_CWD);
+
+    // Advance past the debounce
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+
+    // Should still refresh GitHub because the first signal asked for it
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
+    service.dispose();
+  });
+
+  test("onWorkspaceStateMayHaveChanged is a no-op for unknown cwds", () => {
+    const github = createGitHubServiceStub();
+    const service = createService({ github });
+
+    service.onWorkspaceStateMayHaveChanged("/unknown/cwd");
+
+    expect(github.invalidate).not.toHaveBeenCalled();
+    service.dispose();
+  });
 });

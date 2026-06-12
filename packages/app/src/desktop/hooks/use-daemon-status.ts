@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   getDesktopDaemonLogs,
   getDesktopDaemonStatus,
@@ -17,6 +18,7 @@ interface DaemonStatusData {
 }
 
 export function useDaemonStatus() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const enabled = shouldUseDesktopDaemon();
 
@@ -33,7 +35,7 @@ export function useDaemonStatus() {
   });
   useDesktopIpcQueryErrorToast({
     error: query.error,
-    message: "Unable to load desktop daemon status.",
+    message: t("desktop.daemon.loadFailed"),
     logLabel: "[DesktopDaemon] Failed to load daemon status",
   });
 

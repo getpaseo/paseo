@@ -44,6 +44,18 @@ export async function openQuestion(
     .click();
 }
 
+export async function expectQuestionNavigationEnabled(
+  page: Page,
+  input: { index: number; total: number },
+): Promise<void> {
+  await expect(
+    page
+      .getByTestId("question-form-card")
+      .first()
+      .getByRole("button", { name: `Question ${input.index} of ${input.total}` }),
+  ).toBeEnabled();
+}
+
 export async function fillQuestionAnswer(
   page: Page,
   input: { question: string; answer: string },
@@ -58,4 +70,33 @@ export async function fillQuestionAnswer(
 export async function submitQuestionAnswers(page: Page): Promise<void> {
   await page.getByTestId("question-form-primary-action").click();
   await expect(page.getByTestId("question-form-card")).toHaveCount(0, { timeout: 30_000 });
+}
+
+export async function expectQuestionPrimaryActionEnabled(page: Page, label: string): Promise<void> {
+  await expect(
+    page.getByTestId("question-form-card").first().getByRole("button", { name: label }),
+  ).toBeEnabled();
+}
+
+export async function expectQuestionPrimaryActionDisabled(
+  page: Page,
+  label: string,
+): Promise<void> {
+  await expect(
+    page.getByTestId("question-form-card").first().getByRole("button", { name: label }),
+  ).toBeDisabled();
+}
+
+export async function expectQuestionDismissEnabled(page: Page): Promise<void> {
+  await expect(
+    page.getByTestId("question-form-card").first().getByRole("button", { name: "Dismiss" }),
+  ).toBeEnabled();
+}
+
+export async function continueToNextQuestion(page: Page): Promise<void> {
+  await page
+    .getByTestId("question-form-card")
+    .first()
+    .getByRole("button", { name: "Next" })
+    .click();
 }

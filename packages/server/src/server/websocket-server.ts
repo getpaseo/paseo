@@ -147,6 +147,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     scheduleRefreshForCwd: () => {},
+    onWorkspaceStateMayHaveChanged: () => {},
     dispose: () => {},
   };
 }
@@ -1054,6 +1055,7 @@ export class VoiceAssistantWebSocketServer {
         providersSnapshot: true,
         // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75, remove gate after 2026-11-13.
         checkoutGithubSetAutoMerge: true,
+        githubCheckDetails: true,
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.

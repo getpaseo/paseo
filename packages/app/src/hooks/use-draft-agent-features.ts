@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { AgentProvider, AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
@@ -23,6 +24,7 @@ export function useDraftAgentFeatures(input: {
   thinkingOptionId: string | null | undefined;
   initialFeatureValues?: Record<string, unknown>;
 }) {
+  const { t } = useTranslation();
   const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
     input;
   const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>(
@@ -67,7 +69,7 @@ export function useDraftAgentFeatures(input: {
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       if (!client || !draftConfig) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const payload = await client.listProviderFeatures(draftConfig);
       if (payload.error) {

@@ -335,7 +335,7 @@ For paint-layer bugs, use high-contrast probes:
 3. Screenshot the simulator and sample pixels to see which color fills the area.
 4. Remove the probes before committing.
 
-The welcome-screen investigation used this approach to prove the white layer was the `ScrollView` content container. Deep-dive evidence is in [welcome-theme-split-research.md](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md).
+The welcome-screen investigation used this approach to prove the white layer was the `ScrollView` content container.
 
 ## References
 
@@ -349,4 +349,3 @@ The welcome-screen investigation used this approach to prove the white layer was
 - [GitHub issue #550: ScrollView sticky-header theme updates](https://github.com/jpudysz/react-native-unistyles/issues/550)
 - [GitHub issue #817: `UnistylesRuntime.themeName` does not re-render](https://github.com/jpudysz/react-native-unistyles/issues/817)
 - [GitHub issue #1030: `Image.tintColor` and native style update edge case](https://github.com/jpudysz/react-native-unistyles/issues/1030)
-- [Local research note: welcome theme split](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md)

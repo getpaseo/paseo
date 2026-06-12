@@ -10,12 +10,14 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, X } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -32,9 +34,17 @@ interface QuestionFormCardProps {
 
 const IS_WEB = isWeb;
 
-function getQuestionInputPlaceholder(question: QuestionFormQuestion): string {
+function getQuestionInputPlaceholder({
+  question,
+  answerPlaceholder,
+  otherPlaceholder,
+}: {
+  question: QuestionFormQuestion;
+  answerPlaceholder: string;
+  otherPlaceholder: string;
+}): string {
   return (
-    question.placeholder ?? (question.options.length === 0 ? "Type your answer..." : "Other...")
+    question.placeholder ?? (question.options.length === 0 ? answerPlaceholder : otherPlaceholder)
   );
 }
 
@@ -238,6 +248,7 @@ function QuestionOtherInput({
 
 export function QuestionFormCard({ permission, onRespond, isResponding }: QuestionFormCardProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const questions = useMemo(
     () => parseQuestionFormQuestions(permission.request.input),
@@ -296,6 +307,10 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     ? Math.min(activeQuestionIndex, questions.length - 1)
     : 0;
   const activeQuestion = questions?.[resolvedActiveQuestionIndex];
+  const activeQuestionAnswered = activeQuestion
+    ? isQuestionAnswered(activeQuestion, resolvedActiveQuestionIndex, selections, otherTexts)
+    : false;
+  const isLastQuestion = questions ? resolvedActiveQuestionIndex === questions.length - 1 : true;
 
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
@@ -340,6 +355,15 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     setActiveQuestionIndex(index);
   }, []);
 
+  const handlePrimaryAction = useCallback(() => {
+    if (!isLastQuestion) {
+      if (!activeQuestionAnswered || isResponding) return;
+      setActiveQuestionIndex((index) => Math.min(index + 1, (questions?.length ?? 1) - 1));
+      return;
+    }
+    handleSubmit();
+  }, [activeQuestionAnswered, handleSubmit, isLastQuestion, isResponding, questions?.length]);
+
   const dismissButtonStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.actionButton,
@@ -352,18 +376,21 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     [theme.colors.surface2, theme.colors.surface1, theme.colors.borderAccent],
   );
 
-  const submitDisabled = !allAnswered || isResponding;
+  const primaryDisabled = isResponding || (isLastQuestion ? !allAnswered : !activeQuestionAnswered);
+  const primaryActionLabel = isLastQuestion
+    ? t("message.question.submit")
+    : t("message.question.next");
   const submitButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.actionButton,
       {
         backgroundColor: theme.colors.accent,
         borderColor: theme.colors.accent,
-        opacity: submitDisabled ? 0.5 : 1,
+        opacity: primaryDisabled ? 0.5 : 1,
       },
-      pressed && !submitDisabled ? styles.optionItemPressed : null,
+      pressed && !primaryDisabled ? styles.optionItemPressed : null,
     ],
-    [submitDisabled, theme.colors.accent],
+    [primaryDisabled, theme.colors.accent],
   );
 
   const containerStyle = useMemo(
@@ -402,7 +429,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     return null;
   }
 
-  const dismissLabel = resolveDismissLabel(questions);
+  const dismissLabel = resolveDismissLabel(questions, t("common.actions.dismiss"));
   const selected = selections[resolvedActiveQuestionIndex] ?? new Set<number>();
   const otherText = otherTexts[resolvedActiveQuestionIndex] ?? "";
   const showTextInput = activeQuestion ? questionShowsTextInput(activeQuestion) : false;
@@ -455,10 +482,14 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
               qIndex={resolvedActiveQuestionIndex}
               accessibilityLabel={activeQuestion.question}
               value={otherText}
-              placeholder={getQuestionInputPlaceholder(activeQuestion)}
+              placeholder={getQuestionInputPlaceholder({
+                question: activeQuestion,
+                answerPlaceholder: t("message.question.answerPlaceholder"),
+                otherPlaceholder: t("message.question.otherPlaceholder"),
+              })}
               isResponding={isResponding}
               onChange={setOtherText}
-              onSubmit={handleSubmit}
+              onSubmit={handlePrimaryAction}
             />
           ) : null}
         </View>
@@ -485,10 +516,10 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
 
         <Pressable
           style={submitButtonStyle}
-          onPress={handleSubmit}
-          disabled={submitDisabled}
+          onPress={handlePrimaryAction}
+          disabled={primaryDisabled}
           accessibilityRole="button"
-          accessibilityLabel="Submit"
+          accessibilityLabel={primaryActionLabel}
           testID="question-form-primary-action"
         >
           {respondingAction === "submit" ? (
@@ -496,7 +527,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
           ) : (
             <View style={styles.actionContent}>
               <Check size={14} color={submitActionTextColor} />
-              <Text style={submitActionTextStyle}>Submit</Text>
+              <Text style={submitActionTextStyle}>{primaryActionLabel}</Text>
             </View>
           )}
         </Pressable>

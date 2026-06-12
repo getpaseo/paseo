@@ -3306,6 +3306,16 @@ describe("agent snapshot MCP serialization", () => {
           provider: "codex",
           sessionId: "session-full",
         },
+        capabilities: {
+          supportsStreaming: false,
+          supportsSessionPersistence: false,
+          supportsSessionListing: true,
+          supportsDynamicModes: false,
+          supportsMcpServers: true,
+          supportsReasoningStream: false,
+          supportsToolInvocations: true,
+          supportsNewProviderCapability: true,
+        },
       }),
     );
 
@@ -3325,6 +3335,7 @@ describe("agent snapshot MCP serialization", () => {
         `get_agent_status response failed AgentSnapshotPayloadSchema: ${JSON.stringify(parsed.error.issues, null, 2)}`,
       );
     }
+    expectOutputSchemaAccepts(tool, response.structuredContent);
     expect(response.structuredContent.status).toBe("idle");
     expect(snapshot).toEqual(
       expect.objectContaining({

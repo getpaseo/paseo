@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   View,
@@ -812,6 +813,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
+  const { t } = useTranslation();
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
@@ -882,12 +884,12 @@ const DiffFileHeader = memo(function DiffFileHeader({
               </Text>
               {file.isNew && (
                 <View style={styles.newBadge}>
-                  <Text style={styles.newBadgeText}>New</Text>
+                  <Text style={styles.newBadgeText}>{t("workspace.git.diff.newFile")}</Text>
                 </View>
               )}
               {file.isDeleted && (
                 <View style={styles.deletedBadge}>
-                  <Text style={styles.deletedBadgeText}>Deleted</Text>
+                  <Text style={styles.deletedBadgeText}>{t("workspace.git.diff.deletedFile")}</Text>
                 </View>
               )}
             </View>
@@ -924,6 +926,7 @@ function DiffFileBody({
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
   const [hoveredReviewTargetKey, setHoveredReviewTargetKey] = useState<string | null>(null);
+  const { t } = useTranslation();
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -949,7 +952,9 @@ function DiffFileBody({
           return (
             <View style={styles.statusMessageContainer}>
               <Text style={styles.statusMessageText}>
-                {file.status === "binary" ? "Binary file" : "Diff too large to display"}
+                {file.status === "binary"
+                  ? t("workspace.git.diff.binaryFile")
+                  : t("workspace.git.diff.tooLarge")}
               </Text>
             </View>
           );
@@ -1126,13 +1131,16 @@ function DiffLayoutToggleGroup({
   onUnified,
   onSplit,
 }: DiffLayoutToggleGroupProps) {
+  const { t } = useTranslation();
+  const unifiedLabel = t("workspace.git.diff.unified");
+  const splitLabel = t("workspace.git.diff.split");
   return (
     <View style={styles.toggleButtonGroup}>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Unified diff"
+            accessibilityLabel={unifiedLabel}
             testID="changes-layout-unified"
             onPress={onUnified}
             style={unifiedToggleStyle}
@@ -1146,14 +1154,14 @@ function DiffLayoutToggleGroup({
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>Unified diff</Text>
+          <Text style={styles.tooltipText}>{unifiedLabel}</Text>
         </TooltipContent>
       </Tooltip>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Side-by-side diff"
+            accessibilityLabel={splitLabel}
             testID="changes-layout-split"
             onPress={onSplit}
             style={splitToggleStyle}
@@ -1167,7 +1175,7 @@ function DiffLayoutToggleGroup({
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>Side-by-side diff</Text>
+          <Text style={styles.tooltipText}>{splitLabel}</Text>
         </TooltipContent>
       </Tooltip>
     </View>
@@ -1187,12 +1195,14 @@ function DiffWhitespaceToggle({
   toggleStyle,
   onToggle,
 }: DiffWhitespaceToggleProps) {
+  const { t } = useTranslation();
+  const label = t("workspace.git.diff.hideWhitespace");
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Hide whitespace"
+          accessibilityLabel={label}
           testID="changes-toggle-whitespace"
           style={toggleStyle}
           onPress={onToggle}
@@ -1204,7 +1214,7 @@ function DiffWhitespaceToggle({
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>Hide whitespace</Text>
+        <Text style={styles.tooltipText}>{label}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -1229,6 +1239,13 @@ function DiffFilesToolbar({
   onToggleWrapLines,
   onToggleExpandAll,
 }: DiffFilesToolbarProps) {
+  const { t } = useTranslation();
+  const wrapLinesLabel = wrapLines
+    ? t("workspace.git.diff.scrollLongLines")
+    : t("workspace.git.diff.wrapLongLines");
+  const expandAllLabel = allExpanded
+    ? t("workspace.git.diff.collapseAll")
+    : t("workspace.git.diff.expandAll");
   return (
     <View style={styles.diffStatusButtons}>
       <Tooltip delayDuration={300}>
@@ -1241,9 +1258,7 @@ function DiffFilesToolbar({
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>
-            {wrapLines ? "Scroll long lines" : "Wrap long lines"}
-          </Text>
+          <Text style={styles.tooltipText}>{wrapLinesLabel}</Text>
         </TooltipContent>
       </Tooltip>
       <Tooltip delayDuration={300}>
@@ -1263,9 +1278,7 @@ function DiffFilesToolbar({
           </Pressable>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>
-            {allExpanded ? "Collapse all files" : "Expand all files"}
-          </Text>
+          <Text style={styles.tooltipText}>{expandAllLabel}</Text>
         </TooltipContent>
       </Tooltip>
     </View>
@@ -1282,12 +1295,16 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 function DiffRefreshButton({ isRefreshing, toggleStyle, onPress }: DiffRefreshButtonProps) {
+  const { t } = useTranslation();
+  const refreshLabel = t("workspace.git.diff.refresh");
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={isRefreshing ? "Refreshing" : "Refresh git and GitHub state"}
+          accessibilityLabel={
+            isRefreshing ? t("workspace.git.diff.refreshing") : t("workspace.git.diff.refreshState")
+          }
           testID="changes-refresh"
           style={toggleStyle}
           onPress={onPress}
@@ -1306,7 +1323,7 @@ function DiffRefreshButton({ isRefreshing, toggleStyle, onPress }: DiffRefreshBu
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>Refresh</Text>
+        <Text style={styles.tooltipText}>{refreshLabel}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -1339,14 +1356,19 @@ function computeEmptyMessage(
   hideWhitespace: boolean,
   diffMode: "uncommitted" | "base",
   baseRefLabel: string,
+  labels: {
+    hiddenWhitespace: string;
+    uncommitted: string;
+    againstBase: (baseRefLabel: string) => string;
+  },
 ): string {
   if (hideWhitespace) {
-    return "No visible changes after hiding whitespace";
+    return labels.hiddenWhitespace;
   }
   if (diffMode === "uncommitted") {
-    return "No uncommitted changes";
+    return labels.uncommitted;
   }
-  return `No changes vs ${baseRefLabel}`;
+  return labels.againstBase(baseRefLabel);
 }
 
 interface DiffBodyContentProps {
@@ -1368,6 +1390,8 @@ interface DiffBodyContentProps {
   handleDiffListScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onContentSizeChange: (width: number, height: number) => void;
   showDesktopWebScrollbar: boolean;
+  checkingRepositoryLabel: string;
+  notRepositoryLabel: string;
 }
 
 function DiffBodyContent({
@@ -1389,12 +1413,14 @@ function DiffBodyContent({
   handleDiffListScroll,
   onContentSizeChange,
   showDesktopWebScrollbar,
+  checkingRepositoryLabel,
+  notRepositoryLabel,
 }: DiffBodyContentProps) {
   if (isStatusLoading) {
     return (
       <View style={styles.loadingContainer}>
         <ThemedActivityIndicator size="large" uniProps={foregroundMutedIconColorMapping} />
-        <Text style={styles.loadingText}>Checking repository...</Text>
+        <Text style={styles.loadingText}>{checkingRepositoryLabel}</Text>
       </View>
     );
   }
@@ -1408,7 +1434,7 @@ function DiffBodyContent({
   if (notGit) {
     return (
       <View style={styles.emptyContainer} testID="changes-not-git">
-        <Text style={styles.emptyText}>Not a git repository</Text>
+        <Text style={styles.emptyText}>{notRepositoryLabel}</Text>
       </View>
     );
   }
@@ -1503,8 +1529,8 @@ function deriveStatusState({
   };
 }
 
-function computeBaseRefLabel(baseRef: string | undefined): string {
-  if (!baseRef) return "base";
+function computeBaseRefLabel(baseRef: string | undefined, fallbackLabel: string): string {
+  if (!baseRef) return fallbackLabel;
   const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
   return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
 }
@@ -1563,6 +1589,7 @@ export function GitDiffPane({
   enabled,
 }: GitDiffPaneProps) {
   const { settings: appSettings } = useAppSettings();
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
   const canUseSplitLayout = isWeb && !isMobile;
@@ -1651,9 +1678,9 @@ export function GitDiffPane({
       return;
     }
     void runRefresh({ serverId, cwd }).catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to refresh git state.");
+      toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [cwd, isRefreshing, runRefresh, serverId, toast]);
+  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
 
   const {
     status,
@@ -2064,7 +2091,10 @@ export function GitDiffPane({
   const hasChanges = files.length > 0;
   const diffErrorMessage = diffPayloadError?.message ?? null;
   const prErrorMessage = computePrErrorMessage(githubFeaturesEnabled, prPayloadError);
-  const baseRefLabel = useMemo(() => computeBaseRefLabel(baseRef), [baseRef]);
+  const baseRefLabel = useMemo(
+    () => computeBaseRefLabel(baseRef, t("workspace.git.diff.base")),
+    [baseRef, t],
+  );
   const gitActionsIcons = useMemo(
     () => ({
       commit: <ThemedGitCommitHorizontal size={16} uniProps={foregroundMutedIconColorMapping} />,
@@ -2087,11 +2117,18 @@ export function GitDiffPane({
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
     [baseRefLabel, branchLabel],
   );
+  const uncommittedLabel = t("workspace.git.diff.uncommitted");
+  const committedLabel = t("workspace.git.diff.committed");
 
   const emptyMessage = computeEmptyMessage(
     changesPreferences.hideWhitespace,
     diffMode,
     baseRefLabel,
+    {
+      hiddenWhitespace: t("workspace.git.diff.emptyHiddenWhitespace"),
+      uncommitted: t("workspace.git.diff.emptyUncommitted"),
+      againstBase: (label) => t("workspace.git.diff.emptyAgainstBase", { baseRef: label }),
+    },
   );
 
   const bodyContent: ReactElement = (
@@ -2114,6 +2151,8 @@ export function GitDiffPane({
       handleDiffListScroll={handleDiffListScroll}
       onContentSizeChange={scrollbar.onContentSizeChange}
       showDesktopWebScrollbar={showDesktopWebScrollbar}
+      checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
+      notRepositoryLabel={t("workspace.git.diff.notRepository")}
     />
   );
 
@@ -2139,10 +2178,10 @@ export function GitDiffPane({
                 style={diffModeTriggerStyle}
                 testID="changes-diff-status"
                 accessibilityRole="button"
-                accessibilityLabel="Diff mode"
+                accessibilityLabel={t("workspace.git.diff.diffMode")}
               >
                 <Text style={styles.diffStatusText} numberOfLines={1}>
-                  {diffMode === "uncommitted" ? "Uncommitted" : "Committed"}
+                  {diffMode === "uncommitted" ? uncommittedLabel : committedLabel}
                 </Text>
                 <ThemedChevronDown size={12} uniProps={foregroundMutedIconColorMapping} />
               </DropdownMenuTrigger>
@@ -2152,7 +2191,7 @@ export function GitDiffPane({
                   selected={diffMode === "uncommitted"}
                   onSelect={handleSelectUncommitted}
                 >
-                  Uncommitted
+                  {uncommittedLabel}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -2161,7 +2200,7 @@ export function GitDiffPane({
                   description={committedDiffDescription}
                   onSelect={handleSelectBase}
                 >
-                  Committed
+                  {committedLabel}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

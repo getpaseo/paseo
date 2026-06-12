@@ -17,7 +17,10 @@ export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 export interface SessionsSnapshot {
-  sessions: Record<string, { workspaces: Map<string, WorkspaceDescriptor> }>;
+  sessions: Record<
+    string,
+    { hasHydratedWorkspaces?: boolean; workspaces: Map<string, WorkspaceDescriptor> }
+  >;
 }
 
 export interface SidebarOrderSnapshot {
@@ -108,6 +111,21 @@ export function selectWorkspaceFields<T>(
 ): T | null {
   const workspace = selectWorkspace(state, serverId, workspaceId);
   return workspace ? project(workspace) : null;
+}
+
+export function selectWorkspaceExists(
+  state: SessionsSnapshot,
+  serverId: string | null,
+  workspaceId: string | null,
+): boolean {
+  return selectWorkspace(state, serverId, workspaceId) !== null;
+}
+
+export function selectHasHydratedWorkspaces(
+  state: SessionsSnapshot,
+  serverId: string | null,
+): boolean {
+  return serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false;
 }
 
 export function selectWorkspaceExecutionAuthority(

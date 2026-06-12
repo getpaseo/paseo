@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { queryClient as appQueryClient } from "@/query/query-client";
+import type { AppLanguage } from "@/i18n/locales";
 import {
   DEFAULT_DESKTOP_SETTINGS,
   loadDesktopSettings,
@@ -58,6 +59,7 @@ export {
 };
 export type {
   AppSettings,
+  AppLanguage,
   DesktopSettingsBridge,
   KeyValueStorage,
   ReleaseChannel,
@@ -142,6 +144,9 @@ export function useSettings(): UseSettingsReturn {
       const appUpdates: Partial<AppSettings> = {};
       if (updates.theme !== undefined) {
         appUpdates.theme = updates.theme;
+      }
+      if (updates.language !== undefined) {
+        appUpdates.language = updates.language;
       }
       if (updates.sendBehavior !== undefined) {
         appUpdates.sendBehavior = updates.sendBehavior;

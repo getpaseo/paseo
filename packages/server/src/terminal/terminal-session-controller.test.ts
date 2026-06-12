@@ -319,4 +319,71 @@ describe("terminal-session-controller subdirectory aggregation", () => {
       },
     ]);
   });
+
+  test("keeps nested workspace terminals out of the parent workspace terminal list", async () => {
+    const rootCwd = "/work/repo";
+    const worktreeCwd = "/work/repo/.dev/paseo-home/worktrees/hash/feature-a";
+    const rootTerminal = listSession({ id: "root-term", name: "Terminal 1", cwd: rootCwd });
+    const worktreeTerminal = listSession({
+      id: "worktree-term",
+      name: "Feature",
+      cwd: worktreeCwd,
+    });
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(async (cwd: string) =>
+        cwd === rootCwd ? [rootTerminal, worktreeTerminal] : [worktreeTerminal],
+      ),
+      createTerminal: vi.fn(),
+      registerCwdEnv: vi.fn(),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => [rootCwd, worktreeCwd]),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+    };
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      listTerminalWorkspaceRoots: async () => [rootCwd, worktreeCwd],
+    });
+
+    await controller.dispatch({
+      type: "list_terminals_request",
+      cwd: rootCwd,
+      requestId: "req-root",
+    });
+    await controller.dispatch({
+      type: "list_terminals_request",
+      cwd: worktreeCwd,
+      requestId: "req-worktree",
+    });
+
+    expect(outboundMessages).toEqual([
+      {
+        type: "list_terminals_response",
+        payload: {
+          cwd: rootCwd,
+          terminals: [{ id: "root-term", name: "Terminal 1" }],
+          requestId: "req-root",
+        },
+      },
+      {
+        type: "list_terminals_response",
+        payload: {
+          cwd: worktreeCwd,
+          terminals: [{ id: "worktree-term", name: "Feature" }],
+          requestId: "req-worktree",
+        },
+      },
+    ]);
+  });
 });

@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import { agentCommandsQueryKey, type AgentCommandsDraftConfig } from "@/hooks/agent-commands-query";
 
-const COMMANDS_STALE_TIME = 60_000; // Commands rarely change, cache for 1 minute
+const DRAFT_COMMANDS_STALE_TIME = Number.POSITIVE_INFINITY;
+const SESSION_COMMANDS_STALE_TIME = 60_000;
 
 export interface AgentSlashCommand {
   name: string;
@@ -12,14 +14,7 @@ export interface AgentSlashCommand {
   kind?: string;
 }
 
-export interface DraftCommandConfig {
-  provider: AgentProvider;
-  cwd: string;
-  modeId?: string;
-  model?: string;
-  thinkingOptionId?: string;
-  featureValues?: Record<string, unknown>;
-}
+export type DraftCommandConfig = AgentCommandsDraftConfig;
 
 export type AgentCommandsClient = Pick<DaemonClient, "listCommands">;
 
@@ -32,24 +27,6 @@ export async function fetchAgentCommands(input: {
     draftConfig: input.draftConfig,
   });
   return response.commands as AgentSlashCommand[];
-}
-
-function agentCommandsQueryKey(
-  serverId: string,
-  agentId: string,
-  draftConfig?: DraftCommandConfig,
-) {
-  return [
-    "agentCommands",
-    serverId,
-    agentId,
-    draftConfig?.provider ?? null,
-    draftConfig?.cwd ?? null,
-    draftConfig?.modeId ?? null,
-    draftConfig?.model ?? null,
-    draftConfig?.thinkingOptionId ?? null,
-    draftConfig?.featureValues ?? null,
-  ] as const;
 }
 
 interface UseAgentCommandsQueryOptions {
@@ -65,19 +42,20 @@ export function useAgentCommandsQuery({
   enabled = true,
   draftConfig,
 }: UseAgentCommandsQueryOptions) {
+  const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   const query = useQuery({
-    queryKey: agentCommandsQueryKey(serverId, agentId, draftConfig),
+    queryKey: agentCommandsQueryKey({ serverId, agentId, draftConfig }),
     queryFn: async () => {
       if (!client) {
-        throw new Error("Daemon client not available");
+        throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       return fetchAgentCommands({ client, agentId, draftConfig });
     },
     enabled: enabled && !!client && isConnected && (!!agentId || !!draftConfig),
-    staleTime: COMMANDS_STALE_TIME,
+    staleTime: draftConfig ? DRAFT_COMMANDS_STALE_TIME : SESSION_COMMANDS_STALE_TIME,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
   });

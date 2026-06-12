@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { SidebarCalloutDescriptionText } from "@/components/sidebar-callout";
 import { getIsElectronMac } from "@/constants/platform";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
@@ -12,20 +13,19 @@ import { openExternalUrl } from "@/utils/open-external-url";
 
 const FALLBACK_DOWNLOAD_URL = "https://paseo.sh/download";
 
-function RosettaCalloutDescription() {
+function RosettaCalloutDescription({ t }: { t: ReturnType<typeof useTranslation>["t"] }) {
   return (
     <>
       <SidebarCalloutDescriptionText>
-        You&apos;re running the Intel build of Paseo under Rosetta on Apple Silicon.
+        {t("desktop.rosetta.runningIntel")}
       </SidebarCalloutDescriptionText>
-      <SidebarCalloutDescriptionText>
-        This causes high CPU usage. Download the Apple Silicon build to fix it.
-      </SidebarCalloutDescriptionText>
+      <SidebarCalloutDescriptionText>{t("desktop.rosetta.highCpu")}</SidebarCalloutDescriptionText>
     </>
   );
 }
 
 export function RosettaCalloutSource() {
+  const { t } = useTranslation();
   const callouts = useSidebarCallouts();
   const [runtimeInfo, setRuntimeInfo] = useState<DesktopRuntimeInfo | null>(null);
   const isElectronMac = getIsElectronMac();
@@ -67,20 +67,20 @@ export function RosettaCalloutSource() {
     return callouts.show({
       id: "desktop-rosetta-warning",
       priority: 300,
-      title: "Download the Apple Silicon build",
-      description: <RosettaCalloutDescription />,
+      title: t("desktop.rosetta.title"),
+      description: <RosettaCalloutDescription t={t} />,
       variant: "error",
       dismissible: false,
       actions: [
         {
-          label: "Download",
+          label: t("desktop.rosetta.download"),
           onPress: openDownload,
           variant: "primary",
         },
       ],
       testID: "rosetta-callout",
     });
-  }, [callouts, isElectronMac, openDownload, runtimeInfo]);
+  }, [callouts, isElectronMac, openDownload, runtimeInfo, t]);
 
   return null;
 }

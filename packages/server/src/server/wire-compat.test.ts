@@ -252,6 +252,7 @@ function createSessionForWireCompatTest(options?: {
     loopService: {} as SessionOptions["loopService"],
     checkoutDiffManager: {
       scheduleRefreshForCwd() {},
+      onWorkspaceStateMayHaveChanged() {},
     } as unknown as SessionOptions["checkoutDiffManager"],
     github: {
       invalidate() {},

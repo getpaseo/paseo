@@ -6,6 +6,12 @@ import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
 
 const DEFAULT_GITHUB_CACHE_TTL_MS = 30_000;
+const CHECK_ANNOTATION_PAGE_MAX = 20;
+const CHECK_LOG_TAIL_MAX_LINES = 200;
+const CHECK_LOG_TAIL_MAX_BYTES = 16 * 1024;
+const CHECK_LOG_TAIL_CACHE_MAX_ENTRIES = 128;
+const ACTIONS_JOB_PAGE_MAX = 100;
+const FAILED_CHECK_JOB_LIMIT = 5;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
 export const GITHUB_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
@@ -41,6 +47,7 @@ const GitHubPullRequestSummarySchema = z.object({
 
 const PullRequestCheckRunNodeSchema = z.object({
   __typename: z.literal("CheckRun"),
+  databaseId: z.number().nullable().optional(),
   name: z.string(),
   workflowName: z.string().nullable().optional(),
   conclusion: z.string().nullable().optional(),
@@ -77,6 +84,59 @@ const PullRequestStatusCheckRollupNodeSchema = z.discriminatedUnion("__typename"
 const PullRequestStatusCheckRollupArraySchema = z.array(z.unknown());
 const LegacyPullRequestStatusCheckRollupSchema = z.object({
   contexts: z.array(z.unknown()),
+});
+
+const GitHubCheckRunDetailsSchema = z.object({
+  id: z.number(),
+  name: z.string().catch(""),
+  status: z.string().nullable().optional(),
+  conclusion: z.string().nullable().optional(),
+  html_url: z.string().nullable().optional(),
+  details_url: z.string().nullable().optional(),
+  output: z
+    .object({
+      title: z.string().nullable().optional(),
+      summary: z.string().nullable().optional(),
+      text: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  check_suite: z
+    .object({
+      workflow_run: z
+        .object({
+          id: z.number().nullable().optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+const GitHubCheckAnnotationSchema = z.object({
+  path: z.string().optional(),
+  start_line: z.number().optional(),
+  end_line: z.number().optional(),
+  annotation_level: z.string().optional(),
+  message: z.string().optional(),
+  title: z.string().optional(),
+  raw_details: z.string().optional(),
+});
+
+const GitHubCheckAnnotationsSchema = z.array(GitHubCheckAnnotationSchema).catch([]);
+
+const GitHubActionsJobSchema = z.object({
+  id: z.number(),
+  name: z.string().catch(""),
+  status: z.string().nullable().optional(),
+  conclusion: z.string().nullable().optional(),
+  html_url: z.string().nullable().optional(),
+  completed_at: z.string().nullable().optional(),
+});
+
+const GitHubActionsJobsSchema = z.object({
+  jobs: z.array(GitHubActionsJobSchema).catch([]),
 });
 
 const PullRequestReviewDecisionSchema = z
@@ -158,6 +218,7 @@ const TimelineAuthorSchema = z
   .object({
     login: z.string().optional(),
     url: z.string().nullable().optional(),
+    avatarUrl: z.string().nullable().optional(),
   })
   .nullable()
   .optional();
@@ -177,6 +238,29 @@ const PullRequestTimelineCommentNodeSchema = z.object({
   url: z.string().catch(""),
   createdAt: z.string().nullable().catch(null),
   author: TimelineAuthorSchema,
+});
+
+const PullRequestReviewThreadCommentNodeSchema = PullRequestTimelineCommentNodeSchema.extend({
+  pullRequestReview: z
+    .object({ id: z.string().catch("") })
+    .nullable()
+    .optional()
+    .catch(null),
+});
+
+const PullRequestReviewThreadNodeSchema = z.object({
+  id: z.string().catch(""),
+  path: z.string().catch(""),
+  line: z.number().nullable().optional().catch(null),
+  startLine: z.number().nullable().optional().catch(null),
+  isResolved: z.boolean().catch(false),
+  isOutdated: z.boolean().catch(false),
+  comments: z
+    .object({
+      nodes: z.array(PullRequestReviewThreadCommentNodeSchema).catch([]),
+      pageInfo: z.object({ hasNextPage: z.boolean().catch(false) }).catch({ hasNextPage: false }),
+    })
+    .catch({ nodes: [], pageInfo: { hasNextPage: false } }),
 });
 
 const PullRequestTimelinePageInfoSchema = z.object({
@@ -200,6 +284,12 @@ const PullRequestTimelineGraphqlSchema = z.object({
               comments: z
                 .object({
                   nodes: z.array(PullRequestTimelineCommentNodeSchema).catch([]),
+                  pageInfo: PullRequestTimelinePageInfoSchema.catch({ hasNextPage: false }),
+                })
+                .catch({ nodes: [], pageInfo: { hasNextPage: false } }),
+              reviewThreads: z
+                .object({
+                  nodes: z.array(PullRequestReviewThreadNodeSchema).catch([]),
                   pageInfo: PullRequestTimelinePageInfoSchema.catch({ hasNextPage: false }),
                 })
                 .catch({ nodes: [], pageInfo: { hasNextPage: false } }),
@@ -328,6 +418,7 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
           author {
             login
             url
+            avatarUrl
           }
         }
         pageInfo {
@@ -343,6 +434,39 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
           author {
             login
             url
+            avatarUrl
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          path
+          line
+          startLine
+          isResolved
+          isOutdated
+          comments(first: 100) {
+            nodes {
+              id
+              body
+              url
+              createdAt
+              author {
+                login
+                url
+                avatarUrl
+              }
+              pullRequestReview {
+                id
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
           }
         }
         pageInfo {
@@ -420,6 +544,8 @@ export interface PullRequestCheck {
   url: string | null;
   workflow?: string;
   duration?: string;
+  checkRunId?: number;
+  workflowRunId?: number;
 }
 
 export type PullRequestChecksStatus = "none" | "pending" | "success" | "failure";
@@ -472,6 +598,7 @@ interface PullRequestTimelineItemBase {
   id: string;
   author: string;
   authorUrl: string | null;
+  avatarUrl: string | null;
   body: string;
   createdAt: number;
   url: string;
@@ -484,7 +611,18 @@ export type PullRequestTimelineItem =
     })
   | (PullRequestTimelineItemBase & {
       kind: "comment";
+      reviewId?: string;
+      location?: PullRequestTimelineCommentLocation;
     });
+
+export interface PullRequestTimelineCommentLocation {
+  path: string;
+  line?: number;
+  startLine?: number;
+  threadId?: string;
+  isResolved?: boolean;
+  isOutdated?: boolean;
+}
 
 export type GitHubPullRequestTimelineErrorKind = "not_found" | "forbidden" | "unknown";
 
@@ -577,6 +715,53 @@ export type GetGitHubPullRequestTimelineOptions = {
   repoName: string;
 } & GitHubReadOptions;
 
+export type GetGitHubCheckDetailsOptions = {
+  cwd: string;
+  repoOwner: string;
+  repoName: string;
+  checkRunId: number;
+  workflowRunId?: number;
+} & GitHubReadOptions;
+
+export interface GitHubCheckAnnotation {
+  path?: string;
+  startLine?: number;
+  endLine?: number;
+  annotationLevel?: string;
+  message?: string;
+  title?: string;
+  rawDetails?: string;
+}
+
+export interface GitHubCheckFailedJob {
+  jobId: number;
+  name: string;
+  status?: string | null;
+  conclusion?: string | null;
+  url?: string | null;
+  completedAt?: string;
+  logTail?: string;
+  logTruncated?: boolean;
+}
+
+export interface GitHubCheckDetails {
+  checkRunId: number;
+  workflowRunId?: number | null;
+  name: string;
+  status?: string | null;
+  conclusion?: string | null;
+  url?: string | null;
+  detailsUrl?: string | null;
+  output?: {
+    title?: string | null;
+    summary?: string | null;
+    text?: string | null;
+  } | null;
+  annotations: GitHubCheckAnnotation[];
+  failedJobs: GitHubCheckFailedJob[];
+  truncated: boolean;
+}
+
 export interface GitHubSearchResult {
   items: Array<{
     kind: "issue" | "pr";
@@ -627,6 +812,7 @@ export interface GitHubService {
   getPullRequestTimeline(
     options: GetGitHubPullRequestTimelineOptions,
   ): Promise<GitHubPullRequestTimeline>;
+  getGitHubCheckDetails(options: GetGitHubCheckDetailsOptions): Promise<GitHubCheckDetails>;
   searchIssuesAndPrs(options: SearchGitHubIssuesAndPrsOptions): Promise<GitHubSearchResult>;
   createPullRequest(
     options: CreateGitHubPullRequestOptions,
@@ -745,6 +931,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   const cache = new Map<string, CacheEntry>();
   const inFlight = new Map<string, InFlightCacheEntry>();
   const pollTargets = new Map<string, GitHubPollTarget>();
+  const checkLogTailCache = new Map<string, { logTail: string; logTruncated: boolean }>();
   let api!: GitHubService;
 
   async function cached<T>(params: {
@@ -1084,6 +1271,94 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               error: mapPullRequestTimelineError(error),
             };
           }
+        },
+      });
+    },
+
+    getGitHubCheckDetails(input) {
+      return cached({
+        cwd: input.cwd,
+        method: "getGitHubCheckDetails",
+        args: {
+          repoOwner: input.repoOwner,
+          repoName: input.repoName,
+          checkRunId: input.checkRunId,
+          workflowRunId: input.workflowRunId,
+        },
+        readOptions: input,
+        load: async () => {
+          const repoPath = `repos/${input.repoOwner}/${input.repoName}`;
+          const checkRun = parseGitHubCheckRunDetails(
+            await run(["api", `${repoPath}/check-runs/${input.checkRunId}`], { cwd: input.cwd }),
+          );
+          const annotations = parseGitHubCheckAnnotations(
+            await run(
+              [
+                "api",
+                `${repoPath}/check-runs/${input.checkRunId}/annotations`,
+                "-f",
+                `per_page=${CHECK_ANNOTATION_PAGE_MAX}`,
+              ],
+              {
+                cwd: input.cwd,
+              },
+            ),
+          );
+          const workflowRunId = input.workflowRunId ?? checkRun.workflowRunId ?? null;
+          const failedJobs: GitHubCheckFailedJob[] = [];
+          let truncated = annotations.length >= CHECK_ANNOTATION_PAGE_MAX;
+
+          if (typeof workflowRunId === "number") {
+            const jobs = parseGitHubActionsJobs(
+              await run(
+                [
+                  "api",
+                  `${repoPath}/actions/runs/${workflowRunId}/jobs`,
+                  "-f",
+                  `per_page=${ACTIONS_JOB_PAGE_MAX}`,
+                ],
+                {
+                  cwd: input.cwd,
+                },
+              ),
+            );
+            const failed = jobs.filter(isFailedActionsJob);
+            truncated ||= jobs.length >= ACTIONS_JOB_PAGE_MAX;
+            truncated ||= failed.length > FAILED_CHECK_JOB_LIMIT;
+            for (const job of failed.slice(0, FAILED_CHECK_JOB_LIMIT)) {
+              const log = await getCachedCheckLogTail({
+                cwd: input.cwd,
+                repoPath,
+                job,
+                run,
+                cache: checkLogTailCache,
+              });
+              truncated ||= log.logTruncated;
+              failedJobs.push({
+                jobId: job.jobId,
+                name: job.name,
+                status: job.status,
+                conclusion: job.conclusion,
+                url: job.url,
+                logTail: log.logTail,
+                logTruncated: log.logTruncated,
+              });
+            }
+          }
+
+          return {
+            checkRunId: checkRun.checkRunId,
+            workflowRunId,
+            name: checkRun.name,
+            status: checkRun.status,
+            conclusion: checkRun.conclusion,
+            url: checkRun.url,
+            detailsUrl: checkRun.detailsUrl,
+            output: checkRun.output,
+            annotations,
+            failedJobs,
+            truncated,
+          };
         },
       });
     },
@@ -1945,10 +2220,19 @@ function parsePullRequestTimeline(
 ): GitHubPullRequestTimeline {
   const parsed = PullRequestTimelineGraphqlSchema.parse(JSON.parse(stdout || "{}"));
   const pullRequest = parsed.data?.repository?.pullRequest;
+  const reviewThreadItems = pullRequest
+    ? pullRequest.reviewThreads.nodes.flatMap(toPullRequestTimelineReviewThreadItems)
+    : [];
+  const reviewThreadItemIds = new Set(
+    reviewThreadItems.map((item) => item.id).filter((id) => id.length > 0),
+  );
   const items = pullRequest
     ? [
         ...pullRequest.reviews.nodes.flatMap(toPullRequestTimelineReviewItem),
-        ...pullRequest.comments.nodes.map(toPullRequestTimelineCommentItem),
+        ...pullRequest.comments.nodes
+          .filter((comment) => !reviewThreadItemIds.has(comment.id))
+          .map(toPullRequestTimelineCommentItem),
+        ...reviewThreadItems,
       ].sort(compareTimelineItems)
     : [];
   return {
@@ -1956,9 +2240,12 @@ function parsePullRequestTimeline(
     repoOwner: identity.repoOwner,
     repoName: identity.repoName,
     items,
-    // S3 deliberately caps timeline fetches at the first 100 reviews and first 100 comments.
+    // S3 deliberately caps timeline fetches at the first 100 reviews, comments, and review threads.
     truncated: Boolean(
-      pullRequest?.reviews.pageInfo.hasNextPage || pullRequest?.comments.pageInfo.hasNextPage,
+      pullRequest?.reviews.pageInfo.hasNextPage ||
+      pullRequest?.comments.pageInfo.hasNextPage ||
+      pullRequest?.reviewThreads.pageInfo.hasNextPage ||
+      pullRequest?.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage),
     ),
     error: pullRequest ? null : { kind: "not_found", message: "Pull request not found" },
   };
@@ -1977,6 +2264,7 @@ function toPullRequestTimelineReviewItem(
       id: review.id,
       author: review.author?.login ?? "unknown",
       authorUrl: review.author?.url ?? null,
+      avatarUrl: review.author?.avatarUrl ?? null,
       body: review.body ?? "",
       createdAt: parseOptionalTime(review.submittedAt ?? null),
       url: review.url,
@@ -1993,10 +2281,144 @@ function toPullRequestTimelineCommentItem(
     id: comment.id,
     author: comment.author?.login ?? "unknown",
     authorUrl: comment.author?.url ?? null,
+    avatarUrl: comment.author?.avatarUrl ?? null,
     body: comment.body ?? "",
     createdAt: parseOptionalTime(comment.createdAt ?? null),
     url: comment.url,
   };
+}
+
+function toPullRequestTimelineReviewThreadItems(
+  thread: z.infer<typeof PullRequestReviewThreadNodeSchema>,
+): PullRequestTimelineItem[] {
+  return thread.comments.nodes.map((comment) => ({
+    ...toPullRequestTimelineCommentItem(comment),
+    ...(comment.pullRequestReview?.id ? { reviewId: comment.pullRequestReview.id } : {}),
+    location: {
+      path: thread.path,
+      ...(thread.line !== null && thread.line !== undefined ? { line: thread.line } : {}),
+      ...(thread.startLine !== null && thread.startLine !== undefined
+        ? { startLine: thread.startLine }
+        : {}),
+      ...(thread.id ? { threadId: thread.id } : {}),
+      isResolved: thread.isResolved,
+      isOutdated: thread.isOutdated,
+    },
+  }));
+}
+
+function parseGitHubCheckRunDetails(stdout: string): GitHubCheckDetails {
+  const parsed = GitHubCheckRunDetailsSchema.parse(JSON.parse(stdout || "{}"));
+  return {
+    checkRunId: parsed.id,
+    workflowRunId: parsed.check_suite?.workflow_run?.id ?? null,
+    name: parsed.name,
+    status: parsed.status,
+    conclusion: parsed.conclusion,
+    url: parsed.html_url,
+    detailsUrl: parsed.details_url,
+    output: parsed.output,
+    annotations: [],
+    failedJobs: [],
+    truncated: false,
+  };
+}
+
+function parseGitHubCheckAnnotations(stdout: string): GitHubCheckAnnotation[] {
+  return GitHubCheckAnnotationsSchema.parse(JSON.parse(stdout || "[]")).map((annotation) => {
+    const result: GitHubCheckAnnotation = {};
+    if (annotation.path) result.path = annotation.path;
+    if (annotation.start_line !== undefined) result.startLine = annotation.start_line;
+    if (annotation.end_line !== undefined) result.endLine = annotation.end_line;
+    if (annotation.annotation_level) result.annotationLevel = annotation.annotation_level;
+    if (annotation.message) result.message = annotation.message;
+    if (annotation.title) result.title = annotation.title;
+    if (annotation.raw_details) result.rawDetails = annotation.raw_details;
+    return result;
+  });
+}
+
+function parseGitHubActionsJobs(stdout: string): GitHubCheckFailedJob[] {
+  return GitHubActionsJobsSchema.parse(JSON.parse(stdout || "{}")).jobs.map((job) => {
+    const result: GitHubCheckFailedJob = {
+      jobId: job.id,
+      name: job.name,
+      status: job.status,
+      conclusion: job.conclusion,
+      url: job.html_url,
+    };
+    if (job.completed_at) result.completedAt = job.completed_at;
+    return result;
+  });
+}
+
+function isFailedActionsJob(job: GitHubCheckFailedJob): boolean {
+  return (
+    job.conclusion === "failure" ||
+    job.conclusion === "cancelled" ||
+    job.conclusion === "timed_out" ||
+    job.conclusion === "action_required"
+  );
+}
+
+async function getCachedCheckLogTail(input: {
+  cwd: string;
+  repoPath: string;
+  job: GitHubCheckFailedJob & { completedAt?: string };
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+  cache: Map<string, { logTail: string; logTruncated: boolean }>;
+}): Promise<{ logTail: string; logTruncated: boolean }> {
+  const key = `${input.job.jobId}:${input.job.completedAt ?? ""}`;
+  const cached = input.cache.get(key);
+  if (cached) {
+    input.cache.delete(key);
+    input.cache.set(key, cached);
+    return cached;
+  }
+
+  const capped = capCheckLogTail(
+    await input.run(["api", `${input.repoPath}/actions/jobs/${input.job.jobId}/logs`], {
+      cwd: input.cwd,
+    }),
+  );
+  input.cache.set(key, capped);
+  while (input.cache.size > CHECK_LOG_TAIL_CACHE_MAX_ENTRIES) {
+    const oldestKey = input.cache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    input.cache.delete(oldestKey);
+  }
+  return capped;
+}
+
+function capCheckLogTail(log: string): { logTail: string; logTruncated: boolean } {
+  const lines = log.split("\n");
+  let truncated = lines.length > CHECK_LOG_TAIL_MAX_LINES;
+  let tail = lines.slice(-CHECK_LOG_TAIL_MAX_LINES).join("\n");
+
+  if (Buffer.byteLength(tail, "utf8") > CHECK_LOG_TAIL_MAX_BYTES) {
+    truncated = true;
+    tail = utf8SuffixWithinBytes(tail, CHECK_LOG_TAIL_MAX_BYTES);
+  }
+
+  return { logTail: tail, logTruncated: truncated };
+}
+
+function utf8SuffixWithinBytes(value: string, maxBytes: number): string {
+  let lowerBound = 0;
+  let upperBound = value.length;
+
+  while (lowerBound < upperBound) {
+    const midpoint = Math.floor((lowerBound + upperBound) / 2);
+    if (Buffer.byteLength(value.slice(midpoint), "utf8") > maxBytes) {
+      lowerBound = midpoint + 1;
+    } else {
+      upperBound = midpoint;
+    }
+  }
+
+  return value.slice(lowerBound);
 }
 
 function mapTimelineReviewState(
@@ -2160,6 +2582,10 @@ function buildPullRequestCheck(
       url: typeof context.detailsUrl === "string" ? context.detailsUrl : null,
       ...(typeof context.workflowName === "string" && context.workflowName.trim().length > 0
         ? { workflow: context.workflowName }
+        : {}),
+      ...(typeof context.databaseId === "number" ? { checkRunId: context.databaseId } : {}),
+      ...(typeof context.checkSuite?.workflowRun?.databaseId === "number"
+        ? { workflowRunId: context.checkSuite.workflowRun.databaseId }
         : {}),
       ...formatCheckRunDuration(context),
       recency: getCheckRunRecency(context),

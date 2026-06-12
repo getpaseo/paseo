@@ -66,7 +66,9 @@ function imageWithId(id: string): AttachmentMetadata {
   return { ...imageMetadata, id, storageKey: id, fileName: `${id}.png` };
 }
 
-function reviewWorkspaceAttachment(body: string): WorkspaceComposerAttachment {
+function reviewWorkspaceAttachment(
+  body: string,
+): Extract<WorkspaceComposerAttachment, { kind: "review" }> {
   const attachment: Extract<AgentAttachment, { type: "review" }> = {
     type: "review",
     mimeType: "application/paseo-review",

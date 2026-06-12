@@ -40,7 +40,7 @@ import {
 } from "./workspace-git-metadata.js";
 import { checkoutLiteFromGitSnapshot, normalizeWorkspaceId } from "./workspace-registry-model.js";
 
-const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
+const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 1_000;
 const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
 export const WORKSPACE_GIT_SELF_HEAL_INTERVAL_MS = 60_000;
 const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
@@ -158,6 +158,7 @@ export interface WorkspaceGitService {
     onChange: () => void,
   ): Promise<{ repoRoot: string | null; unsubscribe: () => void }>;
   scheduleRefreshForCwd(cwd: string): void;
+  onWorkspaceStateMayHaveChanged(cwd: string): void;
   dispose(): void;
 }
 
@@ -217,11 +218,10 @@ interface WorkspaceGitRefreshRequest {
   notify: boolean;
 }
 
-interface QueuedWorkspaceGitRefresh {
-  force: boolean;
-  includeGitHub: boolean;
-  reason: string;
-  notify: boolean;
+interface ScheduledWorkspaceGitRefreshOptions {
+  force?: boolean;
+  includeGitHub?: boolean;
+  reason?: string;
 }
 
 type WorkspaceGitRefreshState =
@@ -233,7 +233,7 @@ type WorkspaceGitRefreshState =
       promise: Promise<WorkspaceGitRuntimeSnapshot>;
       force: boolean;
       includeGitHub: boolean;
-      queued: QueuedWorkspaceGitRefresh | null;
+      queued: WorkspaceGitRefreshRequest | null;
     };
 
 interface WorkspaceGitServiceDependencies {
@@ -268,6 +268,7 @@ interface WorkspaceGitTarget {
   listeners: Set<WorkspaceGitListener>;
   watchers: FSWatcher[];
   debounceTimer: NodeJS.Timeout | null;
+  pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
   selfHealTimer: NodeJS.Timeout | null;
   githubPollSubscription: { unsubscribe: () => void } | null;
   githubPollKey: string | null;
@@ -686,6 +687,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
   }
 
+  onWorkspaceStateMayHaveChanged(cwd: string): void {
+    const normalizedCwd = normalizeWorkspaceId(cwd);
+    const target = this.workspaceTargets.get(normalizedCwd);
+    if (!target || target.closed) {
+      return;
+    }
+    this.deps.github.invalidate({ cwd: normalizedCwd });
+    this.scheduleWorkspaceRefresh(target, {
+      force: true,
+      includeGitHub: true,
+      reason: "external-state-change",
+    });
+  }
+
   dispose(): void {
     for (const target of this.workspaceTargets.values()) {
       this.closeWorkspaceTarget(target);
@@ -799,6 +814,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       listeners: new Set(),
       watchers: [],
       debounceTimer: null,
+      pendingDebounceRequest: null,
       selfHealTimer: null,
       githubPollSubscription: null,
       githubPollKey: null,
@@ -1100,7 +1116,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private scheduleWorkspaceRefresh(
     targetOrCwd: WorkspaceGitTarget | string,
-    options?: { force?: boolean; reason?: string },
+    options?: ScheduledWorkspaceGitRefreshOptions,
   ): void {
     const target =
       typeof targetOrCwd === "string"
@@ -1109,6 +1125,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!target || target.closed || this.workspaceTargets.get(target.cwd) !== target) {
       return;
     }
+
+    const request = this.buildScheduledRefreshRequest(options);
+    target.pendingDebounceRequest = this.mergeRefreshRequests(
+      target.pendingDebounceRequest,
+      request,
+    );
 
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
@@ -1119,12 +1141,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         return;
       }
       target.debounceTimer = null;
-      void this.refreshWorkspaceTarget(target, {
-        force: options?.force === true,
-        includeGitHub: false,
-        reason: options?.reason ?? "watch",
-        notify: true,
-      });
+      const merged = target.pendingDebounceRequest;
+      target.pendingDebounceRequest = null;
+      if (merged) {
+        void this.refreshWorkspaceTarget(target, merged);
+      }
     }, WORKSPACE_GIT_WATCH_DEBOUNCE_MS);
   }
 
@@ -1460,7 +1481,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const needsGitHubRefresh =
         request.force && request.includeGitHub && !target.refreshState.includeGitHub;
       if (needsForcedRefresh || needsGitHubRefresh) {
-        target.refreshState.queued = this.mergeQueuedRefresh(target.refreshState.queued, request);
+        target.refreshState.queued = this.mergeRefreshRequests(target.refreshState.queued, request);
       }
       return target.refreshState.promise;
     }
@@ -1532,27 +1553,33 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return this.deps.now().getTime() - target.lastShellOutAtMs < WORKSPACE_GIT_INTERNAL_MIN_GAP_MS;
   }
 
-  private mergeQueuedRefresh(
-    queued: QueuedWorkspaceGitRefresh | null,
+  private buildScheduledRefreshRequest(
+    options: ScheduledWorkspaceGitRefreshOptions | undefined,
+  ): WorkspaceGitRefreshRequest {
+    return {
+      force: options?.force === true,
+      includeGitHub: options?.includeGitHub ?? false,
+      reason: options?.reason ?? "watch",
+      notify: true,
+    };
+  }
+
+  private mergeRefreshRequests(
+    pending: WorkspaceGitRefreshRequest | null,
     request: WorkspaceGitRefreshRequest,
-  ): QueuedWorkspaceGitRefresh {
-    if (!queued) {
-      return {
-        force: request.force,
-        includeGitHub: request.includeGitHub,
-        reason: request.reason,
-        notify: request.notify,
-      };
+  ): WorkspaceGitRefreshRequest {
+    if (!pending) {
+      return request;
     }
 
-    const force = queued.force || request.force;
-    const upgradesForce = request.force && !queued.force;
-    const upgradesGitHub = request.includeGitHub && !queued.includeGitHub;
+    const force = pending.force || request.force;
+    const upgradesForce = request.force && !pending.force;
+    const upgradesGitHub = request.includeGitHub && !pending.includeGitHub;
     return {
       force,
-      includeGitHub: queued.includeGitHub || request.includeGitHub,
-      reason: upgradesForce || upgradesGitHub ? request.reason : queued.reason,
-      notify: queued.notify || request.notify,
+      includeGitHub: pending.includeGitHub || request.includeGitHub,
+      reason: upgradesForce || upgradesGitHub ? request.reason : pending.reason,
+      notify: pending.notify || request.notify,
     };
   }
 

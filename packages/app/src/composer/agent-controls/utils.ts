@@ -1,16 +1,21 @@
 import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import { i18n } from "@/i18n/i18next";
 
 export type ExplainedAgentControl = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "green" | "yellow";
+export type AgentControlHintKey =
+  | "agentControls.hints.thinking"
+  | "agentControls.hints.model"
+  | "agentControls.hints.mode";
 
-export function getAgentControlHint(selector: ExplainedAgentControl): string {
+export function getAgentControlHintKey(selector: ExplainedAgentControl): AgentControlHintKey {
   switch (selector) {
     case "thinking":
-      return "Thinking mode";
+      return "agentControls.hints.thinking";
     case "model":
-      return "Change model";
+      return "agentControls.hints.model";
     case "mode":
-      return "Change permission mode";
+      return "agentControls.hints.mode";
     default:
       throw new Error("unreachable");
   }
@@ -79,7 +84,7 @@ export function formatThinkingOptionLabel(option: ControlLabelInput): string {
   const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
 
   if (compactId === "xhigh" || compactLabel === "xhigh") {
-    return "Extra high";
+    return i18n.t("agentControls.thinking.extraHigh");
   }
 
   return formatControlLabel(option, true);
@@ -143,17 +148,19 @@ function resolveModelDisplay(
   selectedModel: AgentModelDefinition | null,
   preferredModelId: string | null,
   fallbackModel: AgentModelDefinition | null,
+  unknownModelLabel: string,
 ): { activeModelId: string | null; displayModel: string } {
   return {
     activeModelId: selectedModel?.id ?? preferredModelId ?? null,
     displayModel:
-      selectedModel?.label ?? preferredModelId ?? fallbackModel?.label ?? "Unknown model",
+      selectedModel?.label ?? preferredModelId ?? fallbackModel?.label ?? unknownModelLabel,
   };
 }
 
 function resolveThinkingDisplay(
   effectiveThinking: ThinkingOption | null,
   selectedThinkingId: string | null,
+  unknownThinkingLabel: string,
 ): string {
   if (effectiveThinking) {
     return formatThinkingOptionLabel(effectiveThinking);
@@ -163,7 +170,7 @@ function resolveThinkingDisplay(
     return formatThinkingOptionLabel({ id: selectedThinkingId });
   }
 
-  return "Unknown";
+  return unknownThinkingLabel;
 }
 
 export function resolveAgentModelSelection(input: {
@@ -189,13 +196,18 @@ export function resolveAgentModelSelection(input: {
     selectedModel,
     preferredModelId,
     fallbackModel,
+    i18n.t("agentControls.model.unknown"),
   );
 
   const thinkingOptions = selectedModel?.thinkingOptions ?? null;
   const resolvedThinkingId = resolveThinkingId(explicitThinkingOptionId, selectedModel);
   const effectiveThinking = resolveEffectiveThinking(thinkingOptions, resolvedThinkingId);
   const selectedThinkingId = effectiveThinking?.id ?? null;
-  const displayThinking = resolveThinkingDisplay(effectiveThinking, selectedThinkingId);
+  const displayThinking = resolveThinkingDisplay(
+    effectiveThinking,
+    selectedThinkingId,
+    i18n.t("agentControls.thinking.unknown"),
+  );
 
   return {
     selectedModel,

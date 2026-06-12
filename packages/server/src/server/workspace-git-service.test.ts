@@ -878,7 +878,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(repoRootWatch).toBeDefined();
 
     repoRootWatch?.callback();
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1_000);
     await flushPromises();
 
     expect(getCheckoutShortstat).toHaveBeenLastCalledWith(

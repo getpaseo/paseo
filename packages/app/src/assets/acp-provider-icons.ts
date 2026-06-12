@@ -1,6 +1,7 @@
 // Vendored ACP provider SVG assets.
 
 export const ACP_PROVIDER_ICON_SVGS = {
+  agy: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd">\n  <path d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z"/>\n</svg>\n',
   "agoragentic-acp":
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">\n  <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>\n  <path d="M5.5 10.5L8 4L10.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>\n  <line x1="6.25" y1="8.75" x2="9.75" y2="8.75" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>\n</svg>\n',
   "amp-acp":

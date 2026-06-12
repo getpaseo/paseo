@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Modal,
@@ -442,6 +443,7 @@ export function DropdownMenuContent({
   scrollable?: boolean;
   testID?: string;
 }>): ReactElement | null {
+  const { t } = useTranslation();
   const { open, setOpen, triggerRef, flushPendingSelect } =
     useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
@@ -625,7 +627,7 @@ export function DropdownMenuContent({
       <View style={styles.overlay}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Menu backdrop"
+          accessibilityLabel={t("menu.backdrop")}
           style={styles.backdrop}
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}
@@ -899,8 +901,6 @@ const styles = StyleSheet.create((theme) => ({
   labelText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
   },
   separator: {
     height: 1,

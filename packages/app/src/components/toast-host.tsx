@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { AlertTriangle, CheckCircle2 } from "lucide-react-native";
@@ -49,6 +50,7 @@ export function useToastHost(): {
   dismiss: () => void;
 } {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const [toast, setToast] = useState<ToastState | null>(null);
   const idRef = useRef(0);
 
@@ -85,13 +87,13 @@ export function useToastHost(): {
     () => ({
       show,
       copied: (label?: string) =>
-        show(label ? `Copied ${label}` : "Copied", {
+        show(label ? t("common.states.copiedLabel", { label }) : t("common.states.copied"), {
           variant: "success",
           icon: <CheckCircle2 size={18} color={theme.colors.foreground} />,
         }),
       error: (message: string) => show(message, { variant: "error", durationMs: 3200 }),
     }),
-    [show, theme.colors.foreground],
+    [show, theme.colors.foreground, t],
   );
 
   const dismiss = useCallback(() => {

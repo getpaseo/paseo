@@ -3,17 +3,17 @@ import {
   formatAgentModeLabel,
   getFeatureHighlightColor,
   getFeatureTooltip,
-  getAgentControlHint,
+  getAgentControlHintKey,
   formatThinkingOptionLabel,
   normalizeModelId,
   resolveAgentModelSelection,
 } from "./utils";
 
-describe("getAgentControlHint", () => {
-  it("explains what each editable agent control does", () => {
-    expect(getAgentControlHint("thinking")).toBe("Thinking mode");
-    expect(getAgentControlHint("model")).toBe("Change model");
-    expect(getAgentControlHint("mode")).toBe("Change permission mode");
+describe("getAgentControlHintKey", () => {
+  it("returns translation keys for each editable agent control hint", () => {
+    expect(getAgentControlHintKey("thinking")).toBe("agentControls.hints.thinking");
+    expect(getAgentControlHintKey("model")).toBe("agentControls.hints.model");
+    expect(getAgentControlHintKey("mode")).toBe("agentControls.hints.mode");
   });
 });
 

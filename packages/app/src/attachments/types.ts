@@ -41,14 +41,35 @@ export interface BrowserElementAttachment {
   formatted: string;
 }
 
-export type ComposerAttachment =
+export type PullRequestContextAttachmentKind =
+  | "github.pull_request_comment"
+  | "github.pull_request_review"
+  | "github.pull_request_check";
+
+interface PullRequestContextAttachmentFields {
+  id: string;
+  title: string;
+  subtitle?: string;
+  text: string;
+  url?: string | null;
+}
+
+export type PullRequestContextAttachment =
+  | ({ kind: "github.pull_request_comment" } & PullRequestContextAttachmentFields)
+  | ({ kind: "github.pull_request_review" } & PullRequestContextAttachmentFields)
+  | ({ kind: "github.pull_request_check" } & PullRequestContextAttachmentFields);
+
+export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "github_issue"; item: GitHubSearchItem }
-  | { kind: "github_pr"; item: GitHubSearchItem }
+  | { kind: "github_pr"; item: GitHubSearchItem };
+
+export type WorkspaceComposerAttachment =
   | {
       kind: "browser_element";
       attachment: BrowserElementAttachment;
     }
+  | PullRequestContextAttachment
   | {
       kind: "review";
       attachment: Extract<AgentAttachment, { type: "review" }>;
@@ -56,15 +77,7 @@ export type ComposerAttachment =
       commentCount: number;
     };
 
-export type UserComposerAttachment = Exclude<
-  ComposerAttachment,
-  { kind: "review" } | { kind: "browser_element" }
->;
-
-export type WorkspaceComposerAttachment = Extract<
-  ComposerAttachment,
-  { kind: "review" } | { kind: "browser_element" }
->;
+export type ComposerAttachment = UserComposerAttachment | WorkspaceComposerAttachment;
 
 export type AttachmentDataSource =
   | { kind: "bytes"; bytes: Uint8Array }

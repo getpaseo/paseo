@@ -3,6 +3,7 @@ import { Pressable, Text, View, type PressableStateCallbackType } from "react-na
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
+import { useTranslation } from "react-i18next";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
@@ -16,6 +17,7 @@ interface ProjectsScreenProps {
 }
 
 export default function ProjectsScreen({ view }: ProjectsScreenProps) {
+  const { t } = useTranslation();
   const { projects, hostErrors, isLoading } = useProjects();
   const selectedProjectKey = view.kind === "project" ? view.projectKey : null;
   const iconTargets = useMemo(
@@ -49,7 +51,7 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
   if (projects.length === 0) {
     return (
       <View style={styles.centered} testID="projects-list">
-        <Text style={styles.emptyText}>No projects yet</Text>
+        <Text style={styles.emptyText}>{t("sidebar.project.empty.title")}</Text>
       </View>
     );
   }
@@ -73,11 +75,15 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
 }
 
 function HostErrorsBanner({ errors }: { errors: ProjectHostError[] }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.errorsBanner} testID="projects-host-errors">
       {errors.map((error) => (
         <Text key={error.serverId} style={styles.errorsBannerText}>
-          {`Couldn't load projects from host ${error.serverName}: ${error.message}`}
+          {t("settings.projectList.hostLoadFailed", {
+            hostName: error.serverName,
+            message: error.message,
+          })}
         </Text>
       ))}
     </View>
@@ -92,6 +98,7 @@ interface ProjectRowProps {
 }
 
 function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowProps) {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { projectKey, projectName } = project;
 
@@ -116,7 +123,7 @@ function ProjectRow({ project, isFirst, isSelected, iconDataUri }: ProjectRowPro
       style={rowStyle}
       onPress={handleNavigate}
       accessibilityRole="button"
-      accessibilityLabel={`Edit ${projectName}`}
+      accessibilityLabel={t("settings.projectList.editProject", { projectName })}
       testID={`project-row-${projectKey}`}
       data-selected={isSelected ? "true" : "false"}
     >

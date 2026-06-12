@@ -127,12 +127,80 @@ interface AgentStreamStressRequest {
   coalesced: boolean;
 }
 
+interface MockQuestionOption {
+  label: string;
+  description?: string;
+}
+
+interface MockQuestionPromptQuestion {
+  question: string;
+  header: string;
+  options: MockQuestionOption[];
+  multiSelect: boolean;
+  allowOther?: boolean;
+  allowEmpty?: boolean;
+  placeholder?: string;
+  dismissLabel?: string;
+}
+
+interface MockQuestionPromptRequest {
+  questions: MockQuestionPromptQuestion[];
+}
+
 function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+plan\s+approval/i.test(promptToText(prompt));
 }
 
-function shouldEmitQuestionPrompt(prompt: AgentPromptInput): boolean {
-  return /emit\s+(?:a\s+)?synthetic\s+questions?/i.test(promptToText(prompt));
+function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
+  const text = promptToText(prompt);
+  if (!/emit\s+(?:a\s+)?synthetic\s+questions?/i.test(text)) {
+    return null;
+  }
+
+  if (/free[-\s]?write|freeform|text[-\s]?only/i.test(text)) {
+    return {
+      questions: [
+        {
+          question: "What is the GitHub private repo URL to push to?",
+          header: "repoUrl",
+          options: [],
+          multiSelect: false,
+          placeholder: "git@github.com:user/repo.git",
+        },
+        {
+          question: "What should the first commit message be?",
+          header: "commitMessage",
+          options: [],
+          multiSelect: false,
+          placeholder: "Initial commit",
+        },
+      ],
+    };
+  }
+
+  return {
+    questions: [
+      {
+        question: "Which surface should this apply to?",
+        header: "surface",
+        options: [{ label: "App" }, { label: "Desktop" }],
+        multiSelect: false,
+      },
+      {
+        question: "Which rollout should we use?",
+        header: "rollout",
+        options: [{ label: "Immediately" }, { label: "Behind feature flag" }],
+        multiSelect: false,
+      },
+      {
+        question: "What success criteria should we use?",
+        header: "success",
+        options: [],
+        multiSelect: false,
+        placeholder: "Describe success...",
+      },
+    ],
+  };
 }
 
 function resolveModelProfile(modelId: string | null | undefined): {
@@ -536,10 +604,11 @@ export class MockLoadTestAgentSession implements AgentSession {
 
     const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
     const stress = parseAgentStreamStressPrompt(prompt);
+    const questionPrompt = parseMockQuestionPrompt(prompt);
     if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
-    } else if (shouldEmitQuestionPrompt(prompt)) {
-      this.scheduleQuestionPromptTurn(turn);
+    } else if (questionPrompt) {
+      this.scheduleQuestionPromptTurn(turn, questionPrompt);
     } else if (largePayload) {
       this.scheduleLargePayloadTurn(turn, largePayload);
     } else if (stress) {
@@ -712,9 +781,12 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
-  private scheduleQuestionPromptTurn(turn: ActiveTurn): void {
+  private scheduleQuestionPromptTurn(
+    turn: ActiveTurn,
+    questionPrompt: MockQuestionPromptRequest,
+  ): void {
     turn.timer = setTimeout(() => {
-      this.emitQuestionPromptTurn(turn);
+      this.emitQuestionPromptTurn(turn, questionPrompt);
     }, 0);
     turn.timer.unref?.();
   }
@@ -771,7 +843,10 @@ export class MockLoadTestAgentSession implements AgentSession {
     });
   }
 
-  private emitQuestionPromptTurn(turn: ActiveTurn): void {
+  private emitQuestionPromptTurn(
+    turn: ActiveTurn,
+    questionPrompt: MockQuestionPromptRequest,
+  ): void {
     if (this.activeTurn !== turn) {
       return;
     }
@@ -790,27 +865,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       kind: "question",
       title: "Questions",
       input: {
-        questions: [
-          {
-            question: "Which surface should this apply to?",
-            header: "surface",
-            options: [{ label: "App" }, { label: "Desktop" }],
-            multiSelect: false,
-          },
-          {
-            question: "Which rollout should we use?",
-            header: "rollout",
-            options: [{ label: "Immediately" }, { label: "Behind feature flag" }],
-            multiSelect: false,
-          },
-          {
-            question: "What success criteria should we use?",
-            header: "success",
-            options: [],
-            multiSelect: false,
-            placeholder: "Describe success...",
-          },
-        ],
+        questions: questionPrompt.questions,
       },
       metadata: {
         source: "mock_questions",

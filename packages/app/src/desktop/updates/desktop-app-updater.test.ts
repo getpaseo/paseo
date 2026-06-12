@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   createDesktopAppUpdater,
   formatStatusText,
@@ -291,5 +292,33 @@ describe("formatStatusText", () => {
         formatLastCheckedAt,
       }),
     ).toBe("Restart now");
+  });
+
+  it("uses the active app language for local status wrappers", async () => {
+    await i18n.changeLanguage("zh-CN");
+    try {
+      expect(
+        formatStatusText({
+          status: "checking",
+          availableUpdate: null,
+          installMessage: null,
+          lastCheckedAt: null,
+          formatVersion,
+          formatLastCheckedAt,
+        }),
+      ).toBe("正在检查 app 更新...");
+      expect(
+        formatStatusText({
+          status: "available",
+          availableUpdate: buildFakeCheckResult({ latestVersion: "1.2.3" }),
+          installMessage: null,
+          lastCheckedAt: null,
+          formatVersion,
+          formatLastCheckedAt,
+        }),
+      ).toBe("更新已就绪：v1.2.3");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
 });

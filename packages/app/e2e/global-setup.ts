@@ -533,13 +533,23 @@ async function startRelay(excludedPorts: Set<number>): Promise<number> {
   );
 }
 
-function startMetro(metroPort: number, buffer: ReturnType<typeof createLineBuffer>): ChildProcess {
+function startMetro(input: {
+  metroPort: number;
+  daemonPort: number;
+  buffer: ReturnType<typeof createLineBuffer>;
+}): ChildProcess {
   const appDir = path.resolve(__dirname, "..");
-  const child = spawn("npx", ["expo", "start", "--web", "--port", String(metroPort)], {
+  const child = spawn("npx", ["expo", "start", "--web", "--port", String(input.metroPort)], {
     cwd: appDir,
     env: {
       ...process.env,
       BROWSER: "none",
+      ...(process.env.E2E_DESKTOP_RUNTIME === "1"
+        ? {
+            PASEO_WEB_PLATFORM: "electron",
+            EXPO_PUBLIC_LOCAL_DAEMON: `127.0.0.1:${input.daemonPort}`,
+          }
+        : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
@@ -551,7 +561,7 @@ function startMetro(metroPort: number, buffer: ReturnType<typeof createLineBuffe
       .split("\n")
       .filter((line) => line.trim());
     for (const line of lines) {
-      buffer.add(`[stdout] ${line}`);
+      input.buffer.add(`[stdout] ${line}`);
       console.log(`[metro] ${line}`);
     }
   });
@@ -562,7 +572,7 @@ function startMetro(metroPort: number, buffer: ReturnType<typeof createLineBuffe
       .split("\n")
       .filter((line) => line.trim());
     for (const line of lines) {
-      buffer.add(`[stderr] ${line}`);
+      input.buffer.add(`[stderr] ${line}`);
       console.error(`[metro] ${line}`);
     }
   });
@@ -685,7 +695,11 @@ export default async function globalSetup() {
 
   try {
     const relayPort = await startRelay(new Set([port, metroPort]));
-    metroProcess = startMetro(metroPort, metroLineBuffer);
+    metroProcess = startMetro({
+      metroPort,
+      daemonPort: port,
+      buffer: metroLineBuffer,
+    });
     daemonProcess = startDaemon({
       port,
       relayPort,

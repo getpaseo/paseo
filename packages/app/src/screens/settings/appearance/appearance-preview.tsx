@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Text, View, type TextStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
@@ -134,6 +135,7 @@ function markerStyle(type: RowType) {
 // UnistylesRuntime.updateTheme commits a setting; the optional `overrides` layer
 // inline styles for live-while-typing feedback on the code font.
 export function AppearancePreview({ overrides }: AppearancePreviewProps) {
+  const { t } = useTranslation();
   const rows = useMemo(() => buildUnifiedRows(), []);
   const codeOverride = useMemo(() => buildCodeOverride(overrides), [overrides]);
   const codeStyle = useMemo(() => [styles.codeLine, codeOverride], [codeOverride]);
@@ -149,7 +151,7 @@ export function AppearancePreview({ overrides }: AppearancePreviewProps) {
   return (
     <View
       accessibilityRole="image"
-      accessibilityLabel="Live preview of the syntax theme and code font"
+      accessibilityLabel={t("settings.appearance.syntax.previewAccessibility")}
       dataSet={CODE_SURFACE_DATASET}
       style={styles.card}
     >

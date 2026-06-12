@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
   FetchRecentProviderSessionEntry,
@@ -14,6 +15,7 @@ import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/com
 import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { i18n } from "@/i18n/i18next";
 import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
@@ -63,8 +65,10 @@ function buildSessionsQueriesConfig(args: {
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   cwd: string | null | undefined;
+  hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, sessionsQueryRoot, visible, client, cwd } = args;
+  const { providersToFetch, sessionsQueryRoot, visible, client, cwd, hostDisconnectedMessage } =
+    args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
@@ -72,7 +76,7 @@ function buildSessionsQueriesConfig(args: {
     enabled,
     queryFn: async () => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
       }
       return await client.fetchRecentProviderSessions({
         ...(cwd ? { cwd } : {}),
@@ -105,33 +109,36 @@ function SheetStatusMessages({
   importErrored,
 }: SheetStatusMessagesProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   if (!isClientReady) {
-    return <Text style={styles.statusText}>Connect to a host to import sessions</Text>;
+    return <Text style={styles.statusText}>{t("importSession.status.connectHost")}</Text>;
   }
   if (isSnapshotUnsupported) {
-    return <Text style={styles.statusText}>Update the host to import sessions.</Text>;
+    return <Text style={styles.statusText}>{t("importSession.status.updateHost")}</Text>;
   }
   return (
     <>
       {hasNoImportableProviders ? (
-        <Text style={styles.statusText}>No importable providers are enabled.</Text>
+        <Text style={styles.statusText}>{t("importSession.status.noProviders")}</Text>
       ) : null}
       {isLoadingSessions && !hasRows ? (
         <View style={styles.statusRow}>
           <LoadingSpinner color={theme.colors.foregroundMuted} />
-          <Text style={styles.statusText}>Loading recent sessions...</Text>
+          <Text style={styles.statusText}>{t("importSession.status.loading")}</Text>
         </View>
       ) : null}
       {allQueriesErrored ? (
-        <Text style={styles.statusText}>Could not load recent sessions.</Text>
+        <Text style={styles.statusText}>{t("importSession.status.failedAll")}</Text>
       ) : null}
       {!allQueriesErrored && erroredProviderLabels.length > 0 ? (
         <Text style={styles.statusText}>
-          Could not load sessions for {erroredProviderLabels.join(", ")}.
+          {t("importSession.status.failedProviders", {
+            providers: erroredProviderLabels.join(", "),
+          })}
         </Text>
       ) : null}
       {importErrored ? (
-        <Text style={styles.statusText}>Could not import selected session.</Text>
+        <Text style={styles.statusText}>{t("importSession.status.failedImport")}</Text>
       ) : null}
     </>
   );
@@ -139,6 +146,7 @@ function SheetStatusMessages({
 
 function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPress: () => void }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const pressableStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.refreshButton,
@@ -150,7 +158,7 @@ function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPre
     <Pressable
       onPress={onPress}
       disabled={isRefreshing}
-      accessibilityLabel="Refresh sessions"
+      accessibilityLabel={t("importSession.actions.refresh")}
       accessibilityRole="button"
       testID="import-session-refresh"
       style={pressableStyle}
@@ -192,6 +200,7 @@ function ImportSessionSheetRow({
   onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
   const lastActivity = formatTimeAgo(new Date(entry.lastActivityAt));
@@ -229,7 +238,9 @@ function ImportSessionSheetRow({
           <Text style={styles.rowTitle} numberOfLines={1}>
             {title}
           </Text>
-          <Text style={styles.rowMeta}>{importing ? "Importing..." : lastActivity}</Text>
+          <Text style={styles.rowMeta}>
+            {importing ? t("importSession.row.importing") : lastActivity}
+          </Text>
         </View>
         <Text style={styles.rowPreview} numberOfLines={2}>
           {promptPreview}
@@ -253,6 +264,7 @@ export function ImportSessionSheet({
   onImportedAgent,
   onImported,
 }: ImportSessionSheetProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
 
@@ -284,8 +296,9 @@ export function ImportSessionSheet({
         visible,
         client,
         cwd,
+        hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, sessionsQueryRoot, visible, client, cwd],
+    [providersToFetch, sessionsQueryRoot, visible, client, cwd, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -318,19 +331,20 @@ export function ImportSessionSheet({
 
   const filterComboboxOptions = useMemo<ComboboxOption[]>(
     () => [
-      { id: ALL_FILTER_VALUE, label: "All providers" },
+      { id: ALL_FILTER_VALUE, label: t("importSession.filters.all") },
       ...filterProviders.map((provider) => ({
         id: provider,
         label: providerLabelById.get(provider) ?? provider,
       })),
     ],
-    [filterProviders, providerLabelById],
+    [filterProviders, providerLabelById, t],
   );
 
   const selectedProviderLabel = useMemo(
     () =>
-      filterComboboxOptions.find((opt) => opt.id === selectedProvider)?.label ?? "All providers",
-    [filterComboboxOptions, selectedProvider],
+      filterComboboxOptions.find((opt) => opt.id === selectedProvider)?.label ??
+      t("importSession.filters.all"),
+    [filterComboboxOptions, selectedProvider, t],
   );
 
   const handleFilterOpen = useCallback(() => setIsFilterOpen(true), []);
@@ -385,7 +399,7 @@ export function ImportSessionSheet({
   const importMutation = useMutation({
     mutationFn: async (entry: FetchRecentProviderSessionEntry) => {
       if (!client) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       if (!entry.cwd) {
         throw new Error("Session is missing a working directory");
@@ -430,10 +444,10 @@ export function ImportSessionSheet({
 
   const header = useMemo<SheetHeader>(
     () => ({
-      title: "Import session",
+      title: t("importSession.title"),
       actions: <RefreshAction isRefreshing={isRefreshing} onPress={handleRefresh} />,
     }),
-    [isRefreshing, handleRefresh],
+    [isRefreshing, handleRefresh, t],
   );
 
   const isSnapshotUnsupported = !supportsSnapshot;

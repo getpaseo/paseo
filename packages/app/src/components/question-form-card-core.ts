@@ -138,6 +138,9 @@ export function shouldSubmitEmptyOnDismiss(questions: QuestionFormQuestion[]): b
   );
 }
 
-export function resolveDismissLabel(questions: QuestionFormQuestion[]): string {
-  return questions.find((question) => question.dismissLabel)?.dismissLabel ?? "Dismiss";
+export function resolveDismissLabel(
+  questions: QuestionFormQuestion[],
+  fallbackLabel = "Dismiss",
+): string {
+  return questions.find((question) => question.dismissLabel)?.dismissLabel ?? fallbackLabel;
 }

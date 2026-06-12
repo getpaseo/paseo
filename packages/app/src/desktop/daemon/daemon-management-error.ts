@@ -1,3 +1,5 @@
+import { i18n } from "@/i18n/i18next";
+
 export class DaemonConnectionRegistrationError extends Error {
   constructor(message: string) {
     super(message);
@@ -34,19 +36,18 @@ export function getDaemonManagementErrorPresentation(
 
   if (presentationError instanceof DaemonConnectionRegistrationError) {
     return {
-      message:
-        "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
+      message: i18n.t("desktop.daemon.management.registrationFailed"),
       refreshStatus: true,
     };
   }
   if (wasManagingDaemon) {
     return {
-      message: "Built-in daemon management was paused, but Paseo could not stop the daemon.",
+      message: i18n.t("desktop.daemon.management.pausedStopFailed"),
       refreshStatus: false,
     };
   }
   return {
-    message: "Unable to update built-in daemon management.",
+    message: i18n.t("desktop.daemon.management.updateFailed"),
     refreshStatus: false,
   };
 }

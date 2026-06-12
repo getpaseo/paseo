@@ -302,6 +302,18 @@ const REWIND_COMMAND: AgentSlashCommand = {
   description: "Rewind tracked files to a previous user message",
   argumentHint: "[user_message_uuid]",
 };
+const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
+  "clear",
+  "compact",
+  "context",
+  "debug",
+  "extra-usage",
+  "heapdump",
+  "init",
+  "loop",
+  "schedule",
+  "usage",
+]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
@@ -311,6 +323,13 @@ interface SlashCommandInvocation {
   commandName: string;
   args?: string;
   rawInput: string;
+}
+
+function classifyClaudeSlashCommand(commandName: string): AgentSlashCommand["kind"] {
+  // Claude exposes commands and skills as one flat SDK list, without structured source
+  // metadata. Keep obvious root-only/session controls out of inline autocomplete and
+  // treat the rest as skills; the worst failure mode is an inert inline suggestion.
+  return CLAUDE_ROOT_ONLY_COMMANDS.has(commandName) ? "command" : "skill";
 }
 
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
@@ -2137,7 +2156,7 @@ class ClaudeAgentSession implements AgentSession {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
-          kind: "command",
+          kind: classifyClaudeSlashCommand(cmd.name),
         });
       }
     }

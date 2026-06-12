@@ -30,6 +30,12 @@ export function withRuntimePaseoMcpServer(params: {
   config: AgentSessionConfig;
   agentId: string;
   mcpBaseUrl: string | null;
+  /**
+   * Capability token authenticating the injected connection to the daemon's
+   * Agent MCP endpoint. The daemon password is gated off this route, so without
+   * this header the agent's MCP requests are rejected when a password is set.
+   */
+  mcpAuthToken: string | null;
 }): AgentSessionConfig {
   const storedConfig = stripInternalPaseoMcpServer(params.config);
   if (!params.mcpBaseUrl || storedConfig.mcpServers?.[PASEO_MCP_SERVER_NAME]) {
@@ -42,6 +48,9 @@ export function withRuntimePaseoMcpServer(params: {
       [PASEO_MCP_SERVER_NAME]: {
         type: "http",
         url: `${params.mcpBaseUrl}?callerAgentId=${params.agentId}`,
+        ...(params.mcpAuthToken
+          ? { headers: { Authorization: `Bearer ${params.mcpAuthToken}` } }
+          : {}),
       },
       ...storedConfig.mcpServers,
     },

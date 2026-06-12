@@ -221,6 +221,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
         unsubscribe: () => {},
       }),
       scheduleRefreshForCwd: () => {},
+      onWorkspaceStateMayHaveChanged: () => {},
       getMetrics: () => ({
         checkoutDiffTargetCount: 0,
         checkoutDiffSubscriptionCount: 0,

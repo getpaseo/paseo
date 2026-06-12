@@ -181,7 +181,7 @@ test.describe("Workspace agent title handoff", () => {
 
       await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
       await waitForWorkspaceTabsVisible(page);
-      await page.getByTestId("workspace-new-agent-tab").click();
+      await page.getByTestId("workspace-new-agent-tab-inline").click();
       await expectComposerVisible(page);
 
       const promptTitle = "Investigate optimistic tab title handoff";

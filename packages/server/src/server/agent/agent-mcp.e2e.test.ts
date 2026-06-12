@@ -9,6 +9,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import pino from "pino";
 
 import { withTimeout } from "../../utils/promise-timeout.js";
+import { hashDaemonPassword } from "../auth.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type {
@@ -78,8 +79,11 @@ function getStructuredContent(result: McpToolResult): StructuredContent | null {
   return null;
 }
 
-async function createMcpClient(url: string): Promise<McpClient> {
-  const transport = new StreamableHTTPClientTransport(new URL(url));
+async function createMcpClient(url: string, authToken?: string): Promise<McpClient> {
+  const transport = new StreamableHTTPClientTransport(
+    new URL(url),
+    authToken ? { requestInit: { headers: { Authorization: `Bearer ${authToken}` } } } : undefined,
+  );
   const rawClient = await experimental_createMCPClient({ transport });
   const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
   return { callTool: boundCallTool, close: () => rawClient.close() };
@@ -170,6 +174,76 @@ describe("agent MCP end-to-end (offline)", () => {
         await client.callTool({ name: "kill_agent", args: { agentId } });
       }
       await client.close();
+      await daemon.stop();
+      await rm(paseoHome, { recursive: true, force: true });
+      await rm(staticDir, { recursive: true, force: true });
+      await rm(agentCwd, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("password-protected daemon authorizes the agent MCP via the capability token", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const port = await getAvailablePort();
+
+    const daemonConfig: PaseoDaemonConfig = {
+      listen: `127.0.0.1:${port}`,
+      paseoHome,
+      corsAllowedOrigins: [],
+      hostnames: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: createTestAgentClients(),
+      agentStoragePath: path.join(paseoHome, "agents"),
+      auth: { password: hashDaemonPassword("daemon-secret") },
+    };
+
+    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    await daemon.start();
+
+    const mcpUrl = `http://127.0.0.1:${port}/mcp/agents`;
+    const capabilityToken = daemon.agentManager.getMcpAuthToken();
+    expect(typeof capabilityToken).toBe("string");
+
+    let agentId: string | null = null;
+    let client: McpClient | null = null;
+    try {
+      // Remote auth is not weakened: a request without credentials is rejected
+      // before any MCP processing.
+      const unauthorized = await fetch(mcpUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(unauthorized.status).toBe(401);
+
+      // The injected capability token authenticates the full MCP handshake:
+      // creating (and connecting) the client and driving a tool call both go
+      // through the password-gated /mcp/agents route. (The exact bearer header
+      // injected into a child agent's config is covered by the
+      // runtime-mcp-config unit test.)
+      client = await createMcpClient(mcpUrl, capabilityToken!);
+      const result = await client.callTool({
+        name: "create_agent",
+        args: {
+          cwd: agentCwd,
+          title: "Password MCP",
+          provider: "claude/claude-test-model",
+          mode: "bypassPermissions",
+          initialPrompt: "reply with done and stop",
+          background: true,
+        },
+      });
+      const payload = getStructuredContent(result);
+      agentId = typeof payload?.agentId === "string" ? payload.agentId : null;
+      expect(agentId).toBeTruthy();
+    } finally {
+      if (agentId) {
+        await client?.callTool({ name: "kill_agent", args: { agentId } });
+      }
+      await client?.close();
       await daemon.stop();
       await rm(paseoHome, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });

@@ -16,7 +16,6 @@ import {
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
   parseWorkspaceOpenIntent,
-  resolveKnownHostRoute,
 } from "./host-routes";
 
 describe("parseHostAgentRouteFromPathname", () => {
@@ -189,34 +188,5 @@ describe("host settings section slugs", () => {
   it("maps old host settings sections to their new names", () => {
     expect(normalizeHostSectionSlug("orchestration")).toBe("agents");
     expect(normalizeHostSectionSlug("daemon")).toBe("host");
-  });
-});
-
-describe("resolveKnownHostRoute", () => {
-  it("renders when the route host is still saved", () => {
-    expect(
-      resolveKnownHostRoute({
-        routeServerId: "srv-current",
-        hosts: [{ serverId: "srv-current" }, { serverId: "srv-next" }],
-      }),
-    ).toEqual({ kind: "render" });
-  });
-
-  it("sends removed host routes to the next saved host home", () => {
-    expect(
-      resolveKnownHostRoute({
-        routeServerId: "srv-removed",
-        hosts: [{ serverId: "srv-next" }],
-      }),
-    ).toEqual({ kind: "redirect", href: "/h/srv-next/open-project" });
-  });
-
-  it("sends host routes to welcome when no hosts are saved", () => {
-    expect(
-      resolveKnownHostRoute({
-        routeServerId: "srv-removed",
-        hosts: [],
-      }),
-    ).toEqual({ kind: "redirect", href: "/welcome" });
   });
 });

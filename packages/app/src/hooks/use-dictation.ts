@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
@@ -14,6 +15,7 @@ import {
 } from "./use-dictation.shared";
 
 export function useDictation(options: UseDictationOptions): UseDictationResult {
+  const { t } = useTranslation();
   const {
     client,
     onTranscript,
@@ -389,7 +391,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
     try {
       if (!client?.isConnected) {
-        throw new Error("Daemon client is disconnected");
+        throw new Error(t("common.errors.daemonClientDisconnected"));
       }
       senderRef.current.resetStreamForReplay();
       const finalSeq = senderRef.current.getFinalSeq();
@@ -401,7 +403,13 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       }
       handleDictationFailure(err);
     }
-  }, [client, ensureFinalTranscript, handleDictationFailure, handleStreamingTranscriptionSuccess]);
+  }, [
+    client,
+    ensureFinalTranscript,
+    handleDictationFailure,
+    handleStreamingTranscriptionSuccess,
+    t,
+  ]);
 
   const discardFailedDictation = useCallback(() => {
     setIsProcessing(false);

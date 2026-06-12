@@ -284,15 +284,6 @@ describe("routeKeyboardShortcut — message-input.action", () => {
     });
   });
 
-  it("returns none for unsupported message-input kinds (queue)", () => {
-    expect(
-      routeKeyboardShortcut(
-        { action: "message-input.action", payload: { kind: "queue" } },
-        makeCtx(),
-      ),
-    ).toEqual<ShortcutAction>({ kind: "none" });
-  });
-
   it("returns none when kind is missing", () => {
     expect(
       routeKeyboardShortcut({ action: "message-input.action", payload: null }, makeCtx()),

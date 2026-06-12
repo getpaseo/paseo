@@ -126,6 +126,77 @@ describe("pull request timeline message schemas", () => {
     ]);
   });
 
+  test("parses optional author avatar, author URL, and inline comment location fields", () => {
+    const parsed = PullRequestTimelineResponseSchema.parse({
+      type: "pull_request_timeline_response",
+      payload: {
+        items: [
+          {
+            id: "review-1",
+            kind: "review",
+            author: "octocat",
+            authorUrl: "https://github.com/octocat",
+            avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+            body: "Looks good",
+            createdAt: 1710000000000,
+            url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
+            reviewState: "approved",
+          },
+          {
+            id: "thread-comment-1",
+            kind: "comment",
+            author: "hubot",
+            authorUrl: "https://github.com/hubot",
+            avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
+            body: "Inline note",
+            createdAt: 1710000001000,
+            url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+            location: {
+              path: "packages/app/src/git/pull-request-panel/data.ts",
+              line: 24,
+              startLine: 20,
+              threadId: "PRRT_1",
+              isResolved: true,
+              isOutdated: false,
+            },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload.items).toEqual([
+      {
+        id: "review-1",
+        kind: "review",
+        author: "octocat",
+        authorUrl: "https://github.com/octocat",
+        avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+        body: "Looks good",
+        createdAt: 1710000000000,
+        url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
+        reviewState: "approved",
+      },
+      {
+        id: "thread-comment-1",
+        kind: "comment",
+        author: "hubot",
+        authorUrl: "https://github.com/hubot",
+        avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
+        body: "Inline note",
+        createdAt: 1710000001000,
+        url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+        location: {
+          path: "packages/app/src/git/pull-request-panel/data.ts",
+          line: 24,
+          startLine: 20,
+          threadId: "PRRT_1",
+          isResolved: true,
+          isOutdated: false,
+        },
+      },
+    ]);
+  });
+
   test("parses response through the outbound message union", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "pull_request_timeline_response",
@@ -159,6 +230,91 @@ describe("pull request timeline message schemas", () => {
     });
 
     expect(parsed.type).toBe("pull_request_timeline_response");
+  });
+
+  test("an old client timeline schema parses new daemon avatar and inline location fields", () => {
+    const oldClientPullRequestTimelineResponseSchema = z.object({
+      type: z.literal("pull_request_timeline_response"),
+      payload: z.object({
+        cwd: z.string(),
+        prNumber: z.number().nullable(),
+        items: z.array(
+          z.discriminatedUnion("kind", [
+            z.object({
+              id: z.string(),
+              kind: z.literal("review"),
+              author: z.string(),
+              body: z.string(),
+              createdAt: z.number(),
+              url: z.string(),
+              reviewState: z.enum(["approved", "changes_requested", "commented"]),
+            }),
+            z.object({
+              id: z.string(),
+              kind: z.literal("comment"),
+              author: z.string(),
+              body: z.string(),
+              createdAt: z.number(),
+              url: z.string(),
+            }),
+          ]),
+        ),
+        truncated: z.boolean(),
+        error: z.unknown().nullable(),
+        requestId: z.string(),
+        githubFeaturesEnabled: z.boolean(),
+      }),
+    });
+    const newDaemonPayload = PullRequestTimelineResponseSchema.parse({
+      type: "pull_request_timeline_response",
+      payload: {
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        items: [
+          {
+            id: "comment-1",
+            kind: "comment",
+            author: "octocat",
+            authorUrl: "https://github.com/octocat",
+            avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+            body: "Inline note",
+            createdAt: 1710000000000,
+            url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+            location: {
+              path: "src/file.ts",
+              line: 12,
+              threadId: "PRRT_1",
+            },
+          },
+        ],
+        truncated: false,
+        error: null,
+        requestId: "request-compat",
+        githubFeaturesEnabled: true,
+      },
+    });
+
+    expect(oldClientPullRequestTimelineResponseSchema.parse(newDaemonPayload)).toEqual({
+      type: "pull_request_timeline_response",
+      payload: {
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        items: [
+          {
+            id: "comment-1",
+            kind: "comment",
+            author: "octocat",
+            body: "Inline note",
+            createdAt: 1710000000000,
+            url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+          },
+        ],
+        truncated: false,
+        error: null,
+        requestId: "request-compat",
+        githubFeaturesEnabled: true,
+      },
+    });
   });
 
   test("normalizes future error kinds to unknown", () => {

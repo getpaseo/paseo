@@ -1,3 +1,5 @@
+import { i18n } from "@/i18n/i18next";
+
 export type DictationStatus = "idle" | "recording" | "uploading" | "failed";
 
 export interface UseDictationOptions {
@@ -37,5 +39,5 @@ export const toError = (error: unknown): Error => {
   if (typeof error === "string" && error.trim().length > 0) {
     return new Error(error);
   }
-  return new Error("An unexpected error occurred while handling dictation.");
+  return new Error(i18n.t("common.errors.unexpectedDictationError"));
 };

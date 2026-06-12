@@ -59,6 +59,10 @@ export interface DesktopBridgeConfig {
   daemonLogPath?: string;
   /** Initial manageBuiltInDaemon setting. Defaults to false. */
   manageBuiltInDaemon?: boolean;
+  /** Daemon listen address reported by desktop_daemon_status. Defaults to 127.0.0.1:6767. */
+  daemonListen?: string;
+  /** Keep start_desktop_daemon pending to hold the desktop startup blocker open. */
+  hangDaemonStart?: boolean;
   /**
    * Controls what dialog.ask returns when the daemon management confirm dialog
    * fires. True = confirm (proceed with the action), false = cancel. Defaults to
@@ -124,7 +128,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
       return {
         serverId: cfg.serverId,
         status: daemonRunning ? "running" : "stopped",
-        listen: "127.0.0.1:6767",
+        listen: cfg.daemonListen ?? "127.0.0.1:6767",
         hostname: null,
         pid: currentPid,
         home: "",
@@ -132,6 +136,18 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
         desktopManaged: manageDaemon,
         error: null,
       };
+    }
+
+    function startDesktopDaemon() {
+      if (cfg.hangDaemonStart) {
+        return new Promise(() => undefined);
+      }
+      startCount += 1;
+      daemonRunning = true;
+      // First start (bootstrap) returns the configured PID; subsequent starts
+      // (after a stop) get a fresh PID so tests can observe the change.
+      currentPid = (cfg.daemonPid ?? 10000) + (startCount - 1) * 1000;
+      return buildDaemonStatus();
     }
 
     const desktopBridge: {
@@ -218,12 +234,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
         }
 
         if (command === "start_desktop_daemon") {
-          startCount += 1;
-          daemonRunning = true;
-          // First start (bootstrap) returns the configured PID; subsequent starts
-          // (after a stop) get a fresh PID so tests can observe the change.
-          currentPid = (cfg.daemonPid ?? 10000) + (startCount - 1) * 1000;
-          return buildDaemonStatus();
+          return startDesktopDaemon();
         }
 
         return null;
