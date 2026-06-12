@@ -60,7 +60,7 @@ function DocsLayout() {
 
         {/* Main content */}
         <main className="flex-1 min-w-0 px-6 md:px-12 py-8 md:py-12">
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-prose mx-auto">
             {doc && <DocsBreadcrumbs doc={doc} tree={tree} />}
             <Outlet />
           </div>
