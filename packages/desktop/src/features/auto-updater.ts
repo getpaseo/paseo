@@ -81,8 +81,8 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.autoRunAppAfterInstall = true;
+    autoUpdater.autoInstallOnAppQuit = !(process.platform === "linux" && process.env.APPIMAGE);
     autoUpdater.allowPrerelease = input.releaseChannel === "beta";
     autoUpdater.channel = input.releaseChannel === "beta" ? "beta" : "latest";
     autoUpdater.allowDowngrade = false;
