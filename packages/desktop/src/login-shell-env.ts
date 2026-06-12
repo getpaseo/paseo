@@ -28,7 +28,9 @@ export const DEFAULT_RESOLVE_TIMEOUT_MS = 30_000;
 export function getResolveTimeoutMs(): number {
   const raw = process.env.PASEO_SHELL_ENV_TIMEOUT_MS;
   if (raw) {
-    const parsed = Number.parseInt(raw, 10);
+    // Number() (not parseInt) so "60e3" parses as 60000 rather than being
+    // truncated to 60ms, which would nearly disable the probe.
+    const parsed = Number(raw.trim());
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return DEFAULT_RESOLVE_TIMEOUT_MS;

@@ -27,6 +27,11 @@ describe("getResolveTimeoutMs", () => {
     expect(getResolveTimeoutMs()).toBe(45_000);
   });
 
+  it("parses scientific notation rather than truncating it", () => {
+    process.env[KEY] = "60e3";
+    expect(getResolveTimeoutMs()).toBe(60_000);
+  });
+
   it("falls back on non-numeric values", () => {
     process.env[KEY] = "soon";
     expect(getResolveTimeoutMs()).toBe(DEFAULT_RESOLVE_TIMEOUT_MS);
