@@ -1063,6 +1063,8 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
+        // COMPAT(prReviewThreads): added in v0.1.94, drop the gate when floor >= v0.1.94.
+        prReviewThreads: true,
       },
     };
   }

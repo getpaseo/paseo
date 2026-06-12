@@ -215,6 +215,14 @@ function createGitHubServiceStub(): GitHubService {
       pullRequest: null,
       events: [],
     })),
+    getPullRequestReviewThreads: vi.fn(async () => ({
+      prNumber: 1,
+      repoOwner: "acme",
+      repoName: "repo",
+      threads: [],
+      truncated: false,
+      error: null,
+    })),
     createPullRequest: vi.fn(async () => ({
       url: "https://github.com/acme/repo/pull/1",
       number: 1,

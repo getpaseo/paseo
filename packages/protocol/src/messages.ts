@@ -1456,6 +1456,15 @@ export const PullRequestTimelineRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const PullRequestReviewThreadsRequestSchema = z.object({
+  type: z.literal("pr.github.get_review_threads.request"),
+  cwd: z.string(),
+  prNumber: z.number(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  requestId: z.string(),
+});
+
 export const ValidateBranchRequestSchema = z.object({
   type: z.literal("validate_branch_request"),
   cwd: z.string(),
@@ -1912,6 +1921,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutGithubSetAutoMergeRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
+  PullRequestReviewThreadsRequestSchema,
   CheckoutSwitchBranchRequestSchema,
   CheckoutRenameBranchRequestSchema,
   StashSaveRequestSchema,
@@ -2145,6 +2155,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(prReviewThreads): added in v0.1.94, drop the gate when floor >= v0.1.94.
+        prReviewThreads: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3262,6 +3274,73 @@ export const PullRequestTimelineResponseSchema = z.object({
     .default({}),
 });
 
+const PullRequestReviewThreadCommentSchema = z.object({
+  id: z.string().optional().default(""),
+  author: z.string().optional().default("unknown"),
+  body: z.string().optional().default(""),
+  url: z.string().optional().default(""),
+  createdAt: z.number().optional().default(0),
+});
+
+const PullRequestReviewThreadSchema = z.object({
+  id: z.string().optional().default(""),
+  path: z.string().optional().default(""),
+  line: z.number().nullable().optional().default(null),
+  startLine: z.number().nullable().optional().default(null),
+  diffHunk: z.string().optional().default(""),
+  isResolved: z.boolean().optional().default(false),
+  isOutdated: z.boolean().optional().default(false),
+  comments: z.array(PullRequestReviewThreadCommentSchema).optional().default([]),
+});
+
+const PULL_REQUEST_REVIEW_THREADS_ERROR_KINDS = [
+  "missing_cli",
+  "auth_required",
+  "forbidden",
+  "not_found",
+  "invalid_identity",
+  "unknown",
+] as const;
+
+const PullRequestReviewThreadsKnownErrorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("missing_cli"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("auth_required"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("forbidden"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("not_found"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("invalid_identity"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("unknown"), message: z.string().optional().default("") }),
+]);
+
+const PullRequestReviewThreadsErrorSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { kind: "unknown", message: "" };
+  }
+  const error = value as Record<string, unknown>;
+  if (
+    typeof error.kind === "string" &&
+    (PULL_REQUEST_REVIEW_THREADS_ERROR_KINDS as readonly string[]).includes(error.kind)
+  ) {
+    return error;
+  }
+  return { ...error, kind: "unknown" };
+}, PullRequestReviewThreadsKnownErrorSchema);
+
+export const PullRequestReviewThreadsResponseSchema = z.object({
+  type: z.literal("pr.github.get_review_threads.response"),
+  payload: z
+    .object({
+      cwd: z.string().optional().default(""),
+      prNumber: z.number().optional().default(0),
+      threads: z.array(PullRequestReviewThreadSchema).optional().default([]),
+      truncated: z.boolean().optional().default(false),
+      error: PullRequestReviewThreadsErrorSchema.nullable().optional().default(null),
+      requestId: z.string().optional().default(""),
+      githubFeaturesEnabled: z.boolean().optional().default(true),
+    })
+    .optional()
+    .default({}),
+});
+
 export const CheckoutSwitchBranchResponseSchema = z.object({
   type: z.literal("checkout_switch_branch_response"),
   payload: z.object({
@@ -3774,6 +3853,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
+  PullRequestReviewThreadsResponseSchema,
   CheckoutSwitchBranchResponseSchema,
   CheckoutRenameBranchResponseSchema,
   StashSaveResponseSchema,
@@ -4049,6 +4129,13 @@ export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSc
 export type PullRequestTimelineRequest = z.infer<typeof PullRequestTimelineRequestSchema>;
 export type PullRequestTimelineItem = z.infer<typeof PullRequestTimelineItemSchema>;
 export type PullRequestTimelineResponse = z.infer<typeof PullRequestTimelineResponseSchema>;
+export type PullRequestReviewThreadsRequest = z.infer<typeof PullRequestReviewThreadsRequestSchema>;
+export type PullRequestReviewThreadsResponse = z.infer<
+  typeof PullRequestReviewThreadsResponseSchema
+>;
+export type PullRequestReviewThread = z.infer<typeof PullRequestReviewThreadSchema>;
+export type PullRequestReviewThreadComment = z.infer<typeof PullRequestReviewThreadCommentSchema>;
+export type PullRequestReviewThreadsError = z.infer<typeof PullRequestReviewThreadsErrorSchema>;
 export type CheckoutSwitchBranchRequest = z.infer<typeof CheckoutSwitchBranchRequestSchema>;
 export type CheckoutSwitchBranchResponse = z.infer<typeof CheckoutSwitchBranchResponseSchema>;
 export type CheckoutRenameBranchRequest = z.infer<typeof CheckoutRenameBranchRequestSchema>;

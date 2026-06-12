@@ -728,6 +728,26 @@ export const en = {
           statusLoadFailed: "Unable to load pull request status",
           activityLoadFailed: "Unable to load pull request activity",
         },
+        reviewComments: {
+          title: "Review comments",
+          loading: "Loading review comments…",
+          empty: "No unresolved review comments.",
+          hostUpdateRequired: "Update the host to use PR review comments.",
+          fixWithAgent: "Fix {{count}} comment with agent",
+          fixWithAgentPlural: "Fix {{count}} comments with agent",
+          replies: "{{count}} reply",
+          repliesPlural: "{{count}} replies",
+          noActiveAgent: "Open an agent in this workspace to fix review comments.",
+          errors: {
+            missingCli:
+              "GitHub CLI is required to pull PR review comments. Install gh on the host, then retry.",
+            authRequired:
+              "GitHub CLI is not authenticated. Run gh auth login on the host, then retry.",
+            forbidden: "GitHub CLI cannot access this PR. Check repository permissions.",
+            notFound: "PR review comments could not be loaded for this workspace.",
+            unknown: "PR review comments could not be loaded for this workspace.",
+          },
+        },
       },
     },
   },

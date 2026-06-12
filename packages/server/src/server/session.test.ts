@@ -3799,4 +3799,159 @@ describe("session pull request timeline handling", () => {
       },
     });
   });
+
+  test("passes request identity to GitHubService and emits review threads", async () => {
+    const messages: unknown[] = [];
+    const github = {
+      invalidate: vi.fn(),
+      getPullRequestReviewThreads: vi.fn().mockResolvedValue({
+        prNumber: 42,
+        repoOwner: "getpaseo",
+        repoName: "paseo",
+        threads: [
+          {
+            id: "PRT_1",
+            path: "src/index.ts",
+            line: 12,
+            startLine: 10,
+            diffHunk: "@@ -8,4 +8,5 @@",
+            isResolved: false,
+            isOutdated: false,
+            comments: [
+              {
+                id: "PRC_1",
+                author: "octocat",
+                body: "Please rename this",
+                url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+                createdAt: 1710000000000,
+              },
+            ],
+          },
+        ],
+        truncated: false,
+        error: null,
+      }),
+    };
+    const session = createSessionForTest({ github, messages });
+
+    await session.handleMessage({
+      type: "pr.github.get_review_threads.request",
+      cwd: "/tmp/repo",
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      requestId: "request-threads",
+    });
+
+    expect(github.getPullRequestReviewThreads).toHaveBeenCalledWith({
+      cwd: "/tmp/repo",
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+    });
+    expect(messages).toContainEqual({
+      type: "pr.github.get_review_threads.response",
+      payload: {
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        threads: [
+          {
+            id: "PRT_1",
+            path: "src/index.ts",
+            line: 12,
+            startLine: 10,
+            diffHunk: "@@ -8,4 +8,5 @@",
+            isResolved: false,
+            isOutdated: false,
+            comments: [
+              {
+                id: "PRC_1",
+                author: "octocat",
+                body: "Please rename this",
+                url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+                createdAt: 1710000000000,
+              },
+            ],
+          },
+        ],
+        truncated: false,
+        error: null,
+        requestId: "request-threads",
+        githubFeaturesEnabled: true,
+      },
+    });
+  });
+
+  test("returns invalid_identity without calling GitHubService for a bad PR identity", async () => {
+    const messages: unknown[] = [];
+    const github = {
+      invalidate: vi.fn(),
+      getPullRequestReviewThreads: vi.fn(),
+    };
+    const session = createSessionForTest({ github, messages });
+
+    await session.handleMessage({
+      type: "pr.github.get_review_threads.request",
+      cwd: "/tmp/repo",
+      prNumber: 0,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      requestId: "request-invalid",
+    });
+
+    expect(github.getPullRequestReviewThreads).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "pr.github.get_review_threads.response",
+      payload: {
+        cwd: "/tmp/repo",
+        prNumber: 0,
+        threads: [],
+        truncated: false,
+        error: {
+          kind: "invalid_identity",
+          message: "Pull request review threads request has invalid PR identity",
+        },
+        requestId: "request-invalid",
+        githubFeaturesEnabled: true,
+      },
+    });
+  });
+
+  test("disables GitHub features when the review threads fetch reports missing CLI", async () => {
+    const messages: unknown[] = [];
+    const github = {
+      invalidate: vi.fn(),
+      getPullRequestReviewThreads: vi.fn().mockResolvedValue({
+        prNumber: 42,
+        repoOwner: "getpaseo",
+        repoName: "paseo",
+        threads: [],
+        truncated: false,
+        error: { kind: "missing_cli", message: "GitHub CLI (gh) is not installed or not in PATH" },
+      }),
+    };
+    const session = createSessionForTest({ github, messages });
+
+    await session.handleMessage({
+      type: "pr.github.get_review_threads.request",
+      cwd: "/tmp/repo",
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      requestId: "request-missing-cli",
+    });
+
+    expect(messages).toContainEqual({
+      type: "pr.github.get_review_threads.response",
+      payload: {
+        cwd: "/tmp/repo",
+        prNumber: 42,
+        threads: [],
+        truncated: false,
+        error: { kind: "missing_cli", message: "GitHub CLI (gh) is not installed or not in PATH" },
+        requestId: "request-missing-cli",
+        githubFeaturesEnabled: false,
+      },
+    });
+  });
 });

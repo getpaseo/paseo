@@ -15,6 +15,7 @@ import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { PrPane } from "@/git/pr-pane";
+import { PrReviewComments } from "@/git/pr-review-comments";
 import { usePrPaneData } from "@/hooks/use-pr-pane-data";
 import {
   usePanelStore,
@@ -507,7 +508,12 @@ function SidebarContent({
             onOpenFile={onOpenFile}
           />
         )}
-        {resolvedTab === "pr" && prPane.data && <PrPane data={prPane.data} />}
+        {resolvedTab === "pr" && prPane.data && (
+          <View style={styles.prTabContainer}>
+            <PrPane data={prPane.data} />
+            <PrReviewComments serverId={serverId} cwd={workspaceRoot} enabled={isOpen} />
+          </View>
+        )}
       </View>
     </View>
   );
@@ -598,6 +604,10 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   contentArea: {
+    flex: 1,
+    minHeight: 0,
+  },
+  prTabContainer: {
     flex: 1,
     minHeight: 0,
   },

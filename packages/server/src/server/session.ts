@@ -2075,6 +2075,8 @@ export class Session {
         return this.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
         return this.handlePullRequestTimelineRequest(msg);
+      case "pr.github.get_review_threads.request":
+        return this.handlePullRequestReviewThreadsRequest(msg);
       case "github_search_request":
         return this.handleGitHubSearchRequest(msg);
       case "stash_save_request":
@@ -5674,6 +5676,71 @@ export class Session {
           cwd,
           prNumber,
           items: [],
+          truncated: false,
+          error: {
+            kind: "unknown",
+            message: error instanceof Error ? error.message : String(error),
+          },
+          requestId,
+          githubFeaturesEnabled: true,
+        },
+      });
+    }
+  }
+
+  private async handlePullRequestReviewThreadsRequest(
+    msg: Extract<SessionInboundMessage, { type: "pr.github.get_review_threads.request" }>,
+  ): Promise<void> {
+    const { cwd, prNumber, repoOwner, repoName, requestId } = msg;
+
+    if (!isValidPullRequestTimelineIdentity({ prNumber, repoOwner, repoName })) {
+      this.emit({
+        type: "pr.github.get_review_threads.response",
+        payload: {
+          cwd,
+          prNumber,
+          threads: [],
+          truncated: false,
+          error: {
+            kind: "invalid_identity",
+            message: "Pull request review threads request has invalid PR identity",
+          },
+          requestId,
+          githubFeaturesEnabled: true,
+        },
+      });
+      return;
+    }
+
+    try {
+      const reviewThreads = await this.github.getPullRequestReviewThreads({
+        cwd,
+        prNumber,
+        repoOwner,
+        repoName,
+      });
+      const githubFeaturesEnabled =
+        reviewThreads.error?.kind !== "missing_cli" &&
+        reviewThreads.error?.kind !== "auth_required";
+      this.emit({
+        type: "pr.github.get_review_threads.response",
+        payload: {
+          cwd,
+          prNumber: reviewThreads.prNumber,
+          threads: reviewThreads.threads,
+          truncated: reviewThreads.truncated,
+          error: reviewThreads.error,
+          requestId,
+          githubFeaturesEnabled,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "pr.github.get_review_threads.response",
+        payload: {
+          cwd,
+          prNumber,
+          threads: [],
           truncated: false,
           error: {
             kind: "unknown",

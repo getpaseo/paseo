@@ -39,6 +39,7 @@ import type {
   CheckoutGithubSetAutoMergeResponse,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
+  PullRequestReviewThreadsResponse,
   CheckoutSwitchBranchResponse,
   StashSaveResponse,
   StashPopResponse,
@@ -294,6 +295,7 @@ type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
 type CheckoutGithubSetAutoMergePayload = CheckoutGithubSetAutoMergeResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
+type PullRequestReviewThreadsPayload = PullRequestReviewThreadsResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
 export type RenameBranchResult = z.infer<typeof CheckoutRenameBranchResponseSchema>["payload"];
 type StashSavePayload = StashSaveResponse["payload"];
@@ -3049,6 +3051,23 @@ export class DaemonClient {
         repoName: input.repoName,
       },
       responseType: "pull_request_timeline_response",
+      timeout: 60000,
+    });
+  }
+
+  async pullRequestReviewThreads(
+    input: { cwd: string; prNumber: number; repoOwner: string; repoName: string },
+    requestId?: string,
+  ): Promise<PullRequestReviewThreadsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"pr.github.get_review_threads.response">({
+      requestId,
+      message: {
+        type: "pr.github.get_review_threads.request",
+        cwd: input.cwd,
+        prNumber: input.prNumber,
+        repoOwner: input.repoOwner,
+        repoName: input.repoName,
+      },
       timeout: 60000,
     });
   }

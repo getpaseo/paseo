@@ -748,6 +748,30 @@ export const es: TranslationResources = {
           statusLoadFailed: "No se puede cargar el estado de la solicitud de extracción",
           activityLoadFailed: "No se puede cargar la actividad de solicitud de extracción",
         },
+        reviewComments: {
+          title: "Comentarios de revisión",
+          loading: "Cargando comentarios de revisión…",
+          empty: "No hay comentarios de revisión sin resolver.",
+          hostUpdateRequired: "Actualiza el host para usar los comentarios de revisión de PR.",
+          fixWithAgent: "Corregir {{count}} comentario con el agente",
+          fixWithAgentPlural: "Corregir {{count}} comentarios con el agente",
+          replies: "{{count}} respuesta",
+          repliesPlural: "{{count}} respuestas",
+          noActiveAgent:
+            "Abre un agente en este espacio de trabajo para corregir los comentarios de revisión.",
+          errors: {
+            missingCli:
+              "Se requiere GitHub CLI para obtener los comentarios de revisión de PR. Instala gh en el host y vuelve a intentarlo.",
+            authRequired:
+              "GitHub CLI no está autenticado. Ejecuta gh auth login en el host y vuelve a intentarlo.",
+            forbidden:
+              "GitHub CLI no puede acceder a este PR. Comprueba los permisos del repositorio.",
+            notFound:
+              "No se pudieron cargar los comentarios de revisión de PR para este espacio de trabajo.",
+            unknown:
+              "No se pudieron cargar los comentarios de revisión de PR para este espacio de trabajo.",
+          },
+        },
       },
     },
   },

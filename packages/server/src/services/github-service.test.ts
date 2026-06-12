@@ -343,6 +343,45 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
   });
 }
 
+function pullRequestReviewThreadsJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          number: 42,
+          reviewThreads: {
+            nodes: [
+              {
+                id: "PRT_unresolved",
+                path: "src/index.ts",
+                line: 12,
+                startLine: 10,
+                diffHunk: "@@ -8,4 +8,5 @@\n-const a = 1;\n+const a = 2;",
+                isResolved: false,
+                isOutdated: false,
+                comments: {
+                  nodes: [
+                    {
+                      id: "PRC_1",
+                      body: "Please rename this variable.",
+                      url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+                      createdAt: "2026-04-02T13:50:00Z",
+                      author: { login: "reviewer", url: "https://github.com/reviewer" },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false },
+          },
+          ...overrides,
+        },
+      },
+    },
+  });
+}
+
 describe("GitHubService", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -1318,6 +1357,257 @@ describe("GitHubService", () => {
 
     const fresh = await freshRequest;
     expect(fresh.items.at(-1)?.body).toBe("Fresh post-invalidation result");
+    expect(runner.calls).toHaveLength(2);
+  });
+
+  it("fetches and parses PR review threads grouped with their comments", async () => {
+    const runner = createRunner([pullRequestReviewThreadsJson()]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const reviewThreads = await service.getPullRequestReviewThreads({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]).toMatchObject({
+      cwd: "/repo",
+      args: [
+        "api",
+        "graphql",
+        "-f",
+        expect.stringContaining("query="),
+        "-F",
+        "owner=parentOwner",
+        "-F",
+        "name=parentRepo",
+        "-F",
+        "number=42",
+      ],
+    });
+    expect(runner.calls[0]?.args[3]).toContain("reviewThreads(first: 100)");
+    expect(reviewThreads).toEqual({
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+      truncated: false,
+      error: null,
+      threads: [
+        {
+          id: "PRT_unresolved",
+          path: "src/index.ts",
+          line: 12,
+          startLine: 10,
+          diffHunk: "@@ -8,4 +8,5 @@\n-const a = 1;\n+const a = 2;",
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "PRC_1",
+              author: "reviewer",
+              body: "Please rename this variable.",
+              url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+              createdAt: Date.parse("2026-04-02T13:50:00Z"),
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("marks PR review threads truncated when threads or comments hit the pagination cap", async () => {
+    const runner = createRunner([
+      pullRequestReviewThreadsJson({
+        reviewThreads: {
+          nodes: [],
+          pageInfo: { hasNextPage: true },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const reviewThreads = await service.getPullRequestReviewThreads({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(reviewThreads).toMatchObject({ threads: [], truncated: true, error: null });
+  });
+
+  it("maps a missing gh binary during PR review threads fetch to a missing_cli error", async () => {
+    const runner = createRunner([]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => null,
+      now: () => 100,
+    });
+
+    const reviewThreads = await service.getPullRequestReviewThreads({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(runner.calls).toHaveLength(0);
+    expect(reviewThreads.error).toEqual({
+      kind: "missing_cli",
+      message: "GitHub CLI (gh) is not installed or not in PATH",
+    });
+  });
+
+  it("maps PR review threads authentication failures to auth_required errors", async () => {
+    const runner = createScriptedRunner([
+      {
+        error: new GitHubCommandError({
+          args: ["api", "graphql"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "To authenticate, run: gh auth login",
+        }),
+      },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const reviewThreads = await service.getPullRequestReviewThreads({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(reviewThreads.error).toEqual({
+      kind: "auth_required",
+      message: "To authenticate, run: gh auth login",
+    });
+  });
+
+  it("maps PR review threads permission failures to forbidden errors", async () => {
+    const runner = createScriptedRunner([
+      {
+        error: new GitHubCommandError({
+          args: ["api", "graphql"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "GraphQL: Resource not accessible by integration",
+        }),
+      },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const reviewThreads = await service.getPullRequestReviewThreads({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(reviewThreads.error).toEqual({
+      kind: "forbidden",
+      message: "GraphQL: Resource not accessible by integration",
+    });
+  });
+
+  it("maps PR review threads missing PR failures to not_found errors", async () => {
+    const runner = createScriptedRunner([
+      {
+        error: new GitHubCommandError({
+          args: ["api", "graphql"],
+          cwd: "/repo",
+          exitCode: 1,
+          stderr: "GraphQL: Could not resolve to a PullRequest with the number of 42.",
+        }),
+      },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const reviewThreads = await service.getPullRequestReviewThreads({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(reviewThreads.error?.kind).toBe("not_found");
+  });
+
+  it("caches PR review threads by cwd and PR number until invalidated", async () => {
+    const runner = createRunner([
+      pullRequestReviewThreadsJson(),
+      pullRequestReviewThreadsJson({
+        reviewThreads: {
+          nodes: [
+            {
+              id: "PRT_refreshed",
+              path: "src/other.ts",
+              line: 5,
+              startLine: null,
+              diffHunk: "@@ -1 +1 @@",
+              isResolved: false,
+              isOutdated: false,
+              comments: {
+                nodes: [
+                  {
+                    id: "PRC_refreshed",
+                    body: "Refreshed comment",
+                    url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r9",
+                    createdAt: "2026-04-02T14:00:00Z",
+                    author: { login: "reviewer", url: "https://github.com/reviewer" },
+                  },
+                ],
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 1_000,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+    const request = {
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    };
+
+    const first = await service.getPullRequestReviewThreads(request);
+    const second = await service.getPullRequestReviewThreads(request);
+    service.invalidate({ cwd: "/repo" });
+    const refreshed = await service.getPullRequestReviewThreads(request);
+
+    expect(first.threads[0]?.id).toBe("PRT_unresolved");
+    expect(second.threads[0]?.id).toBe("PRT_unresolved");
+    expect(refreshed.threads[0]?.id).toBe("PRT_refreshed");
     expect(runner.calls).toHaveLength(2);
   });
 

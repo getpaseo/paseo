@@ -37,6 +37,18 @@ export function prPaneTimelineQueryKey({
   return ["prPaneTimeline", serverId, cwd, prNumber] as const;
 }
 
+export function prReviewThreadsQueryKey({
+  serverId,
+  cwd,
+  prNumber,
+}: {
+  serverId: string;
+  cwd: string;
+  prNumber: number | null;
+}) {
+  return ["prReviewThreads", serverId, cwd, prNumber] as const;
+}
+
 export async function invalidateCheckoutGitQueriesForClient(
   queryClient: QueryClient,
   identity: CheckoutQueryIdentity,
@@ -53,6 +65,9 @@ export async function invalidateCheckoutGitQueriesForClient(
     }),
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate("prPaneTimeline", identity),
+    }),
+    queryClient.invalidateQueries({
+      predicate: checkoutQueryPredicate("prReviewThreads", identity),
     }),
   ]);
 }

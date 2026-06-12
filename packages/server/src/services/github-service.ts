@@ -213,6 +213,54 @@ const PullRequestTimelineGraphqlSchema = z.object({
     .optional(),
 });
 
+const PullRequestReviewThreadCommentNodeSchema = z.object({
+  id: z.string().catch(""),
+  body: z.string().nullable().catch(null),
+  url: z.string().catch(""),
+  createdAt: z.string().nullable().catch(null),
+  author: TimelineAuthorSchema,
+});
+
+const PullRequestReviewThreadNodeSchema = z.object({
+  id: z.string().catch(""),
+  path: z.string().catch(""),
+  line: z.number().nullable().catch(null),
+  startLine: z.number().nullable().catch(null),
+  diffHunk: z.string().catch(""),
+  isResolved: z.boolean().catch(false),
+  isOutdated: z.boolean().catch(false),
+  comments: z
+    .object({
+      nodes: z.array(PullRequestReviewThreadCommentNodeSchema).catch([]),
+      pageInfo: PullRequestTimelinePageInfoSchema.catch({ hasNextPage: false }),
+    })
+    .catch({ nodes: [], pageInfo: { hasNextPage: false } }),
+});
+
+const PullRequestReviewThreadsGraphqlSchema = z.object({
+  data: z
+    .object({
+      repository: z
+        .object({
+          pullRequest: z
+            .object({
+              number: z.number().optional(),
+              reviewThreads: z
+                .object({
+                  nodes: z.array(PullRequestReviewThreadNodeSchema).catch([]),
+                  pageInfo: PullRequestTimelinePageInfoSchema.catch({ hasNextPage: false }),
+                })
+                .catch({ nodes: [], pageInfo: { hasNextPage: false } }),
+            })
+            .nullable()
+            .optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .optional(),
+});
+
 const GitHubRepoViewSchema = z.object({
   owner: z
     .object({
@@ -343,6 +391,44 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
           author {
             login
             url
+          }
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }
+  }
+}`;
+
+const PULL_REQUEST_REVIEW_THREADS_QUERY = `
+query PullRequestReviewThreads($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          path
+          line
+          startLine
+          diffHunk
+          isResolved
+          isOutdated
+          comments(first: 100) {
+            nodes {
+              id
+              body
+              url
+              createdAt
+              author {
+                login
+                url
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
           }
         }
         pageInfo {
@@ -502,6 +588,47 @@ export interface GitHubPullRequestTimeline {
   error: GitHubPullRequestTimelineError | null;
 }
 
+export interface GitHubPullRequestReviewThreadComment {
+  id: string;
+  author: string;
+  body: string;
+  url: string;
+  createdAt: number;
+}
+
+export interface GitHubPullRequestReviewThread {
+  id: string;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  diffHunk: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  comments: GitHubPullRequestReviewThreadComment[];
+}
+
+export type GitHubPullRequestReviewThreadsErrorKind =
+  | "missing_cli"
+  | "auth_required"
+  | "forbidden"
+  | "not_found"
+  | "invalid_identity"
+  | "unknown";
+
+export interface GitHubPullRequestReviewThreadsError {
+  kind: GitHubPullRequestReviewThreadsErrorKind;
+  message: string;
+}
+
+export interface GitHubPullRequestReviewThreads {
+  prNumber: number;
+  repoOwner: string;
+  repoName: string;
+  threads: GitHubPullRequestReviewThread[];
+  truncated: boolean;
+  error: GitHubPullRequestReviewThreadsError | null;
+}
+
 export interface GitHubPullRequestCreateResult {
   url: string;
   number: number;
@@ -577,6 +704,13 @@ export type GetGitHubPullRequestTimelineOptions = {
   repoName: string;
 } & GitHubReadOptions;
 
+export type GetGitHubPullRequestReviewThreadsOptions = {
+  cwd: string;
+  prNumber: number;
+  repoOwner: string;
+  repoName: string;
+} & GitHubReadOptions;
+
 export interface GitHubSearchResult {
   items: Array<{
     kind: "issue" | "pr";
@@ -627,6 +761,9 @@ export interface GitHubService {
   getPullRequestTimeline(
     options: GetGitHubPullRequestTimelineOptions,
   ): Promise<GitHubPullRequestTimeline>;
+  getPullRequestReviewThreads(
+    options: GetGitHubPullRequestReviewThreadsOptions,
+  ): Promise<GitHubPullRequestReviewThreads>;
   searchIssuesAndPrs(options: SearchGitHubIssuesAndPrsOptions): Promise<GitHubSearchResult>;
   createPullRequest(
     options: CreateGitHubPullRequestOptions,
@@ -1082,6 +1219,48 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               items: [],
               truncated: false,
               error: mapPullRequestTimelineError(error),
+            };
+          }
+        },
+      });
+    },
+
+    getPullRequestReviewThreads(input) {
+      return cached({
+        cwd: input.cwd,
+        method: "getPullRequestReviewThreads",
+        args: { prNumber: input.prNumber },
+        readOptions: input,
+        load: async () => {
+          try {
+            const stdout = await run(
+              [
+                "api",
+                "graphql",
+                "-f",
+                `query=${PULL_REQUEST_REVIEW_THREADS_QUERY}`,
+                "-F",
+                `owner=${input.repoOwner}`,
+                "-F",
+                `name=${input.repoName}`,
+                "-F",
+                `number=${input.prNumber}`,
+              ],
+              { cwd: input.cwd },
+            );
+            return parsePullRequestReviewThreads(stdout, {
+              prNumber: input.prNumber,
+              repoOwner: input.repoOwner,
+              repoName: input.repoName,
+            });
+          } catch (error) {
+            return {
+              prNumber: input.prNumber,
+              repoOwner: input.repoOwner,
+              repoName: input.repoName,
+              threads: [],
+              truncated: false,
+              error: mapPullRequestReviewThreadsError(error),
             };
           }
         },
@@ -2048,6 +2227,95 @@ function mapPullRequestTimelineError(error: unknown): GitHubPullRequestTimelineE
 }
 
 function classifyPullRequestTimelineError(stderr: string): GitHubPullRequestTimelineErrorKind {
+  const normalized = stderr.toLowerCase();
+  if (
+    normalized.includes("could not resolve to a pullrequest") ||
+    normalized.includes("pull request not found") ||
+    normalized.includes("pullrequest not found")
+  ) {
+    return "not_found";
+  }
+  if (
+    normalized.includes("forbidden") ||
+    normalized.includes("resource not accessible") ||
+    normalized.includes("permission") ||
+    normalized.includes("access denied") ||
+    normalized.includes("requires authentication") ||
+    normalized.includes("http 403")
+  ) {
+    return "forbidden";
+  }
+  return "unknown";
+}
+
+function parsePullRequestReviewThreads(
+  stdout: string,
+  identity: { prNumber: number; repoOwner: string; repoName: string },
+): GitHubPullRequestReviewThreads {
+  const parsed = PullRequestReviewThreadsGraphqlSchema.parse(JSON.parse(stdout || "{}"));
+  const pullRequest = parsed.data?.repository?.pullRequest;
+  const threadNodes = pullRequest?.reviewThreads.nodes ?? [];
+  const commentsTruncated = threadNodes.some((node) => node.comments.pageInfo.hasNextPage);
+  return {
+    prNumber: pullRequest?.number ?? identity.prNumber,
+    repoOwner: identity.repoOwner,
+    repoName: identity.repoName,
+    threads: threadNodes.map(toPullRequestReviewThread),
+    // S3 deliberately caps fetches at the first 100 review threads and first 100 comments each.
+    truncated: Boolean(pullRequest?.reviewThreads.pageInfo.hasNextPage) || commentsTruncated,
+    error: pullRequest ? null : { kind: "not_found", message: "Pull request not found" },
+  };
+}
+
+function toPullRequestReviewThread(
+  thread: z.infer<typeof PullRequestReviewThreadNodeSchema>,
+): GitHubPullRequestReviewThread {
+  return {
+    id: thread.id,
+    path: thread.path,
+    line: thread.line,
+    startLine: thread.startLine,
+    diffHunk: thread.diffHunk,
+    isResolved: thread.isResolved,
+    isOutdated: thread.isOutdated,
+    comments: thread.comments.nodes.map(toPullRequestReviewThreadComment),
+  };
+}
+
+function toPullRequestReviewThreadComment(
+  comment: z.infer<typeof PullRequestReviewThreadCommentNodeSchema>,
+): GitHubPullRequestReviewThreadComment {
+  return {
+    id: comment.id,
+    author: comment.author?.login ?? "unknown",
+    body: comment.body ?? "",
+    url: comment.url,
+    createdAt: parseOptionalTime(comment.createdAt ?? null),
+  };
+}
+
+function mapPullRequestReviewThreadsError(error: unknown): GitHubPullRequestReviewThreadsError {
+  if (error instanceof GitHubCliMissingError) {
+    return { kind: "missing_cli", message: error.message };
+  }
+  if (error instanceof GitHubAuthenticationError) {
+    return { kind: "auth_required", message: error.stderr || error.message };
+  }
+  if (error instanceof GitHubCommandError) {
+    return {
+      kind: classifyPullRequestReviewThreadsError(error.stderr),
+      message: error.stderr || error.message,
+    };
+  }
+  return {
+    kind: "unknown",
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function classifyPullRequestReviewThreadsError(
+  stderr: string,
+): GitHubPullRequestReviewThreadsErrorKind {
   const normalized = stderr.toLowerCase();
   if (
     normalized.includes("could not resolve to a pullrequest") ||

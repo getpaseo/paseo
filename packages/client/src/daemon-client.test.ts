@@ -3597,3 +3597,120 @@ test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", 
     vi.useRealTimers();
   }
 });
+
+test("pullRequestReviewThreads sends the dotted RPC and resolves the payload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.pullRequestReviewThreads(
+    { cwd: "/tmp/project", prNumber: 42, repoOwner: "getpaseo", repoName: "paseo" },
+    "req-threads",
+  );
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "pr.github.get_review_threads.request",
+      cwd: "/tmp/project",
+      prNumber: 42,
+      repoOwner: "getpaseo",
+      repoName: "paseo",
+      requestId: "req-threads",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "pr.github.get_review_threads.response",
+      payload: {
+        cwd: "/tmp/project",
+        prNumber: 42,
+        threads: [
+          {
+            id: "PRT_1",
+            path: "src/index.ts",
+            line: 12,
+            startLine: 10,
+            diffHunk: "@@ -8,4 +8,5 @@",
+            isResolved: false,
+            isOutdated: false,
+            comments: [
+              {
+                id: "PRC_1",
+                author: "octocat",
+                body: "Please rename this",
+                url: "https://github.com/getpaseo/paseo/pull/42#discussion_r1",
+                createdAt: 1710000000000,
+              },
+            ],
+          },
+        ],
+        truncated: false,
+        error: null,
+        requestId: "req-threads",
+        githubFeaturesEnabled: true,
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toMatchObject({
+    cwd: "/tmp/project",
+    prNumber: 42,
+    githubFeaturesEnabled: true,
+    truncated: false,
+    error: null,
+  });
+  const payload = await responsePromise;
+  expect(payload.threads).toHaveLength(1);
+  expect(payload.threads[0]).toMatchObject({ id: "PRT_1", path: "src/index.ts" });
+});
+
+test("pullRequestReviewThreads rejects when the daemon returns an rpc_error", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.pullRequestReviewThreads(
+    { cwd: "/tmp/project", prNumber: 7, repoOwner: "getpaseo", repoName: "paseo" },
+    "req-threads-err",
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: {
+        requestId: "req-threads-err",
+        requestType: "pr.github.get_review_threads.request",
+        error: "unknown request type",
+        code: "unknown_schema",
+      },
+    }),
+  );
+
+  await expect(responsePromise).rejects.toThrow();
+});
