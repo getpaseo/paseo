@@ -2220,11 +2220,19 @@ function parsePullRequestTimeline(
 ): GitHubPullRequestTimeline {
   const parsed = PullRequestTimelineGraphqlSchema.parse(JSON.parse(stdout || "{}"));
   const pullRequest = parsed.data?.repository?.pullRequest;
+  const reviewThreadItems = pullRequest
+    ? pullRequest.reviewThreads.nodes.flatMap(toPullRequestTimelineReviewThreadItems)
+    : [];
+  const reviewThreadItemIds = new Set(
+    reviewThreadItems.map((item) => item.id).filter((id) => id.length > 0),
+  );
   const items = pullRequest
     ? [
         ...pullRequest.reviews.nodes.flatMap(toPullRequestTimelineReviewItem),
-        ...pullRequest.comments.nodes.map(toPullRequestTimelineCommentItem),
-        ...pullRequest.reviewThreads.nodes.flatMap(toPullRequestTimelineReviewThreadItems),
+        ...pullRequest.comments.nodes
+          .filter((comment) => !reviewThreadItemIds.has(comment.id))
+          .map(toPullRequestTimelineCommentItem),
+        ...reviewThreadItems,
       ].sort(compareTimelineItems)
     : [];
   return {

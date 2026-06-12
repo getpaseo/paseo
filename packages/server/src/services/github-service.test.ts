@@ -997,6 +997,99 @@ describe("GitHubService", () => {
     expect(runner.calls[0]?.args[3]).toContain("pullRequestReview");
   });
 
+  it("keeps inline review thread comments once when they also appear in PR comments", async () => {
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        comments: {
+          nodes: [
+            {
+              id: "PRRC_1",
+              body: "This should include line context.",
+              url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+              createdAt: "2026-04-02T13:51:00Z",
+              author: {
+                login: "inline-reviewer",
+                url: "https://github.com/inline-reviewer",
+                avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+              },
+            },
+            {
+              id: "IC_later",
+              body: "Can we add a regression test?",
+              url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-3",
+              createdAt: "2026-04-02T13:55:00Z",
+              author: {
+                login: "commenter",
+                url: "https://github.com/commenter",
+                avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+        reviewThreads: {
+          nodes: [
+            {
+              id: "PRRT_1",
+              path: "packages/app/src/git/pull-request-panel/data.ts",
+              line: 24,
+              startLine: 20,
+              isResolved: false,
+              isOutdated: false,
+              comments: {
+                nodes: [
+                  {
+                    id: "PRRC_1",
+                    body: "This should include line context.",
+                    url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
+                    createdAt: "2026-04-02T13:51:00Z",
+                    author: {
+                      login: "inline-reviewer",
+                      url: "https://github.com/inline-reviewer",
+                      avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+                    },
+                    pullRequestReview: { id: "PRR_empty_commented" },
+                  },
+                ],
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.items.map((item) => item.id)).toEqual([
+      "PRR_empty_commented",
+      "PRRC_1",
+      "PRR_approved",
+      "IC_later",
+    ]);
+    expect(timeline.items[1]).toMatchObject({
+      id: "PRRC_1",
+      reviewId: "PRR_empty_commented",
+      location: {
+        path: "packages/app/src/git/pull-request-panel/data.ts",
+        line: 24,
+        startLine: 20,
+        threadId: "PRRT_1",
+      },
+    });
+  });
+
   it("uses the passed parent repository identity for fork PR timelines", async () => {
     const runner = createRunner([pullRequestTimelineJson()]);
     const service = createGitHubService({
