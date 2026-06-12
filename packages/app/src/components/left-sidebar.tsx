@@ -66,6 +66,7 @@ import {
   buildHostOpenProjectRoute,
   buildHostNewWorkspaceRoute,
   buildHostSessionsRoute,
+  buildSettingsHostSectionRoute,
   buildSettingsRoute,
   mapPathnameToServer,
 } from "@/utils/host-routes";
@@ -247,12 +248,20 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const handleSettingsMobile = useCallback(() => {
     showMobileAgent();
-    router.push(buildSettingsRoute());
-  }, [showMobileAgent]);
+    router.push(
+      activeServerId
+        ? buildSettingsHostSectionRoute(activeServerId, "connections")
+        : buildSettingsRoute(),
+    );
+  }, [showMobileAgent, activeServerId]);
 
   const handleSettingsDesktop = useCallback(() => {
-    router.push(buildSettingsRoute());
-  }, []);
+    router.push(
+      activeServerId
+        ? buildSettingsHostSectionRoute(activeServerId, "connections")
+        : buildSettingsRoute(),
+    );
+  }, [activeServerId]);
 
   const handleHomeMobile = useCallback(() => {
     if (!activeServerId) return;
