@@ -29,6 +29,8 @@ Each `onChange` delivers both the new snapshot and the `previous` one (`{ state,
 
 The daemon's notification policy consumes these transitions, not snapshots. When a transition moves from `working` to `idle`, the websocket layer fires a "Terminal finished" attention notification. It keeps no per-terminal timing state of its own — the previous snapshot carried in the transition is the entire history it needs. A terminal that exits while still working emits no turn-end notification.
 
+Terminal workspace membership is path-prefix based: a terminal opened in a workspace subdirectory rolls up to the deepest active parent workspace for status buckets and notification routing.
+
 ## Hook reporting
 
 Terminals receive four environment variables when the daemon creates the shell:

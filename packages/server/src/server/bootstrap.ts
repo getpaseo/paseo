@@ -510,17 +510,20 @@ export async function createPaseoDaemon(
     next();
   });
 
-  // Middleware
-  app.use(express.json());
-
   // Local, harmless, and token-gated; deliberately skips daemon auth.
-  app.post("/api/terminal-activity", createTerminalActivityRouteHandler(terminalManager));
+  app.post(
+    "/api/terminal-activity",
+    express.json(),
+    createTerminalActivityRouteHandler(terminalManager),
+  );
 
   app.use(
     createRequireBearerMiddleware(config.auth, (context) => {
       logger.warn(context, "Rejected HTTP request with invalid daemon password");
     }),
   );
+
+  app.use(express.json());
 
   // Serve static files from public directory
   app.use("/public", express.static(staticDir));

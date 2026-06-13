@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
-import { basename, join, resolve } from "path";
+import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -9,6 +9,7 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import { resolveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -1819,10 +1820,7 @@ export class VoiceAssistantWebSocketServer {
 
   private async resolveWorkspaceIdForCwd(cwd: string): Promise<string | undefined> {
     const workspaces = await this.workspaceRegistry.list();
-    const directory = resolve(cwd);
-    return workspaces.find(
-      (workspace) => !workspace.archivedAt && resolve(workspace.cwd) === directory,
-    )?.workspaceId;
+    return resolveWorkspaceRecordForCwd(cwd, workspaces)?.workspaceId;
   }
 
   private async broadcastTerminalAttention(params: {

@@ -15,7 +15,10 @@ import {
 import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
+import { resolveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+
+type WorkspaceIdResolver = (cwd: string) => string | undefined;
 
 const FETCH_WORKSPACES_SORT_KEYS = [
   "status_priority",
@@ -207,9 +210,8 @@ export class WorkspaceDirectory {
     );
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
-    const workspaceIdsByDirectory = new Map(
-      activeRecords.map((workspace) => [resolve(workspace.cwd), workspace.workspaceId] as const),
-    );
+    const resolveWorkspaceIdForCwd: WorkspaceIdResolver = (cwd) =>
+      resolveWorkspaceRecordForCwd(cwd, activeRecords)?.workspaceId;
 
     const includedWorkspaces = activeRecords.filter(
       (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
@@ -258,7 +260,7 @@ export class WorkspaceDirectory {
         });
       }
 
-      const workspaceId = workspaceIdsByDirectory.get(resolve(workspaceAgent.cwd));
+      const workspaceId = resolveWorkspaceIdForCwd(workspaceAgent.cwd);
       if (workspaceId === undefined) {
         continue;
       }
@@ -277,7 +279,7 @@ export class WorkspaceDirectory {
     // Terminal activity contributions: working terminal → running bucket.
     const terminalEntriesByWorkspaceId = this.applyTerminalContributions(
       terminalContributions,
-      workspaceIdsByDirectory,
+      resolveWorkspaceIdForCwd,
       descriptorsByWorkspaceId,
     );
 
@@ -289,7 +291,7 @@ export class WorkspaceDirectory {
         (agent) =>
           !agent.archivedAt &&
           this.deps.isProviderVisibleToClient(agent.provider) &&
-          workspaceIdsByDirectory.get(resolve(agent.cwd)) === workspaceId,
+          resolveWorkspaceIdForCwd(agent.cwd) === workspaceId,
       );
       const terminalEntries = terminalEntriesByWorkspaceId.get(workspaceId) ?? [];
       const result = this.resolveStatusEnteredAt({
@@ -315,7 +317,7 @@ export class WorkspaceDirectory {
   // of terminal timestamp entries per workspace for use in `resolveStatusEnteredAt`.
   private applyTerminalContributions(
     terminalContributions: Array<{ cwd: string; activity: TerminalActivity | null }>,
-    workspaceIdsByDirectory: ReadonlyMap<string, string>,
+    resolveWorkspaceIdForCwd: WorkspaceIdResolver,
     descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>,
   ): Map<string, Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>> {
     const terminalEntriesByWorkspaceId = new Map<
@@ -334,7 +336,7 @@ export class WorkspaceDirectory {
       } else {
         continue;
       }
-      const workspaceId = workspaceIdsByDirectory.get(resolve(cwd));
+      const workspaceId = resolveWorkspaceIdForCwd(cwd);
       if (workspaceId === undefined) {
         continue;
       }

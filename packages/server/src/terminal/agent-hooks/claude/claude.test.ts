@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildTerminalEnvironment } from "../../terminal.js";
 import { buildAgentHookShellCommand } from "../agent-hook-installer.js";
@@ -12,6 +13,7 @@ import {
 } from "../provider-registry.js";
 
 const temporaryDirs: string[] = [];
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../..");
 
 afterEach(() => {
   while (temporaryDirs.length > 0) {
@@ -150,8 +152,8 @@ describe("Claude terminal agent hooks", () => {
 
   it("keeps provider names out of generic CLI and bootstrap integration points", () => {
     const genericFiles = [
-      join(process.cwd(), "packages", "cli", "src", "commands", "hooks.ts"),
-      join(process.cwd(), "packages", "server", "src", "server", "bootstrap.ts"),
+      join(repositoryRoot, "packages", "cli", "src", "commands", "hooks.ts"),
+      join(repositoryRoot, "packages", "server", "src", "server", "bootstrap.ts"),
     ];
 
     for (const filePath of genericFiles) {

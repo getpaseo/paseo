@@ -124,6 +124,13 @@ class WorkspaceStatus {
     });
   }
 
+  hasWorkingTerminalInSubdirectory(changedAt: number): void {
+    this.terminals.push({
+      cwd: `${this.workspace.cwd}/packages/app`,
+      activity: { state: "working", changedAt },
+    });
+  }
+
   hasIdleTerminal(changedAt: number): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
@@ -240,6 +247,15 @@ describe("WorkspaceDirectory", () => {
     const changedAt = new Date(NOW).getTime();
 
     workspace.hasWorkingTerminal(changedAt);
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("working terminal in a subdirectory contributes to the parent workspace", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasWorkingTerminalInSubdirectory(changedAt);
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
   });

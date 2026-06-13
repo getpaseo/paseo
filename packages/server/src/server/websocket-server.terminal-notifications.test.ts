@@ -293,6 +293,26 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
     expect(readTerminalAttentionMessage(ws).workspaceId).toBe("ws-1");
   });
 
+  it("resolves the parent workspaceId for a subdirectory terminal cwd", async () => {
+    const { manager, emit } = createTerminalManager();
+    const { server } = createServer(manager, createWorkspaceRegistry([workspaceRecord()]));
+    const ws = connectClient(server);
+
+    emit({
+      ...transition({
+        previousState: "working",
+        previousChangedAt: 1000,
+        state: "idle",
+        changedAt: 11001,
+      }),
+      cwd: `${CWD}/packages/app`,
+    });
+
+    await flushAsync();
+
+    expect(readTerminalAttentionMessage(ws).workspaceId).toBe("ws-1");
+  });
+
   it("omits workspaceId for archived or unregistered workspaces", async () => {
     const { manager, emit } = createTerminalManager();
     const { server } = createServer(
