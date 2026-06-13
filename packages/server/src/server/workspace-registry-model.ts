@@ -34,7 +34,7 @@ export function generateWorkspaceId(): string {
   return `wks_${randomBytes(8).toString("hex")}`;
 }
 
-export function resolveWorkspaceRecordForCwd(
+export function resolveActiveWorkspaceRecordForCwd(
   cwd: string,
   workspaces: Iterable<PersistedWorkspaceRecord>,
 ): PersistedWorkspaceRecord | null {

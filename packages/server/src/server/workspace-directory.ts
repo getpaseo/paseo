@@ -15,7 +15,7 @@ import {
 import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
-import { resolveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
+import { resolveActiveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 
 type WorkspaceIdResolver = (cwd: string) => string | undefined;
@@ -210,8 +210,11 @@ export class WorkspaceDirectory {
     );
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
-    const resolveWorkspaceIdForCwd: WorkspaceIdResolver = (cwd) =>
-      resolveWorkspaceRecordForCwd(cwd, activeRecords)?.workspaceId;
+    const workspaceIdsByDirectory = new Map(
+      activeRecords.map((workspace) => [resolve(workspace.cwd), workspace.workspaceId] as const),
+    );
+    const resolveActiveWorkspaceIdForCwd: WorkspaceIdResolver = (cwd) =>
+      resolveActiveWorkspaceRecordForCwd(cwd, activeRecords)?.workspaceId;
 
     const includedWorkspaces = activeRecords.filter(
       (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
@@ -260,7 +263,7 @@ export class WorkspaceDirectory {
         });
       }
 
-      const workspaceId = resolveWorkspaceIdForCwd(workspaceAgent.cwd);
+      const workspaceId = workspaceIdsByDirectory.get(resolve(workspaceAgent.cwd));
       if (workspaceId === undefined) {
         continue;
       }
@@ -279,7 +282,7 @@ export class WorkspaceDirectory {
     // Terminal activity contributions: working terminal → running bucket.
     const terminalEntriesByWorkspaceId = this.applyTerminalContributions(
       terminalContributions,
-      resolveWorkspaceIdForCwd,
+      resolveActiveWorkspaceIdForCwd,
       descriptorsByWorkspaceId,
     );
 
@@ -291,7 +294,7 @@ export class WorkspaceDirectory {
         (agent) =>
           !agent.archivedAt &&
           this.deps.isProviderVisibleToClient(agent.provider) &&
-          resolveWorkspaceIdForCwd(agent.cwd) === workspaceId,
+          workspaceIdsByDirectory.get(resolve(agent.cwd)) === workspaceId,
       );
       const terminalEntries = terminalEntriesByWorkspaceId.get(workspaceId) ?? [];
       const result = this.resolveStatusEnteredAt({

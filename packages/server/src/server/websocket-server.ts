@@ -9,7 +9,7 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
-import { resolveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
+import { resolveActiveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -1820,7 +1820,7 @@ export class VoiceAssistantWebSocketServer {
 
   private async resolveWorkspaceIdForCwd(cwd: string): Promise<string | undefined> {
     const workspaces = await this.workspaceRegistry.list();
-    return resolveWorkspaceRecordForCwd(cwd, workspaces)?.workspaceId;
+    return resolveActiveWorkspaceRecordForCwd(cwd, workspaces)?.workspaceId;
   }
 
   private async broadcastTerminalAttention(params: {
