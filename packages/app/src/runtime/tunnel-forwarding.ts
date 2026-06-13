@@ -91,8 +91,11 @@ function ensureDesktopSubscription(): void {
   }
   desktopSubscribed = true;
   void listenToDesktopEvent<TunnelEventPayload>("tunnel", handleDesktopTunnelEvent);
-  // Reclaim this window's loopback listeners when it closes/reloads, so they
-  // don't leak (and hold their ports) until app quit.
+  // Best-effort early reclaim of this window's loopback listeners on close/reload.
+  // The IPC is fire-and-forget and may not round-trip before the renderer is torn
+  // down — that's fine: the main process's closeAllTunnelListeners() on app quit is
+  // the backstop, so the worst case is a listener lingering until quit, not a leak
+  // that outlives the app.
   if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
     window.addEventListener("beforeunload", closeAllForwards);
   }

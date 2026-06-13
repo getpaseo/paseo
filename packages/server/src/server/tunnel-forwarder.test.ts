@@ -106,7 +106,7 @@ describe("TunnelForwarder", () => {
     });
 
     const dataFrame = findFrame(emitted, TunnelStreamOpcode.Data);
-    expect(dataFrame?.opcode).toBe(TunnelStreamOpcode.Data);
+    expect(dataFrame).toBeDefined();
     if (dataFrame?.opcode === TunnelStreamOpcode.Data) {
       expect(new TextDecoder().decode(dataFrame.payload)).toBe("ping");
       expect(dataFrame.streamId).toBe("s1");
@@ -128,6 +128,7 @@ describe("TunnelForwarder", () => {
     });
 
     const closeFrame = findFrame(emitted, TunnelStreamOpcode.Close);
+    expect(closeFrame).toBeDefined();
     if (closeFrame?.opcode === TunnelStreamOpcode.Close) {
       expect(closeFrame.reason).toBe(TunnelCloseReason.ConnectFailed);
     }
@@ -163,7 +164,8 @@ describe("TunnelForwarder", () => {
       payload: new TextEncoder().encode("ping"),
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // handleFrame's disposed guard is synchronous: no socket is dialed and
+    // nothing is emitted, so this holds immediately without waiting.
     expect(emitted).toHaveLength(0);
   });
 });
