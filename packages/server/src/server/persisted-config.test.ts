@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import {
   loadPersistedConfig,
@@ -558,6 +558,21 @@ describe("PersistedConfigSchema voice mode config", () => {
 
     expect(parsed.features?.dictation?.stt?.language).toBe("fr");
     expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
+  });
+
+  it("round-trips features.dictation.transcriptionPrompt", () => {
+    const parsed = PersistedConfigSchema.parse({
+      version: 1,
+      features: {
+        dictation: {
+          stt: { language: "en" },
+          transcriptionPrompt: "Transcribe verbatim, keep filler words.",
+        },
+      },
+    });
+    expect(parsed.features?.dictation?.transcriptionPrompt).toBe(
+      "Transcribe verbatim, keep filler words.",
+    );
   });
 });
 

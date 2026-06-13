@@ -89,6 +89,7 @@ const SpeechProviderIdSchema = z
 const FeatureDictationSchema = z
   .object({
     enabled: z.boolean().optional(),
+    transcriptionPrompt: z.string().optional(),
     stt: z
       .object({
         provider: SpeechProviderIdSchema.optional(),
