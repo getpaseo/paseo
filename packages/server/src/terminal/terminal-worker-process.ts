@@ -13,16 +13,16 @@ let ipcClosing = false;
 
 // node-pty completes its Windows conpty spawn asynchronously on a separate
 // conout worker thread. When that spawn fails (bad cwd, missing command, etc.)
-// it throws an exception that escapes our per-request try/catch and would
+// it throws an exception there that cannot be caught at the call site and would
 // otherwise crash this entire worker process — taking every existing terminal
-// down with it ("Terminal worker is not running"). Keep the worker alive so a
-// single bad terminal can't sever the rest; the failed terminal still surfaces
-// its own exit/error to the client.
+// down with it ("Terminal worker is not running"), with no restart path in the
+// parent (see worker-terminal-manager's `worker.on("exit")`, which only rejects
+// pending requests). Keeping the worker alive on an uncaught exception is a
+// deliberate trade-off: a single bad terminal must not sever the rest, and the
+// failed terminal still surfaces its own exit/error to the client. Scoped to
+// `uncaughtException` only — that is the path conpty failures actually take.
 process.on("uncaughtException", (error) => {
   console.error("Terminal worker uncaught exception (kept alive):", error);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error("Terminal worker unhandled rejection (kept alive):", reason);
 });
 
 function sendToParent(message: TerminalWorkerToParentMessage): void {

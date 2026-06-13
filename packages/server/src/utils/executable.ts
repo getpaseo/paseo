@@ -28,11 +28,6 @@ export interface WindowsKnownInstallOptions {
   localAppData?: string;
 }
 
-// winget "portable" packages drop their executable at the package root
-// (e.g. Anthropic.ClaudeCode → claude.exe). Keep the scan to the verified
-// root layout; widen this list only when a real package needs a subdir.
-const WINGET_PACKAGE_BIN_SUBDIRS = [""];
-
 /**
  * Find an executable installed by `winget` outside of PATH.
  *
@@ -66,14 +61,10 @@ export function enumerateWindowsKnownInstallCandidates(
     return [];
   }
 
+  // winget "portable" packages (e.g. Anthropic.ClaudeCode) drop their
+  // executable at the package root, so probe `<packageDir>/<name>.exe`.
   const exeName = `${name}.exe`;
-  const candidates: string[] = [];
-  for (const packageDir of packageDirs) {
-    for (const subdir of WINGET_PACKAGE_BIN_SUBDIRS) {
-      candidates.push(join(wingetPackages, packageDir, subdir, exeName));
-    }
-  }
-  return candidates;
+  return packageDirs.map((packageDir) => join(wingetPackages, packageDir, exeName));
 }
 
 async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]> {
