@@ -1642,6 +1642,7 @@ interface WorkspaceTerminalTabActions {
   handleScriptTerminalSelected: (terminalId: string) => void;
   handleWorkspacePathUnavailable: () => void;
   handleTerminalCreateQueued: () => void;
+  handleTerminalCreateFailed: (reason: string) => void;
 }
 
 function useWorkspaceTerminalTabActions({
@@ -1678,12 +1679,19 @@ function useWorkspaceTerminalTabActions({
   const handleTerminalCreateQueued = useCallback(() => {
     toast.show(labels.terminalQueued);
   }, [labels.terminalQueued, toast]);
+  const handleTerminalCreateFailed = useCallback(
+    (reason: string) => {
+      toast.error(reason);
+    },
+    [toast],
+  );
 
   return {
     handleTerminalCreated,
     handleScriptTerminalSelected,
     handleWorkspacePathUnavailable,
     handleTerminalCreateQueued,
+    handleTerminalCreateFailed,
   };
 }
 
@@ -1826,6 +1834,7 @@ function WorkspaceScreenContent({
     handleScriptTerminalSelected,
     handleWorkspacePathUnavailable,
     handleTerminalCreateQueued,
+    handleTerminalCreateFailed,
   } = useWorkspaceTerminalTabActions({
     persistenceKey,
     focusWorkspacePane,
@@ -1866,6 +1875,7 @@ function WorkspaceScreenContent({
     onScriptTerminalSelected: handleScriptTerminalSelected,
     onWorkspacePathUnavailable: handleWorkspacePathUnavailable,
     onTerminalCreateQueued: handleTerminalCreateQueued,
+    onTerminalCreateFailed: handleTerminalCreateFailed,
   });
   const { archiveAgent } = useArchiveAgent();
 

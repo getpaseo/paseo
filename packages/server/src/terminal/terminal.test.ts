@@ -5,6 +5,7 @@ import {
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
   resolveDefaultTerminalShell,
+  resolveTerminalSpawnCommand,
   humanizeProcessTitle,
   normalizeProcessTitle,
   resolveZshShellIntegrationDir,
@@ -201,6 +202,50 @@ describe("createTerminal", () => {
         env: { ComSpec: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
       }),
     ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  });
+
+  it("passes profile commands through untouched on non-Windows", async () => {
+    const resolveExecutable = vi.fn(async () => "/usr/local/bin/claude");
+    const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
+      platform: "linux",
+      resolveExecutable,
+    });
+
+    expect(resolved).toEqual({ command: "claude", args: ["--foo"] });
+    // Non-Windows must not pay the executable-resolution cost.
+    expect(resolveExecutable).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original command when it cannot be resolved on Windows", async () => {
+    const resolved = await resolveTerminalSpawnCommand("claude", [], {
+      platform: "win32",
+      resolveExecutable: async () => null,
+    });
+
+    // Falls back to the bare command so the terminal surfaces the error itself.
+    expect(resolved).toEqual({ command: "claude", args: [] });
+  });
+
+  it("routes resolved .cmd shims through cmd.exe on Windows", async () => {
+    const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
+      platform: "win32",
+      env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+      resolveExecutable: async () => "C:\\npm\\claude.cmd",
+    });
+
+    expect(resolved).toEqual({
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/c", "C:\\npm\\claude.cmd", "--foo"],
+    });
+  });
+
+  it("uses the resolved .exe path directly on Windows", async () => {
+    const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
+      platform: "win32",
+      resolveExecutable: async () => "C:\\tools\\claude.exe",
+    });
+
+    expect(resolved).toEqual({ command: "C:\\tools\\claude.exe", args: ["--foo"] });
   });
 
   it("creates a terminal session with an id, name, and cwd", async () => {

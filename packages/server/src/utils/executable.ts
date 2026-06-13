@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { extname } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { extname, join } from "node:path";
 import { execCommand } from "./spawn.js";
 import { isWindowsCommandScript } from "./windows-command.js";
 
@@ -21,6 +21,59 @@ async function enumerateCandidates(name: string): Promise<string[]> {
     return enumerateCandidatesViaSystemWhich(name);
   }
   return enumerateCandidatesViaLibrary(name);
+}
+
+export interface WindowsKnownInstallOptions {
+  platform?: NodeJS.Platform;
+  localAppData?: string;
+}
+
+// winget "portable" packages drop their executable at the package root
+// (e.g. Anthropic.ClaudeCode → claude.exe). Keep the scan to the verified
+// root layout; widen this list only when a real package needs a subdir.
+const WINGET_PACKAGE_BIN_SUBDIRS = [""];
+
+/**
+ * Find an executable installed by `winget` outside of PATH.
+ *
+ * winget "portable" packages (like Claude Code) extract their executable into
+ * `%LOCALAPPDATA%\Microsoft\WinGet\Packages\<PackageId>\` but do NOT add that
+ * directory to PATH or create a Links shim, so PATH-based lookup can't find
+ * them. Rather than hardcode each tool's package id, scan every winget package
+ * directory for a matching `<name>.exe`. This keeps a single generic fallback
+ * that any provider's command resolution benefits from — no per-tool probe.
+ */
+export function enumerateWindowsKnownInstallCandidates(
+  name: string,
+  options: WindowsKnownInstallOptions = {},
+): string[] {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    return [];
+  }
+  const localAppData = options.localAppData ?? process.env.LOCALAPPDATA;
+  if (!localAppData) {
+    return [];
+  }
+
+  const wingetPackages = join(localAppData, "Microsoft", "WinGet", "Packages");
+  let packageDirs: string[];
+  try {
+    packageDirs = readdirSync(wingetPackages, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+
+  const exeName = `${name}.exe`;
+  const candidates: string[] = [];
+  for (const packageDir of packageDirs) {
+    for (const subdir of WINGET_PACKAGE_BIN_SUBDIRS) {
+      candidates.push(join(wingetPackages, packageDir, subdir, exeName));
+    }
+  }
+  return candidates;
 }
 
 async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]> {
@@ -128,6 +181,15 @@ export async function findExecutable(
   const candidates = await enumerateCandidates(trimmed);
   for (const candidate of candidates) {
     if (await probeExecutable(candidate, probeTimeoutMs)) {
+      return candidate;
+    }
+  }
+
+  // PATH didn't resolve it. Fall back to well-known Windows install locations
+  // (e.g. winget portable packages) that don't register themselves on PATH.
+  // Only the existing executables are probed, so the cost is bounded.
+  for (const candidate of enumerateWindowsKnownInstallCandidates(trimmed)) {
+    if (existsSync(candidate) && (await probeExecutable(candidate, probeTimeoutMs))) {
       return candidate;
     }
   }

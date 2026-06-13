@@ -1,9 +1,10 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
+  enumerateWindowsKnownInstallCandidates,
   executableExists,
   findExecutable,
   quoteWindowsArgument,
@@ -118,6 +119,47 @@ describe("findExecutable", () => {
     prependPath(dir);
 
     await expect(findExecutable("paseo-definitely-missing-command")).resolves.toBeNull();
+  });
+});
+
+describe("enumerateWindowsKnownInstallCandidates", () => {
+  test("returns nothing on non-Windows platforms", () => {
+    expect(
+      enumerateWindowsKnownInstallCandidates("claude", {
+        platform: "darwin",
+        localAppData: "/Users/me/AppData/Local",
+      }),
+    ).toEqual([]);
+  });
+
+  test("returns nothing when LOCALAPPDATA is unavailable", () => {
+    expect(
+      enumerateWindowsKnownInstallCandidates("claude", { platform: "win32", localAppData: "" }),
+    ).toEqual([]);
+  });
+
+  test("scans winget package dirs for a portable executable not on PATH", () => {
+    const localAppData = makeTempDir();
+    const packages = path.join(localAppData, "Microsoft", "WinGet", "Packages");
+    // A portable package drops the exe at its root (like Anthropic.ClaudeCode).
+    mkdirSync(path.join(packages, "Anthropic.ClaudeCode_abc"), { recursive: true });
+    mkdirSync(path.join(packages, "Some.Other_xyz"), { recursive: true });
+
+    const candidates = enumerateWindowsKnownInstallCandidates("claude", {
+      platform: "win32",
+      localAppData,
+    });
+
+    // Each package dir is probed at its root, where portable packages drop the exe.
+    expect(candidates).toContain(path.join(packages, "Anthropic.ClaudeCode_abc", "claude.exe"));
+    expect(candidates).toContain(path.join(packages, "Some.Other_xyz", "claude.exe"));
+  });
+
+  test("returns nothing when the winget Packages dir is absent", () => {
+    const localAppData = makeTempDir();
+    expect(
+      enumerateWindowsKnownInstallCandidates("claude", { platform: "win32", localAppData }),
+    ).toEqual([]);
   });
 });
 

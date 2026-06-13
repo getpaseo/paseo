@@ -11,6 +11,20 @@ const manager = createTerminalManager();
 const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
 let ipcClosing = false;
 
+// node-pty completes its Windows conpty spawn asynchronously on a separate
+// conout worker thread. When that spawn fails (bad cwd, missing command, etc.)
+// it throws an exception that escapes our per-request try/catch and would
+// otherwise crash this entire worker process — taking every existing terminal
+// down with it ("Terminal worker is not running"). Keep the worker alive so a
+// single bad terminal can't sever the rest; the failed terminal still surfaces
+// its own exit/error to the client.
+process.on("uncaughtException", (error) => {
+  console.error("Terminal worker uncaught exception (kept alive):", error);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("Terminal worker unhandled rejection (kept alive):", reason);
+});
+
 function sendToParent(message: TerminalWorkerToParentMessage): void {
   if (ipcClosing || !process.connected || !process.send) {
     return;
