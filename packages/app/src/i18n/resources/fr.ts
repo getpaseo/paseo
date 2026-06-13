@@ -766,6 +766,8 @@ export const fr: TranslationResources = {
           countLabel: "{{count}} commits en avance sur la base",
           fileDiffEmpty: "Aucune modification à afficher",
           fileDiffError: "Échec du chargement du diff du fichier",
+          loading: "Chargement des commits…",
+          loadError: "Échec du chargement des commits",
         },
       },
       openInEditor: {

@@ -747,6 +747,8 @@ export const en = {
           countLabel: "{{count}} commits ahead of base",
           fileDiffEmpty: "No changes to display",
           fileDiffError: "Failed to load file diff",
+          loading: "Loading commits…",
+          loadError: "Failed to load commits",
         },
       },
       openInEditor: {

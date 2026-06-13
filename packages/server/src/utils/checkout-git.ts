@@ -2120,20 +2120,29 @@ async function getLocalOnlyCommitShas(
  * else local <base>). Returns `[]` when the base cannot be resolved, the current
  * ref is the base itself, or there are no commits ahead.
  */
-export async function listCheckoutCommits({ cwd }: { cwd: string }): Promise<CheckoutCommit[]> {
+export interface CheckoutCommitsResult {
+  baseRef: string | null;
+  commits: CheckoutCommit[];
+}
+
+export async function listCheckoutCommits({
+  cwd,
+}: {
+  cwd: string;
+}): Promise<CheckoutCommitsResult> {
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch) {
-    return [];
+    return { baseRef: null, commits: [] };
   }
 
   const { resolvedBaseRef } = await resolveBaseRefForCwd(cwd);
   if (!resolvedBaseRef) {
-    return [];
+    return { baseRef: null, commits: [] };
   }
 
   const normalizedBaseRef = normalizeLocalBranchRefName(resolvedBaseRef);
   if (!normalizedBaseRef || normalizedBaseRef === currentBranch) {
-    return [];
+    return { baseRef: null, commits: [] };
   }
 
   let comparisonBaseRef: string;
@@ -2141,7 +2150,7 @@ export async function listCheckoutCommits({ cwd }: { cwd: string }): Promise<Che
     comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, resolvedBaseRef);
   } catch {
     // Base branch is not present locally or on origin — nothing to compare against.
-    return [];
+    return { baseRef: null, commits: [] };
   }
 
   // Single pass: `--raw` carries the status letter, `--numstat` the +/- counts.
@@ -2162,12 +2171,12 @@ export async function listCheckoutCommits({ cwd }: { cwd: string }): Promise<Che
 
   const records = parseCheckoutCommitRecords(logResult.stdout);
   if (records.length === 0) {
-    return [];
+    return { baseRef: comparisonBaseRef, commits: [] };
   }
 
   const localOnlyShas = await getLocalOnlyCommitShas(cwd, currentBranch);
 
-  return records.map((record) => ({
+  const commits = records.map((record) => ({
     sha: record.sha,
     shortSha: record.shortSha,
     subject: record.subject,
@@ -2176,6 +2185,8 @@ export async function listCheckoutCommits({ cwd }: { cwd: string }): Promise<Che
     isOnRemote: localOnlyShas === null ? false : !localOnlyShas.has(record.sha),
     files: record.files,
   }));
+
+  return { baseRef: comparisonBaseRef, commits };
 }
 
 /**

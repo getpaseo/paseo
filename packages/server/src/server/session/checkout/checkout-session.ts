@@ -181,10 +181,10 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      const commits = await listCheckoutCommits({ cwd: expandTilde(cwd) });
+      const { baseRef, commits } = await listCheckoutCommits({ cwd: expandTilde(cwd) });
       this.host.emit({
         type: "checkout.commits.list.response",
-        payload: { cwd, baseRef: null, commits, error: null, requestId },
+        payload: { cwd, baseRef, commits, error: null, requestId },
       });
     } catch (error) {
       this.host.emit({

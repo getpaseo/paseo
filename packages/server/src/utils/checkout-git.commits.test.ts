@@ -62,8 +62,9 @@ describe("listCheckoutCommits", () => {
     git(["push", "-u", "origin", "feature"], repoDir);
     commitFile(repoDir, "bar.txt", "x\n", "Add bar");
 
-    const commits = await listCheckoutCommits({ cwd: repoDir });
+    const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
 
+    expect(baseRef).toBe("main");
     expect(commits).toHaveLength(2);
     expect(commits[0]?.subject).toBe("Add bar");
     expect(commits[1]?.subject).toBe("Add foo");
@@ -86,7 +87,8 @@ describe("listCheckoutCommits", () => {
 
   it("returns [] when there are no commits ahead of base", async () => {
     const { repoDir } = initRepoOnMain();
-    const commits = await listCheckoutCommits({ cwd: repoDir });
+    const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
+    expect(baseRef).toBeNull();
     expect(commits).toEqual([]);
   });
 
@@ -96,8 +98,9 @@ describe("listCheckoutCommits", () => {
     commitFile(repoDir, "foo.txt", "a\n", "Add foo");
     commitFile(repoDir, "bar.txt", "b\n", "Add bar");
 
-    const commits = await listCheckoutCommits({ cwd: repoDir });
+    const { baseRef, commits } = await listCheckoutCommits({ cwd: repoDir });
 
+    expect(baseRef).toBe("main");
     expect(commits).toHaveLength(2);
     expect(commits.every((c) => c.isOnRemote === false)).toBe(true);
   });
@@ -109,7 +112,7 @@ describe("listCheckoutCommits", () => {
     git(["mv", "original.txt", "renamed.txt"], repoDir);
     commit(repoDir, "Rename file");
 
-    const commits = await listCheckoutCommits({ cwd: repoDir });
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
 
     expect(commits[0]?.files).toEqual([
       { path: "renamed.txt", additions: 0, deletions: 0, status: "renamed" },
@@ -123,7 +126,7 @@ describe("listCheckoutCommits", () => {
     git(["rm", "README.md"], repoDir);
     commit(repoDir, "Delete readme");
 
-    const commits = await listCheckoutCommits({ cwd: repoDir });
+    const { commits } = await listCheckoutCommits({ cwd: repoDir });
 
     expect(commits[0]?.files).toEqual([
       { path: "README.md", additions: 0, deletions: 2, status: "deleted" },

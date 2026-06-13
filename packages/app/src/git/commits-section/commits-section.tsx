@@ -16,7 +16,10 @@ interface CommitsSectionProps {
 
 export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionProps) {
   const { t } = useTranslation();
-  const { commits, capabilityMissing } = useCheckoutCommitsQuery({ serverId, cwd });
+  const { commits, capabilityMissing, isLoading, error } = useCheckoutCommitsQuery({
+    serverId,
+    cwd,
+  });
   const { preferences, updatePreferences } = useChangesPreferences();
   const collapsed = preferences.commitsCollapsed;
   const [expandedShas, setExpandedShas] = useState<ReadonlySet<string>>(() => new Set());
@@ -42,7 +45,29 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
     [collapsed],
   );
 
-  if (capabilityMissing || commits.length === 0) {
+  if (capabilityMissing) {
+    return null;
+  }
+
+  if (commits.length === 0) {
+    if (error) {
+      return (
+        <View style={styles.container}>
+          <Text style={styles.errorRow} testID="commits-section-error">
+            {t("workspace.git.diff.commits.loadError")}
+          </Text>
+        </View>
+      );
+    }
+    if (isLoading) {
+      return (
+        <View style={styles.container}>
+          <Text style={styles.loadingRow} testID="commits-section-loading">
+            {t("workspace.git.diff.commits.loading")}
+          </Text>
+        </View>
+      );
+    }
     return null;
   }
 
@@ -154,5 +179,19 @@ const styles = StyleSheet.create((theme) => ({
   },
   list: {
     paddingBottom: theme.spacing[1],
+  },
+  loadingRow: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  errorRow: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.statusDanger,
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
   },
 }));

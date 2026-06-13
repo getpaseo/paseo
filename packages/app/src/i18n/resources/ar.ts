@@ -740,6 +740,8 @@ export const ar: TranslationResources = {
           countLabel: "{{count}} إيداعات قبل الأساس",
           fileDiffEmpty: "لا توجد تغييرات لعرضها",
           fileDiffError: "تعذّر تحميل فروق الملف",
+          loading: "جارٍ تحميل الإيداعات…",
+          loadError: "تعذّر تحميل الإيداعات",
         },
       },
       openInEditor: {

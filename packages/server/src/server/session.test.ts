@@ -3273,26 +3273,29 @@ describe("session checkout status handling", () => {
 describe("session checkout commits list handling", () => {
   test("returns the branch commits ahead of base with local/remote flags", async () => {
     const messages: unknown[] = [];
-    checkoutGitMocks.listCheckoutCommits.mockResolvedValue([
-      {
-        sha: "1111111111111111111111111111111111111111",
-        shortSha: "1111111",
-        subject: "pushed commit",
-        authorName: "Ada",
-        authorDate: "2026-06-13T10:00:00Z",
-        isOnRemote: true,
-        files: [],
-      },
-      {
-        sha: "2222222222222222222222222222222222222222",
-        shortSha: "2222222",
-        subject: "local-only commit",
-        authorName: "Ada",
-        authorDate: "2026-06-13T11:00:00Z",
-        isOnRemote: false,
-        files: [],
-      },
-    ]);
+    checkoutGitMocks.listCheckoutCommits.mockResolvedValue({
+      baseRef: "origin/main",
+      commits: [
+        {
+          sha: "1111111111111111111111111111111111111111",
+          shortSha: "1111111",
+          subject: "pushed commit",
+          authorName: "Ada",
+          authorDate: "2026-06-13T10:00:00Z",
+          isOnRemote: true,
+          files: [],
+        },
+        {
+          sha: "2222222222222222222222222222222222222222",
+          shortSha: "2222222",
+          subject: "local-only commit",
+          authorName: "Ada",
+          authorDate: "2026-06-13T11:00:00Z",
+          isOnRemote: false,
+          files: [],
+        },
+      ],
+    });
     const session = createSessionForTest({ messages });
 
     await asSessionInternals(session).handleCheckoutCommitsListRequest({
@@ -3308,7 +3311,7 @@ describe("session checkout commits list handling", () => {
       type: "checkout.commits.list.response",
       payload: {
         cwd: "/tmp/commits-worktree",
-        baseRef: null,
+        baseRef: "origin/main",
         commits: [
           {
             sha: "1111111111111111111111111111111111111111",

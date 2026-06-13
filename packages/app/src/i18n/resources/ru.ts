@@ -759,6 +759,8 @@ export const ru: TranslationResources = {
           countLabel: "{{count}} коммитов впереди базы",
           fileDiffEmpty: "Нет изменений для отображения",
           fileDiffError: "Не удалось загрузить различия файла",
+          loading: "Загрузка коммитов…",
+          loadError: "Не удалось загрузить коммиты",
         },
       },
       openInEditor: {
