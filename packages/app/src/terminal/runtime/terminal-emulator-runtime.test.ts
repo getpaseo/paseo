@@ -345,17 +345,34 @@ describe("terminal-emulator-runtime", () => {
     expect(terminal.resetCalls).toBe(0);
   });
 
-  it("suppresses input only across a barrier op and restores it after the barrier commits", () => {
+  it("applies a barrier immediately when no writes precede it, suppressing input at once", () => {
     const { runtime, writeCallbacks } = createRuntimeWithTerminal();
     const readSuppressInput = () =>
       (runtime as unknown as { suppressInput: boolean }).suppressInput;
 
     expect(readSuppressInput()).toBe(false);
 
+    // No plain writes precede this barrier (mount), so there is nothing to gate: it starts
+    // at once with no sentinel, flipping suppressInput synchronously.
+    runtime.restoreOutput({ data: terminalOutput("snapshot") });
+    expect(readSuppressInput()).toBe(true);
+
+    // writeCallbacks[0] is the barrier's own snapshot write; committing it restores input.
+    writeCallbacks[0]?.();
+    expect(readSuppressInput()).toBe(false);
+  });
+
+  it("gates a barrier behind a preceding plain write before suppressing input", () => {
+    const { runtime, writeCallbacks } = createRuntimeWithTerminal();
+    const readSuppressInput = () =>
+      (runtime as unknown as { suppressInput: boolean }).suppressInput;
+
+    // A plain write is now ungated, so the following barrier must wait on the sentinel.
+    runtime.write({ data: terminalOutput("output") });
     runtime.restoreOutput({ data: terminalOutput("snapshot") });
 
-    // writeCallbacks[0] is the barrier gate sentinel; suppressInput only flips once the
-    // barrier actually starts (after the gate resolves), not while waiting on the gate.
+    // The plain write carries no onCommitted so it registers no callback; writeCallbacks[0]
+    // is the sentinel gate. suppressInput only flips once the gate resolves the barrier.
     expect(readSuppressInput()).toBe(false);
     writeCallbacks[0]?.();
     expect(readSuppressInput()).toBe(true);

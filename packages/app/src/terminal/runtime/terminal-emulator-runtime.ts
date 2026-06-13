@@ -188,6 +188,11 @@ export class TerminalEmulatorRuntime {
   // pending until xterm commits the write. unmount() disposes xterm before those fire, so we
   // track them here to flush remaining callbacks and avoid stalling upstream backpressure.
   private pendingWriteCommits = new Set<() => void>();
+  // True once a plain write has been submitted to xterm that no later barrier has gated
+  // yet. A barrier only needs the sentinel-write gate when this is set; at mount or right
+  // after another barrier it's false and the barrier applies immediately, saving a parse
+  // cycle of latency. Cleared when a barrier starts (it gates every write before it).
+  private hasUngatedWrites = false;
   private readonly inputModeDecoder = new TextDecoder();
   private suppressInput = false;
   private readonly inputModeTracker = new TerminalInputModeTracker();
@@ -816,11 +821,16 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
-    // The next op is a barrier. Before clear()/reset()/resize() touches the terminal, the
-    // plain writes submitted above must finish parsing — otherwise a synchronous reset
-    // could interleave with writes still sitting in xterm's internal buffer. A zero-length
-    // sentinel write commits after every prior write, so waiting on its callback gates the
-    // barrier behind the drained run. Plain writes never wait; only barriers do.
+    // The next op is a barrier. Before clear()/reset()/resize() touches the terminal, any
+    // ungated plain writes still parsing in xterm's buffer must finish — otherwise a
+    // synchronous reset could interleave with them. When none are ungated (mount, or right
+    // after another barrier) there is nothing to wait for, so apply the barrier at once.
+    if (!this.hasUngatedWrites) {
+      this.startBarrierOperation(terminal, operation);
+      return;
+    }
+    // Otherwise a zero-length sentinel write commits after every outstanding write, so
+    // waiting on its callback gates the barrier behind them. Plain writes never wait.
     let started = false;
     const startBarrier = () => {
       // unmount() clears the in-flight op and disposes the terminal while we wait on the
@@ -849,6 +859,7 @@ export class TerminalEmulatorRuntime {
     if (result.changed) {
       this.emitInputModeChange();
     }
+    this.hasUngatedWrites = true;
     const onCommitted = operation.onCommitted;
     if (!onCommitted) {
       try {
@@ -874,6 +885,10 @@ export class TerminalEmulatorRuntime {
 
   private startBarrierOperation(terminal: Terminal, operation: TerminalOutputOperation): void {
     this.inFlightOutputOperation = operation;
+    // This barrier gates every write submitted before it (the sentinel guaranteed they
+    // parsed, or there were none), so the next barrier can skip the sentinel until the
+    // next write arrives.
+    this.hasUngatedWrites = false;
     const previousSuppressInput = this.suppressInput;
     if (operation.suppressInput) {
       this.suppressInput = Boolean(operation.suppressInput);
