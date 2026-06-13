@@ -860,6 +860,98 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
   });
 });
 
+describe("ClaudeAgentClient.listImportableSessions", () => {
+  test("shows Claude slash command prompts without transcript tags", async () => {
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
+
+    try {
+      const commandSessionId = "session-command-import";
+      const argsSessionId = "session-command-args-import";
+      const cwd = "/tmp/paseo-test-claude-import";
+      const sanitized = cwd.replace(/[\\/._:]/g, "-");
+      const projectDir = path.join(tmpConfigDir, "projects", sanitized);
+      await fs.mkdir(projectDir, { recursive: true });
+      const commandSessionFile = path.join(projectDir, `${commandSessionId}.jsonl`);
+      const argsSessionFile = path.join(projectDir, `${argsSessionId}.jsonl`);
+      await fs.writeFile(
+        commandSessionFile,
+        `${JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          type: "user",
+          message: {
+            role: "user",
+            content:
+              "<command-message>caveman:caveman</command-message>\n<command-name>/caveman:caveman</command-name>",
+          },
+          cwd,
+          sessionId: commandSessionId,
+        })}\n`,
+        "utf-8",
+      );
+      await fs.writeFile(
+        argsSessionFile,
+        `${JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          type: "user",
+          message: {
+            role: "user",
+            content:
+              "<command-message>diagnose</command-message>\n<command-name>/diagnose</command-name>\n<command-args>recently the PR data does not update</command-args>",
+          },
+          cwd,
+          sessionId: argsSessionId,
+        })}\n`,
+        "utf-8",
+      );
+      await fs.utimes(
+        commandSessionFile,
+        new Date("2026-06-12T10:00:00.000Z"),
+        new Date("2026-06-12T10:00:00.000Z"),
+      );
+      await fs.utimes(
+        argsSessionFile,
+        new Date("2026-06-12T11:00:00.000Z"),
+        new Date("2026-06-12T11:00:00.000Z"),
+      );
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        resolveBinary: async () => "/test/claude/bin",
+      });
+
+      await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+        {
+          providerHandleId: argsSessionId,
+          cwd,
+          title: "/diagnose recently the PR data does not update",
+          firstPromptPreview: "/diagnose recently the PR data does not update",
+          lastPromptPreview: "/diagnose recently the PR data does not update",
+          lastActivityAt: new Date("2026-06-12T11:00:00.000Z"),
+        },
+        {
+          providerHandleId: commandSessionId,
+          cwd,
+          title: "/caveman:caveman",
+          firstPromptPreview: "/caveman:caveman",
+          lastPromptPreview: "/caveman:caveman",
+          lastActivityAt: new Date("2026-06-12T10:00:00.000Z"),
+        },
+      ]);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 

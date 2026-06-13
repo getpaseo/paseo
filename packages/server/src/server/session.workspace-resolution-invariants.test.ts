@@ -138,6 +138,7 @@ function createHarness(input: {
         workspaces.delete(id);
       },
     }),
+    filesystem: { isDirectory: async () => true },
     chatService: createStub<SessionOptions["chatService"]>({}),
     scheduleService: createStub<SessionOptions["scheduleService"]>({}),
     loopService: createStub<SessionOptions["loopService"]>({}),

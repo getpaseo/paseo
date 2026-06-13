@@ -2,7 +2,8 @@
 title: Updates
 description: How Paseo releases work, the difference between stable and beta channels, and how to opt in to earlier updates.
 nav: Updates
-order: 18
+order: 5
+category: Getting started
 ---
 
 # Updates

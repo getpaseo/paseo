@@ -512,6 +512,7 @@ function createSessionForWorkspaceTests(
         archive: async () => {},
         remove: async () => {},
       },
+      filesystem: { isDirectory: async () => true },
       chatService: asChatService(),
       scheduleService: asScheduleService(),
       loopService: asLoopService(),

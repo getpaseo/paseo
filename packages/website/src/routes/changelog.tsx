@@ -16,7 +16,7 @@ export const Route = createFileRoute("/changelog")({
 
 function Changelog() {
   return (
-    <SiteShell>
+    <SiteShell width="default">
       <article className="changelog-markdown rounded-xl border border-border bg-card/40 p-6 md:p-8">
         <ReactMarkdown>{changelogMarkdown}</ReactMarkdown>
       </article>

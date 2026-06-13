@@ -97,7 +97,7 @@ export function ExplorerSidebar({
     windowWidth,
     animateToOpen,
     animateToClose,
-    settledGeneration,
+    overlayVisible,
     isGesturing,
     gestureAnimatingRef,
     closeGestureRef,
@@ -260,25 +260,13 @@ export function ExplorerSidebar({
     [isMobile, explorerWidth, resizeWidth, setExplorerWidth, viewportWidth],
   );
 
-  // settledGeneration as deps: after each settle the updater is rebuilt so the
-  // shared values are re-applied to the view, protecting against a heavy Fabric
-  // commit reverting the transform to stale React-committed props (#9635).
-  const sidebarAnimatedStyle = useAnimatedStyle(
-    () => ({
-      transform: [{ translateX: translateX.value }],
-    }),
-    [settledGeneration],
-  );
+  const sidebarAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
-  // pointerEvents comes from React state, not the worklet: the Fabric revert
-  // protection above does not cover pointerEvents, so a worklet-driven value
-  // can wedge an invisible tap-eating backdrop after a heavy commit.
-  const backdropAnimatedStyle = useAnimatedStyle(
-    () => ({
-      opacity: backdropOpacity.value,
-    }),
-    [settledGeneration],
-  );
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
     width: resizeWidth.value,
@@ -288,6 +276,9 @@ export function ExplorerSidebar({
     () => [
       explorerStaticStyles.backdrop,
       backdropAnimatedStyle,
+      // pointerEvents is React-owned, not worklet-owned: Reanimated never
+      // touches it, so a stale animated-prop revert can't wedge an invisible
+      // tap-eating backdrop.
       { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
     ],
     [backdropAnimatedStyle, isOpen],
@@ -311,6 +302,16 @@ export function ExplorerSidebar({
       mobileKeyboardInsetStyle,
     ],
   );
+  // display is React-owned on the plain wrapper View (no animated styles), so
+  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
+  // reverts the panel transform to after a heavy commit (reanimated#9635).
+  const overlayStyle = useMemo(
+    () => [
+      StyleSheet.absoluteFillObject,
+      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
+    ],
+    [overlayVisible],
+  );
   const desktopSidebarStyle = useMemo(
     () => [explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }],
     [resizeAnimatedStyle, insets.top],
@@ -331,7 +332,7 @@ export function ExplorerSidebar({
 
   if (isMobile) {
     return (
-      <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+      <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
         <Animated.View style={backdropCombinedStyle} />
 

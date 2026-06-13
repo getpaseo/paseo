@@ -2622,6 +2622,8 @@ export const OpenProjectResponseMessageSchema = z.object({
     requestId: z.string(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
+    // Unknown codes from newer daemons degrade to null; clients fall back to `error`.
+    errorCode: z.enum(["directory_not_found"]).nullish().catch(null),
   }),
 });
 
@@ -4064,6 +4066,7 @@ export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishM
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+export type UploadedFileAttachment = z.infer<typeof UploadedFileAttachmentSchema>;
 export type FirstAgentContext = z.infer<typeof FirstAgentContextSchema>;
 export type ReviewAttachment = z.infer<typeof ReviewAttachmentSchema>;
 export type ListProviderModelsRequestMessage = z.infer<

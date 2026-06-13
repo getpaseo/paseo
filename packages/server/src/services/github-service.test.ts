@@ -303,6 +303,7 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
                 id: "PRR_approved",
                 state: "APPROVED",
                 body: "Looks good to me.",
+                bodyHTML: "<p>Looks good to me.</p>",
                 url: "https://github.com/parentOwner/parentRepo/pull/42#pullrequestreview-1",
                 submittedAt: "2026-04-02T13:52:14Z",
                 author: {
@@ -315,6 +316,7 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
                 id: "PRR_empty_commented",
                 state: "COMMENTED",
                 body: "",
+                bodyHTML: "",
                 url: "https://github.com/parentOwner/parentRepo/pull/42#pullrequestreview-2",
                 submittedAt: "2026-04-02T13:50:00Z",
                 author: null,
@@ -327,6 +329,7 @@ function pullRequestTimelineJson(overrides: Record<string, unknown> = {}): strin
               {
                 id: "IC_later",
                 body: "Can we add a regression test?",
+                bodyHTML: "<p>Can we add a regression test?</p>",
                 url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-3",
                 createdAt: "2026-04-02T13:55:00Z",
                 author: {
@@ -875,6 +878,7 @@ describe("GitHubService", () => {
     });
     expect(runner.calls[0]?.args[3]).toContain("reviews(first: 100)");
     expect(runner.calls[0]?.args[3]).toContain("comments(first: 100)");
+    expect(runner.calls[0]?.args[3]).toContain("bodyHTML");
     expect(runner.calls[0]?.args[3]).toContain("avatarUrl");
     expect(runner.calls[0]?.args[3]).toContain("reviewThreads(first: 100)");
     expect(timeline).toEqual({
@@ -920,6 +924,200 @@ describe("GitHubService", () => {
     });
   });
 
+  it("rewrites GitHub attachment image URLs in timeline comments", async () => {
+    const privateAttachmentUrl =
+      "https://private-user-images.githubusercontent.com/123/asset.png?jwt=abc&expires=123";
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        reviews: {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+        comments: {
+          nodes: [
+            {
+              id: "IC_attachment",
+              body: "Screenshot: ![bug](https://github.com/user-attachments/assets/raw-asset)",
+              bodyHTML: `<p>Screenshot: <img alt="bug" src="${privateAttachmentUrl.replaceAll("&", "&amp;")}" /></p>`,
+              url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-4",
+              createdAt: "2026-04-02T13:56:00Z",
+              author: null,
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.items).toHaveLength(1);
+    expect(timeline.items[0]).toMatchObject({
+      kind: "comment",
+      id: "IC_attachment",
+      body: `Screenshot: ![bug](${privateAttachmentUrl})`,
+    });
+  });
+
+  it("rewrites GitHub attachment image URLs in review thread comments", async () => {
+    const privateAttachmentUrl =
+      "https://private-user-images.githubusercontent.com/123/thread.png?jwt=thread";
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        reviews: {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+        comments: {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+        reviewThreads: {
+          nodes: [
+            {
+              id: "PRRT_attachment",
+              path: "packages/app/src/git/pull-request-panel/data.ts",
+              line: 24,
+              startLine: 20,
+              isResolved: false,
+              isOutdated: false,
+              comments: {
+                nodes: [
+                  {
+                    id: "PRRC_attachment",
+                    body: '<img src="https://github.com/user-attachments/assets/thread-asset" alt="thread" />',
+                    bodyHTML: `<p><img alt="thread" src="${privateAttachmentUrl}" /></p>`,
+                    url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r2",
+                    createdAt: "2026-04-02T13:51:00Z",
+                    author: null,
+                    pullRequestReview: { id: "PRR_empty_commented" },
+                  },
+                ],
+                pageInfo: { hasNextPage: false },
+              },
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.items).toHaveLength(1);
+    expect(timeline.items[0]).toMatchObject({
+      kind: "comment",
+      id: "PRRC_attachment",
+      body: `<img src="${privateAttachmentUrl}" alt="thread" />`,
+    });
+  });
+
+  it("leaves external badge images unchanged", async () => {
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        reviews: {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+        comments: {
+          nodes: [
+            {
+              id: "IC_badge",
+              body: "![build](https://img.shields.io/github/actions/workflow/status/getpaseo/paseo/ci.yml)",
+              bodyHTML:
+                '<p><img alt="build" src="https://camo.githubusercontent.com/badge-signature" /></p>',
+              url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-5",
+              createdAt: "2026-04-02T13:57:00Z",
+              author: null,
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.items[0]).toMatchObject({
+      kind: "comment",
+      id: "IC_badge",
+      body: "![build](https://img.shields.io/github/actions/workflow/status/getpaseo/paseo/ci.yml)",
+    });
+  });
+
+  it("leaves GitHub attachment image URLs unchanged when rendered images do not match", async () => {
+    const body = "![bug](https://github.com/user-attachments/assets/raw-asset)";
+    const runner = createRunner([
+      pullRequestTimelineJson({
+        reviews: {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+        comments: {
+          nodes: [
+            {
+              id: "IC_mismatch",
+              body,
+              bodyHTML: "<p>No rendered image.</p>",
+              url: "https://github.com/parentOwner/parentRepo/pull/42#issuecomment-6",
+              createdAt: "2026-04-02T13:58:00Z",
+              author: null,
+            },
+          ],
+          pageInfo: { hasNextPage: false },
+        },
+      }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const timeline = await service.getPullRequestTimeline({
+      cwd: "/repo",
+      prNumber: 42,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+
+    expect(timeline.items[0]).toMatchObject({
+      kind: "comment",
+      id: "IC_mismatch",
+      body,
+    });
+  });
+
   it("maps inline review thread comments as chronological PR timeline comments with location", async () => {
     const runner = createRunner([
       pullRequestTimelineJson({
@@ -937,6 +1135,7 @@ describe("GitHubService", () => {
                   {
                     id: "PRRC_1",
                     body: "This should include line context.",
+                    bodyHTML: "<p>This should include line context.</p>",
                     url: "https://github.com/parentOwner/parentRepo/pull/42#discussion_r1",
                     createdAt: "2026-04-02T13:51:00Z",
                     author: {

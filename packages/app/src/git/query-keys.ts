@@ -6,6 +6,11 @@ interface CheckoutQueryIdentity {
   cwd: string;
 }
 
+interface CheckoutQueryScope {
+  serverId: string;
+  cwd?: string;
+}
+
 type CheckoutQueryKey = readonly unknown[];
 
 export function checkoutStatusQueryKey(serverId: string, cwd: string) {
@@ -46,17 +51,41 @@ export async function invalidateCheckoutGitQueriesForClient(
   ]);
 }
 
+// checkoutDiff is excluded: diff queries are subscription-fed (queryFn: skipToken) and
+// receive a fresh snapshot on every resubscribe, so invalidation cannot and need not
+// refetch them.
+export async function invalidateCheckoutGitQueriesForServer(
+  queryClient: QueryClient,
+  serverId: string,
+) {
+  const kinds = ["checkoutStatus", "checkoutPrStatus", prPaneTimelineQueryKind];
+  await Promise.all(
+    kinds.map((kind) =>
+      queryClient.invalidateQueries({ predicate: checkoutQueryPredicate(kind, { serverId }) }),
+    ),
+  );
+}
+
+export async function invalidatePrPaneTimelineForCheckout(
+  queryClient: QueryClient,
+  identity: CheckoutQueryIdentity,
+) {
+  await queryClient.invalidateQueries({
+    predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
+  });
+}
+
 function checkoutQueryPredicate(
   queryKind: CheckoutQueryKey[0],
-  identity: CheckoutQueryIdentity,
+  scope: CheckoutQueryScope,
 ): (query: Query) => boolean {
   return (query) => {
     const key = query.queryKey;
     return (
       isCheckoutQueryKey(key) &&
       key[0] === queryKind &&
-      key[1] === identity.serverId &&
-      key[2] === identity.cwd
+      key[1] === scope.serverId &&
+      (scope.cwd === undefined || key[2] === scope.cwd)
     );
   };
 }

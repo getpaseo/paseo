@@ -2,7 +2,7 @@
 title: Open Source Conductor Alternative With Linux, Windows, and Mobile
 description: Paseo is open source, runs on macOS, Linux, and Windows, ships native iOS and Android apps, and supports 30+ agents through the in-app catalog plus any ACP or CLI agent. Conductor is macOS only and Claude Code or Codex only.
 nav: Conductor
-order: 100
+order: 50
 ---
 
 # Paseo vs Conductor
@@ -94,4 +94,4 @@ Paseo's speech-to-text and text-to-speech run locally on your device. Nothing le
 | Local voice (on-device)      | Yes                                                             | —                  |
 | Self-hosted daemon           | Yes                                                             | —                  |
 
-See also: [Paseo vs Superset](/docs/alternatives/superset), [Paseo vs OpenChamber](/docs/alternatives/openchamber), [Paseo vs Happy Coder](/docs/alternatives/happy-coder).
+See also: [Paseo vs Superset](/alternatives/superset), [Paseo vs OpenChamber](/alternatives/openchamber), [Paseo vs Happy Coder](/alternatives/happy-coder).

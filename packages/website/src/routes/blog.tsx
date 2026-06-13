@@ -7,7 +7,7 @@ export const Route = createFileRoute("/blog")({
 
 function BlogLayout() {
   return (
-    <SiteShell>
+    <SiteShell width="default">
       <Outlet />
     </SiteShell>
   );

@@ -11,30 +11,78 @@ export interface ReviewDraftComment {
   updatedAt: string;
 }
 
+// A manual mode selection is valid only while the checkout's dirty state matches the
+// value at the time of selection. serverId/cwd identify the checkout so the override can
+// be expired when its dirty state changes (see expireStaleDiffModeOverridesInState).
+export interface DiffModeOverride {
+  serverId: string;
+  cwd: string;
+  mode: ReviewDraftMode;
+  isDirtyAtSelection: boolean;
+}
+
 export interface ReviewDraftStoreState {
   drafts: Record<string, ReviewDraftComment[]>;
-  activeModesByScope: Record<string, ReviewDraftMode>;
+  // In-memory only — not persisted. Keyed by scope key.
+  diffModeOverrides: Record<string, DiffModeOverride>;
 }
 
+// Only drafts are persisted; diffModeOverrides is intentionally excluded.
 export interface SerializedReviewDraftState {
   drafts: Record<string, ReviewDraftComment[]>;
-  activeModesByScope: Record<string, ReviewDraftMode>;
 }
 
-export function setActiveModeInState(
+export function setDiffModeOverrideInState(
   state: ReviewDraftStoreState,
-  input: { scopeKey: string; mode: ReviewDraftMode },
+  input: { scopeKey: string; override: DiffModeOverride },
 ): ReviewDraftStoreState {
-  if (state.activeModesByScope[input.scopeKey] === input.mode) {
-    return state;
-  }
   return {
     ...state,
-    activeModesByScope: {
-      ...state.activeModesByScope,
-      [input.scopeKey]: input.mode,
+    diffModeOverrides: {
+      ...state.diffModeOverrides,
+      [input.scopeKey]: input.override,
     },
   };
+}
+
+// Drops every override for the checkout whose dirty state no longer matches the value it
+// was selected under. Called whenever a checkout status enters the app (push or fetch),
+// so expiry does not depend on any screen being mounted.
+export function expireStaleDiffModeOverridesInState(
+  state: ReviewDraftStoreState,
+  input: { serverId: string; cwd: string; isDirty: boolean },
+): ReviewDraftStoreState {
+  const staleScopeKeys = Object.entries(state.diffModeOverrides)
+    .filter(
+      ([, override]) =>
+        override.serverId === input.serverId &&
+        override.cwd === input.cwd &&
+        override.isDirtyAtSelection !== input.isDirty,
+    )
+    .map(([scopeKey]) => scopeKey);
+  if (staleScopeKeys.length === 0) {
+    return state;
+  }
+  const next = { ...state.diffModeOverrides };
+  for (const scopeKey of staleScopeKeys) {
+    delete next[scopeKey];
+  }
+  return { ...state, diffModeOverrides: next };
+}
+
+// Pure read — returns the effective mode without mutating state. The staleness check is
+// kept even though stale overrides are expired at the data boundary: a render can observe
+// a fresh dirty state before the expiry lands, and resolution must be correct under any
+// interleaving.
+export function resolveDiffMode(input: {
+  override: DiffModeOverride | undefined;
+  hasUncommittedChanges: boolean;
+}): ReviewDraftMode {
+  const { override, hasUncommittedChanges } = input;
+  if (override && override.isDirtyAtSelection === hasUncommittedChanges) {
+    return override.mode;
+  }
+  return hasUncommittedChanges ? "uncommitted" : "base";
 }
 
 export function addCommentToState(
@@ -108,18 +156,18 @@ export function serializeReviewDraftState(
 ): SerializedReviewDraftState {
   return {
     drafts: state.drafts,
-    activeModesByScope: state.activeModesByScope,
   };
 }
 
 export function normalizePersistedState(state: unknown): ReviewDraftStoreState {
   if (!state || typeof state !== "object") {
-    return { drafts: {}, activeModesByScope: {} };
+    return { drafts: {}, diffModeOverrides: {} };
   }
-  const persisted = state as { drafts?: unknown; activeModesByScope?: unknown };
+  // activeModesByScope may be present in old persisted JSON — tolerate and ignore it.
+  const persisted = state as { drafts?: unknown };
   const drafts = persisted.drafts;
   if (!drafts || typeof drafts !== "object" || Array.isArray(drafts)) {
-    return { drafts: {}, activeModesByScope: {} };
+    return { drafts: {}, diffModeOverrides: {} };
   }
 
   const normalized: Record<string, ReviewDraftComment[]> = {};
@@ -132,20 +180,7 @@ export function normalizePersistedState(state: unknown): ReviewDraftStoreState {
     );
   }
 
-  const activeModesByScope: Record<string, ReviewDraftMode> = {};
-  const persistedActiveModes = persisted.activeModesByScope;
-  if (
-    persistedActiveModes &&
-    typeof persistedActiveModes === "object" &&
-    !Array.isArray(persistedActiveModes)
-  ) {
-    for (const [key, mode] of Object.entries(persistedActiveModes)) {
-      if (mode === "base" || mode === "uncommitted") {
-        activeModesByScope[key] = mode;
-      }
-    }
-  }
-  return { drafts: normalized, activeModesByScope };
+  return { drafts: normalized, diffModeOverrides: {} };
 }
 
 export function isReviewDraftComment(value: unknown): value is ReviewDraftComment {

@@ -22,7 +22,7 @@ type Status = "idle" | "submitting" | "success" | "error";
 
 function Cloud() {
   return (
-    <SiteShell>
+    <SiteShell width="default">
       <h1 className="text-3xl font-medium mb-3">Paseo Cloud</h1>
       <p className="text-white/70 leading-relaxed mb-10">
         For using Paseo across machines, with a team, or inside a company. Looking for design

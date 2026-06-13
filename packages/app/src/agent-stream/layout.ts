@@ -206,6 +206,11 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
   });
 }
 
+// Keyed by history array identity; inner key encodes the inputs that affect history layout.
+// History layout is stable across text-chunk flushes because the liveHead boundary item's
+// kind and id don't change when only its text grows.
+const historyLayoutCache = new WeakMap<StreamItem[], Map<string, StreamLayoutItem[]>>();
+
 export function layoutStream(input: StreamLayoutInput): StreamLayout {
   const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter(input);
   const historyBoundaryIndex = input.strategy.getHistoryLiveBoundaryIndex(input.history);
@@ -215,17 +220,46 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
   const liveHeadBoundaryItem =
     liveHeadBoundaryIndex === null ? null : (input.liveHead[liveHeadBoundaryIndex] ?? null);
   const frameOrder = input.strategy.getFrameChildOrder();
-  const history = layoutSegment({
-    strategy: input.strategy,
-    agentStatus: input.agentStatus,
-    items: input.history,
-    timingByAssistantId: input.timingByAssistantId,
-    auxiliaryTurnFooter,
-    frameOrder,
-    boundaryIndex: historyBoundaryIndex,
-    boundaryAboveItem: null,
-    boundaryBelowItem: liveHeadBoundaryItem,
-  });
+
+  let history: StreamLayoutItem[];
+  if (input.history.length > 0) {
+    // The cache key encodes every input that can change history layout. liveHeadBoundaryItem.id
+    // and .kind are stable across text-only flushes (text growth doesn't change what kind of
+    // item borders history), so cached layout stays valid between flushes.
+    const historyCacheKey = [
+      input.agentStatus,
+      frameOrder,
+      historyBoundaryIndex ?? "null",
+      liveHeadBoundaryItem?.id ?? "null",
+      liveHeadBoundaryItem?.kind ?? "null",
+      auxiliaryTurnFooter?.itemId ?? "null",
+    ].join(":");
+    let byKey = historyLayoutCache.get(input.history);
+    if (!byKey) {
+      byKey = new Map();
+      historyLayoutCache.set(input.history, byKey);
+    }
+    const cached = byKey.get(historyCacheKey);
+    if (cached) {
+      history = cached;
+    } else {
+      history = layoutSegment({
+        strategy: input.strategy,
+        agentStatus: input.agentStatus,
+        items: input.history,
+        timingByAssistantId: input.timingByAssistantId,
+        auxiliaryTurnFooter,
+        frameOrder,
+        boundaryIndex: historyBoundaryIndex,
+        boundaryAboveItem: null,
+        boundaryBelowItem: liveHeadBoundaryItem,
+      });
+      byKey.set(historyCacheKey, history);
+    }
+  } else {
+    history = [];
+  }
+
   const liveHead = layoutSegment({
     strategy: input.strategy,
     agentStatus: input.agentStatus,

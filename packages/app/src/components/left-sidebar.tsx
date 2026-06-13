@@ -615,7 +615,7 @@ function MobileSidebar({
     windowWidth,
     animateToOpen,
     animateToClose,
-    settledGeneration,
+    overlayVisible,
     isGesturing,
     mobilePanelState,
     gestureAnimatingRef,
@@ -749,25 +749,13 @@ function MobileSidebar({
     [activeHostStatusColor],
   );
 
-  // settledGeneration as deps: after each settle the updater is rebuilt so the
-  // shared values are re-applied to the view, protecting against a heavy Fabric
-  // commit reverting the transform to stale React-committed props (#9635).
-  const sidebarAnimatedStyle = useAnimatedStyle(
-    () => ({
-      transform: [{ translateX: translateX.value }],
-    }),
-    [settledGeneration],
-  );
+  const sidebarAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
-  // pointerEvents comes from React state, not the worklet: the Fabric revert
-  // protection above does not cover pointerEvents, so a worklet-driven value
-  // can wedge an invisible tap-eating backdrop after a heavy commit.
-  const backdropAnimatedStyle = useAnimatedStyle(
-    () => ({
-      opacity: backdropOpacity.value,
-    }),
-    [settledGeneration],
-  );
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
 
   let overlayPointerEvents: "auto" | "none" | "box-none";
   if (!isWeb) overlayPointerEvents = "box-none";
@@ -778,6 +766,9 @@ function MobileSidebar({
     () => [
       staticStyles.backdrop,
       backdropAnimatedStyle,
+      // pointerEvents is React-owned, not worklet-owned: Reanimated never
+      // touches it, so a stale animated-prop revert can't wedge an invisible
+      // tap-eating backdrop.
       { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
     ],
     [backdropAnimatedStyle, isOpen],
@@ -791,9 +782,19 @@ function MobileSidebar({
     ],
     [mobileSidebarInsetStyle, sidebarAnimatedStyle, theme.colors.surfaceSidebar],
   );
+  // display is React-owned on the plain wrapper View (no animated styles), so
+  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
+  // reverts the panel transform to after a heavy commit (reanimated#9635).
+  const overlayStyle = useMemo(
+    () => [
+      StyleSheet.absoluteFillObject,
+      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
+    ],
+    [overlayVisible],
+  );
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+    <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
       <Animated.View style={backdropStyle} />
 
       <GestureDetector gesture={closeGesture} touchAction="pan-y">

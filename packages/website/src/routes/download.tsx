@@ -33,7 +33,7 @@ function Download() {
   const urls = downloadUrls(release);
 
   return (
-    <SiteShell>
+    <SiteShell width="default">
       <h1 className="text-3xl md:text-4xl font-semibold tracking-tight mb-2">Download</h1>
       <p className="text-muted-foreground mb-10">v{version}</p>
 

@@ -2,7 +2,7 @@
 title: Open Source Claude Desktop Alternative With Linux, Mobile, and Multi-Provider Support
 description: Paseo is an open source Claude Desktop alternative for developers who want Linux, self-hosting, native mobile apps, and Claude Code alongside Codex, OpenCode, Copilot, and more.
 nav: Claude Desktop
-order: 106
+order: 55
 ---
 
 # Paseo vs Claude Desktop
@@ -115,4 +115,4 @@ Claude supports voice in Claude's own mobile and app surfaces. Claude Code itsel
 | MCP server for orchestration | Yes                                                             | MCP support inside Claude Code    |
 | Self-hosted daemon           | Yes                                                             | No                                |
 
-See also: [Paseo vs Codex App](/docs/alternatives/codex-app), [Paseo vs OpenCode Desktop](/docs/alternatives/opencode-desktop), [Paseo vs Conductor](/docs/alternatives/conductor).
+See also: [Paseo vs Codex App](/alternatives/codex-app), [Paseo vs OpenCode Desktop](/alternatives/opencode-desktop), [Paseo vs Conductor](/alternatives/conductor).

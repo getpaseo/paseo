@@ -16,6 +16,7 @@ type NewWorkspaceDaemonClient = Pick<
 >;
 
 type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
+type WorkspacePayload = Pick<OpenProjectPayload, "error" | "workspace">;
 
 export interface OpenedProject {
   workspaceId: string;
@@ -24,7 +25,7 @@ export interface OpenedProject {
   workspaceName: string;
 }
 
-function requireWorkspace(payload: OpenProjectPayload) {
+function requireWorkspace(payload: WorkspacePayload) {
   if (payload.error) {
     throw new Error(payload.error);
   }
