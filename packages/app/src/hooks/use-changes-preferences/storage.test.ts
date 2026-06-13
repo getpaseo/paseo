@@ -32,6 +32,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       wrapLines: true,
       hideWhitespace: false,
       fileView: "list",
+      commitsCollapsed: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
@@ -55,6 +56,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       hideWhitespace: true,
       wrapLines: false,
       fileView: "list",
+      commitsCollapsed: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
     expect(storage.entries.size).toBe(1);
@@ -84,6 +86,32 @@ describe("changes preferences fileView", () => {
     const prefs = await loadChangesPreferencesFromStorage(storage);
 
     expect(prefs.fileView).toBe("list");
+  });
+});
+
+describe("changes preferences commitsCollapsed", () => {
+  it("defaults commitsCollapsed to false", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.commitsCollapsed).toBe(false);
+  });
+
+  it("round-trips commitsCollapsed: true", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsCollapsed: true }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.commitsCollapsed).toBe(true);
+  });
+
+  it("falls back to false for invalid commitsCollapsed", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsCollapsed: "nope" }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.commitsCollapsed).toBe(false);
   });
 });
 

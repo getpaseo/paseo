@@ -733,6 +733,12 @@ export const ar: TranslationResources = {
         base: "قاعدة",
         newFile: "جديد",
         deletedFile: "تم الحذف",
+        commits: {
+          title: "الإيداعات",
+          legendLocal: "محلي",
+          legendRemote: "على المستودع البعيد",
+          countLabel: "{{count}} إيداعات قبل الأساس",
+        },
       },
       openInEditor: {
         open: "يفتح",

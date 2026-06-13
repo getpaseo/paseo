@@ -728,6 +728,12 @@ export const zhCN: TranslationResources = {
         base: "base",
         newFile: "新增",
         deletedFile: "已删除",
+        commits: {
+          title: "提交",
+          legendLocal: "本地",
+          legendRemote: "已推送",
+          countLabel: "领先基线 {{count}} 个提交",
+        },
       },
       openInEditor: {
         open: "打开",

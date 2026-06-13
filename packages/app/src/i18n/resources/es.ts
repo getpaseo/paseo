@@ -760,6 +760,12 @@ export const es: TranslationResources = {
         base: "base",
         newFile: "Nuevo",
         deletedFile: "Eliminado",
+        commits: {
+          title: "Commits",
+          legendLocal: "local",
+          legendRemote: "en remoto",
+          countLabel: "{{count}} commits por delante de la base",
+        },
       },
       openInEditor: {
         open: "Abierto",

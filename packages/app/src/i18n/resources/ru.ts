@@ -752,6 +752,12 @@ export const ru: TranslationResources = {
         base: "база",
         newFile: "Новый",
         deletedFile: "Удалено",
+        commits: {
+          title: "Коммиты",
+          legendLocal: "локально",
+          legendRemote: "на удалённом",
+          countLabel: "{{count}} коммитов впереди базы",
+        },
       },
       openInEditor: {
         open: "Открыть",

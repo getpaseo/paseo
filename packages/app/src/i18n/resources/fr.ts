@@ -759,6 +759,12 @@ export const fr: TranslationResources = {
         base: "base",
         newFile: "Nouveau",
         deletedFile: "Supprimé",
+        commits: {
+          title: "Commits",
+          legendLocal: "local",
+          legendRemote: "sur le distant",
+          countLabel: "{{count}} commits en avance sur la base",
+        },
       },
       openInEditor: {
         open: "Ouvrir",

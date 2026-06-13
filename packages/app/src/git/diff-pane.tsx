@@ -62,6 +62,7 @@ import { SvgXml } from "react-native-svg";
 import { getFileIconSvg } from "@/components/material-file-icons";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
+import { CommitsSection } from "@/git/commits-section/commits-section";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
 import { DiffScroll } from "@/components/diff-scroll";
@@ -2458,6 +2459,8 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       ) : null}
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
+
+      {isDesktopWeb ? <CommitsSection serverId={serverId} cwd={cwd} /> : null}
 
       <View style={styles.diffContainer}>{bodyContent}</View>
     </View>

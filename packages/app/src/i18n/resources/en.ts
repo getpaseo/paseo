@@ -740,6 +740,12 @@ export const en = {
         base: "base",
         newFile: "New",
         deletedFile: "Deleted",
+        commits: {
+          title: "Commits",
+          legendLocal: "local",
+          legendRemote: "on remote",
+          countLabel: "{{count}} commits ahead of base",
+        },
       },
       openInEditor: {
         open: "Open",

@@ -1,18 +1,11 @@
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
-import { ChevronRight } from "lucide-react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
+import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 const INDENT_PER_LEVEL = 16;
-
-const ThemedChevron = withUnistyles(ChevronRight);
-
-const chevronColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
 
 interface DirectoryRowProps {
   name: string;
