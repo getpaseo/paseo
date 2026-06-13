@@ -166,7 +166,7 @@ export async function startRunningMockAgent(
     cwd: repo.path,
     model: opts.model,
   });
-  const agentUrl = `${buildHostWorkspaceRoute(serverId, repo.path)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
+  const agentUrl = `${buildHostWorkspaceRoute(serverId, opened.workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
   await page.goto(agentUrl);
   await expectComposerVisible(page);
   await client.sendAgentMessage(agent.id, opts.prompt);

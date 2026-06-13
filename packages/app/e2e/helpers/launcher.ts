@@ -6,8 +6,8 @@ import { getServerId } from "./server-id";
 // ─── Navigation ────────────────────────────────────────────────────────────
 
 /** Navigate to a workspace and wait for the tab bar to appear. */
-export async function gotoWorkspace(page: Page, cwd: string): Promise<void> {
-  const route = buildHostWorkspaceRoute(getServerId(), cwd);
+export async function gotoWorkspace(page: Page, workspaceId: string): Promise<void> {
+  const route = buildHostWorkspaceRoute(getServerId(), workspaceId);
   await page.goto(route);
   await waitForTabBar(page);
 }

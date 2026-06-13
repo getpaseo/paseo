@@ -5,6 +5,7 @@ import { getServerId } from "./server-id";
 
 export interface MockAgentWorkspace {
   agentId: string;
+  workspaceId: string;
   cwd: string;
   client: SeedDaemonClient;
   cleanup(): Promise<void>;
@@ -40,6 +41,7 @@ export async function seedMockAgentWorkspace(
     });
     return {
       agentId: agent.id,
+      workspaceId: workspace.workspaceId,
       cwd: workspace.repoPath,
       client: workspace.client,
       cleanup: workspace.cleanup,
@@ -50,8 +52,8 @@ export async function seedMockAgentWorkspace(
   }
 }
 
-export function buildAgentRoute(cwd: string, agentId: string): string {
-  return `${buildHostWorkspaceRoute(getServerId(), cwd)}?open=${encodeURIComponent(
+export function buildAgentRoute(workspaceId: string, agentId: string): string {
+  return `${buildHostWorkspaceRoute(getServerId(), workspaceId)}?open=${encodeURIComponent(
     `agent:${agentId}`,
   )}`;
 }
@@ -59,9 +61,9 @@ export function buildAgentRoute(cwd: string, agentId: string): string {
 /** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */
 export async function openAgentRoute(
   page: Page,
-  input: { cwd: string; agentId: string },
+  input: { workspaceId: string; agentId: string },
 ): Promise<void> {
-  await page.goto(buildAgentRoute(input.cwd, input.agentId));
+  await page.goto(buildAgentRoute(input.workspaceId, input.agentId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },
