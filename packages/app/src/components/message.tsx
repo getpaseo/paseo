@@ -32,6 +32,7 @@ import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
+  CircleDot,
   Info,
   CheckCircle,
   XCircle,
@@ -41,13 +42,15 @@ import {
   Check,
   CheckSquare,
   Copy,
+  GitPullRequest,
+  MessageSquareCode,
   TriangleAlertIcon,
   Scissors,
   MicVocal,
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -101,6 +104,13 @@ import {
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
+import { getFileTypeLabel } from "@/attachments/file-types";
+import {
+  AttachmentFrame,
+  AttachmentLabel,
+  AttachmentThumbnail,
+} from "@/components/attachment-pill";
+import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
@@ -160,6 +170,10 @@ const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
+const ThemedAttachmentFileText = withUnistyles(FileText);
+const ThemedGitPullRequest = withUnistyles(GitPullRequest);
+const ThemedCircleDot = withUnistyles(CircleDot);
+const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -363,34 +377,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   imagePreviewSpacing: {
     marginBottom: theme.spacing[2],
   },
-  imagePill: {
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.borderAccent,
-    overflow: "hidden",
-  },
-  imageThumbnail: {
-    width: 48,
-    height: 48,
-  },
-  imageThumbnailPlaceholder: {
-    width: 48,
-    height: 48,
-    backgroundColor: theme.colors.surface1,
-  },
-  structuredAttachmentPill: {
-    maxWidth: 220,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.borderAccent,
-    backgroundColor: theme.colors.surface1,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  structuredAttachmentText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
   copyButton: {
     alignSelf: "center",
     padding: theme.spacing[1],
@@ -417,36 +403,82 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAttachment }) {
-  const uri = useAttachmentPreviewUrl(image);
-  const imageSource = useMemo(() => ({ uri: uri ?? "" }), [uri]);
-  if (!uri) {
-    return <View style={userMessageStylesheet.imageThumbnailPlaceholder} />;
-  }
-  return <Image source={imageSource} style={userMessageStylesheet.imageThumbnail} />;
+const attachmentReviewIcon = (
+  <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
+const attachmentGithubPrIcon = (
+  <ThemedGitPullRequest size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
+const attachmentGithubIssueIcon = (
+  <ThemedCircleDot size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
+const attachmentFileIcon = (
+  <ThemedAttachmentFileText size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+);
+
+interface UserMessageImagePillProps {
+  image: UserMessageImageAttachment;
+  onOpen: (image: UserMessageImageAttachment) => void;
+  accessibilityLabel: string;
 }
 
-function getUserMessageAttachmentLabel(
+function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessageImagePillProps) {
+  const handlePress = useCallback(() => {
+    onOpen(image);
+  }, [onOpen, image]);
+  return (
+    <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
+      <AttachmentThumbnail metadata={image} />
+    </AttachmentFrame>
+  );
+}
+
+interface UserMessageAttachmentContent {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+}
+
+function getUserMessageAttachmentContent(
   attachment: AgentAttachment,
   t: ReturnType<typeof useTranslation>["t"],
-): string {
+): UserMessageAttachmentContent {
   switch (attachment.type) {
     case "review": {
       const count = attachment.comments.length;
-      return count === 1
-        ? t("message.attachments.reviewOne")
-        : t("message.attachments.reviewMany", { count });
+      return {
+        icon: attachmentReviewIcon,
+        title: t("message.attachments.review"),
+        subtitle:
+          count === 1
+            ? t("message.attachments.commentsOne")
+            : t("message.attachments.commentsMany", { count }),
+      };
     }
     case "github_pr":
-      return `PR #${attachment.number}`;
+      return {
+        icon: attachmentGithubPrIcon,
+        title: attachment.title,
+        subtitle: `PR #${attachment.number}`,
+      };
     case "github_issue":
-      return `Issue #${attachment.number}`;
+      return {
+        icon: attachmentGithubIssueIcon,
+        title: attachment.title,
+        subtitle: `Issue #${attachment.number}`,
+      };
     case "text":
-      return attachment.title ?? t("message.attachments.textAttachment");
+      return {
+        icon: attachmentFileIcon,
+        title: attachment.title ?? t("message.attachments.textAttachment"),
+        subtitle: t("message.attachments.text"),
+      };
     case "uploaded_file":
-      return attachment.fileName;
-    default:
-      return "";
+      return {
+        icon: attachmentFileIcon,
+        title: attachment.fileName,
+        subtitle: getFileTypeLabel(attachment.fileName) ?? t("message.attachments.file"),
+      };
   }
 }
 
@@ -467,6 +499,8 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
+  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
+  const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
@@ -534,24 +568,31 @@ export const UserMessage = memo(function UserMessage({
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
               {images.map((image) => (
-                <View key={image.id} style={userMessageStylesheet.imagePill}>
-                  <UserMessageAttachmentThumbnail image={image} />
-                </View>
+                <UserMessageImagePill
+                  key={image.id}
+                  image={image}
+                  onOpen={setLightboxMetadata}
+                  accessibilityLabel={t("composer.attachments.openImage")}
+                />
               ))}
             </View>
           ) : null}
           {hasAttachments ? (
             <View style={attachmentPreviewContainerStyle}>
-              {attachments.map((attachment, index) => (
-                <View
-                  key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                  style={userMessageStylesheet.structuredAttachmentPill}
-                >
-                  <Text style={userMessageStylesheet.structuredAttachmentText} numberOfLines={1}>
-                    {getUserMessageAttachmentLabel(attachment, t)}
-                  </Text>
-                </View>
-              ))}
+              {attachments.map((attachment, index) => {
+                const content = getUserMessageAttachmentContent(attachment, t);
+                return (
+                  <AttachmentFrame
+                    key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+                  >
+                    <AttachmentLabel
+                      icon={content.icon}
+                      title={content.title}
+                      subtitle={content.subtitle}
+                    />
+                  </AttachmentFrame>
+                );
+              })}
             </View>
           ) : null}
           {hasText ? (
@@ -579,6 +620,7 @@ export const UserMessage = memo(function UserMessage({
           </View>
         ) : null}
       </View>
+      <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
     </View>
   );
 });

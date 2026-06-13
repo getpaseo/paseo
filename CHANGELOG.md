@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.96 - 2026-06-13
+
+_This release only fixes an Android issue — desktop users don't need to update._
+
+### Fixed
+
+- On Android, the sidebar no longer reappears and gets stuck after you open a chat
+
 ## 0.1.95 - 2026-06-13
 
 ### Added

@@ -334,6 +334,50 @@ describe("createTerminal", () => {
     expect(Array.isArray(exitInfo.lastOutputLines)).toBe(true);
     expect(session.getExitInfo()).toEqual(exitInfo);
   });
+
+  it("retains the final lines after output far exceeds the recent-output char cap", async () => {
+    // Emit many small chunks whose total length is well past the 16000-char
+    // recent-output cap, so the chunk-trimming path runs repeatedly. The final
+    // distinctive lines must survive in the exit summary. The process is kept
+    // alive (no self-exit) so we can wait until the last chunk has actually been
+    // parsed by the headless terminal before killing — otherwise the exit
+    // summary races the async xterm parse and reads a stale buffer.
+    const session = trackSession(
+      await createTerminal({
+        cwd: realpathSync(tmpdir()),
+        command: process.execPath,
+        args: [
+          "-e",
+          "for (let i = 0; i < 3000; i++) { process.stdout.write(`line-${i}\\n`); } setInterval(() => {}, 1000);",
+        ],
+      }),
+    );
+
+    // Poll the parsed buffer until the final line lands, so the exit summary
+    // (which reads the headless buffer) can't race the async xterm parse.
+    const finalLineParsed = (): boolean => {
+      const state = session.getState();
+      const rowText = (row: { char: string }[]): string => row.map((cell) => cell.char).join("");
+      return [...state.scrollback, ...state.grid].some((row) => rowText(row).includes("line-2999"));
+    };
+    const deadline = Date.now() + 10000;
+    while (!finalLineParsed()) {
+      if (Date.now() > deadline) {
+        throw new Error("Timed out waiting for the final line to be parsed");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    const exitInfo = await new Promise<NonNullable<ReturnType<TerminalSession["getExitInfo"]>>>(
+      (resolve) => {
+        session.onExit((info) => resolve(info));
+        session.kill();
+      },
+    );
+
+    expect(exitInfo.lastOutputLines.length).toBeGreaterThan(0);
+    expect(exitInfo.lastOutputLines[exitInfo.lastOutputLines.length - 1]).toBe("line-2999");
+  });
 });
 
 describe.skipIf(isPlatform("win32"))("send input", () => {

@@ -2,7 +2,6 @@ import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { TerminalState } from "@getpaseo/protocol/messages";
-import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import type {
   ClientMessage,
   ServerMessage,
@@ -44,7 +43,10 @@ interface PendingRequest {
 interface WorkerTerminalRecord {
   info: WorkerTerminalInfo;
   state: TerminalState;
-  inputModeTracker: TerminalInputModeTracker;
+  // Cached input-mode preamble from the worker (the authoritative tracker lives
+  // in the worker process). Refreshed on every getTerminalState response and on
+  // the snapshotReady event that precedes a live-restore replay.
+  replayPreamble: string;
   exitInfo: TerminalExitInfo | null;
   messageListeners: Set<(msg: ServerMessage) => void>;
   exitListeners: Set<(info: TerminalExitInfo) => void>;
@@ -171,7 +173,7 @@ export function createWorkerTerminalManager(
     const record: WorkerTerminalRecord = {
       info: cloneTerminalInfo(input.info),
       state: input.state,
-      inputModeTracker: new TerminalInputModeTracker(),
+      replayPreamble: "",
       exitInfo: null,
       messageListeners: new Set(),
       exitListeners: new Set(),
@@ -266,7 +268,12 @@ export function createWorkerTerminalManager(
         };
       },
       getReplayPreamble(): string {
-        return record.inputModeTracker.getPreamble();
+        // Refreshed from every getTerminalState response, which the controller fetches
+        // before every snapshot replay (legacy + visible-snapshot restore). The one
+        // gap is restore.mode === "live", which replays without fetching state — there
+        // this can be stale/empty. No client sends "live" today; revisit (ship the
+        // preamble on the worker's snapshotReady) if one ever does.
+        return record.replayPreamble;
       },
       getTitle(): string | undefined {
         return record.info.title;
@@ -333,8 +340,8 @@ export function createWorkerTerminalManager(
     if (message.message.type === "snapshot") {
       record.state = message.message.state;
     }
-    if (message.message.type === "output") {
-      record.inputModeTracker.feed(message.message.data);
+    if (message.message.type === "snapshotReady" && message.message.replayPreamble !== undefined) {
+      record.replayPreamble = message.message.replayPreamble;
     }
     for (const listener of Array.from(record.messageListeners)) {
       listener(message.message);
@@ -558,11 +565,18 @@ export function createWorkerTerminalManager(
       id: string,
       options?: { scrollbackLines?: number },
     ): Promise<TerminalStateSnapshot | null> {
-      return (await sendRequest({
+      const snapshot = (await sendRequest({
         type: "getTerminalState",
         terminalId: id,
         ...(options ? { options } : {}),
       })) as TerminalWorkerStateResult;
+      if (snapshot && snapshot.replayPreamble !== undefined) {
+        const record = recordsById.get(id);
+        if (record) {
+          record.replayPreamble = snapshot.replayPreamble;
+        }
+      }
+      return snapshot;
     },
 
     setTerminalTitle(id: string, title: string): boolean {

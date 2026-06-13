@@ -1,14 +1,17 @@
 import { createTerminalManager } from "./terminal-manager.js";
 import { captureTerminalLines } from "./terminal-capture.js";
-import type { TerminalSession } from "./terminal.js";
+import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
+import type { TerminalSession, TerminalStateSnapshotOptions } from "./terminal.js";
 import type {
   TerminalWorkerRequest,
+  TerminalWorkerStateResult,
   TerminalWorkerToParentMessage,
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
 const manager = createTerminalManager();
 const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
+const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
 let ipcClosing = false;
 
 function sendToParent(message: TerminalWorkerToParentMessage): void {
@@ -24,6 +27,16 @@ function sendToParent(message: TerminalWorkerToParentMessage): void {
   } catch {
     ipcClosing = true;
   }
+}
+
+function buildTerminalStateResult(
+  session: TerminalSession | undefined,
+  options?: TerminalStateSnapshotOptions,
+): TerminalWorkerStateResult {
+  if (!session) {
+    return null;
+  }
+  return { ...session.getStateSnapshot(options), replayPreamble: session.getReplayPreamble() };
 }
 
 function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
@@ -47,12 +60,44 @@ function clearTerminalSubscriptions(terminalId: string): void {
     }
   }
   unsubscribeByTerminalId.delete(terminalId);
+  const coalescer = outputCoalescerByTerminalId.get(terminalId);
+  if (coalescer) {
+    coalescer.dispose();
+    outputCoalescerByTerminalId.delete(terminalId);
+  }
 }
 
 function watchTerminal(session: TerminalSession): void {
   clearTerminalSubscriptions(session.id);
 
+  // Coalesce pty output chunks into a single IPC message per ~5ms window so a
+  // burst of small chunks no longer costs one process.send each. The batch
+  // carries the LAST chunk's revision (the highest) so downstream snapshot
+  // replay dedup stays correct.
+  let pendingOutputRevision: number | undefined;
+  const outputCoalescer = new TerminalOutputCoalescer({
+    timers: { setTimeout, clearTimeout },
+    onFlush: ({ payload }) => {
+      const revision = pendingOutputRevision;
+      pendingOutputRevision = undefined;
+      sendToParent({
+        type: "terminalMessage",
+        terminalId: session.id,
+        message: { type: "output", data: payload.toString("utf8"), revision },
+      });
+    },
+  });
+  outputCoalescerByTerminalId.set(session.id, outputCoalescer);
+
   const unsubscribeMessage = session.subscribe((message) => {
+    if (message.type === "output") {
+      pendingOutputRevision = message.revision;
+      outputCoalescer.handle(message.data);
+      return;
+    }
+    // Non-output messages (snapshot/snapshotReady/titleChange) must not jump
+    // ahead of buffered output: flush the coalescer first, then forward.
+    outputCoalescer.flush();
     sendToParent({
       type: "terminalMessage",
       terminalId: session.id,
@@ -60,6 +105,7 @@ function watchTerminal(session: TerminalSession): void {
     });
   });
   const unsubscribeExit = session.onExit((info) => {
+    outputCoalescer.flush();
     clearTerminalSubscriptions(session.id);
     sendToParent({
       type: "terminalExit",
@@ -68,6 +114,7 @@ function watchTerminal(session: TerminalSession): void {
     });
   });
   const unsubscribeTitle = session.onTitleChange((title) => {
+    outputCoalescer.flush();
     sendToParent({
       type: "terminalTitleChange",
       terminalId: session.id,
@@ -75,6 +122,7 @@ function watchTerminal(session: TerminalSession): void {
     });
   });
   const unsubscribeCommandFinished = session.onCommandFinished((info) => {
+    outputCoalescer.flush();
     sendToParent({
       type: "terminalCommandFinished",
       terminalId: session.id,
@@ -171,12 +219,16 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "getTerminalState": {
-      const session = manager.getTerminal(message.terminalId);
+      // Flush buffered output before snapshotting: the headless state already includes it,
+      // so if the coalescer emitted it afterward (in a batch carrying a revision past the
+      // snapshot's) the controller's revision dedup wouldn't drop it and the client would
+      // see the bytes twice. Flushing first sends them with a revision <= the snapshot's.
+      outputCoalescerByTerminalId.get(message.terminalId)?.flush();
       sendToParent({
         type: "response",
         requestId: message.requestId,
         ok: true,
-        result: session?.getStateSnapshot(message.options) ?? null,
+        result: buildTerminalStateResult(manager.getTerminal(message.terminalId), message.options),
       });
       return;
     }

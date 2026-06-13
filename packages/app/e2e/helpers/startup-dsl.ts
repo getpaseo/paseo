@@ -1,3 +1,4 @@
+import type { Route } from "@playwright/test";
 import { expect, type Page } from "../fixtures";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { wsRoutePatternForPort } from "./daemon-port";
@@ -6,6 +7,7 @@ const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const E2E_KEY = "@paseo:e2e";
+const STORAGE_SEED_HTML = "<!doctype html><html><body>storage seed</body></html>";
 
 interface SavedHostInput {
   serverId: string;
@@ -88,9 +90,9 @@ class StartupScenario {
       return;
     }
 
-    // Let the shared fixture create its seed nonce, then opt out of that seed for
-    // the next navigation so this scenario owns the stored host registry.
-    await this.page.goto("/");
+    // Create same-origin storage without booting the app. If the default host runtime
+    // starts first, it can race this scenario's registry override during CI.
+    await openStorageSeedDocument(this.page);
     const nowIso = new Date().toISOString();
     const registry = this.savedHosts.map((host) =>
       buildStoredHost({
@@ -132,6 +134,21 @@ class StartupScenario {
   }
 }
 
+async function openStorageSeedDocument(page: Page): Promise<void> {
+  await page.route(
+    "**/*",
+    async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: STORAGE_SEED_HTML,
+      });
+    },
+    { times: 1 },
+  );
+  await page.goto("/");
+}
+
 class StartupAssertions {
   private readonly page: Page;
 
@@ -140,6 +157,7 @@ class StartupAssertions {
   }
 
   async expectsSavedHostShell(input: { label: string }): Promise<this> {
+    await this.page.getByRole("button", { name: "Open menu", exact: true }).click();
     await expect(this.page.getByText(input.label, { exact: true })).toBeVisible({
       timeout: 15_000,
     });
