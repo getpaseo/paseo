@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { withUnistyles } from "react-native-unistyles";
 import { FileText, MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
   ComposerAttachment,
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
-import { AttachmentPill } from "@/components/attachment-pill";
+import { AttachmentLabel, AttachmentPill } from "@/components/attachment-pill";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   isWorkspaceAttachment,
@@ -112,16 +111,31 @@ function getContextSourceLabel(attachment: WorkspaceComposerAttachment): string 
   return "Review";
 }
 
-function getPillLabel(attachment: WorkspaceComposerAttachment, t: TranslationFn): string {
+interface PillContent {
+  title: string;
+  subtitle: string;
+}
+
+function getPillContent(attachment: WorkspaceComposerAttachment, t: TranslationFn): PillContent {
   if (attachment.kind === "browser_element") {
-    return t("composer.attachments.browserElement", { tag: attachment.attachment.tag });
+    return {
+      title: attachment.attachment.tag,
+      subtitle: t("composer.attachments.element"),
+    };
   }
   if (isPullRequestContextAttachment(attachment)) {
-    return `${getContextSourceLabel(attachment)} · ${attachment.title}`;
+    return {
+      title: attachment.title,
+      subtitle: getContextSourceLabel(attachment),
+    };
   }
-  return attachment.commentCount === 1
-    ? t("message.attachments.reviewOne")
-    : t("message.attachments.reviewMany", { count: attachment.commentCount });
+  return {
+    title: t("message.attachments.review"),
+    subtitle:
+      attachment.commentCount === 1
+        ? t("message.attachments.commentsOne")
+        : t("message.attachments.commentsMany", { count: attachment.commentCount }),
+  };
 }
 
 function getOpenAccessibilityLabel(
@@ -309,7 +323,7 @@ function WorkspaceAttachmentPill({
   onRemove,
 }: WorkspaceAttachmentPillProps) {
   const { t } = useTranslation();
-  const label = getPillLabel(attachment, t);
+  const content = getPillContent(attachment, t);
   const handleOpen = useCallback(() => {
     onOpen(attachment);
   }, [onOpen, attachment]);
@@ -325,12 +339,11 @@ function WorkspaceAttachmentPill({
       removeAccessibilityLabel={getRemoveAccessibilityLabel(attachment, t)}
       disabled={disabled}
     >
-      <View style={styles.pillBody}>
-        <View style={styles.pillIcon}>{renderPillIcon(attachment)}</View>
-        <Text style={styles.pillText} numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
+      <AttachmentLabel
+        icon={renderPillIcon(attachment)}
+        title={content.title}
+        subtitle={content.subtitle}
+      />
     </AttachmentPill>
   );
 }
@@ -342,30 +355,6 @@ export const composerWorkspaceAttachment = {
   userAttachmentsOnly,
   useBinding: useWorkspaceAttachmentBinding,
 };
-
-const styles = StyleSheet.create((theme: Theme) => ({
-  pillBody: {
-    minHeight: 48,
-    maxWidth: 260,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface1,
-  },
-  pillIcon: {
-    width: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pillText: {
-    minWidth: 0,
-    flexShrink: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-})) as unknown as Record<string, object>;
 
 const ThemedMousePointer2 = withUnistyles(MousePointer2);
 const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);

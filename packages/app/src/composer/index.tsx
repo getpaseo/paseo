@@ -3,7 +3,6 @@ import {
   Pressable,
   Text,
   ActivityIndicator,
-  Image,
   type PressableStateCallbackType,
 } from "react-native";
 import type { TFunction } from "i18next";
@@ -100,9 +99,9 @@ import type {
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
-import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
-import { AttachmentPill } from "@/components/attachment-pill";
+import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
@@ -560,15 +559,6 @@ function QueuedMessageRow({
   );
 }
 
-function ImageAttachmentThumbnail({ image }: { image: ImageAttachment }) {
-  const uri = useAttachmentPreviewUrl(image);
-  const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
-  if (!uri) {
-    return <View style={styles.imageThumbnailPlaceholder} />;
-  }
-  return <Image source={source} style={styles.imageThumbnail} />;
-}
-
 interface ImageAttachmentPillProps {
   attachment: Extract<ComposerAttachment, { kind: "image" }>;
   index: number;
@@ -603,7 +593,7 @@ function ImageAttachmentPill({
       removeAccessibilityLabel={removeLabel}
       disabled={disabled}
     >
-      <ImageAttachmentThumbnail image={attachment.metadata} />
+      <AttachmentThumbnail metadata={attachment.metadata} />
     </AttachmentPill>
   );
 }
@@ -644,18 +634,11 @@ function GithubAttachmentPill({
       removeAccessibilityLabel={removeLabel(kindLabel, item.number)}
       disabled={disabled}
     >
-      <View style={styles.githubPillBody}>
-        <View style={styles.githubPillIcon}>
-          {item.kind === "pr" ? (
-            <ThemedGitPullRequest size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
-          ) : (
-            <ThemedCircleDot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
-          )}
-        </View>
-        <Text style={styles.githubPillText} numberOfLines={1}>
-          #{item.number} {item.title}
-        </Text>
-      </View>
+      <AttachmentLabel
+        icon={item.kind === "pr" ? githubPrPillIcon : githubIssuePillIcon}
+        title={item.title}
+        subtitle={`${item.kind === "pr" ? "PR" : "Issue"} #${item.number}`}
+      />
     </AttachmentPill>
   );
 }
@@ -675,26 +658,25 @@ function FileAttachmentPill({
   onRemove,
   removeLabel,
 }: FileAttachmentPillProps) {
+  const { t } = useTranslation();
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);
+  const fileName = attachment.attachment.fileName;
   return (
     <AttachmentPill
       testID="composer-file-attachment-pill"
       onOpen={noopCallback}
       onRemove={handleRemove}
-      openAccessibilityLabel={attachment.attachment.fileName}
+      openAccessibilityLabel={fileName}
       removeAccessibilityLabel={removeLabel}
       disabled={disabled}
     >
-      <View style={styles.filePillBody}>
-        <View style={styles.filePillIcon}>
-          <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
-        </View>
-        <Text style={styles.filePillText} numberOfLines={1}>
-          {attachment.attachment.fileName}
-        </Text>
-      </View>
+      <AttachmentLabel
+        icon={filePillIcon}
+        title={fileName}
+        subtitle={getFileTypeLabel(fileName) ?? t("message.attachments.file")}
+      />
     </AttachmentPill>
   );
 }
@@ -1705,18 +1687,14 @@ export function Composer({
           setIsGithubPickerOpen(true);
         },
       },
-      ...(!isNative
-        ? [
-            {
-              id: "file",
-              label: t("composer.attachments.addFile"),
-              icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
-              onSelect: () => {
-                void handlePickFile();
-              },
-            },
-          ]
-        : []),
+      {
+        id: "file",
+        label: t("composer.attachments.addFile"),
+        icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        onSelect: () => {
+          void handlePickFile();
+        },
+      },
     ],
     [handlePickImage, handlePickFile, t],
   );
@@ -2059,50 +2037,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[2],
     flexWrap: "wrap",
   },
-  imageThumbnail: {
-    width: 32,
-    height: 32,
-  },
-  imageThumbnailPlaceholder: {
-    width: 32,
-    height: 32,
-    backgroundColor: theme.colors.surface2,
-  },
-  githubPillBody: {
-    minHeight: 32,
-    maxWidth: 260,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface1,
-  },
-  githubPillIcon: {
-    width: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  filePillBody: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  filePillIcon: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  filePillText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    flexShrink: 1,
-  },
-  githubPillText: {
-    minWidth: 0,
-    flexShrink: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
   tooltipRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2173,3 +2107,11 @@ const ThemedGithub = withUnistyles(Github);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
+
+const githubPrPillIcon = (
+  <ThemedGitPullRequest size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+);
+const githubIssuePillIcon = (
+  <ThemedCircleDot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+);
+const filePillIcon = <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;

@@ -575,10 +575,11 @@ describe("translation resources", () => {
   });
 
   it("includes remaining utility chrome keys for the Batch 4T migration", () => {
-    expect(en.message.attachments.reviewOne).toBe("Review · 1 comment");
-    expect(en.message.attachments.reviewMany).toBe("Review · {{count}} comments");
+    expect(en.message.attachments.review).toBe("Review");
+    expect(en.message.attachments.commentsOne).toBe("1 comment");
+    expect(en.message.attachments.commentsMany).toBe("{{count}} comments");
     expect(en.message.attachments.textAttachment).toBe("Text attachment");
-    expect(en.composer.attachments.browserElement).toBe("Element · {{tag}}");
+    expect(en.composer.attachments.element).toBe("Element");
     expect(en.workspace.hoverCard.scriptsAccessibility).toBe("Workspace scripts");
     expect(en.branchSwitcher.restoreStashTitle).toBe("Restore stashed changes?");
     expect(en.branchSwitcher.stashRestored).toBe("Stashed changes restored");
