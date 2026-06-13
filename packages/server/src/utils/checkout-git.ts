@@ -2178,6 +2178,58 @@ export async function listCheckoutCommits({ cwd }: { cwd: string }): Promise<Che
   }));
 }
 
+/**
+ * Fetches the unified diff of a single file as introduced by one commit and
+ * parses it into the same {@link ParsedDiffFile} shape the diff subscription
+ * emits (so the client can reuse its existing renderer).
+ *
+ * Runs `git show <sha> --format= -- <path>` with the sha and path passed as
+ * separate process args (never interpolated into a shell string), and `--format=`
+ * suppresses the commit header so the output is a pure unified diff. The text is
+ * parsed and highlighted by {@link parseAndHighlightDiff} — the exact parser the
+ * diff subscription uses. Returns `null` when the file is absent from the commit
+ * or the change is binary-only (no textual hunks). Throws on git failure (e.g. an
+ * unknown sha), which the caller maps to a typed checkout error.
+ */
+export async function getCommitFileDiff({
+  cwd,
+  sha,
+  path,
+}: {
+  cwd: string;
+  sha: string;
+  path: string;
+}): Promise<ParsedDiffFile | null> {
+  const { stdout } = await runGitCommand(["show", sha, "--format=", "--", path], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+
+  if (stdout.trim().length === 0) {
+    return null;
+  }
+
+  const parsedFiles = await parseAndHighlightDiff(stdout, cwd, {
+    getOldFileContent: (file) => readGitFileContentAtRef(cwd, `${sha}^`, file.path),
+    getNewFileContent: (file) => readGitFileContentAtRef(cwd, sha, file.path),
+  });
+
+  // `--` scopes the diff to a single pathspec, so there is at most one real
+  // entry. Pick by path to drop any stray header-only section the parser emits.
+  const file = parsedFiles.find((candidate) => candidate.path === path) ?? null;
+  if (!file) {
+    return null;
+  }
+
+  // Binary changes carry a "Binary files ... differ" marker and no hunks; there
+  // is nothing textual to render, so report them as absent.
+  if (file.hunks.length === 0 && /^Binary files .* differ$/m.test(stdout)) {
+    return null;
+  }
+
+  return file;
+}
+
 export interface CheckoutShortstat {
   additions: number;
   deletions: number;

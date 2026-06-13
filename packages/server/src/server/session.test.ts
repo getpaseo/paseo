@@ -181,6 +181,7 @@ const checkoutGitMocks = vi.hoisted(() => ({
   createPullRequest: vi.fn(),
   getCachedCheckoutShortstat: vi.fn(),
   getCheckoutStatus: vi.fn(),
+  getCommitFileDiff: vi.fn(),
   listBranchSuggestions: vi.fn(),
   listCheckoutCommits: vi.fn(),
   mergeFromBase: vi.fn(),
@@ -230,6 +231,7 @@ vi.mock("../utils/checkout-git.js", async (importOriginal) => {
     createPullRequest: checkoutGitMocks.createPullRequest,
     getCachedCheckoutShortstat: checkoutGitMocks.getCachedCheckoutShortstat,
     getCheckoutStatus: checkoutGitMocks.getCheckoutStatus,
+    getCommitFileDiff: checkoutGitMocks.getCommitFileDiff,
     listBranchSuggestions: checkoutGitMocks.listBranchSuggestions,
     listCheckoutCommits: checkoutGitMocks.listCheckoutCommits,
     mergeFromBase: checkoutGitMocks.mergeFromBase,
@@ -3354,6 +3356,210 @@ describe("session checkout commits list handling", () => {
         requestId: "request-commits-error",
       },
     });
+  });
+});
+
+describe("session checkout commit file diff handling", () => {
+  const sha = "1111111111111111111111111111111111111111";
+
+  test("returns the parsed file diff for a commit", async () => {
+    const messages: unknown[] = [];
+    const file = {
+      path: "src/a.ts",
+      isNew: false,
+      isDeleted: false,
+      additions: 2,
+      deletions: 1,
+      hunks: [
+        {
+          oldStart: 1,
+          oldCount: 2,
+          newStart: 1,
+          newCount: 3,
+          lines: [
+            { type: "header" as const, content: "@@ -1,2 +1,3 @@" },
+            { type: "remove" as const, content: "old" },
+            { type: "add" as const, content: "new" },
+          ],
+        },
+      ],
+      status: "ok" as const,
+    };
+    checkoutGitMocks.getCommitFileDiff.mockResolvedValue(file);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "src/a.ts",
+      requestId: "request-file-diff",
+    });
+
+    expect(checkoutGitMocks.getCommitFileDiff).toHaveBeenCalledWith({
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "src/a.ts",
+    });
+    expect(messages).toContainEqual({
+      type: "checkout.commits.file_diff.response",
+      payload: {
+        cwd: "/tmp/commits-worktree",
+        sha,
+        path: "src/a.ts",
+        file,
+        error: null,
+        requestId: "request-file-diff",
+      },
+    });
+  });
+
+  test("returns a null file when the path is absent from the commit", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.getCommitFileDiff.mockResolvedValue(null);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "src/missing.ts",
+      requestId: "request-file-diff-missing",
+    });
+
+    expect(messages).toContainEqual({
+      type: "checkout.commits.file_diff.response",
+      payload: {
+        cwd: "/tmp/commits-worktree",
+        sha,
+        path: "src/missing.ts",
+        file: null,
+        error: null,
+        requestId: "request-file-diff-missing",
+      },
+    });
+  });
+
+  test("reports an error with a null file when the diff lookup fails", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.getCommitFileDiff.mockRejectedValue(new Error("bad object"));
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "src/a.ts",
+      requestId: "request-file-diff-error",
+    });
+
+    expect(messages).toContainEqual({
+      type: "checkout.commits.file_diff.response",
+      payload: {
+        cwd: "/tmp/commits-worktree",
+        sha,
+        path: "src/a.ts",
+        file: null,
+        error: { code: "UNKNOWN", message: "bad object" },
+        requestId: "request-file-diff-error",
+      },
+    });
+  });
+
+  test("rejects an unsafe sha without invoking git", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.getCommitFileDiff.mockResolvedValue(null);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha: "$(rm -rf /)",
+      path: "src/a.ts",
+      requestId: "request-file-diff-unsafe",
+    });
+
+    expect(checkoutGitMocks.getCommitFileDiff).not.toHaveBeenCalled();
+    const response = messages.find(
+      (message): message is { type: string; payload: { file: unknown; error: unknown } } =>
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: string }).type === "checkout.commits.file_diff.response",
+    );
+    expect(response?.payload.file).toBeNull();
+    expect(response?.payload.error).not.toBeNull();
+  });
+
+  test("rejects an absolute path without invoking git", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.getCommitFileDiff.mockResolvedValue(null);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "/etc/passwd",
+      requestId: "request-file-diff-absolute",
+    });
+
+    expect(checkoutGitMocks.getCommitFileDiff).not.toHaveBeenCalled();
+    const response = messages.find(
+      (message): message is { type: string; payload: { file: unknown; error: unknown } } =>
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: string }).type === "checkout.commits.file_diff.response",
+    );
+    expect(response?.payload.file).toBeNull();
+    expect(response?.payload.error).not.toBeNull();
+  });
+
+  test("rejects a path traversal without invoking git", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.getCommitFileDiff.mockResolvedValue(null);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "../../../etc/passwd",
+      requestId: "request-file-diff-traversal",
+    });
+
+    expect(checkoutGitMocks.getCommitFileDiff).not.toHaveBeenCalled();
+    const response = messages.find(
+      (message): message is { type: string; payload: { file: unknown; error: unknown } } =>
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: string }).type === "checkout.commits.file_diff.response",
+    );
+    expect(response?.payload.file).toBeNull();
+    expect(response?.payload.error).not.toBeNull();
+  });
+
+  test("rejects an empty path without invoking git", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.getCommitFileDiff.mockResolvedValue(null);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitFileDiffRequest({
+      type: "checkout.commits.file_diff.request",
+      cwd: "/tmp/commits-worktree",
+      sha,
+      path: "",
+      requestId: "request-file-diff-empty",
+    });
+
+    expect(checkoutGitMocks.getCommitFileDiff).not.toHaveBeenCalled();
+    const response = messages.find(
+      (message): message is { type: string; payload: { file: unknown; error: unknown } } =>
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: string }).type === "checkout.commits.file_diff.response",
+    );
+    expect(response?.payload.file).toBeNull();
+    expect(response?.payload.error).not.toBeNull();
   });
 });
 
