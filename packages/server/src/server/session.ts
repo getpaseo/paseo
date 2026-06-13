@@ -155,6 +155,7 @@ import {
 import {
   checkoutLiteFromGitSnapshot,
   classifyDirectoryForProjectMembership,
+  deriveProjectGroupingName,
   deriveWorkspaceDisplayName,
   generateWorkspaceId,
 } from "./workspace-registry-model.js";
@@ -1649,13 +1650,34 @@ export class Session {
 
   private async buildProjectPlacementForCwd(
     cwd: string,
-    options?: { refreshGit?: boolean },
+    options?: { refreshGit?: boolean; fallback?: boolean },
   ): Promise<ProjectPlacementPayload | null> {
     const workspace = await this.findWorkspaceByDirectory(cwd, {
       refreshGit: options?.refreshGit,
     });
     if (!workspace) {
-      return null;
+      if (!options?.fallback) {
+        return null;
+      }
+
+      // An agent can run in a directory that has no registered workspace yet
+      // (e.g. a fresh non-git folder). Synthesize a directory-scoped placement so
+      // the agent still emits updates. projectKey/cwd are paths here — a project
+      // grouping key, not a workspace id — so this stays opaque-id-safe.
+      const resolvedCwd = resolve(cwd);
+      return {
+        projectKey: resolvedCwd,
+        projectName: deriveProjectGroupingName(resolvedCwd),
+        checkout: {
+          cwd: resolvedCwd,
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      };
     }
     return this.buildProjectPlacementForWorkspace(workspace);
   }
@@ -1667,6 +1689,7 @@ export class Session {
       if (subscription) {
         const project = await this.buildProjectPlacementForCwd(payload.cwd, {
           refreshGit: false,
+          fallback: true,
         });
         if (!project) {
           throw new Error(`Workspace not found for agent ${payload.id}`);
