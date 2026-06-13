@@ -1272,6 +1272,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceGithubRepositorySearch: true,
         // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
         projectCreateDirectory: true,
+        // COMPAT(commitsList): added in v0.1.106, remove gate after 2027-01-12.
+        commitsList: true,
       },
     };
   }

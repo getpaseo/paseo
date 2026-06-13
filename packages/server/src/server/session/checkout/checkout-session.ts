@@ -3,6 +3,7 @@ import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import type {
   BranchSuggestionsRequest,
+  CheckoutCommitsListRequest,
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
   CheckoutStatusRequest,
@@ -41,6 +42,7 @@ import {
   mergeToBase,
   pullCurrentBranch,
   pushCurrentBranch,
+  listCheckoutCommits,
 } from "../../../utils/checkout-git.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { expandTilde } from "../../../utils/path.js";
@@ -168,6 +170,23 @@ export class CheckoutSession {
           error: toCheckoutError(error),
           requestId,
         },
+      });
+    }
+  }
+
+  async handleCommitsListRequest(msg: CheckoutCommitsListRequest): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const commits = await listCheckoutCommits({ cwd: expandTilde(cwd) });
+      this.host.emit({
+        type: "checkout.commits.list.response",
+        payload: { cwd, baseRef: null, commits, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.commits.list.response",
+        payload: { cwd, baseRef: null, commits: [], error: toCheckoutError(error), requestId },
       });
     }
   }

@@ -68,6 +68,7 @@ interface SessionHandlerInternals {
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutRefreshRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
+  handleCheckoutCommitsListRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
@@ -181,6 +182,7 @@ const checkoutGitMocks = vi.hoisted(() => ({
   getCachedCheckoutShortstat: vi.fn(),
   getCheckoutStatus: vi.fn(),
   listBranchSuggestions: vi.fn(),
+  listCheckoutCommits: vi.fn(),
   mergeFromBase: vi.fn(),
   mergeToBase: vi.fn(),
   pullCurrentBranch: vi.fn(),
@@ -229,6 +231,7 @@ vi.mock("../utils/checkout-git.js", async (importOriginal) => {
     getCachedCheckoutShortstat: checkoutGitMocks.getCachedCheckoutShortstat,
     getCheckoutStatus: checkoutGitMocks.getCheckoutStatus,
     listBranchSuggestions: checkoutGitMocks.listBranchSuggestions,
+    listCheckoutCommits: checkoutGitMocks.listCheckoutCommits,
     mergeFromBase: checkoutGitMocks.mergeFromBase,
     mergeToBase: checkoutGitMocks.mergeToBase,
     pullCurrentBranch: checkoutGitMocks.pullCurrentBranch,
@@ -3261,6 +3264,95 @@ describe("session checkout status handling", () => {
         error: null,
         requestId: "request-cold-status",
       }),
+    });
+  });
+});
+
+describe("session checkout commits list handling", () => {
+  test("returns the branch commits ahead of base with local/remote flags", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.listCheckoutCommits.mockResolvedValue([
+      {
+        sha: "1111111111111111111111111111111111111111",
+        shortSha: "1111111",
+        subject: "pushed commit",
+        authorName: "Ada",
+        authorDate: "2026-06-13T10:00:00Z",
+        isOnRemote: true,
+        files: [],
+      },
+      {
+        sha: "2222222222222222222222222222222222222222",
+        shortSha: "2222222",
+        subject: "local-only commit",
+        authorName: "Ada",
+        authorDate: "2026-06-13T11:00:00Z",
+        isOnRemote: false,
+        files: [],
+      },
+    ]);
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitsListRequest({
+      type: "checkout.commits.list.request",
+      cwd: "/tmp/commits-worktree",
+      requestId: "request-commits",
+    });
+
+    expect(checkoutGitMocks.listCheckoutCommits).toHaveBeenCalledWith({
+      cwd: "/tmp/commits-worktree",
+    });
+    expect(messages).toContainEqual({
+      type: "checkout.commits.list.response",
+      payload: {
+        cwd: "/tmp/commits-worktree",
+        baseRef: null,
+        commits: [
+          {
+            sha: "1111111111111111111111111111111111111111",
+            shortSha: "1111111",
+            subject: "pushed commit",
+            authorName: "Ada",
+            authorDate: "2026-06-13T10:00:00Z",
+            isOnRemote: true,
+            files: [],
+          },
+          {
+            sha: "2222222222222222222222222222222222222222",
+            shortSha: "2222222",
+            subject: "local-only commit",
+            authorName: "Ada",
+            authorDate: "2026-06-13T11:00:00Z",
+            isOnRemote: false,
+            files: [],
+          },
+        ],
+        error: null,
+        requestId: "request-commits",
+      },
+    });
+  });
+
+  test("reports an error when listing commits fails", async () => {
+    const messages: unknown[] = [];
+    checkoutGitMocks.listCheckoutCommits.mockRejectedValue(new Error("not a git repository"));
+    const session = createSessionForTest({ messages });
+
+    await asSessionInternals(session).handleCheckoutCommitsListRequest({
+      type: "checkout.commits.list.request",
+      cwd: "/tmp/commits-worktree",
+      requestId: "request-commits-error",
+    });
+
+    expect(messages).toContainEqual({
+      type: "checkout.commits.list.response",
+      payload: {
+        cwd: "/tmp/commits-worktree",
+        baseRef: null,
+        commits: [],
+        error: { code: "UNKNOWN", message: "not a git repository" },
+        requestId: "request-commits-error",
+      },
     });
   });
 });
