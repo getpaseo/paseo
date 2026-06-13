@@ -67,6 +67,7 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     name: session.name,
     cwd: session.cwd,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
+    activity: session.getActivity(),
   };
 }
 
@@ -168,12 +169,21 @@ function watchTerminal(session: TerminalSession): void {
       info,
     });
   });
+  const unsubscribeActivity = session.onActivityChange((transition) => {
+    sendToParent({
+      type: "terminalActivityChange",
+      terminalId: session.id,
+      activity: transition.activity,
+      previous: transition.previous,
+    });
+  });
 
   unsubscribeByTerminalId.set(session.id, [
     unsubscribeMessage,
     unsubscribeExit,
     unsubscribeTitle,
     unsubscribeCommandFinished,
+    unsubscribeActivity,
   ]);
 }
 
@@ -252,6 +262,12 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
       return;
     }
 
+    case "setActivity": {
+      await manager.setTerminalActivity(message.terminalId, message.state);
+      sendToParent({ type: "response", requestId: message.requestId, ok: true });
+      return;
+    }
+
     case "killTerminal": {
       const session = manager.getTerminal(message.terminalId);
       const cwd = session?.cwd;
@@ -295,16 +311,6 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
         requestId: message.requestId,
         ok: true,
         result: buildTerminalStateResult(manager.getTerminal(message.terminalId), message.options),
-      });
-      return;
-    }
-
-    case "listDirectories": {
-      sendToParent({
-        type: "response",
-        requestId: message.requestId,
-        ok: true,
-        result: manager.listDirectories(),
       });
       return;
     }

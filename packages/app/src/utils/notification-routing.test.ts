@@ -13,6 +13,7 @@ describe("resolveNotificationTarget", () => {
       serverId: "server-123",
       agentId: "agent-456",
       workspaceId: null,
+      terminalId: null,
     });
   });
 
@@ -21,11 +22,13 @@ describe("resolveNotificationTarget", () => {
       serverId: null,
       agentId: null,
       workspaceId: null,
+      terminalId: null,
     });
     expect(resolveNotificationTarget(undefined)).toEqual({
       serverId: null,
       agentId: null,
       workspaceId: null,
+      terminalId: null,
     });
   });
 
@@ -40,6 +43,7 @@ describe("resolveNotificationTarget", () => {
       serverId: "srv-1",
       agentId: "agent-1",
       workspaceId: null,
+      terminalId: null,
     });
   });
 });
@@ -59,6 +63,26 @@ describe("buildNotificationRoute", () => {
     expect(buildNotificationRoute({ serverId: "srv-1", agentId: "agent-1" })).toBe(
       "/h/srv-1/agent/agent-1",
     );
+  });
+
+  it("routes to the workspace terminal tab when workspace and terminal ids are present", () => {
+    expect(
+      buildNotificationRoute({
+        serverId: "srv-1",
+        workspaceId: "ws-main",
+        terminalId: "term-1",
+      }),
+    ).toBe("/h/srv-1/workspace/ws-main?open=terminal%3Aterm-1");
+  });
+
+  it("falls back to host root for a terminal without a workspace id", () => {
+    expect(
+      buildNotificationRoute({
+        serverId: "srv-1",
+        terminalId: "term-1",
+        cwd: "/tmp/repo",
+      }),
+    ).toBe("/h/srv-1");
   });
 
   it("falls back to host root when only serverId is present", () => {

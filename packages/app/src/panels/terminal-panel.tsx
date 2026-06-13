@@ -12,6 +12,7 @@ import { queryClient } from "@/query/query-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import { terminalActivityToStatusBucket } from "@/utils/terminal-activity-bucket";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -63,7 +64,7 @@ function useTerminalPanelDescriptor(
     subtitle: t("workspace.tabs.fallback.terminal"),
     titleState: "ready",
     icon: Terminal,
-    statusBucket: null,
+    statusBucket: terminalActivityToStatusBucket(terminal?.activity?.state),
   };
 }
 

@@ -2030,6 +2030,7 @@ function WorkspaceScreenContent({
     [uiTabs, workspaceLayout],
   );
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
+  const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
     const target = focusedPaneTabState.activeTab?.descriptor.target;
     if (target?.kind !== "agent") {
@@ -2037,13 +2038,28 @@ function WorkspaceScreenContent({
     }
     return target.agentId;
   }, [focusedPaneTabState.activeTab]);
+  const focusedPaneTerminalId = useMemo(() => {
+    const target = focusedPaneTabState.activeTab?.descriptor.target;
+    if (target?.kind !== "terminal") {
+      return null;
+    }
+    return target.terminalId;
+  }, [focusedPaneTabState.activeTab]);
 
   useEffect(() => {
     if (!isRouteFocused) {
       return;
     }
     setFocusedAgentId(normalizedServerId, focusedPaneAgentId);
-  }, [focusedPaneAgentId, isRouteFocused, normalizedServerId, setFocusedAgentId]);
+    setFocusedTerminalId(normalizedServerId, focusedPaneTerminalId);
+  }, [
+    focusedPaneAgentId,
+    focusedPaneTerminalId,
+    isRouteFocused,
+    normalizedServerId,
+    setFocusedAgentId,
+    setFocusedTerminalId,
+  ]);
 
   useEffect(() => {
     if (!isRouteFocused) {
@@ -2051,8 +2067,9 @@ function WorkspaceScreenContent({
     }
     return () => {
       setFocusedAgentId(normalizedServerId, null);
+      setFocusedTerminalId(normalizedServerId, null);
     };
-  }, [isRouteFocused, normalizedServerId, setFocusedAgentId]);
+  }, [isRouteFocused, normalizedServerId, setFocusedAgentId, setFocusedTerminalId]);
 
   const openWorkspaceDraftTab = useCallback(
     function openWorkspaceDraftTab(input?: { draftId?: string; focus?: boolean }) {

@@ -6,7 +6,10 @@ export interface ClientPresenceState {
   appVisible: boolean;
   lastActivityAtMs: number | null;
   focusedAgentId: string | null;
+  focusedTerminalId: string | null;
 }
+
+export type AttentionFocusTarget = { kind: "agent"; id: string } | { kind: "terminal"; id: string };
 
 export interface NotificationPlan {
   inAppRecipientIndex: number | null;
@@ -15,15 +18,31 @@ export interface NotificationPlan {
 
 interface ComputeNotificationPlanInput {
   allStates: ClientPresenceState[];
-  agentId: string;
-  reason: AgentAttentionReason;
+  // A present, app-visible client focused on the attention target suppresses the
+  // notification entirely. Pass null when the target should not suppress notifications.
+  focusTarget: AttentionFocusTarget | null;
+  // Whether a push notification is allowed when no client is present.
+  pushEligible: boolean;
   nowMs: number;
+}
+
+function isFocusedOnTarget(
+  state: ClientPresenceState,
+  target: AttentionFocusTarget | null,
+): boolean {
+  if (target === null) {
+    return false;
+  }
+  if (target.kind === "agent") {
+    return state.focusedAgentId === target.id;
+  }
+  return state.focusedTerminalId === target.id;
 }
 
 export function computeNotificationPlan({
   allStates,
-  agentId,
-  reason,
+  focusTarget,
+  pushEligible,
   nowMs,
 }: ComputeNotificationPlanInput): NotificationPlan {
   let mostRecentPresentIndex: number | null = null;
@@ -39,7 +58,7 @@ export function computeNotificationPlan({
       continue;
     }
 
-    if (state.appVisible && state.focusedAgentId === agentId) {
+    if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
       return { inAppRecipientIndex: null, shouldPush: false };
     }
 
@@ -53,5 +72,9 @@ export function computeNotificationPlan({
     return { inAppRecipientIndex: mostRecentPresentIndex, shouldPush: false };
   }
 
-  return { inAppRecipientIndex: null, shouldPush: reason !== "error" };
+  return { inAppRecipientIndex: null, shouldPush: pushEligible };
+}
+
+export function isPushEligibleAttentionReason(reason: AgentAttentionReason): boolean {
+  return reason !== "error";
 }

@@ -195,6 +195,7 @@ function createTerminalManagerStub(options?: {
             onExit: () => () => {},
             onCommandFinished: () => () => {},
             onTitleChange: () => () => {},
+            onActivityChange: () => () => {},
             send: (message: { type: string; data: string }) => {
               if (message.type === "input") {
                 sent.push(message.data);
@@ -204,6 +205,8 @@ function createTerminalManagerStub(options?: {
             killAndWait: async () => {},
             getSize: () => ({ rows: 1, cols: 1 }),
             getTitle: () => undefined,
+            getActivity: () => null,
+            setActivity: () => {},
             getExitInfo: () => null,
           } satisfies TerminalSession;
           terminals.push({
@@ -216,13 +219,19 @@ function createTerminalManagerStub(options?: {
           return terminal;
         },
       ),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
       getTerminals: vi.fn(async () => []),
       getTerminal: vi.fn(() => undefined),
       killTerminal: vi.fn(),
       killTerminalAndWait: vi.fn(async () => {}),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(async () => false),
+      getTerminalState: vi.fn(async () => null),
+      captureTerminal: vi.fn(async () => ({ lines: [], totalLines: 0 })),
       listDirectories: vi.fn(() => []),
       killAll: vi.fn(),
       subscribeTerminalsChanged: vi.fn(() => () => {}),
+      subscribeTerminalActivity: vi.fn(() => () => {}),
     } satisfies TerminalManager,
   };
 }

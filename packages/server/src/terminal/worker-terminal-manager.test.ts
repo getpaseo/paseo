@@ -2,12 +2,17 @@ import { afterEach, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
-import type { TerminalManager } from "./terminal-manager.js";
-import type { TerminalSession } from "./terminal.js";
+import type { TerminalActivityTransitionEvent, TerminalManager } from "./terminal-manager.js";
+import {
+  resolvePaseoCliBinDir,
+  resolvePaseoCliExecutablePath,
+  type TerminalSession,
+} from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type {
   TerminalWorkerRequest,
   TerminalWorkerToParentMessage,
@@ -375,7 +380,12 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
 
   worker.emitWorkerMessage({
     type: "terminalCreated",
-    terminal: { id: "terminal-1", name: "Terminal", cwd: "/tmp" },
+    terminal: {
+      id: "terminal-1",
+      name: "Terminal",
+      cwd: "/tmp",
+      activity: { state: "idle", changedAt: 0 },
+    },
     state: createTerminalState(),
   });
   const session = manager.getTerminal("terminal-1");
@@ -425,6 +435,57 @@ it("keeps registered cwd env inheritance behind the worker manager interface", a
   expect(readFileSync(markerPath, "utf8")).toBe("worker-env");
 });
 
+it("injects parent-minted terminal activity env through the worker", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-activity-env-"));
+  temporaryDirs.push(cwd);
+  const envPath = join(cwd, "activity-env.json");
+  const activityUrl = "http://127.0.0.1:12345/api/terminal-activity";
+  manager = createWorkerTerminalManager({
+    getTerminalActivityUrl: () => activityUrl,
+  });
+
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd,
+      ...nodeTerminalCommand(`
+        require("node:fs").writeFileSync(
+          ${JSON.stringify(envPath)},
+          JSON.stringify({
+            terminalId: process.env.PASEO_TERMINAL_ID,
+            token: process.env.PASEO_ACTIVITY_TOKEN,
+            url: process.env.PASEO_TERMINAL_ACTIVITY_URL,
+            hookCli: process.env.PASEO_HOOK_CLI,
+            path: process.env.PATH ?? process.env.Path,
+          }),
+        );
+        setInterval(() => {}, 1000);
+      `),
+    }),
+  );
+
+  await waitForCondition(() => existsSync(envPath), 10000);
+
+  const env = JSON.parse(readFileSync(envPath, "utf8")) as {
+    terminalId?: string;
+    token?: string;
+    url?: string;
+    hookCli?: string;
+    path?: string;
+  };
+  const paseoCliBinDir = resolvePaseoCliBinDir();
+  const paseoCliPath = resolvePaseoCliExecutablePath();
+  expect(paseoCliBinDir).not.toBeNull();
+  expect(paseoCliPath).not.toBeNull();
+  expect(env.terminalId).toBe(session.id);
+  expect(env.token).toEqual(expect.any(String));
+  expect(env.token).not.toBe("");
+  expect(env.url).toBe(activityUrl);
+  expect(env.hookCli).toBe(paseoCliPath);
+  expect(manager.validateTerminalActivityToken(session.id, env.token ?? "")).toBe("valid");
+  await expect(manager.setTerminalActivity(session.id, "attention")).resolves.toBe(true);
+  expect(env.path?.split(delimiter)[0]).toBe(paseoCliBinDir);
+});
+
 it("starts the default shell through the worker and accepts quoted commands", async () => {
   manager = createWorkerTerminalManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-shell-"));
@@ -460,6 +521,133 @@ it("lists subdirectory terminals when querying the workspace root", async () => 
   const rootTerminals = await manager.getTerminals(rootCwd);
 
   expect(rootTerminals.map((terminal) => terminal.id)).toEqual([created.id]);
+});
+
+it("surfaces worker activity changes via getActivity, onActivityChange, and terminalsChanged", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: { state: "idle", changedAt: 0 },
+    },
+    state: createTerminalState(),
+  });
+
+  const session = manager.getTerminal("terminal-a");
+  expect(session).toBeDefined();
+  expect(session!.getActivity()).toEqual({ state: "idle", changedAt: 0 });
+
+  const activityChanges: Array<{
+    activity: TerminalActivity | null;
+    previous: TerminalActivity | null;
+  }> = [];
+  const activityTransitions: TerminalActivityTransitionEvent[] = [];
+  const terminalsChangedCwds: string[] = [];
+  session!.onActivityChange((transition) => {
+    activityChanges.push(transition);
+  });
+  manager.subscribeTerminalActivity((event) => {
+    activityTransitions.push(event);
+  });
+  manager.subscribeTerminalsChanged((event) => {
+    terminalsChangedCwds.push(event.cwd);
+  });
+
+  const workingActivity = { state: "working" as const, changedAt: 1000 };
+  const idleActivity = { state: "idle" as const, changedAt: 0 };
+  worker.emitWorkerMessage({
+    type: "terminalActivityChange",
+    terminalId: "terminal-a",
+    activity: workingActivity,
+    previous: idleActivity,
+  });
+
+  expect(session!.getActivity()).toEqual(workingActivity);
+  expect(activityChanges).toEqual([{ activity: workingActivity, previous: idleActivity }]);
+  expect(activityTransitions).toEqual([
+    {
+      terminalId: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: workingActivity,
+      previous: idleActivity,
+    },
+  ]);
+  expect(terminalsChangedCwds).toContain("/workspace");
+});
+
+it("sets terminal activity through a worker request", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+
+  const result = manager.setTerminalActivity("terminal-a", "attention");
+  const request = worker.sentMessages.find((message) => message.type === "setActivity");
+  expect(request).toMatchObject({
+    type: "setActivity",
+    terminalId: "terminal-a",
+    state: "attention",
+  });
+  if (!request) {
+    throw new Error("setActivity request not sent");
+  }
+  worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+
+  await expect(result).resolves.toBe(true);
+});
+
+it("clears terminal attention through a worker activity update", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: { state: "attention", changedAt: 1000 },
+    },
+    state: createTerminalState(),
+  });
+
+  const result = manager.clearTerminalAttention("terminal-a");
+  const request = worker.sentMessages.find(
+    (message) => message.type === "setActivity" && message.state === "idle",
+  );
+  expect(request).toMatchObject({
+    type: "setActivity",
+    terminalId: "terminal-a",
+    state: "idle",
+  });
+  if (!request) {
+    throw new Error("attention clear request not sent");
+  }
+  worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+
+  await expect(result).resolves.toBe(true);
 });
 
 it("removes worker terminals after killAndWait", async () => {

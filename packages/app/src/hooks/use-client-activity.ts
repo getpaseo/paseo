@@ -14,6 +14,7 @@ import {
 interface ClientActivityOptions {
   client: DaemonClient;
   focusedAgentId: string | null;
+  focusedTerminalId: string | null;
   onAppResumed?: (awayMs: number) => void;
 }
 
@@ -26,6 +27,7 @@ interface ClientActivityOptions {
 export function useClientActivity({
   client,
   focusedAgentId,
+  focusedTerminalId,
   onAppResumed,
 }: ClientActivityOptions): void {
   const onAppResumedRef = useRef(onAppResumed);
@@ -37,6 +39,7 @@ export function useClientActivity({
       client,
       deviceType: isWeb ? "web" : "mobile",
       initialFocusedAgentId: focusedAgentId,
+      initialFocusedTerminalId: focusedTerminalId,
       initialAppVisible: AppState.currentState === "active",
       now: () => Date.now(),
       onAppResumed: (awayMs) => onAppResumedRef.current?.(awayMs),
@@ -113,6 +116,11 @@ export function useClientActivity({
   useEffect(() => {
     tracker.setFocusedAgentId(focusedAgentId);
   }, [focusedAgentId, tracker]);
+
+  // Send heartbeat on focused terminal change.
+  useEffect(() => {
+    tracker.setFocusedTerminalId(focusedTerminalId);
+  }, [focusedTerminalId, tracker]);
 
   // Periodic heartbeat gated by connection status.
   useEffect(() => {

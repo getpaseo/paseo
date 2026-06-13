@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeNotificationPlan,
+  isPushEligibleAttentionReason,
   type ClientPresenceState,
   PRESENCE_THRESHOLD_MS,
 } from "./agent-attention-policy.js";
@@ -9,6 +10,7 @@ function state(overrides: Partial<ClientPresenceState>): ClientPresenceState {
   return {
     appVisible: true,
     focusedAgentId: null,
+    focusedTerminalId: null,
     lastActivityAtMs: null,
     ...overrides,
   };
@@ -28,8 +30,8 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [staleFocused],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
@@ -48,8 +50,8 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [staleFocused, presentFocused],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: false });
@@ -65,8 +67,8 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [backgroundFocused],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
@@ -81,8 +83,8 @@ describe("computeNotificationPlan", () => {
             lastActivityAtMs: nowMs - 1_000,
           }),
         ],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
@@ -96,8 +98,8 @@ describe("computeNotificationPlan", () => {
           state({ lastActivityAtMs: nowMs - 1_000 }),
           state({ lastActivityAtMs: staleAtMs }),
         ],
-        agentId: "agent-1",
-        reason: "permission",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: 1, shouldPush: false });
@@ -110,8 +112,8 @@ describe("computeNotificationPlan", () => {
           state({ lastActivityAtMs: nowMs - 1_000 }),
           state({ lastActivityAtMs: nowMs - 1_000 }),
         ],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
@@ -124,8 +126,8 @@ describe("computeNotificationPlan", () => {
           state({ lastActivityAtMs: nowMs - 1 }),
           state({ lastActivityAtMs: nowMs + 600_000 }),
         ],
-        agentId: "agent-1",
-        reason: "permission",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: 1, shouldPush: false });
@@ -135,8 +137,8 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [state({ lastActivityAtMs: null })],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
@@ -146,8 +148,8 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [state({ lastActivityAtMs: staleAtMs })],
-        agentId: "agent-1",
-        reason: "permission",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
@@ -157,8 +159,8 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [state({ lastActivityAtMs: staleAtMs })],
-        agentId: "agent-1",
-        reason: "error",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: false,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: false });
@@ -171,8 +173,8 @@ describe("computeNotificationPlan", () => {
           state({ focusedAgentId: "agent-2", lastActivityAtMs: nowMs - 20_000 }),
           state({ focusedAgentId: null, lastActivityAtMs: nowMs - 500 }),
         ],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: 1, shouldPush: false });
@@ -182,10 +184,51 @@ describe("computeNotificationPlan", () => {
     expect(
       computeNotificationPlan({
         allStates: [state({ lastActivityAtMs: staleAtMs }), state({ lastActivityAtMs: staleAtMs })],
-        agentId: "agent-1",
-        reason: "finished",
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
         nowMs,
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+  });
+
+  it("never suppresses when focusTarget is null even if a client focuses a matching id", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ focusedAgentId: "terminal-1", lastActivityAtMs: nowMs - 500 })],
+        focusTarget: null,
+        pushEligible: true,
+        nowMs,
+      }),
+    ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
+  });
+
+  it("suppresses terminal notifications when a present visible client focuses the terminal", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ focusedTerminalId: "terminal-1", lastActivityAtMs: nowMs - 500 })],
+        focusTarget: { kind: "terminal", id: "terminal-1" },
+        pushEligible: true,
+        nowMs,
+      }),
+    ).toEqual({ inAppRecipientIndex: null, shouldPush: false });
+  });
+
+  it("pushes for a null-focus target when no client is present and push is eligible", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ lastActivityAtMs: staleAtMs })],
+        focusTarget: null,
+        pushEligible: true,
+        nowMs,
+      }),
+    ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+  });
+});
+
+describe("isPushEligibleAttentionReason", () => {
+  it("allows push for finished and permission but not error", () => {
+    expect(isPushEligibleAttentionReason("finished")).toBe(true);
+    expect(isPushEligibleAttentionReason("permission")).toBe(true);
+    expect(isPushEligibleAttentionReason("error")).toBe(false);
   });
 });
