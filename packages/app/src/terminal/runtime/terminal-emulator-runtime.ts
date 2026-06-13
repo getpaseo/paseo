@@ -184,6 +184,10 @@ export class TerminalEmulatorRuntime {
   private outputOperations: TerminalOutputOperation[] = [];
   private inFlightOutputOperation: TerminalOutputOperation | null = null;
   private inFlightOutputOperationTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Plain writes are submitted to xterm without waiting, so their onCommitted callbacks are
+  // pending until xterm commits the write. unmount() disposes xterm before those fire, so we
+  // track them here to flush remaining callbacks and avoid stalling upstream backpressure.
+  private pendingWriteCommits = new Set<() => void>();
   private readonly inputModeDecoder = new TextDecoder();
   private suppressInput = false;
   private readonly inputModeTracker = new TerminalInputModeTracker();
@@ -759,6 +763,9 @@ export class TerminalEmulatorRuntime {
     for (const operation of pendingOperations) {
       operation.onCommitted?.();
     }
+    for (const commit of Array.from(this.pendingWriteCommits)) {
+      commit();
+    }
 
     this.cleanup?.();
     this.cleanup = null;
@@ -776,6 +783,13 @@ export class TerminalEmulatorRuntime {
     this.emitInputModeChange();
   }
 
+  // A barrier op mutates terminal geometry or toggles suppressInput and must apply in
+  // isolation: clear/snapshot reset/resize the terminal, and any write carrying
+  // suppressInput flips input handling around the commit. Plain writes are fast-pathed.
+  private isBarrierOperation(operation: TerminalOutputOperation): boolean {
+    return operation.type !== "write" || Boolean(operation.suppressInput);
+  }
+
   private processOutputQueue(): void {
     if (this.inFlightOutputOperation) {
       return;
@@ -786,11 +800,79 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
+    // Fast path: drain contiguous plain writes back-to-back without waiting for each
+    // write's completion callback. xterm buffers internally and parses in submission
+    // order, so serializing one frame per parse tick only adds latency under burst.
+    while (this.outputOperations[0] && !this.isBarrierOperation(this.outputOperations[0])) {
+      const writeOperation = this.outputOperations.shift();
+      if (!writeOperation) {
+        break;
+      }
+      this.submitWrite(terminal, writeOperation);
+    }
+
     const operation = this.outputOperations.shift();
     if (!operation) {
       return;
     }
 
+    // The next op is a barrier. Before clear()/reset()/resize() touches the terminal, the
+    // plain writes submitted above must finish parsing — otherwise a synchronous reset
+    // could interleave with writes still sitting in xterm's internal buffer. A zero-length
+    // sentinel write commits after every prior write, so waiting on its callback gates the
+    // barrier behind the drained run. Plain writes never wait; only barriers do.
+    let started = false;
+    const startBarrier = () => {
+      // unmount() clears the in-flight op and disposes the terminal while we wait on the
+      // sentinel; bail if either changed so we don't reset/resize a torn-down terminal.
+      if (started || this.inFlightOutputOperation !== operation || this.terminal !== terminal) {
+        return;
+      }
+      started = true;
+      this.clearInFlightOutputTimeout();
+      this.startBarrierOperation(terminal, operation);
+    };
+    this.inFlightOutputOperation = operation;
+    this.inFlightOutputOperationTimeout = setTimeout(startBarrier, OUTPUT_OPERATION_TIMEOUT_MS);
+    try {
+      terminal.write(EMPTY_TERMINAL_OUTPUT, startBarrier);
+    } catch {
+      startBarrier();
+    }
+  }
+
+  private submitWrite(terminal: Terminal, operation: TerminalOutputOperation): void {
+    // Synchronous per-write tracking must run in frame order; doing it here in the drain
+    // loop preserves that ordering even though the writes are submitted without waiting.
+    const text = this.inputModeDecoder.decode(operation.data, { stream: true });
+    const result = this.inputModeTracker.feed(text);
+    if (result.changed) {
+      this.emitInputModeChange();
+    }
+    const onCommitted = operation.onCommitted;
+    if (!onCommitted) {
+      try {
+        terminal.write(operation.data);
+      } catch {
+        // Match existing behavior: a failed write still proceeds with no commit callback.
+      }
+      return;
+    }
+    const commit = () => {
+      if (!this.pendingWriteCommits.delete(commit)) {
+        return;
+      }
+      onCommitted();
+    };
+    this.pendingWriteCommits.add(commit);
+    try {
+      terminal.write(operation.data, commit);
+    } catch {
+      commit();
+    }
+  }
+
+  private startBarrierOperation(terminal: Terminal, operation: TerminalOutputOperation): void {
     this.inFlightOutputOperation = operation;
     const previousSuppressInput = this.suppressInput;
     if (operation.suppressInput) {

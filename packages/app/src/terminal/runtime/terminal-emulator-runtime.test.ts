@@ -110,7 +110,13 @@ function createRuntimeWithTerminal(): {
 
   const terminal: StubTerminal & { resetCalls: number } = {
     write: (data: string | Uint8Array, callback?: () => void) => {
-      writeTexts.push(decodeTerminalOutput(data));
+      const text = decodeTerminalOutput(data);
+      // The runtime submits a zero-length sentinel write to gate barrier ops behind the
+      // drained write run. Keep its callback (the gate resolves through it) but exclude the
+      // empty payload from writeTexts so assertions read like real terminal output.
+      if (text.length > 0) {
+        writeTexts.push(text);
+      }
       if (callback) {
         writeCallbacks.push(callback);
       }
@@ -164,7 +170,7 @@ describe("terminal-emulator-runtime", () => {
     vi.useRealTimers();
   });
 
-  it("processes write and clear operations in strict order", () => {
+  it("drains contiguous plain writes without waiting for each commit, gating a clear behind them", () => {
     const { runtime, terminal, writeCallbacks, writeTexts } = createRuntimeWithTerminal();
     const committed: string[] = [];
 
@@ -174,43 +180,64 @@ describe("terminal-emulator-runtime", () => {
         committed.push("first");
       },
     });
-    runtime.clear({
-      onCommitted: () => {
-        committed.push("clear");
-      },
-    });
     runtime.write({
       data: terminalOutput("second"),
       onCommitted: () => {
         committed.push("second");
       },
     });
+    runtime.clear({
+      onCommitted: () => {
+        committed.push("clear");
+      },
+    });
+    runtime.write({
+      data: terminalOutput("third"),
+      onCommitted: () => {
+        committed.push("third");
+      },
+    });
 
-    expect(writeTexts).toEqual(["first"]);
+    // Both plain writes are submitted back-to-back; neither waited on the other's callback.
+    // The clear and the write after it stay queued behind the barrier gate (sentinel write).
+    expect(writeTexts).toEqual(["first", "second"]);
     expect(terminal.resetCalls).toBe(0);
     expect(committed).toEqual([]);
 
+    // writeCallbacks: [0]=first, [1]=second, [2]=barrier-gate sentinel.
     writeCallbacks[0]?.();
-
-    expect(committed).toEqual(["first", "clear"]);
-    expect(terminal.resetCalls).toBe(1);
-    expect(writeTexts).toEqual(["first", "second"]);
-
     writeCallbacks[1]?.();
-    expect(committed).toEqual(["first", "clear", "second"]);
+    expect(committed).toEqual(["first", "second"]);
+    expect(terminal.resetCalls).toBe(0);
+
+    // Resolving the sentinel releases the clear, which resets and then drains "third".
+    writeCallbacks[2]?.();
+    expect(committed).toEqual(["first", "second", "clear"]);
+    expect(terminal.resetCalls).toBe(1);
+    expect(writeTexts).toEqual(["first", "second", "third"]);
+
+    // "third" still commits through its own write callback.
+    writeCallbacks[3]?.();
+    expect(committed).toEqual(["first", "second", "clear", "third"]);
   });
 
-  it("falls back to timeout commit when xterm write callback does not fire", () => {
+  it("falls back to timeout commit for a barrier op when the gate sentinel never fires", () => {
     vi.useFakeTimers();
-    const { runtime } = createRuntimeWithTerminal();
+    const { runtime, terminal } = createRuntimeWithTerminal();
     const onCommitted = vi.fn();
 
-    runtime.write({
+    // restoreOutput is a barrier; if xterm never commits the gate sentinel, the barrier still
+    // applies (and commits) after the 5s safety timeout instead of stalling forever.
+    runtime.restoreOutput({
       data: terminalOutput("stuck"),
       onCommitted,
     });
 
     expect(onCommitted).not.toHaveBeenCalled();
+    expect(terminal.resetCalls).toBe(0);
+    vi.advanceTimersByTime(5_000);
+    // The barrier now runs (write submitted) but its own commit still waits on xterm; advance
+    // again to fire the barrier's own write timeout.
     vi.advanceTimersByTime(5_000);
     expect(onCommitted).toHaveBeenCalledTimes(1);
   });
@@ -239,6 +266,12 @@ describe("terminal-emulator-runtime", () => {
         },
       },
     });
+    // The plain write reports kitty flags synchronously during drain; the snapshot resets
+    // them only after its barrier gate (the sentinel write callback) resolves.
+    expect(inputModeChanges).toEqual([{ kittyKeyboardFlags: 7, win32InputMode: false }]);
+
+    // The plain write carries no onCommitted, so it registers no callback; writeCallbacks[0]
+    // is the barrier gate sentinel.
     writeCallbacks[0]?.();
 
     expect(inputModeChanges).toEqual([
@@ -247,8 +280,8 @@ describe("terminal-emulator-runtime", () => {
     ]);
   });
 
-  it("ignores stale duplicate write callbacks from a previous operation", () => {
-    const { runtime, writeCallbacks } = createRuntimeWithTerminal();
+  it("commits each drained plain write through its own xterm callback", () => {
+    const { runtime, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
     const committed: string[] = [];
 
     runtime.write({
@@ -264,14 +297,72 @@ describe("terminal-emulator-runtime", () => {
       },
     });
 
-    writeCallbacks[0]?.();
-    expect(committed).toEqual(["first"]);
-
-    writeCallbacks[0]?.();
-    expect(committed).toEqual(["first"]);
+    // Both submitted without waiting; each commits independently when its callback fires.
+    expect(writeTexts).toEqual(["first", "second"]);
+    expect(committed).toEqual([]);
 
     writeCallbacks[1]?.();
-    expect(committed).toEqual(["first", "second"]);
+    expect(committed).toEqual(["second"]);
+
+    writeCallbacks[0]?.();
+    expect(committed).toEqual(["second", "first"]);
+  });
+
+  it("applies a snapshot after the writes ahead of it, never interleaving the reset", () => {
+    const { runtime, terminal, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
+    const committed: string[] = [];
+
+    runtime.write({
+      data: terminalOutput("before-a"),
+      onCommitted: () => {
+        committed.push("before-a");
+      },
+    });
+    runtime.write({
+      data: terminalOutput("before-b"),
+      onCommitted: () => {
+        committed.push("before-b");
+      },
+    });
+    runtime.restoreOutput({
+      data: terminalOutput("snap"),
+      onCommitted: () => {
+        committed.push("snap");
+      },
+    });
+
+    // Plain writes are submitted up front; the snapshot's reset+write has not run yet.
+    expect(writeTexts).toEqual(["before-a", "before-b"]);
+
+    // writeCallbacks: [0]=before-a, [1]=before-b, [2]=barrier gate sentinel.
+    // The snapshot is gated behind the prior writes; resolving the gate runs it after them.
+    writeCallbacks[2]?.();
+    expect(writeTexts).toEqual(["before-a", "before-b", "csnap"]);
+
+    // Snapshot commit fires only after its own write callback, strictly after the writes.
+    writeCallbacks[3]?.();
+    expect(committed).toEqual(["snap"]);
+    expect(terminal.resetCalls).toBe(0);
+  });
+
+  it("suppresses input only across a barrier op and restores it after the barrier commits", () => {
+    const { runtime, writeCallbacks } = createRuntimeWithTerminal();
+    const readSuppressInput = () =>
+      (runtime as unknown as { suppressInput: boolean }).suppressInput;
+
+    expect(readSuppressInput()).toBe(false);
+
+    runtime.restoreOutput({ data: terminalOutput("snapshot") });
+
+    // writeCallbacks[0] is the barrier gate sentinel; suppressInput only flips once the
+    // barrier actually starts (after the gate resolves), not while waiting on the gate.
+    expect(readSuppressInput()).toBe(false);
+    writeCallbacks[0]?.();
+    expect(readSuppressInput()).toBe(true);
+
+    // writeCallbacks[1] is the barrier's own snapshot write; committing it restores input.
+    writeCallbacks[1]?.();
+    expect(readSuppressInput()).toBe(false);
   });
 
   it("commits pending output operations during unmount to avoid deadlock", () => {
@@ -295,7 +386,7 @@ describe("terminal-emulator-runtime", () => {
   });
 
   it("replays snapshots through a single write without first painting a reset terminal", () => {
-    const { runtime, terminal, writeTexts } = createRuntimeWithTerminal();
+    const { runtime, terminal, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
 
     runtime.renderSnapshot({
       state: {
@@ -313,6 +404,9 @@ describe("terminal-emulator-runtime", () => {
       },
     });
 
+    // The snapshot is a barrier; its write applies after the gate sentinel (writeCallbacks[0]).
+    writeCallbacks[0]?.();
+
     expect(terminal.resetCalls).toBe(0);
     expect(writeTexts).toHaveLength(1);
     expect(writeTexts[0]?.startsWith("\u001bc")).toBe(true);
@@ -320,9 +414,12 @@ describe("terminal-emulator-runtime", () => {
   });
 
   it("restores server-rendered ANSI snapshots through the snapshot write path", () => {
-    const { runtime, terminal, writeTexts } = createRuntimeWithTerminal();
+    const { runtime, terminal, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
 
     runtime.restoreOutput({ data: terminalOutput("restored screen") });
+
+    // restoreOutput is a barrier (suppressInput); it applies after the gate sentinel.
+    writeCallbacks[0]?.();
 
     expect(terminal.resetCalls).toBe(0);
     expect(writeTexts).toEqual(["\u001bcrestored screen"]);

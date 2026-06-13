@@ -334,6 +334,32 @@ describe("createTerminal", () => {
     expect(Array.isArray(exitInfo.lastOutputLines)).toBe(true);
     expect(session.getExitInfo()).toEqual(exitInfo);
   });
+
+  it("retains the final lines after output far exceeds the recent-output char cap", async () => {
+    // Emit many small chunks whose total length is well past the 16000-char
+    // recent-output cap, so the chunk-trimming path runs repeatedly. The final
+    // distinctive lines must survive in the exit summary.
+    const session = trackSession(
+      await createTerminal({
+        cwd: realpathSync(tmpdir()),
+        command: process.execPath,
+        args: [
+          "-e",
+          "for (let i = 0; i < 3000; i++) { process.stdout.write(`line-${i}\\n`); } process.exit(0);",
+        ],
+      }),
+    );
+
+    const exitInfo = await new Promise<NonNullable<ReturnType<TerminalSession["getExitInfo"]>>>(
+      (resolve) => {
+        session.onExit((info) => resolve(info));
+      },
+    );
+
+    expect(exitInfo.exitCode).toBe(0);
+    expect(exitInfo.lastOutputLines.length).toBeGreaterThan(0);
+    expect(exitInfo.lastOutputLines[exitInfo.lastOutputLines.length - 1]).toBe("line-2999");
+  });
 });
 
 describe.skipIf(isPlatform("win32"))("send input", () => {
