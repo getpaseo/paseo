@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -176,18 +177,23 @@ it("creates a terminal through the worker and streams output", async () => {
   expect(snapshots).toBe(snapshotsBeforeOutput);
 });
 
-it("delivers rapid small writes complete and in order through worker coalescing", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
-  temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
-  // On any input the child emits 500 small distinct chunks back-to-back, so the
-  // worker-side coalescer must batch them without dropping, duplicating, or
-  // reordering any chunk. Emitting on input (not at spawn) guarantees we have
-  // subscribed before the burst.
-  const session = trackTerminal(
-    await manager.createTerminal({
-      cwd,
-      ...nodeTerminalCommand(`
+// Windows ConPTY injects repaint/cursor escapes between writes, so the raw
+// output stream isn't byte-contiguous there; the coalescing contract is verified
+// on Linux/macOS.
+it.skipIf(isPlatform("win32"))(
+  "delivers rapid small writes complete and in order through worker coalescing",
+  async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
+    temporaryDirs.push(cwd);
+    manager = createWorkerTerminalManager();
+    // On any input the child emits 500 small distinct chunks back-to-back, so the
+    // worker-side coalescer must batch them without dropping, duplicating, or
+    // reordering any chunk. Emitting on input (not at spawn) guarantees we have
+    // subscribed before the burst.
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd,
+        ...nodeTerminalCommand(`
       process.stdin.on("data", () => {
         for (let i = 0; i < 500; i++) {
           process.stdout.write("[" + i + "]");
@@ -195,53 +201,54 @@ it("delivers rapid small writes complete and in order through worker coalescing"
       });
       setInterval(() => {}, 1000);
     `),
-    }),
-  );
+      }),
+    );
 
-  const events: Array<{ type: string; data?: string }> = [];
-  session.subscribe((message) => {
-    if (message.type === "output") {
-      events.push({ type: "output", data: message.data });
-    } else if (message.type === "snapshot" || message.type === "snapshotReady") {
-      events.push({ type: message.type });
+    const events: Array<{ type: string; data?: string }> = [];
+    session.subscribe((message) => {
+      if (message.type === "output") {
+        events.push({ type: "output", data: message.data });
+      } else if (message.type === "snapshot" || message.type === "snapshotReady") {
+        events.push({ type: message.type });
+      }
+    });
+
+    // Let the snapshot subscription settle, then trigger the burst.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    session.send({ type: "input", data: "go\r" });
+
+    const expected = Array.from({ length: 500 }, (_, i) => `[${i}]`).join("");
+    await waitForCondition(
+      () =>
+        events
+          .filter((event) => event.type === "output")
+          .map((event) => event.data)
+          .join("")
+          .includes(expected),
+      10000,
+    );
+
+    const received = events
+      .filter((event) => event.type === "output")
+      .map((event) => event.data)
+      .join("");
+    // The full sequence must appear contiguously: coalescing preserved order and
+    // dropped nothing.
+    expect(received).toContain(expected);
+
+    // No snapshot may land after output it should have preceded: every snapshot
+    // event must come before the first output event.
+    const firstOutputIndex = events.findIndex((event) => event.type === "output");
+    const lastSnapshotIndex = events.reduce(
+      (last, event, index) =>
+        event.type === "snapshot" || event.type === "snapshotReady" ? index : last,
+      -1,
+    );
+    if (lastSnapshotIndex !== -1 && firstOutputIndex !== -1) {
+      expect(lastSnapshotIndex).toBeLessThan(firstOutputIndex);
     }
-  });
-
-  // Let the snapshot subscription settle, then trigger the burst.
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  session.send({ type: "input", data: "go\r" });
-
-  const expected = Array.from({ length: 500 }, (_, i) => `[${i}]`).join("");
-  await waitForCondition(
-    () =>
-      events
-        .filter((event) => event.type === "output")
-        .map((event) => event.data)
-        .join("")
-        .includes(expected),
-    10000,
-  );
-
-  const received = events
-    .filter((event) => event.type === "output")
-    .map((event) => event.data)
-    .join("");
-  // The full sequence must appear contiguously: coalescing preserved order and
-  // dropped nothing.
-  expect(received).toContain(expected);
-
-  // No snapshot may land after output it should have preceded: every snapshot
-  // event must come before the first output event.
-  const firstOutputIndex = events.findIndex((event) => event.type === "output");
-  const lastSnapshotIndex = events.reduce(
-    (last, event, index) =>
-      event.type === "snapshot" || event.type === "snapshotReady" ? index : last,
-    -1,
-  );
-  if (lastSnapshotIndex !== -1 && firstOutputIndex !== -1) {
-    expect(lastSnapshotIndex).toBeLessThan(firstOutputIndex);
-  }
-});
+  },
+);
 
 it("pulls fresh terminal state from the worker authority", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-state-"));
@@ -267,29 +274,34 @@ it("pulls fresh terminal state from the worker authority", async () => {
   expect(visibleText).toContain("worker-state-ready");
 });
 
-it("caches the input-mode replay preamble from the worker after getTerminalState", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
-  temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
-  // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
-  // tracker records and reflects in its replay preamble (\x1b[=1;1u).
-  const session = trackTerminal(
-    await manager.createTerminal({
-      cwd,
-      ...nodeTerminalCommand(`
+// Windows ConPTY normalizes/strips the kitty keyboard escape, so the worker's
+// input-mode tracker never records it there; verified on Linux/macOS.
+it.skipIf(isPlatform("win32"))(
+  "caches the input-mode replay preamble from the worker after getTerminalState",
+  async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
+    temporaryDirs.push(cwd);
+    manager = createWorkerTerminalManager();
+    // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
+    // tracker records and reflects in its replay preamble (\x1b[=1;1u).
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd,
+        ...nodeTerminalCommand(`
       process.stdout.write("\\u001b[>1u");
       setInterval(() => {}, 1000);
     `),
-    }),
-  );
+      }),
+    );
 
-  await waitForCondition(async () => {
-    const snapshot = await manager!.getTerminalState(session.id);
-    return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
-  }, 10000);
+    await waitForCondition(async () => {
+      const snapshot = await manager!.getTerminalState(session.id);
+      return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
+    }, 10000);
 
-  expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
-});
+    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
+  },
+);
 
 it("refreshes cached terminal title after worker title changes", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
