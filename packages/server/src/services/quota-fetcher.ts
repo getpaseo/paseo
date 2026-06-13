@@ -19,6 +19,9 @@ const CURSOR_SQLITE_TIMEOUT_MS = 2_000;
 
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+// macOS: Claude Code stores its OAuth credential in the login Keychain under
+// this generic-password service name instead of ~/.claude/.credentials.json.
+const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 export interface QuotaFetcherServiceOptions {
@@ -47,6 +50,14 @@ interface ClaudeCredentials {
     subscriptionType?: string;
     rateLimitTier?: string;
   };
+}
+
+interface ClaudeCredentialRecord {
+  // accessToken is guaranteed present; the remaining oauth fields stay optional.
+  oauth: { accessToken: string } & NonNullable<ClaudeCredentials["claudeAiOauth"]>;
+  // Path of the writable file store, or null when the credential was read from
+  // the macOS Keychain (read-only there — Claude Code owns refresh/persist).
+  filePath: string | null;
 }
 
 interface ClaudeUsageWindow {
@@ -84,6 +95,29 @@ function buildClaudePlan(
   return tier ? `${label} ${tier}` : label;
 }
 
+// macOS only: Claude Code stores its OAuth credential in the login Keychain as a
+// generic-password item, not in ~/.claude/.credentials.json (which usually does
+// not exist on macOS). The Keychain item's ACL grants decrypt only to
+// /usr/bin/security, so read it by shelling out to the `security` CLI — a native
+// Keychain read under our own identity would trigger an interactive
+// authorization prompt the daemon cannot answer.
+async function readClaudeKeychainCredentials(): Promise<ClaudeCredentials | null> {
+  try {
+    const { stdout } = await execFileAsync("security", [
+      "find-generic-password",
+      "-s",
+      CLAUDE_KEYCHAIN_SERVICE,
+      "-w",
+    ]);
+    const raw = stdout.trim();
+    if (!raw) return null;
+    return JSON.parse(raw) as ClaudeCredentials;
+  } catch {
+    // No Keychain item, non-macOS, or malformed payload.
+    return null;
+  }
+}
+
 export class ClaudeQuotaProvider implements QuotaProvider {
   readonly id = "claude";
 
@@ -94,14 +128,10 @@ export class ClaudeQuotaProvider implements QuotaProvider {
   }
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["claude"]> {
-    const credPath = join(this.claudeHome, ".credentials.json");
-    if (!existsSync(credPath)) return undefined;
+    const credentials = await this.readCredentials();
+    if (!credentials) return undefined;
 
-    const raw = await fs.readFile(credPath, "utf8");
-    const creds: ClaudeCredentials = JSON.parse(raw);
-    const oauth = creds.claudeAiOauth;
-    if (!oauth?.accessToken) return undefined;
-
+    const { oauth, filePath } = credentials;
     const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
 
     let resp = await this.callClaudeApi(oauth.accessToken);
@@ -111,11 +141,16 @@ export class ClaudeQuotaProvider implements QuotaProvider {
       const refreshed = await this.refreshClaudeToken(oauth.refreshToken);
       if (!refreshed?.access_token) return undefined;
 
-      await this.saveClaudeCredentials(credPath, {
-        ...oauth,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token ?? oauth.refreshToken,
-      });
+      // Only the file-backed store is writable. On macOS the credential lives in
+      // the Keychain (filePath === null) whose ACL only trusts /usr/bin/security,
+      // and Claude Code owns the refresh, so stay read-only there.
+      if (filePath) {
+        await this.saveClaudeCredentials(filePath, {
+          ...oauth,
+          accessToken: refreshed.access_token,
+          refreshToken: refreshed.refresh_token ?? oauth.refreshToken,
+        });
+      }
 
       resp = await this.callClaudeApi(refreshed.access_token);
       if (resp === "NEEDS_AUTH") return undefined;
@@ -133,6 +168,34 @@ export class ClaudeQuotaProvider implements QuotaProvider {
         : null,
       plan,
     };
+  }
+
+  private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
+    const credPath = join(this.claudeHome, ".credentials.json");
+
+    // Linux/Windows (and macOS when the file is present) use the file store.
+    if (existsSync(credPath)) {
+      try {
+        const creds: ClaudeCredentials = JSON.parse(await fs.readFile(credPath, "utf8"));
+        const oauth = creds.claudeAiOauth;
+        if (oauth?.accessToken) {
+          return { oauth: { ...oauth, accessToken: oauth.accessToken }, filePath: credPath };
+        }
+      } catch {
+        // Fall through to the macOS Keychain below.
+      }
+    }
+
+    // macOS keeps the credential in the login Keychain, not the file.
+    if (process.platform === "darwin") {
+      const creds = await readClaudeKeychainCredentials();
+      const oauth = creds?.claudeAiOauth;
+      if (oauth?.accessToken) {
+        return { oauth: { ...oauth, accessToken: oauth.accessToken }, filePath: null };
+      }
+    }
+
+    return null;
   }
 
   private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
