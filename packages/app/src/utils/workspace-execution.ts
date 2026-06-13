@@ -26,6 +26,8 @@ export function resolveWorkspaceRouteId(input: {
   return normalizeWorkspaceOpaqueId(input.routeWorkspaceId);
 }
 
+// Single approved cwd→workspaceId inference site.
+// Do not add cwd-to-id inference elsewhere; prefer agent.workspaceId when the daemon provides it.
 export function resolveWorkspaceIdByExecutionDirectory(input: {
   workspaces: Iterable<WorkspaceDescriptor> | null | undefined;
   workspaceDirectory: string | null | undefined;

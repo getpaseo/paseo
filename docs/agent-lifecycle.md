@@ -97,6 +97,8 @@ Closing a subagent's tab on one client doesn't affect other clients' layouts. Th
 $PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 ```
 
+`{cwd-with-dashes}` is derived from the agent's filesystem `cwd`. It is not the workspace id; agent storage stays cwd-keyed while workspace identity is the opaque workspace id.
+
 Each agent is a single JSON file. Fields relevant to this doc:
 
 | Field                             | Type          | Meaning                                                                                   |

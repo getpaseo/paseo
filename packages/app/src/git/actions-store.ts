@@ -158,12 +158,13 @@ function snapshotWorktreeArchiveState(input: {
   worktreePath: string;
 }): WorktreeArchiveSnapshot {
   const workspaces = useSessionStore.getState().sessions[input.serverId]?.workspaces;
-  const workspaceId =
-    resolveWorkspaceIdByExecutionDirectory({
-      workspaces: workspaces?.values(),
-      workspaceDirectory: input.worktreePath,
-    }) ?? input.worktreePath;
-  const workspaceKey = resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId });
+  const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+    workspaces: workspaces?.values(),
+    workspaceDirectory: input.worktreePath,
+  });
+  const workspaceKey = workspaceId
+    ? resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId })
+    : null;
   return {
     workspace: workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null,
     worktreeLists: appQueryClient.getQueriesData({
@@ -173,13 +174,13 @@ function snapshotWorktreeArchiveState(input: {
   };
 }
 
-function removeWorktreeFromSessionStore(input: { serverId: string; worktreePath: string }): void {
+function removeWorktreeFromSessionStore(input: { serverId: string; workspaceId: string }): void {
   const serverId = input.serverId.trim();
-  const worktreePath = input.worktreePath.trim();
-  if (!serverId || !worktreePath) {
+  const workspaceId = input.workspaceId.trim();
+  if (!serverId || !workspaceId) {
     return;
   }
-  useSessionStore.getState().removeWorkspace(serverId, worktreePath);
+  useSessionStore.getState().removeWorkspace(serverId, workspaceId);
 }
 
 function restoreWorktreeArchiveState(input: {
@@ -195,9 +196,9 @@ function restoreWorktreeArchiveState(input: {
   }
 }
 
-function purgeArchivedWorkspaceState(input: { serverId: string; worktreePath: string }): void {
+function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const serverId = input.serverId.trim();
-  const workspaceId = input.worktreePath.trim();
+  const workspaceId = input.workspaceId.trim();
   if (!serverId || !workspaceId) {
     return;
   }
@@ -223,6 +224,13 @@ export function isLocalWorktreeArchivePending(input: { serverId: string; cwd: st
       actionId: "archive-worktree",
     }) === "pending"
   );
+}
+
+function warnMissingArchiveWorkspace(input: { serverId: string; worktreePath: string }): void {
+  console.warn("[CheckoutGitActions] archive worktree skipped: workspace not found", {
+    serverId: input.serverId,
+    worktreePath: input.worktreePath,
+  });
 }
 
 interface CheckoutGitActionsStoreState {
@@ -504,15 +512,19 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       run: async () => {
         const client = resolveClient(serverId);
         const snapshot = snapshotWorktreeArchiveState({ serverId, worktreePath });
+        if (!snapshot.workspace) {
+          warnMissingArchiveWorkspace({ serverId, worktreePath });
+          return;
+        }
         markWorkspaceArchivePending({
           serverId,
-          workspaceId: snapshot.workspace?.id ?? worktreePath,
-          workspaceDirectory: snapshot.workspace?.workspaceDirectory ?? worktreePath,
+          workspaceId: snapshot.workspace.id,
+          workspaceDirectory: snapshot.workspace.workspaceDirectory,
         });
         removeWorktreeFromCachedLists({ serverId, worktreePath });
         removeWorktreeFromSessionStore({
           serverId,
-          worktreePath: snapshot.workspace?.id ?? worktreePath,
+          workspaceId: snapshot.workspace.id,
         });
         try {
           const payload = await client.archivePaseoWorktree({ worktreePath });
@@ -522,13 +534,13 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         } catch (error) {
           clearWorkspaceArchivePending({
             serverId,
-            workspaceId: snapshot.workspace?.id ?? worktreePath,
+            workspaceId: snapshot.workspace.id,
           });
           restoreWorktreeArchiveState({ serverId, snapshot });
           throw error;
         }
         invalidateWorktreeList();
-        purgeArchivedWorkspaceState({ serverId, worktreePath });
+        purgeArchivedWorkspaceState({ serverId, workspaceId: snapshot.workspace.id });
       },
     });
   },

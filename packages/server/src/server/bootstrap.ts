@@ -109,6 +109,7 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore } from "./daemon-config-store.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import { resolveRegisteredWorkspaceIdForCwd } from "./workspace-directory.js";
 import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
@@ -665,6 +666,9 @@ export async function createPaseoDaemon(
       projectRegistry,
     });
   };
+  const resolveWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
+    return resolveRegisteredWorkspaceIdForCwd(cwd, await workspaceRegistry.list());
+  };
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
     const workspaceIdList = Array.from(workspaceIds);
     for (const session of wsServer?.listActiveSessions() ?? []) {
@@ -699,6 +703,7 @@ export async function createPaseoDaemon(
     agentStorage,
     terminalManager,
     logger,
+    resolveWorkspaceIdForCwd: resolveWorkspaceIdForCwdExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
@@ -721,6 +726,7 @@ export async function createPaseoDaemon(
         providerSnapshotManager,
         github,
         workspaceGitService,
+        resolveWorkspaceIdForCwd: resolveWorkspaceIdForCwdExternal,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,

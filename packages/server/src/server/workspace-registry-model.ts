@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 
 import type {
@@ -27,17 +28,13 @@ export interface DetectStaleWorkspacesInput {
   checkDirectoryExists: (cwd: string) => Promise<boolean>;
 }
 
-export function normalizeWorkspaceId(cwd: string): string {
-  const trimmed = cwd.trim();
-  if (!trimmed) {
-    return cwd;
-  }
-  return resolve(trimmed);
+export function generateWorkspaceId(): string {
+  return `wks_${randomBytes(8).toString("hex")}`;
 }
 
 export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
-  return worktreeRoot ?? normalizeWorkspaceId(cwd);
+  return worktreeRoot ?? resolve(cwd);
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
@@ -240,7 +237,7 @@ export function classifyDirectoryForProjectMembership(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
 }): DirectoryProjectMembership {
-  const normalizedCwd = normalizeWorkspaceId(input.cwd);
+  const normalizedCwd = resolve(input.cwd);
   const checkout: ProjectCheckoutLitePayload = {
     ...input.checkout,
     cwd: normalizedCwd,

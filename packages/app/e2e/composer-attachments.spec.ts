@@ -244,7 +244,7 @@ test.describe("Composer attachments", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: workspace.workspaceId,
+        workspaceId: workspace.workspaceId,
       });
 
       await openNewWorkspaceComposer(page, {

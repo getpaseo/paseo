@@ -3,7 +3,6 @@ import type { Logger } from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import type { GitHubService } from "../services/github-service.js";
 import {
   deletePaseoWorktree,
@@ -19,6 +18,7 @@ export interface ArchivePaseoWorktreeDependencies {
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
   agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
   agentStorage: Pick<AgentStorage, "list">;
+  resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -57,7 +57,6 @@ export async function archivePaseoWorktree(
 
   const archivedAgents = new Set<string>();
   const affectedWorkspaceCwds = new Set<string>([targetPath]);
-  const affectedWorkspaceIds = new Set<string>([normalizePersistedWorkspaceId(targetPath)]);
 
   const liveAgents = dependencies.agentManager
     .listAgents()
@@ -65,7 +64,6 @@ export async function archivePaseoWorktree(
   for (const agent of liveAgents) {
     archivedAgents.add(agent.id);
     affectedWorkspaceCwds.add(agent.cwd);
-    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(agent.cwd));
   }
 
   let storedRecords: StoredAgentRecord[] = [];
@@ -84,10 +82,12 @@ export async function archivePaseoWorktree(
   for (const record of matchingStoredRecords) {
     archivedAgents.add(record.id);
     affectedWorkspaceCwds.add(record.cwd);
-    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(record.cwd));
   }
 
-  const affectedWorkspaceIdList = Array.from(affectedWorkspaceIds);
+  const affectedWorkspaceIdList = await resolveAffectedWorkspaceIds(
+    dependencies,
+    affectedWorkspaceCwds,
+  );
   dependencies.markWorkspaceArchiving(affectedWorkspaceIdList, new Date().toISOString());
 
   try {
@@ -174,6 +174,28 @@ export async function archivePaseoWorktree(
   }
 
   return Array.from(archivedAgents);
+}
+
+async function resolveAffectedWorkspaceIds(
+  dependencies: Pick<
+    ArchivePaseoWorktreeDependencies,
+    "resolveWorkspaceIdForCwd" | "sessionLogger"
+  >,
+  cwds: Iterable<string>,
+): Promise<string[]> {
+  const workspaceIds = new Set<string>();
+  for (const cwd of cwds) {
+    const workspaceId = await dependencies.resolveWorkspaceIdForCwd(cwd);
+    if (!workspaceId) {
+      dependencies.sessionLogger?.warn(
+        { cwd },
+        "Skipping workspace archive update for unregistered directory",
+      );
+      continue;
+    }
+    workspaceIds.add(workspaceId);
+  }
+  return Array.from(workspaceIds);
 }
 
 export async function killTerminalsUnderPath(

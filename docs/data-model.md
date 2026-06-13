@@ -386,16 +386,16 @@ emptied duplicate.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field         | Type                                            | Description                    |
-| ------------- | ----------------------------------------------- | ------------------------------ |
-| `workspaceId` | `string`                                        | Primary key                    |
-| `projectId`   | `string`                                        | FK to Project.projectId        |
-| `cwd`         | `string`                                        | Filesystem path                |
-| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                |
-| `displayName` | `string`                                        |                                |
-| `createdAt`   | `string` (ISO 8601)                             |                                |
-| `updatedAt`   | `string` (ISO 8601)                             |                                |
-| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable |
+| Field         | Type                                            | Description                                                                                                                                                    |
+| ------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | `string`                                        | Opaque stable identifier. Currently generated from cwd but MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
+| `projectId`   | `string`                                        | FK to Project.projectId                                                                                                                                        |
+| `cwd`         | `string`                                        | Filesystem path                                                                                                                                                |
+| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                                                                                                                                                |
+| `displayName` | `string`                                        |                                                                                                                                                                |
+| `createdAt`   | `string` (ISO 8601)                             |                                                                                                                                                                |
+| `updatedAt`   | `string` (ISO 8601)                             |                                                                                                                                                                |
+| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                 |
 
 ---
 

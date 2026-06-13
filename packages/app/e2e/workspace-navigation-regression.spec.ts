@@ -92,7 +92,7 @@ async function openWorkspaceThroughApp(
   await switchWorkspaceViaSidebar({
     page,
     serverId: input.serverId,
-    targetWorkspacePath: input.workspace.workspaceId,
+    workspaceId: input.workspace.workspaceId,
   });
   await waitForWorkspaceTabsVisible(page);
   await expectWorkspaceLocation(page, input);
@@ -365,7 +365,7 @@ test.describe("Workspace navigation regression", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: firstWorkspace.workspaceId,
+        workspaceId: firstWorkspace.workspaceId,
       });
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId), {
@@ -397,7 +397,7 @@ test.describe("Workspace navigation regression", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: secondWorkspace.workspaceId,
+        workspaceId: secondWorkspace.workspaceId,
       });
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
@@ -461,7 +461,7 @@ test.describe("Workspace navigation regression", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: firstWorkspace.workspaceId,
+        workspaceId: firstWorkspace.workspaceId,
       });
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId), {

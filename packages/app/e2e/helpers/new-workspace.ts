@@ -3,7 +3,7 @@ import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/inte
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { daemonWsRoutePattern } from "./daemon-port";
-import { expectWorkspaceHeader, workspaceLabelFromPath } from "./workspace-ui";
+import { expectWorkspaceHeader } from "./workspace-ui";
 
 type NewWorkspaceDaemonClient = Pick<
   InternalDaemonClient,
@@ -12,17 +12,20 @@ type NewWorkspaceDaemonClient = Pick<
   | "close"
   | "connect"
   | "createPaseoWorktree"
+  | "fetchWorkspaces"
   | "openProject"
 >;
 
 type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
 type WorkspacePayload = Pick<OpenProjectPayload, "error" | "workspace">;
+type WorkspaceDescriptor = NonNullable<OpenProjectPayload["workspace"]>;
 
 export interface OpenedProject {
   workspaceId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
+  workspaceDirectory: string;
 }
 
 function requireWorkspace(payload: WorkspacePayload) {
@@ -33,6 +36,39 @@ function requireWorkspace(payload: WorkspacePayload) {
     throw new Error("openProject returned no workspace.");
   }
   return payload.workspace;
+}
+
+function openedProjectFromWorkspace(workspace: WorkspaceDescriptor): OpenedProject {
+  return {
+    workspaceId: workspace.id,
+    projectKey: workspace.projectId,
+    projectDisplayName: workspace.projectDisplayName,
+    workspaceName: workspace.name,
+    workspaceDirectory: workspace.workspaceDirectory,
+  };
+}
+
+async function fetchWorkspaceById(
+  client: NewWorkspaceDaemonClient,
+  workspaceId: string,
+): Promise<WorkspaceDescriptor | null> {
+  const payload = await client.fetchWorkspaces();
+  return payload.entries.find((entry) => entry.id === workspaceId) ?? null;
+}
+
+async function waitForWorkspaceDescriptor(
+  client: NewWorkspaceDaemonClient,
+  workspaceId: string,
+): Promise<WorkspaceDescriptor> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const workspace = await fetchWorkspaceById(client, workspaceId);
+    if (workspace) {
+      return workspace;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Workspace descriptor not found: ${workspaceId}`);
 }
 
 function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | null {
@@ -57,24 +93,19 @@ export async function openProjectViaDaemon(
   repoPath: string,
 ): Promise<OpenedProject> {
   const workspace = requireWorkspace(await client.openProject(repoPath));
-  return {
-    workspaceId: workspace.id,
-    projectKey: workspace.projectId,
-    projectDisplayName: workspace.projectDisplayName,
-    workspaceName: workspace.name,
-  };
+  return openedProjectFromWorkspace(workspace);
 }
 
 export async function archiveWorkspaceFromDaemon(
   client: NewWorkspaceDaemonClient,
-  workspaceId: string,
+  workspaceDirectory: string,
 ): Promise<void> {
-  const payload = await client.archivePaseoWorktree({ worktreePath: workspaceId });
+  const payload = await client.archivePaseoWorktree({ worktreePath: workspaceDirectory });
   if (payload.error) {
     throw new Error(payload.error.message);
   }
   if (!payload.success) {
-    throw new Error(`Failed to archive workspace: ${workspaceId}`);
+    throw new Error(`Failed to archive workspace: ${workspaceDirectory}`);
   }
 }
 
@@ -100,12 +131,7 @@ export async function createWorktreeViaDaemon(
     worktreeSlug: input.slug,
   });
   const workspace = requireWorkspace(payload);
-  return {
-    workspaceId: workspace.id,
-    projectKey: workspace.projectId,
-    projectDisplayName: workspace.projectDisplayName,
-    workspaceName: workspace.name,
-  };
+  return openedProjectFromWorkspace(workspace);
 }
 
 export async function openNewWorkspaceComposer(
@@ -241,12 +267,13 @@ export async function assertNewWorkspaceSidebarAndHeader(
   page: Page,
   input: {
     serverId: string;
+    client: NewWorkspaceDaemonClient;
     previousWorkspaceId: string;
     projectDisplayName: string;
     assertSidebarRow?: boolean;
     assertHeader?: boolean;
   },
-): Promise<{ workspaceId: string }> {
+): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
   // Wait for URL to redirect to the newly created workspace.
   // Uses URL as source of truth to avoid picking up sidebar rows from concurrent tests.
   let workspaceId: string | null = null;
@@ -263,21 +290,27 @@ export async function assertNewWorkspaceSidebarAndHeader(
     throw new Error(`Expected URL to redirect to a new workspace.\nCurrent URL: ${page.url()}`);
   }
 
+  const workspace = await waitForWorkspaceDescriptor(input.client, workspaceId);
+
   if (input.assertSidebarRow !== false) {
     const createdWorkspaceRow = page.getByTestId(
-      `sidebar-workspace-row-${input.serverId}:${workspaceId}`,
+      `sidebar-workspace-row-${input.serverId}:${workspace.id}`,
     );
     await expect(createdWorkspaceRow.first()).toBeVisible({ timeout: 30_000 });
   }
 
   if (input.assertHeader !== false) {
     await expectWorkspaceHeader(page, {
-      title: workspaceLabelFromPath(workspaceId),
+      title: workspace.name,
       subtitle: input.projectDisplayName,
     });
   }
 
-  return { workspaceId };
+  return {
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    workspaceDirectory: workspace.workspaceDirectory,
+  };
 }
 
 type WebSocketMessage = string | Buffer;

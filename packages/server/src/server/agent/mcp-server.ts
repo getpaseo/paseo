@@ -93,6 +93,7 @@ export interface AgentMcpServerOptions {
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
+  resolveWorkspaceIdForCwd?: ArchivePaseoWorktreeDependencies["resolveWorkspaceIdForCwd"];
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
@@ -2406,6 +2407,9 @@ function archiveWorktreeDependencies(
   if (!options.archiveWorkspaceRecord) {
     throw new Error("Workspace registry archiver is required to archive worktrees");
   }
+  if (!options.resolveWorkspaceIdForCwd) {
+    throw new Error("Workspace resolver is required to archive worktrees");
+  }
   if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
     throw new Error("Workspace update emitter is required to archive worktrees");
   }
@@ -2422,6 +2426,7 @@ function archiveWorktreeDependencies(
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
+    resolveWorkspaceIdForCwd: options.resolveWorkspaceIdForCwd,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,

@@ -36,7 +36,6 @@ import {
   switchWorkspaceViaSidebar,
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
-  workspaceLabelFromPath,
 } from "./helpers/workspace-ui";
 
 interface WorkspaceStatusGroupEvent {
@@ -183,7 +182,7 @@ async function submitNewWorkspaceWithoutPrompt(page: import("@playwright/test").
 test.describe("New workspace flow", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   const localWorkspaceIds = new Set<string>();
-  const createdWorktreeIds = new Set<string>();
+  const createdWorktreeDirectories = new Set<string>();
 
   test.describe.configure({ timeout: 240_000 });
 
@@ -193,14 +192,14 @@ test.describe("New workspace flow", () => {
 
   test.afterEach(async () => {
     if (client) {
-      for (const workspaceId of createdWorktreeIds) {
-        await archiveWorkspaceFromDaemon(client, workspaceId).catch(() => undefined);
+      for (const workspaceDirectory of createdWorktreeDirectories) {
+        await archiveWorkspaceFromDaemon(client, workspaceDirectory).catch(() => undefined);
       }
       for (const workspaceId of localWorkspaceIds) {
         await archiveLocalWorkspaceFromDaemon(client, workspaceId).catch(() => undefined);
       }
     }
-    createdWorktreeIds.clear();
+    createdWorktreeDirectories.clear();
     localWorkspaceIds.clear();
     await client?.close().catch(() => undefined);
   });
@@ -223,7 +222,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: firstWorkspace.workspaceId,
+        workspaceId: firstWorkspace.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: firstWorkspace.workspaceName,
@@ -233,7 +232,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: secondWorkspace.workspaceId,
+        workspaceId: secondWorkspace.workspaceId,
       });
       await waitForWorkspaceInSidebar(page, {
         serverId,
@@ -247,7 +246,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: firstWorkspace.workspaceId,
+        workspaceId: firstWorkspace.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: firstWorkspace.workspaceName,
@@ -271,7 +270,7 @@ test.describe("New workspace flow", () => {
         slug: `nav-${Date.now()}`,
       });
       localWorkspaceIds.add(rootWorkspace.workspaceId);
-      createdWorktreeIds.add(worktreeWorkspace.workspaceId);
+      createdWorktreeDirectories.add(worktreeWorkspace.workspaceDirectory);
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -279,7 +278,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: rootWorkspace.workspaceId,
+        workspaceId: rootWorkspace.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: rootWorkspace.workspaceName,
@@ -294,7 +293,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: worktreeWorkspace.workspaceId,
+        workspaceId: worktreeWorkspace.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: worktreeWorkspace.workspaceName,
@@ -315,7 +314,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: rootWorkspace.workspaceId,
+        workspaceId: rootWorkspace.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: rootWorkspace.workspaceName,
@@ -354,7 +353,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: openedProject.workspaceId,
+        workspaceId: openedProject.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
@@ -367,12 +366,13 @@ test.describe("New workspace flow", () => {
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
+        client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
         assertSidebarRow: false,
         assertHeader: false,
       });
-      createdWorktreeIds.add(createdWorkspace.workspaceId);
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
       expect(createdWorkspace.workspaceId).not.toBe(openedProject.workspaceId);
       await expect(page).toHaveURL(
@@ -388,7 +388,7 @@ test.describe("New workspace flow", () => {
       await expect(createdWorkspaceRow).toBeVisible({ timeout: 30_000 });
 
       await expectWorkspaceHeader(page, {
-        title: workspaceLabelFromPath(createdWorkspace.workspaceId),
+        title: createdWorkspace.workspaceName,
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -428,7 +428,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: openedProject.workspaceId,
+        workspaceId: openedProject.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
@@ -455,12 +455,13 @@ test.describe("New workspace flow", () => {
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
+        client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
         assertSidebarRow: false,
         assertHeader: false,
       });
-      createdWorktreeIds.add(createdWorkspace.workspaceId);
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
       await expect(page).toHaveURL(
         buildHostWorkspaceRoute(serverId, createdWorkspace.workspaceId),
@@ -507,7 +508,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: openedProject.workspaceId,
+        workspaceId: openedProject.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
@@ -523,12 +524,13 @@ test.describe("New workspace flow", () => {
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
+        client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
         assertSidebarRow: false,
         assertHeader: false,
       });
-      createdWorktreeIds.add(createdWorkspace.workspaceId);
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
       const rowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
       await expectWorkspaceStatusGroupEvents({
@@ -560,7 +562,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: openedProject.workspaceId,
+        workspaceId: openedProject.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
@@ -576,10 +578,11 @@ test.describe("New workspace flow", () => {
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
+        client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      createdWorktreeIds.add(createdWorkspace.workspaceId);
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
       const rowTestId = `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`;
       await expectWorkspaceStatusGroupEvents({
@@ -618,7 +621,7 @@ test.describe("New workspace flow", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: openedProject.workspaceId,
+        workspaceId: openedProject.workspaceId,
       });
       await expectWorkspaceHeader(page, {
         title: openedProject.workspaceName,
@@ -640,17 +643,18 @@ test.describe("New workspace flow", () => {
 
       const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
         serverId,
+        client,
         previousWorkspaceId: openedProject.workspaceId,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      createdWorktreeIds.add(createdWorkspace.workspaceId);
+      createdWorktreeDirectories.add(createdWorkspace.workspaceDirectory);
 
-      expect(existsSync(createdWorkspace.workspaceId)).toBe(true);
+      expect(existsSync(createdWorkspace.workspaceDirectory)).toBe(true);
 
       const branchInfo = await readWorktreeBranchInfo({
-        worktreePath: createdWorkspace.workspaceId,
+        worktreePath: createdWorkspace.workspaceDirectory,
       });
-      expect(branchInfo.currentBranch).toBe(path.basename(createdWorkspace.workspaceId));
+      expect(branchInfo.currentBranch).toBe(path.basename(createdWorkspace.workspaceDirectory));
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.main)).toBe(true);
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.dev)).toBe(true);
     } finally {

@@ -948,6 +948,7 @@ export const FetchWorkspacesRequestMessageSchema = z.object({
     .object({
       query: z.string().optional(),
       projectId: z.string().optional(),
+      // Unused: accepted so older clients still parse, but the server does not filter on it.
       idPrefix: z.string().optional(),
     })
     .optional(),
@@ -1627,6 +1628,7 @@ export const LegacyOpenInEditorRequestSchema = z.object({
 
 export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
+  // Path used only for workspace lookup/creation. Use the returned workspace.id for all subsequent references.
   cwd: z.string(),
   requestId: z.string(),
 });

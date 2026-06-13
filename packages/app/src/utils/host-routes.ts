@@ -193,6 +193,7 @@ export function decodeWorkspaceIdFromPathSegment(workspaceIdSegment: string): st
     return prefixedDecoded ? normalizeWorkspaceId(prefixedDecoded) : null;
   }
 
+  // COMPAT(legacyPathWorkspaceId): IDs were path-shaped before v0.1.95. Remove when deep-link floor >= v0.2.0.
   const base64Decoded = tryDecodeBase64UrlNoPadUtf8(decoded);
   if (base64Decoded && isLegacyPathLikeWorkspaceValue(base64Decoded)) {
     return normalizeWorkspaceId(base64Decoded);
