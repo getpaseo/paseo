@@ -80,6 +80,8 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
               key={commit.sha}
               commit={commit}
               expanded={expandedShas.has(commit.sha)}
+              serverId={serverId}
+              cwd={cwd}
               onToggle={handleToggleCommit}
               onFilePress={onFilePress}
             />

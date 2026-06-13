@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutDiffQueryOptions {
@@ -16,7 +16,8 @@ interface UseCheckoutDiffQueryOptions {
 
 type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
 
-export type ParsedDiffFile = CheckoutDiffQueryPayload["files"][number];
+// Re-export the canonical protocol type so all consumers share one definition.
+export type { ParsedDiffFile };
 export type DiffHunk = ParsedDiffFile["hunks"][number];
 export type DiffLine = DiffHunk["lines"][number];
 export type HighlightToken = NonNullable<DiffLine["tokens"]>[number];

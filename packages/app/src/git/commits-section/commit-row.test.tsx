@@ -83,6 +83,16 @@ vi.mock("@/components/material-file-icons", () => ({
   getFileIconSvg: (name: string) => `<svg data-name="${name}" />`,
 }));
 
+vi.mock("./commit-file-diff-view", () => ({
+  CommitFileDiffView: ({ serverId, cwd, sha, path }: Record<string, string>) =>
+    React.createElement("div", {
+      "data-testid": `commit-file-diff-${path}`,
+      "data-server": serverId,
+      "data-cwd": cwd,
+      "data-sha": sha,
+    }),
+}));
+
 import { CommitRow } from "./commit-row";
 
 function makeCommit(overrides: Partial<CheckoutCommit> = {}): CheckoutCommit {
@@ -128,9 +138,14 @@ describe("CommitRow", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderRow(props: React.ComponentProps<typeof CommitRow>): void {
+  function renderRow(
+    props: Omit<React.ComponentProps<typeof CommitRow>, "serverId" | "cwd"> & {
+      serverId?: string;
+      cwd?: string;
+    },
+  ): void {
     act(() => {
-      root?.render(<CommitRow {...props} />);
+      root?.render(<CommitRow serverId="server-1" cwd="/tmp/repo" {...props} />);
     });
   }
 
@@ -199,5 +214,31 @@ describe("CommitRow", () => {
 
     expect(onFilePress).toHaveBeenCalledTimes(1);
     expect(onFilePress).toHaveBeenCalledWith(commit, commit.files[0]);
+  });
+
+  it("toggles the inline file diff view when a file row is pressed", () => {
+    const commit = makeCommit();
+    renderRow({ commit, expanded: true, onToggle: vi.fn() });
+
+    const fileRow = container?.querySelector(
+      '[data-testid="commit-file-src/app.ts"]',
+    ) as HTMLElement | null;
+    expect(container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]')).toBeNull();
+
+    act(() => {
+      fileRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    const diffView = container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]');
+    expect(diffView).not.toBeNull();
+    expect(diffView?.getAttribute("data-server")).toBe("server-1");
+    expect(diffView?.getAttribute("data-cwd")).toBe("/tmp/repo");
+    expect(diffView?.getAttribute("data-sha")).toBe(commit.sha);
+
+    act(() => {
+      fileRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]')).toBeNull();
   });
 });

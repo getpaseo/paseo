@@ -745,6 +745,8 @@ export const en = {
           legendLocal: "local",
           legendRemote: "on remote",
           countLabel: "{{count}} commits ahead of base",
+          fileDiffEmpty: "No changes to display",
+          fileDiffError: "Failed to load file diff",
         },
       },
       openInEditor: {

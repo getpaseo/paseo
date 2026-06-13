@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { SvgXml } from "react-native-svg";
 import { StyleSheet } from "react-native-unistyles";
@@ -6,29 +6,36 @@ import type { CheckoutCommit } from "@getpaseo/protocol/messages";
 import { DiffStat } from "@/components/diff-stat";
 import { getFileIconSvg } from "@/components/material-file-icons";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import { CommitFileDiffView } from "./commit-file-diff-view";
 import type { CheckoutCommitFile, FilePressHandler } from "./shared";
 
 interface CommitFileRowProps {
   commit: CheckoutCommit;
   file: CheckoutCommitFile;
-  onFilePress?: FilePressHandler;
+  isOpen: boolean;
+  onFilePress: FilePressHandler;
 }
 
 const CommitFileRow = memo(function CommitFileRow({
   commit,
   file,
+  isOpen,
   onFilePress,
 }: CommitFileRowProps) {
   const handlePress = useCallback(() => {
-    onFilePress?.(commit, file);
+    onFilePress(commit, file);
   }, [commit, file, onFilePress]);
+
+  const rowStyle = useMemo(() => [styles.fileRow, isOpen && styles.fileRowOpen], [isOpen]);
+  const accessibilityState = useMemo(() => ({ expanded: isOpen }), [isOpen]);
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={accessibilityState}
       testID={`commit-file-${file.path}`}
       onPress={handlePress}
-      style={styles.fileRow}
+      style={rowStyle}
     >
       <View style={styles.fileIcon}>
         <SvgXml xml={getFileIconSvg(file.path)} width={16} height={16} />
@@ -44,6 +51,8 @@ const CommitFileRow = memo(function CommitFileRow({
 interface CommitRowProps {
   commit: CheckoutCommit;
   expanded: boolean;
+  serverId: string;
+  cwd: string;
   onToggle: (sha: string) => void;
   onFilePress?: FilePressHandler;
 }
@@ -51,9 +60,21 @@ interface CommitRowProps {
 export const CommitRow = memo(function CommitRow({
   commit,
   expanded,
+  serverId,
+  cwd,
   onToggle,
   onFilePress,
 }: CommitRowProps) {
+  const [openFilePath, setOpenFilePath] = useState<string | null>(null);
+
+  // Reset the inline diff when the commit collapses so re-expanding doesn't
+  // auto-reopen the previously selected file.
+  useEffect(() => {
+    if (!expanded) {
+      setOpenFilePath(null);
+    }
+  }, [expanded]);
+
   const chevronStyle = useMemo(
     () => [styles.chevron, expanded && styles.chevronExpanded],
     [expanded],
@@ -62,6 +83,17 @@ export const CommitRow = memo(function CommitRow({
   const handleToggle = useCallback(() => {
     onToggle(commit.sha);
   }, [commit.sha, onToggle]);
+
+  // Stable across renders: toggles the inline diff for the pressed file and
+  // forwards the press to any external listener. Keeping it stable preserves
+  // CommitFileRow memoization (only the toggled rows re-render).
+  const handleFilePress = useCallback<FilePressHandler>(
+    (pressedCommit, file) => {
+      setOpenFilePath((prev) => (prev === file.path ? null : file.path));
+      onFilePress?.(pressedCommit, file);
+    },
+    [onFilePress],
+  );
 
   return (
     <View>
@@ -86,7 +118,22 @@ export const CommitRow = memo(function CommitRow({
       {expanded ? (
         <View style={styles.files}>
           {commit.files.map((file) => (
-            <CommitFileRow key={file.path} commit={commit} file={file} onFilePress={onFilePress} />
+            <View key={file.path}>
+              <CommitFileRow
+                commit={commit}
+                file={file}
+                isOpen={openFilePath === file.path}
+                onFilePress={handleFilePress}
+              />
+              {openFilePath === file.path ? (
+                <CommitFileDiffView
+                  serverId={serverId}
+                  cwd={cwd}
+                  sha={commit.sha}
+                  path={file.path}
+                />
+              ) : null}
+            </View>
           ))}
         </View>
       ) : null}
@@ -153,6 +200,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingLeft: theme.spacing[3],
     paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[1],
+  },
+  fileRowOpen: {
+    backgroundColor: theme.colors.surface2,
   },
   fileIcon: {
     width: 16,

@@ -765,6 +765,8 @@ export const es: TranslationResources = {
           legendLocal: "local",
           legendRemote: "en remoto",
           countLabel: "{{count}} commits por delante de la base",
+          fileDiffEmpty: "No hay cambios para mostrar",
+          fileDiffError: "Error al cargar el diff del archivo",
         },
       },
       openInEditor: {

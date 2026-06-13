@@ -738,6 +738,8 @@ export const ar: TranslationResources = {
           legendLocal: "محلي",
           legendRemote: "على المستودع البعيد",
           countLabel: "{{count}} إيداعات قبل الأساس",
+          fileDiffEmpty: "لا توجد تغييرات لعرضها",
+          fileDiffError: "تعذّر تحميل فروق الملف",
         },
       },
       openInEditor: {

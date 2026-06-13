@@ -757,6 +757,8 @@ export const ru: TranslationResources = {
           legendLocal: "локально",
           legendRemote: "на удалённом",
           countLabel: "{{count}} коммитов впереди базы",
+          fileDiffEmpty: "Нет изменений для отображения",
+          fileDiffError: "Не удалось загрузить различия файла",
         },
       },
       openInEditor: {
