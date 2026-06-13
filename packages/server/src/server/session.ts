@@ -8694,7 +8694,8 @@ export class Session {
   private emit(msg: SessionOutboundMessage): void {
     // JSON.stringify(msg) is only computed when trace is enabled — it runs for
     // every outbound message otherwise, and trace is disabled by default.
-    if (this.sessionLogger.isLevelEnabled("trace")) {
+    // Optional-chained because test logger stubs don't implement isLevelEnabled.
+    if (this.sessionLogger.isLevelEnabled?.("trace")) {
       this.sessionLogger.trace(
         {
           messageType: msg.type,
