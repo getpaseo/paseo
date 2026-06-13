@@ -31,6 +31,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       viewMode: "flat",
       wrapLines: true,
       hideWhitespace: false,
+      fileView: "list",
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
@@ -53,9 +54,36 @@ describe("loadChangesPreferencesFromStorage", () => {
       viewMode: "tree",
       hideWhitespace: true,
       wrapLines: false,
+      fileView: "list",
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
     expect(storage.entries.size).toBe(1);
+  });
+});
+
+describe("changes preferences fileView", () => {
+  it("defaults fileView to list", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.fileView).toBe("list");
+  });
+
+  it("round-trips fileView: tree", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ fileView: "tree" }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.fileView).toBe("tree");
+  });
+
+  it("falls back to list for invalid fileView", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ fileView: "bogus" }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.fileView).toBe("list");
   });
 });
 
