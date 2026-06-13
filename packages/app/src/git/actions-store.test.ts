@@ -340,7 +340,7 @@ describe("checkout-git-actions-store", () => {
     ).toBe(false);
   });
 
-  it("does not archive a worktree when its workspace cannot be resolved", async () => {
+  it("archives on the server even when its workspace cannot be resolved", async () => {
     const client = {
       archivePaseoWorktree: vi.fn(async () => ({})),
     };
@@ -350,7 +350,9 @@ describe("checkout-git-actions-store", () => {
       .getState()
       .archiveWorktree({ serverId, cwd, worktreePath: cwd });
 
-    expect(client.archivePaseoWorktree).not.toHaveBeenCalled();
+    // The server archive is keyed by worktreePath and must run regardless.
+    expect(client.archivePaseoWorktree).toHaveBeenCalledWith({ worktreePath: cwd });
+    // The optimistic client-side mark is never keyed by the path.
     expect(isWorkspaceArchivePending({ serverId, workspaceId: cwd })).toBe(false);
   });
 
