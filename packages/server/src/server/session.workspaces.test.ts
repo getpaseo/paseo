@@ -895,7 +895,7 @@ test("agent_update placement does not refresh git snapshots", async () => {
   });
 });
 
-test("agent_update skips placement when no workspace is registered", async () => {
+test("agent_update emits a directory-scoped placement when no workspace is registered", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const getSnapshot = vi.fn(async () => {
     throw new Error("getSnapshot should not be called for unregistered agent_update placement");
@@ -928,7 +928,15 @@ test("agent_update skips placement when no workspace is registered", async () =>
   );
 
   expect(getSnapshot).not.toHaveBeenCalled();
-  expect(emitted.find((message) => message.type === "agent_update")).toBeUndefined();
+  // An agent in a directory with no registered workspace must still emit an
+  // upsert (live model/thinking switches depend on this). It gets a directory-
+  // scoped placement keyed by the path — a project key, not a workspace id.
+  const update = emitted.find((message) => message.type === "agent_update");
+  if (update?.type !== "agent_update" || update.payload.kind !== "upsert") {
+    throw new Error("expected an agent_update upsert");
+  }
+  expect(update.payload.agent.id).toBe("agent-1");
+  expect(update.payload.project?.checkout.isGit).toBe(false);
 });
 
 test("archive emits an authoritative agent_update upsert for subscribed clients", async () => {
