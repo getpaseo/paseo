@@ -244,17 +244,16 @@ it("delivers rapid small writes complete and in order through worker coalescing"
 
   expect(received).toEqual(expected);
 
+  await waitForCondition(() => events.some((event) => event.type === "output"), 10000);
+
   // No snapshot may land after output it should have preceded: every snapshot
   // event must come before the first output event.
   const firstOutputIndex = events.findIndex((event) => event.type === "output");
-  const lastSnapshotIndex = events.reduce(
-    (last, event, index) =>
-      event.type === "snapshot" || event.type === "snapshotReady" ? index : last,
-    -1,
-  );
-  if (lastSnapshotIndex !== -1 && firstOutputIndex !== -1) {
-    expect(lastSnapshotIndex).toBeLessThan(firstOutputIndex);
-  }
+  expect(firstOutputIndex).toBeGreaterThanOrEqual(0);
+  const snapshotAfterOutput = events
+    .slice(firstOutputIndex + 1)
+    .find((event) => event.type === "snapshot" || event.type === "snapshotReady");
+  expect(snapshotAfterOutput).toBeUndefined();
 });
 
 it("pulls fresh terminal state from the worker authority", async () => {
