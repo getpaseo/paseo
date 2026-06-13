@@ -31,6 +31,10 @@ export function checkoutPrStatusQueryKey(serverId: string, cwd: string) {
   return ["checkoutPrStatus", serverId, cwd] as const;
 }
 
+export function checkoutCommitsQueryKey(serverId: string, cwd: string) {
+  return ["checkoutCommits", serverId, cwd] as const;
+}
+
 export async function invalidateCheckoutGitQueriesForClient(
   queryClient: QueryClient,
   identity: CheckoutQueryIdentity,

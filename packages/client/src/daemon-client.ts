@@ -29,6 +29,7 @@ import type {
   AgentForkContextResponseMessage,
   GitSetupOptions,
   CheckoutStatusResponse,
+  CheckoutCommit,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
   CheckoutMergeFromBaseResponse,
@@ -3404,6 +3405,25 @@ export class DaemonClient {
       },
       responseType: "checkout.refresh.response",
     });
+  }
+
+  async listCheckoutCommits(
+    cwd: string,
+    requestId?: string,
+  ): Promise<{ baseRef: string | null; commits: CheckoutCommit[] }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.list.response">({
+        requestId,
+        message: {
+          type: "checkout.commits.list.request",
+          cwd,
+        },
+        timeout: 60000,
+      });
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return { baseRef: payload.baseRef, commits: payload.commits };
   }
 
   async checkoutPrCreate(
