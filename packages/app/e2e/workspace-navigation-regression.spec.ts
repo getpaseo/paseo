@@ -209,7 +209,7 @@ test.describe("Workspace navigation regression", () => {
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
-      await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.cwd));
+      await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.workspaceId));
       await page.waitForURL(
         (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
         { timeout: 60_000 },
