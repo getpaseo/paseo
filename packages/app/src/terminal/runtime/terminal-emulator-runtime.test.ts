@@ -104,6 +104,21 @@ function createRuntimeWithTerminal(): {
   writeTexts: string[];
 } {
   const runtime = new TerminalEmulatorRuntime();
+  const terminalState = attachStubTerminal(runtime);
+
+  return {
+    runtime,
+    ...terminalState,
+  };
+}
+
+function attachStubTerminal(runtime: TerminalEmulatorRuntime): {
+  terminal: StubTerminal & {
+    resetCalls: number;
+  };
+  writeCallbacks: Array<() => void>;
+  writeTexts: string[];
+} {
   const writeCallbacks: Array<() => void> = [];
   const writeTexts: string[] = [];
   let resetCalls = 0;
@@ -137,7 +152,6 @@ function createRuntimeWithTerminal(): {
   (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
 
   return {
-    runtime,
     terminal,
     writeCallbacks,
     writeTexts,
@@ -400,6 +414,19 @@ describe("terminal-emulator-runtime", () => {
 
     expect(onCommittedA).toHaveBeenCalledTimes(1);
     expect(onCommittedB).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears ungated writes on unmount so remount barriers apply immediately", () => {
+    const { runtime } = createRuntimeWithTerminal();
+
+    runtime.write({ data: terminalOutput("before unmount") });
+    runtime.unmount();
+
+    const remounted = attachStubTerminal(runtime);
+    runtime.restoreOutput({ data: terminalOutput("restored screen") });
+
+    expect(remounted.writeTexts).toEqual(["\u001bcrestored screen"]);
+    expect(remounted.writeCallbacks).toHaveLength(1);
   });
 
   it("replays snapshots through a single write without first painting a reset terminal", () => {

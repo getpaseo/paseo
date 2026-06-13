@@ -771,6 +771,7 @@ export class TerminalEmulatorRuntime {
     for (const commit of Array.from(this.pendingWriteCommits)) {
       commit();
     }
+    this.hasUngatedWrites = false;
 
     this.cleanup?.();
     this.cleanup = null;
