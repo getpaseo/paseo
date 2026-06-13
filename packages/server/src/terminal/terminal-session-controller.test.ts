@@ -395,7 +395,7 @@ describe("terminal-session-controller subdirectory aggregation", () => {
 });
 
 describe("terminal-session-controller backpressure snapshot fallback", () => {
-  async function setup(getClientBufferedAmount: () => number): Promise<{
+  async function setup(getClientBufferedAmount: () => number | null): Promise<{
     pushOutput: (data: string) => void;
     frames: TerminalStreamFrame[];
   }> {
@@ -509,5 +509,17 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
 
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(false);
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Output)).toBe(true);
+  });
+
+  test("falls back to a snapshot at the byte threshold when no backpressure signal exists", async () => {
+    // A null reading means the transport (e.g. the multiplexed relay socket) gives
+    // no signal; we can't distinguish a slow client from a fast one, so we keep the
+    // unconditional catch-up so a slow relay client can't fall unboundedly behind.
+    const { pushOutput, frames } = await setup(() => null);
+
+    pushOutput("r".repeat(300 * 1024));
+    await waitForCoalescerFlush();
+
+    expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(true);
   });
 });

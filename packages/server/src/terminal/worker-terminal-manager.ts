@@ -268,6 +268,11 @@ export function createWorkerTerminalManager(
         };
       },
       getReplayPreamble(): string {
+        // Refreshed from every getTerminalState response, which the controller fetches
+        // before every snapshot replay (legacy + visible-snapshot restore). The one
+        // gap is restore.mode === "live", which replays without fetching state — there
+        // this can be stale/empty. No client sends "live" today; revisit (ship the
+        // preamble on the worker's snapshotReady) if one ever does.
         return record.replayPreamble;
       },
       getTitle(): string | undefined {

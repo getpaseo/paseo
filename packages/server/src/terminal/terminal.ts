@@ -861,6 +861,13 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       recentOutputLength -= recentOutputChunks[0].length;
       recentOutputChunks.shift();
     }
+    // We never drop the last chunk, so a single chunk larger than the cap would
+    // grow the buffer unbounded; slice its tail to keep the cap hard.
+    if (recentOutputChunks.length === 1 && recentOutputLength > TERMINAL_EXIT_OUTPUT_CHAR_LIMIT) {
+      const tail = recentOutputChunks[0].slice(-TERMINAL_EXIT_OUTPUT_CHAR_LIMIT);
+      recentOutputChunks[0] = tail;
+      recentOutputLength = tail.length;
+    }
     writeOutputToHeadless(data);
   });
 

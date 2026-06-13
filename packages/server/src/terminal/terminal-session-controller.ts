@@ -76,7 +76,9 @@ export interface TerminalSessionControllerOptions {
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
   // constant 0 (no backpressure signal) so callers without a transport always
   // stream.
-  getClientBufferedAmount?: () => number;
+  // Bytes queued on the client transport but not yet sent, or null when the
+  // transport exposes no backpressure signal (e.g. the multiplexed relay socket).
+  getClientBufferedAmount?: () => number | null;
 }
 
 export interface TerminalSessionControllerMetrics {
@@ -118,7 +120,7 @@ export class TerminalSessionController {
   private readonly sessionLogger: pino.Logger;
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
-  private readonly getClientBufferedAmount: () => number;
+  private readonly getClientBufferedAmount: () => number | null;
 
   private readonly subscribedDirectories = new Set<string>();
   private unsubscribeTerminalsChanged: (() => void) | null = null;
@@ -772,9 +774,14 @@ export class TerminalSessionController {
           // past the byte threshold. outputBytesSinceSnapshot keeps accumulating
           // in that case — it's harmless, it only gates the snapshot decision at
           // the instant backpressure appears, and trySendSnapshot resets it to 0.
+          // A null reading means the transport exposes no backpressure signal
+          // (e.g. the multiplexed relay socket); there we can't tell a slow client
+          // from a fast one, so fall back unconditionally at the byte threshold to
+          // keep a slow relay client from falling unboundedly behind.
+          const clientBufferedAmount = this.getClientBufferedAmount();
           if (
             activeStream.outputBytesSinceSnapshot > MAX_TERMINAL_OUTPUT_FRAME_BYTES &&
-            this.getClientBufferedAmount() > MAX_CLIENT_BUFFERED_BYTES
+            (clientBufferedAmount === null || clientBufferedAmount > MAX_CLIENT_BUFFERED_BYTES)
           ) {
             activeStream.restore = resolveRestoreAfterOutputOverflow(activeStream.restore);
             activeStream.needsSnapshot = true;

@@ -219,6 +219,11 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "getTerminalState": {
+      // Flush buffered output before snapshotting: the headless state already includes it,
+      // so if the coalescer emitted it afterward (in a batch carrying a revision past the
+      // snapshot's) the controller's revision dedup wouldn't drop it and the client would
+      // see the bytes twice. Flushing first sends them with a revision <= the snapshot's.
+      outputCoalescerByTerminalId.get(message.terminalId)?.flush();
       sendToParent({
         type: "response",
         requestId: message.requestId,

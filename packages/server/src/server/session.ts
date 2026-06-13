@@ -566,7 +566,7 @@ export interface SessionOptions {
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
-  getTransportBufferedAmount?: () => number;
+  getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
@@ -758,7 +758,7 @@ export class Session {
   private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
-  private readonly getTransportBufferedAmount: () => number;
+  private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;

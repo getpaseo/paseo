@@ -886,14 +886,16 @@ export class VoiceAssistantWebSocketServer {
       },
       getTransportBufferedAmount: () => {
         if (!connection) {
-          return 0;
+          return null;
         }
-        let maxBuffered = 0;
+        // Relay-attached sockets are a WebSocketLike that doesn't expose
+        // bufferedAmount. Return null when no socket gives a signal so the
+        // terminal fallback can't mistake "no signal" for "client keeping up";
+        // a direct ws reports its real buffered bytes (0 when drained).
+        let maxBuffered: number | null = null;
         for (const socket of connection.sockets) {
-          // Relay-attached sockets are a WebSocketLike that may not expose
-          // bufferedAmount; treat a missing value as no backpressure signal.
-          if (typeof socket.bufferedAmount === "number" && socket.bufferedAmount > maxBuffered) {
-            maxBuffered = socket.bufferedAmount;
+          if (typeof socket.bufferedAmount === "number") {
+            maxBuffered = Math.max(maxBuffered ?? 0, socket.bufferedAmount);
           }
         }
         return maxBuffered;
