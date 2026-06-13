@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
-import { resolveWorkspaceScriptLink } from "./workspace-script-links";
+import { isRemoteTunnelConnection, resolveWorkspaceScriptLink } from "./workspace-script-links";
 
 const runningService: WorkspaceScriptPayload = {
   scriptName: "web",
@@ -170,5 +170,54 @@ describe("resolveWorkspaceScriptLink", () => {
       openUrl: "https://web--feature--paseo.services.example.com",
       labelUrl: "https://web--feature--paseo.services.example.com",
     });
+  });
+});
+
+describe("isRemoteTunnelConnection", () => {
+  it("is false without a connection", () => {
+    expect(isRemoteTunnelConnection(null)).toBe(false);
+  });
+
+  it("is true for relay", () => {
+    expect(
+      isRemoteTunnelConnection({ type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" }),
+    ).toBe(true);
+  });
+
+  it("is false for local transports (socket, pipe, loopback TCP)", () => {
+    expect(
+      isRemoteTunnelConnection({
+        type: "directSocket",
+        endpoint: "/tmp/paseo.sock",
+        display: "socket",
+      }),
+    ).toBe(false);
+    expect(
+      isRemoteTunnelConnection({ type: "directPipe", endpoint: "paseo", display: "pipe" }),
+    ).toBe(false);
+    expect(
+      isRemoteTunnelConnection({
+        type: "directTcp",
+        endpoint: "127.0.0.1:6767",
+        display: "localhost",
+      }),
+    ).toBe(false);
+    expect(
+      isRemoteTunnelConnection({
+        type: "directTcp",
+        endpoint: "localhost:6767",
+        display: "localhost",
+      }),
+    ).toBe(false);
+  });
+
+  it("is true for a remote direct TCP host", () => {
+    expect(
+      isRemoteTunnelConnection({
+        type: "directTcp",
+        endpoint: "mac-mini.tail123.ts.net:6767",
+        display: "remote",
+      }),
+    ).toBe(true);
   });
 });

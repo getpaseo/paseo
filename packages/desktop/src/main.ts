@@ -24,6 +24,7 @@ import {
 import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
 import { closeAllTransportSessions } from "./daemon/local-transport.js";
+import { closeAllTunnelListeners } from "./daemon/tunnel-listener.js";
 import {
   registerWindowManager,
   getMainWindowChromeOptions,
@@ -750,7 +751,10 @@ app.on(
   "before-quit",
   createBeforeQuitHandler({
     app,
-    closeTransportSessions: closeAllTransportSessions,
+    closeTransportSessions: () => {
+      closeAllTransportSessions();
+      closeAllTunnelListeners();
+    },
     stopDesktopManagedDaemonIfNeeded: () =>
       stopDesktopManagedDaemonOnQuitIfNeeded({
         settingsStore: getDesktopSettingsStore(),

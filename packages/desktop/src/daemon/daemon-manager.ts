@@ -30,6 +30,12 @@ import {
   sendLocalTransportMessage,
   closeLocalTransportSession,
 } from "./local-transport.js";
+import {
+  openTunnelListener,
+  sendTunnelData,
+  closeTunnelStream,
+  closeTunnelListener,
+} from "./tunnel-listener.js";
 import { createNodeEntrypointInvocation, resolveDaemonRunnerEntrypoint } from "./runtime-paths.js";
 import { runExternalCliJsonCommand, runExternalCliTextCommand } from "./cli/external.js";
 import {
@@ -518,6 +524,17 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
           ? (args as { sessionId: string }).sessionId
           : "";
       if (sessionId) closeLocalTransportSession(sessionId);
+    },
+    open_tunnel_listener: async (args) =>
+      await openTunnelListener(args as { listenerId: string; port: number }),
+    send_tunnel_data: (args) => {
+      sendTunnelData(args as { streamId: string; binaryBase64: string });
+    },
+    close_tunnel_stream: (args) => {
+      closeTunnelStream(args as { streamId: string });
+    },
+    close_tunnel_listener: (args) => {
+      closeTunnelListener(args as { listenerId: string });
     },
     check_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();

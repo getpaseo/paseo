@@ -16,9 +16,13 @@ import {
   useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
-import { isNative } from "@/constants/platform";
+import { getIsElectron, isNative } from "@/constants/platform";
 import { openServiceUrl } from "@/utils/open-service-url";
-import { resolveWorkspaceScriptLink } from "@/utils/workspace-script-links";
+import {
+  isRemoteTunnelConnection,
+  resolveWorkspaceScriptLink,
+} from "@/utils/workspace-script-links";
+import { ensureServiceForward, type TunnelCapableClient } from "@/runtime/tunnel-forwarding";
 import type { Theme } from "@/styles/theme";
 
 type ScriptActionIcon = "start" | "view";
@@ -143,7 +147,7 @@ interface HostLinkProps {
   label: string;
   url: string | null;
   scriptName: string;
-  onOpenInBrowserTab?: (url: string) => void;
+  onOpen: (url: string) => void;
 }
 
 interface HostLinkChildrenProps {
@@ -169,7 +173,7 @@ function HostLinkChildren({ hovered, disabled, label }: HostLinkChildrenProps): 
   );
 }
 
-function HostLinkRow({ label, url, scriptName, onOpenInBrowserTab }: HostLinkProps): ReactElement {
+function HostLinkRow({ label, url, scriptName, onOpen }: HostLinkProps): ReactElement {
   const { t } = useTranslation();
   const disabled = !url;
   const closeMenu = useDropdownMenuClose();
@@ -179,9 +183,9 @@ function HostLinkRow({ label, url, scriptName, onOpenInBrowserTab }: HostLinkPro
       event.stopPropagation();
       if (!url) return;
       closeMenu();
-      void openServiceUrl(url, { openInApp: onOpenInBrowserTab });
+      onOpen(url);
     },
-    [url, onOpenInBrowserTab, closeMenu],
+    [url, onOpen, closeMenu],
   );
 
   const renderChildren = useCallback(
@@ -229,6 +233,9 @@ interface ScriptRowProps {
       ? A
       : null
     : null;
+  serverId: string;
+  client: TunnelCapableClient | null;
+  tunnelSupported: boolean;
   isStartPending: boolean;
   onStartScript: (scriptName: string) => void;
   onViewTerminal?: (terminalId: string) => void;
@@ -251,10 +258,67 @@ function resolveScriptIconColorMapping(args: {
   return mutedColorMapping;
 }
 
+async function openServiceLink(input: {
+  tunnelEligible: boolean;
+  client: TunnelCapableClient | null;
+  port: number | null;
+  serverId: string;
+  fallbackUrl: string;
+  onOpenInApp?: (url: string) => void;
+}): Promise<void> {
+  if (input.tunnelEligible && input.client && input.port !== null) {
+    try {
+      const localUrl = await ensureServiceForward({
+        serverId: input.serverId,
+        client: input.client,
+        port: input.port,
+      });
+      await openServiceUrl(localUrl, { openInApp: input.onOpenInApp });
+      return;
+    } catch {
+      // Couldn't bind the local port — fall back to the direct/proxy URL.
+    }
+  }
+  await openServiceUrl(input.fallbackUrl, { openInApp: input.onOpenInApp });
+}
+
+/**
+ * Returns a link opener that, when the daemon is remote and supports tunneling,
+ * forwards the service port to loopback and opens `http://localhost:<port>` so
+ * the browser sees a real localhost origin (OAuth callbacks line up). Otherwise
+ * it opens the direct/proxy URL it's given.
+ */
+function useServiceLinkOpener(input: {
+  activeConnection: ScriptRowProps["activeConnection"];
+  serverId: string;
+  client: TunnelCapableClient | null;
+  tunnelSupported: boolean;
+  port: number | null;
+  onOpenInApp?: (url: string) => void;
+}): (fallbackUrl: string) => void {
+  const { activeConnection, serverId, client, tunnelSupported, port, onOpenInApp } = input;
+  const tunnelEligible =
+    getIsElectron() &&
+    tunnelSupported &&
+    client !== null &&
+    port !== null &&
+    isRemoteTunnelConnection(activeConnection);
+
+  return useCallback(
+    (fallbackUrl: string) => {
+      void openServiceLink({ tunnelEligible, client, port, serverId, fallbackUrl, onOpenInApp });
+    },
+    [tunnelEligible, client, port, serverId, onOpenInApp],
+  );
+}
+
 function ScriptRow({
   script,
   liveTerminalIdSet,
   activeConnection,
+  serverId,
+  client,
+  tunnelSupported,
   isStartPending,
   onStartScript,
   onViewTerminal,
@@ -268,6 +332,15 @@ function ScriptRow({
   const serviceOpenUrl = isService && isRunning ? serviceLink.openUrl : null;
   const liveTerminalId =
     script.terminalId && liveTerminalIdSet.has(script.terminalId) ? script.terminalId : null;
+
+  const handleOpenLink = useServiceLinkOpener({
+    activeConnection,
+    serverId,
+    client,
+    tunnelSupported,
+    port: script.port,
+    onOpenInApp: onOpenUrlInBrowserTab,
+  });
 
   const hostLinks: HostLink[] = [];
   if (isService && isRunning) {
@@ -362,7 +435,7 @@ function ScriptRow({
               label={link.label}
               url={link.url}
               scriptName={script.scriptName}
-              onOpenInBrowserTab={onOpenUrlInBrowserTab}
+              onOpen={handleOpenLink}
             />
           ))}
         </View>
@@ -385,6 +458,9 @@ export function WorkspaceScriptsButton({
   const { t } = useTranslation();
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const tunnelSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.tcpTunnel === true,
+  );
   const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
 
@@ -478,6 +554,9 @@ export function WorkspaceScriptsButton({
                     script={script}
                     liveTerminalIdSet={liveTerminalIdSet}
                     activeConnection={activeConnection}
+                    serverId={serverId}
+                    client={client}
+                    tunnelSupported={tunnelSupported}
                     isStartPending={startScriptMutation.isPending}
                     onStartScript={handleStartScript}
                     onViewTerminal={onViewTerminal}

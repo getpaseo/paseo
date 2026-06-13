@@ -27,6 +27,30 @@ function isLocalOnlyUrl(url: string | null | undefined): boolean {
   }
 }
 
+/**
+ * Whether the active connection reaches a remote daemon, so a service running on
+ * the daemon host isn't directly reachable at `localhost` from this client and a
+ * tunnel is worthwhile. Local transports (loopback TCP, unix socket, pipe) are
+ * already on the same machine, so they don't need one.
+ */
+export function isRemoteTunnelConnection(activeConnection: ActiveConnection | null): boolean {
+  if (!activeConnection) {
+    return false;
+  }
+  if (activeConnection.type === "relay") {
+    return true;
+  }
+  if (activeConnection.type === "directSocket" || activeConnection.type === "directPipe") {
+    return false;
+  }
+  try {
+    const { host } = parseHostPort(activeConnection.endpoint);
+    return !isLoopbackHost(host);
+  } catch {
+    return false;
+  }
+}
+
 function buildDirectServiceUrl(endpoint: string, port: number): string | null {
   try {
     const { host, isIpv6 } = parseHostPort(endpoint);

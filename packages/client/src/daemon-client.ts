@@ -94,9 +94,14 @@ import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
   decodeTerminalStreamFrame,
+  decodeTunnelStreamFrame,
+  encodeTunnelStreamFrame,
   FileTransferOpcode,
   TerminalStreamOpcode,
+  TunnelCloseReason,
+  TunnelStreamOpcode,
   type FileTransferFrame,
+  type TunnelStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   createRelayE2eeTransportFactory,
@@ -881,6 +886,7 @@ export class DaemonClient {
   >();
   private terminalDirectorySubscriptions = new Set<string>();
   private readonly terminalStreams = new TerminalStreamRouter();
+  private readonly tunnelFrameListeners = new Set<(frame: TunnelStreamFrame) => void>();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
   private completedBinaryFileReads = new Map<string, FileReadResult>();
@@ -4313,6 +4319,38 @@ export class DaemonClient {
     return this.terminalStreams.onEvent(handler);
   }
 
+  /**
+   * Subscribe to inbound TCP-tunnel frames (Data/Close the daemon sends back for
+   * a forwarded loopback port). Filtering by streamId is the caller's job.
+   */
+  onTunnelFrame(handler: (frame: TunnelStreamFrame) => void): () => void {
+    this.tunnelFrameListeners.add(handler);
+    return () => {
+      this.tunnelFrameListeners.delete(handler);
+    };
+  }
+
+  /** Open a tunnel stream to `127.0.0.1:port` on the daemon host. */
+  openTunnelStream(streamId: string, port: number): void {
+    this.sendBinaryFrame(
+      encodeTunnelStreamFrame({ opcode: TunnelStreamOpcode.Open, streamId, port }),
+    );
+  }
+
+  /** Forward browser→daemon bytes for an open tunnel stream. */
+  sendTunnelData(streamId: string, payload: Uint8Array): void {
+    this.sendBinaryFrame(
+      encodeTunnelStreamFrame({ opcode: TunnelStreamOpcode.Data, streamId, payload }),
+    );
+  }
+
+  /** Tell the daemon the browser side of a tunnel stream closed. */
+  closeTunnelStream(streamId: string, reason: number = TunnelCloseReason.Normal): void {
+    this.sendBinaryFrame(
+      encodeTunnelStreamFrame({ opcode: TunnelStreamOpcode.Close, streamId, reason }),
+    );
+  }
+
   async waitForTerminalStreamEvent(
     predicate: (event: TerminalStreamEvent) => boolean,
     timeout = 5000,
@@ -4497,6 +4535,15 @@ export class DaemonClient {
     const fileFrame = decodeFileTransferFrame(rawBytes);
     if (fileFrame) {
       this.handleFileTransferFrame(fileFrame);
+      this.runtimeMetrics?.recordBinaryFrame("other", rawBytes.byteLength, 0);
+      return true;
+    }
+
+    const tunnelFrame = decodeTunnelStreamFrame(rawBytes);
+    if (tunnelFrame) {
+      for (const listener of this.tunnelFrameListeners) {
+        listener(tunnelFrame);
+      }
       this.runtimeMetrics?.recordBinaryFrame("other", rawBytes.byteLength, 0);
       return true;
     }

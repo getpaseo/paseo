@@ -31,6 +31,7 @@ import {
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
+import { TunnelForwarder } from "./tunnel-forwarder.js";
 import {
   type BinaryFrame,
   encodeFileTransferFrame,
@@ -834,6 +835,7 @@ export class Session {
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   private readonly terminalController: TerminalSessionController;
+  private readonly tunnelForwarder: TunnelForwarder;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
@@ -951,6 +953,12 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
+    });
+    this.tunnelForwarder = new TunnelForwarder({
+      emitBinary: (frame) => this.emitBinary(frame),
+      hasBinaryChannel: () => this.onBinaryMessage !== null,
+      getClientBufferedAmount: () => this.getTransportBufferedAmount(),
+      sessionLogger: this.sessionLogger,
     });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
@@ -2271,6 +2279,10 @@ export class Session {
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
     if (binaryFrame.kind === "file_transfer") {
       await this.handleFileTransferFrame(binaryFrame.frame);
+      return;
+    }
+    if (binaryFrame.kind === "tunnel") {
+      this.tunnelForwarder.handleFrame(binaryFrame.frame);
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame);
@@ -8812,6 +8824,7 @@ export class Session {
     this.isVoiceMode = false;
 
     this.terminalController.dispose();
+    this.tunnelForwarder.dispose();
 
     for (const unsubscribe of this.checkoutDiffSubscriptions.values()) {
       unsubscribe();
