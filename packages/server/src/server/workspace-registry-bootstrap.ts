@@ -63,6 +63,12 @@ export async function bootstrapWorkspaceRegistries(options: {
     return;
   }
 
+  const existingWorkspaceIdsByCwd = new Map(
+    (await options.workspaceRegistry.list()).map((workspace) => [
+      path.resolve(workspace.cwd),
+      workspace.workspaceId,
+    ]),
+  );
   const records = await options.agentStorage.list();
   const activeRecords = records.filter((record) => !record.archivedAt);
   const recordsByWorkspaceKey = new Map<
@@ -120,7 +126,7 @@ export async function bootstrapWorkspaceRegistries(options: {
     projectRanges.set(membership.projectKey, existingProjectRange);
 
     workspaceUpsertInputs.push({
-      workspaceId: generateWorkspaceId(),
+      workspaceId: existingWorkspaceIdsByCwd.get(workspaceCwd) ?? generateWorkspaceId(),
       membership,
       workspaceCwd,
       createdAt,

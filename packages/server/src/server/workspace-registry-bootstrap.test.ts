@@ -174,4 +174,55 @@ describe("bootstrapWorkspaceRegistries", () => {
     expect(await workspaceRegistry.list()).toHaveLength(1);
     expect((await workspaceRegistry.list())[0]?.workspaceId).toBe("ws-existing");
   });
+
+  test("preserves existing workspace IDs when only the projects file is missing", async () => {
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert({
+      workspaceId: "ws-existing",
+      projectId: NON_GIT_PROJECT,
+      cwd: NON_GIT_PROJECT,
+      kind: "directory",
+      displayName: "non-git-project",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      archivedAt: null,
+    });
+
+    await agentStorage.initialize();
+    await agentStorage.upsert({
+      id: "agent-1",
+      provider: "codex",
+      cwd: NON_GIT_PROJECT,
+      createdAt: "2026-03-02T00:00:00.000Z",
+      updatedAt: "2026-03-02T00:00:00.000Z",
+      lastActivityAt: "2026-03-02T00:00:00.000Z",
+      lastUserMessageAt: null,
+      title: null,
+      labels: {},
+      lastStatus: "idle",
+      lastModeId: null,
+      config: null,
+      runtimeInfo: { provider: "codex", sessionId: null },
+      persistence: null,
+      archivedAt: null,
+    });
+
+    await bootstrapWorkspaceRegistries({
+      paseoHome,
+      agentStorage,
+      projectRegistry,
+      workspaceRegistry,
+      workspaceGitService,
+      logger,
+    });
+
+    const workspaces = await workspaceRegistry.list();
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0]?.workspaceId).toBe("ws-existing");
+    expect(workspaces[0]?.cwd).toBe(NON_GIT_PROJECT);
+
+    const projects = await projectRegistry.list();
+    expect(projects).toHaveLength(1);
+    expect(projects[0]?.projectId).toBe(NON_GIT_PROJECT);
+  });
 });
