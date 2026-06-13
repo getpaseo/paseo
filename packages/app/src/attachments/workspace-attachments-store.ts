@@ -44,7 +44,7 @@ export function buildWorkspaceAttachmentScopeKey(input: WorkspaceAttachmentScope
   const workspaceId = input.workspaceId?.trim();
   // workspaceId is opaque; do not parse this key back into a path.
   const workspacePart = workspaceId
-    ? `wsid=${encodeScopePart(workspaceId)}`
+    ? `workspace=${encodeScopePart(workspaceId)}`
     : `cwd=${encodeScopePart(normalizeCwd(input.cwd))}`;
 
   return ["workspace-attachments", `server=${encodeScopePart(input.serverId)}`, workspacePart].join(
