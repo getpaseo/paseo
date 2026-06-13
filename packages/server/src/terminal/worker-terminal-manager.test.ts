@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -280,29 +281,36 @@ it("pulls fresh terminal state from the worker authority", async () => {
   expect(visibleText).toContain("worker-state-ready");
 });
 
-it("caches the input-mode replay preamble from the worker after getTerminalState", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
-  temporaryDirs.push(cwd);
-  manager = createWorkerTerminalManager();
-  // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
-  // tracker records and reflects in its replay preamble (\x1b[=1;1u).
-  const session = trackTerminal(
-    await manager.createTerminal({
-      cwd,
-      ...nodeTerminalCommand(`
+// Windows ConPTY normalizes away the kitty keyboard escape the child writes, so it
+// never reaches the worker's input-mode tracker and the preamble stays empty. The
+// preamble-caching contract is verified on Linux/macOS; the daemon's input-mode
+// handling runs identically on every platform once the escape is observed.
+it.skipIf(isPlatform("win32"))(
+  "caches the input-mode replay preamble from the worker after getTerminalState",
+  async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
+    temporaryDirs.push(cwd);
+    manager = createWorkerTerminalManager();
+    // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
+    // tracker records and reflects in its replay preamble (\x1b[=1;1u).
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd,
+        ...nodeTerminalCommand(`
       process.stdout.write("\\u001b[>1u");
       setInterval(() => {}, 1000);
     `),
-    }),
-  );
+      }),
+    );
 
-  await waitForCondition(async () => {
-    const snapshot = await manager!.getTerminalState(session.id);
-    return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
-  }, 10000);
+    await waitForCondition(async () => {
+      const snapshot = await manager!.getTerminalState(session.id);
+      return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
+    }, 10000);
 
-  expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
-});
+    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
+  },
+);
 
 it("refreshes cached terminal title after worker title changes", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
