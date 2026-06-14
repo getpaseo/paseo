@@ -1666,6 +1666,16 @@ export const ru: TranslationResources = {
           save: "Сохранить",
           saving: "Сохранение...",
         },
+        dictationPrompt: {
+          title: "Подсказка для диктовки",
+          hint: "Определяет, как распознаётся ваша речь",
+          sheetTitle: "Подсказка для транскрипции диктовки",
+          accessibilityLabel: "Подсказка для транскрипции диктовки",
+          edit: "Редактировать",
+          reset: "Сбросить",
+          save: "Сохранить",
+          saving: "Сохранение...",
+        },
       },
       agents: {
         unavailable: "Connect to this host to manage agents",

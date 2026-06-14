@@ -1674,6 +1674,16 @@ export const es: TranslationResources = {
           save: "Guardar",
           saving: "Guardando...",
         },
+        dictationPrompt: {
+          title: "Mensaje de dictado",
+          hint: "Guía cómo se transcribe tu voz",
+          sheetTitle: "Mensaje de transcripción de dictado",
+          accessibilityLabel: "Mensaje de transcripción de dictado",
+          edit: "Editar",
+          reset: "Restablecer",
+          save: "Guardar",
+          saving: "Guardando...",
+        },
       },
       agents: {
         unavailable: "Connect to this host to manage agents",

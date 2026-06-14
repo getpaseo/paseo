@@ -1642,6 +1642,16 @@ export const en = {
           save: "Save",
           saving: "Saving...",
         },
+        dictationPrompt: {
+          title: "Dictation prompt",
+          hint: "Guides how your speech is transcribed",
+          sheetTitle: "Dictation transcription prompt",
+          accessibilityLabel: "Dictation transcription prompt",
+          edit: "Edit",
+          reset: "Reset",
+          save: "Save",
+          saving: "Saving...",
+        },
       },
       agents: {
         unavailable: "Connect to this host to manage agents",

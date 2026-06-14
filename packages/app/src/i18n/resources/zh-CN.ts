@@ -1617,6 +1617,16 @@ export const zhCN: TranslationResources = {
           save: "保存",
           saving: "保存中...",
         },
+        dictationPrompt: {
+          title: "听写提示词",
+          hint: "指导如何转写你的语音",
+          sheetTitle: "听写转写提示词",
+          accessibilityLabel: "听写转写提示词",
+          edit: "编辑",
+          reset: "重置",
+          save: "保存",
+          saving: "保存中...",
+        },
       },
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",

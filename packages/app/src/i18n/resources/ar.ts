@@ -1636,6 +1636,16 @@ export const ar: TranslationResources = {
           save: "حفظ",
           saving: "جارٍ الحفظ...",
         },
+        dictationPrompt: {
+          title: "موجه الإملاء",
+          hint: "يوجّه كيفية تحويل كلامك إلى نص",
+          sheetTitle: "موجه نسخ الإملاء",
+          accessibilityLabel: "موجه نسخ الإملاء",
+          edit: "تحرير",
+          reset: "إعادة ضبط",
+          save: "حفظ",
+          saving: "جارٍ الحفظ...",
+        },
       },
       agents: {
         unavailable: "Connect to this host to manage agents",

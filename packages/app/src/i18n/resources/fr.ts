@@ -1679,6 +1679,16 @@ export const fr: TranslationResources = {
           save: "Sauvegarder",
           saving: "Sauvegarde...",
         },
+        dictationPrompt: {
+          title: "Invite de dictée",
+          hint: "Guide la transcription de votre voix",
+          sheetTitle: "Invite de transcription de dictée",
+          accessibilityLabel: "Invite de transcription de dictée",
+          edit: "Modifier",
+          reset: "Réinitialiser",
+          save: "Sauvegarder",
+          saving: "Sauvegarde...",
+        },
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
