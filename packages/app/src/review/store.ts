@@ -47,6 +47,9 @@ export interface BuildReviewDraftKeyInput {
   mode: ReviewDraftMode;
   baseRef?: string | null;
   ignoreWhitespace: boolean;
+  // Per-commit reviews namespace their draft key by the reviewed commit SHA so a
+  // commit's comments never collide with the uncommitted/base drafts for the same cwd.
+  commitSha?: string | null;
 }
 
 export type BuildReviewDraftScopeKeyInput = Omit<BuildReviewDraftKeyInput, "mode">;
@@ -56,6 +59,7 @@ export interface BuildReviewAttachmentSnapshotInput {
   cwd: string;
   mode: ReviewDraftMode;
   baseRef?: string | null;
+  commitSha?: string | null;
   comments: readonly ReviewDraftComment[];
   diffFiles: readonly ParsedDiffFile[];
 }
@@ -101,13 +105,21 @@ function buildReviewDraftScopeParts(input: BuildReviewDraftScopeKeyInput): strin
     ? `workspace=${encodeKeyPart(workspaceId)}`
     : `cwd=${encodeKeyPart(normalizeCwd(input.cwd))}`;
 
-  return [
+  const parts = [
     "review",
     `server=${encodeKeyPart(input.serverId)}`,
     workspacePart,
     `base=${encodeKeyPart(normalizeBaseRef(input.baseRef))}`,
     `ignoreWhitespace=${input.ignoreWhitespace ? "true" : "false"}`,
   ];
+
+  // Appended (never inserted) so legacy keys without a commitSha stay byte-identical.
+  const commitSha = input.commitSha?.trim();
+  if (commitSha) {
+    parts.push(`commit=${encodeKeyPart(commitSha)}`);
+  }
+
+  return parts;
 }
 
 export function buildReviewDraftScopeKey(input: BuildReviewDraftScopeKeyInput): string {
@@ -115,11 +127,20 @@ export function buildReviewDraftScopeKey(input: BuildReviewDraftScopeKeyInput): 
 }
 
 export function buildReviewDraftKey(input: BuildReviewDraftKeyInput): string {
-  const [prefix, serverPart, workspacePart, basePart, whitespacePart] =
+  const [prefix, serverPart, workspacePart, basePart, whitespacePart, commitPart] =
     buildReviewDraftScopeParts(input);
-  return [prefix, serverPart, workspacePart, `mode=${input.mode}`, basePart, whitespacePart].join(
-    ":",
-  );
+  const composed = [
+    prefix,
+    serverPart,
+    workspacePart,
+    `mode=${input.mode}`,
+    basePart,
+    whitespacePart,
+  ];
+  if (commitPart) {
+    composed.push(commitPart);
+  }
+  return composed.join(":");
 }
 
 function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment {
@@ -260,6 +281,7 @@ export function buildReviewAttachmentSnapshot(
     return null;
   }
 
+  const commitSha = input.commitSha?.trim();
   const attachment: ReviewAttachment = {
     type: "review",
     mimeType: "application/paseo-review",
@@ -268,6 +290,9 @@ export function buildReviewAttachmentSnapshot(
     baseRef: normalizeBaseRef(input.baseRef) || null,
     comments,
   };
+  if (commitSha) {
+    attachment.commitSha = commitSha;
+  }
 
   return {
     kind: "review",
@@ -347,6 +372,7 @@ export function useReviewAttachmentSnapshot(input: {
   cwd: string;
   mode: ReviewDraftMode;
   baseRef?: string | null;
+  commitSha?: string | null;
 }): ReviewComposerAttachment | null {
   const comments = useReviewDraftComments(input.key);
   return useMemo(
@@ -356,9 +382,10 @@ export function useReviewAttachmentSnapshot(input: {
         cwd: input.cwd,
         mode: input.mode,
         baseRef: input.baseRef,
+        commitSha: input.commitSha,
         comments,
         diffFiles: input.diffFiles,
       }),
-    [comments, input.key, input.cwd, input.mode, input.baseRef, input.diffFiles],
+    [comments, input.key, input.cwd, input.mode, input.baseRef, input.commitSha, input.diffFiles],
   );
 }

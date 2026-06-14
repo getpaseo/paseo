@@ -105,6 +105,55 @@ describe("buildReviewDraftKey", () => {
     ).toBe("review:server=local:cwd=%2Frepo:mode=base:base=main:ignoreWhitespace=false");
   });
 
+  it("keeps the legacy key byte-identical when commitSha is absent", () => {
+    expect(
+      buildReviewDraftKey({
+        serverId: "local",
+        workspaceId: "workspace-1",
+        cwd: "/repo",
+        mode: "base",
+        baseRef: "main",
+        ignoreWhitespace: false,
+        commitSha: null,
+      }),
+    ).toBe("review:server=local:workspace=workspace-1:mode=base:base=main:ignoreWhitespace=false");
+  });
+
+  it("namespaces per-commit drafts with a commit segment distinct from non-commit keys", () => {
+    const withoutCommit = buildReviewDraftKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+    });
+    const withCommit = buildReviewDraftKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+      commitSha: "abc123",
+    });
+    const withOtherCommit = buildReviewDraftKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+      mode: "base",
+      baseRef: "main",
+      ignoreWhitespace: false,
+      commitSha: "def456",
+    });
+
+    expect(withCommit).toBe(
+      "review:server=local:workspace=workspace-1:mode=base:base=main:ignoreWhitespace=false:commit=abc123",
+    );
+    expect(withCommit).not.toBe(withoutCommit);
+    expect(withCommit).not.toBe(withOtherCommit);
+  });
+
   it("builds a mode-free scope key for diff mode override sharing", () => {
     const scope = buildReviewDraftScopeKey({
       serverId: "local",
@@ -426,5 +475,32 @@ describe("buildReviewAttachmentSnapshot", () => {
         ],
       },
     });
+  });
+
+  it("sets commitSha on the attachment and still extracts context for per-commit reviews", () => {
+    const snapshot = buildReviewAttachmentSnapshot({
+      reviewDraftKey: "review:key:commit=abc123",
+      cwd: "/repo",
+      mode: "base",
+      baseRef: "abc123^",
+      commitSha: "abc123",
+      comments: [
+        {
+          id: "comment-1",
+          filePath: "src/example.ts",
+          side: "new",
+          lineNumber: 41,
+          body: "Please simplify this.",
+          createdAt: "2026-04-21T00:00:00.000Z",
+          updatedAt: "2026-04-21T00:00:00.000Z",
+        },
+      ],
+      diffFiles: [makeFile()],
+    });
+
+    expect(snapshot?.attachment.commitSha).toBe("abc123");
+    expect(snapshot?.attachment.mode).toBe("base");
+    expect(snapshot?.commentCount).toBe(1);
+    expect(snapshot?.attachment.comments[0]?.context.hunkHeader).toBe("@@ -40,4 +40,4 @@");
   });
 });
