@@ -141,13 +141,16 @@ test("two workspaces sharing one cwd stay isolated by workspaceId", async () => 
       throw new Error("Expected a created terminal id");
     }
 
-    // Give both directory subscriptions a chance to receive their snapshots.
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // A's directory subscription receives a snapshot attributing the terminal
+    // to A. Poll the observed snapshot state instead of sleeping for a fixed
+    // window, so the assertion never races the daemon's snapshot push.
+    await expect
+      .poll(() => terminalSnapshotsByWorkspace.get(WORKSPACE_A)?.has(terminalId) ?? false)
+      .toBe(true);
     unsubscribeTerminals();
 
-    // Every snapshot that carried this terminal attributed it to A; no snapshot
-    // ever attributed it to B (the only other same-cwd workspace).
-    expect(terminalSnapshotsByWorkspace.get(WORKSPACE_A)?.has(terminalId)).toBe(true);
+    // No snapshot ever attributed the terminal to B (the only other same-cwd
+    // workspace).
     expect(terminalSnapshotsByWorkspace.get(WORKSPACE_B)?.has(terminalId) ?? false).toBe(false);
 
     const listForA = await client.listTerminals(cwd, undefined, { workspaceId: WORKSPACE_A });

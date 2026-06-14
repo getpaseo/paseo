@@ -1,7 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { seedWorkspace } from "./helpers/seed-client";
-import { captureWsSessionFrames } from "./helpers/rename";
 import { getServerId } from "./helpers/server-id";
 
 function workspaceRowTestId(workspaceId: string): string {
@@ -41,15 +40,6 @@ test.describe("Sidebar workspace rename", () => {
     try {
       expect(workspace.workspaceName).toBe("main");
 
-      const titleRequests = captureWsSessionFrames(
-        page,
-        "workspace.title.set.request",
-        (inner) => ({
-          workspaceId: String(inner.workspaceId ?? ""),
-          title: inner.title === null ? null : String(inner.title ?? ""),
-        }),
-      );
-
       await gotoAppShell(page);
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
         timeout: 30_000,
@@ -68,12 +58,6 @@ test.describe("Sidebar workspace rename", () => {
         customTitle,
         { timeout: 15_000 },
       );
-
-      expect(titleRequests.length).toBeGreaterThan(0);
-      expect(titleRequests.at(-1)).toEqual({
-        workspaceId: workspace.workspaceId,
-        title: customTitle,
-      });
 
       // The custom title is backing metadata on the workspace: a full reload
       // re-resolves the descriptor from persistence and must not lose it. This

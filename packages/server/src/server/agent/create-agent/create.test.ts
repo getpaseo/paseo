@@ -1,8 +1,43 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
+import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
+
+const logger = createTestLogger();
+
+function createRealAgentManager(storage: AgentStorage): AgentManager {
+  return new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+  });
+}
+
+// Creates a worktree directory under repoRoot and reports it back as a fresh
+// workspace so the command can stamp the agent with it (mirrors the production
+// worktree service).
+function fakeWorktreeCreator(args: { repoRoot: string; createdWorkspaceId: string }) {
+  const worktreePath = join(args.repoRoot, "worktree");
+  mkdirSync(worktreePath, { recursive: true });
+  return async (): Promise<CreatePaseoWorktreeWorkflowResult> =>
+    ({
+      worktree: { worktreePath },
+      intent: {},
+      workspace: { workspaceId: args.createdWorkspaceId },
+      repoRoot: args.repoRoot,
+      created: true,
+      setupContinuation: { kind: "agent" as const, startAfterAgentCreate: () => {} },
+    }) as unknown as CreatePaseoWorktreeWorkflowResult;
+}
 
 test("session create forwards clientMessageId to the initial prompt run options", async () => {
   const snapshot = {
@@ -45,133 +80,121 @@ test("session create forwards clientMessageId to the initial prompt run options"
   });
 });
 
-function buildCreateAgentDependencies(snapshot: ManagedAgent) {
-  const createAgent = vi.fn(async () => snapshot);
-  const dependencies: Parameters<typeof createAgentCommand>[0] = {
-    agentManager: {
-      createAgent,
-      getAgent: vi.fn(() => snapshot),
-      tryRunOutOfBand: vi.fn(() => false),
-      hasInFlightRun: vi.fn(() => false),
-      streamAgent: vi.fn(() => (async function* noop() {})()),
-      waitForAgentRunStart: vi.fn(async () => undefined),
-    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
-    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
-    logger: createTestLogger(),
-    providerSnapshotManager: {} as Parameters<
-      typeof createAgentCommand
-    >[0]["providerSnapshotManager"],
-  };
-  return { dependencies, createAgent };
-}
-
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {
-  const snapshot = {
-    id: "agent-1",
-    provider: "codex",
-    cwd: "/tmp/paseo-create-test",
-    runtimeInfo: null,
-  } as ManagedAgent;
-  const { dependencies, createAgent } = buildCreateAgentDependencies(snapshot);
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
 
-  await createAgentCommand(dependencies, {
-    kind: "session",
-    config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
-    workspaceId: "ws-source",
-    labels: {},
-    provisionalTitle: null,
-    explicitTitle: null,
-    firstAgentContext: { attachments: [] },
-    buildSessionConfig: async (config) => ({ sessionConfig: config }),
-  });
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-source",
+        labels: {},
+        provisionalTitle: null,
+        explicitTitle: null,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
 
-  expect(createAgent).toHaveBeenCalledWith(
-    expect.anything(),
-    undefined,
-    expect.objectContaining({ workspaceId: "ws-source" }),
-  );
+    const stored = await storage.get(snapshot.id);
+    expect(stored?.workspaceId).toBe("ws-source");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("session create stamps the new worktree's workspaceId when a setup continuation runs", async () => {
-  const snapshot = {
-    id: "agent-1",
-    provider: "codex",
-    cwd: "/tmp/paseo-create-test/worktree",
-    runtimeInfo: null,
-  } as ManagedAgent;
-  const { dependencies, createAgent } = buildCreateAgentDependencies(snapshot);
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
 
-  await createAgentCommand(dependencies, {
-    kind: "session",
-    config: { provider: "codex", cwd: "/tmp/paseo-create-test/worktree" },
-    workspaceId: "ws-source",
-    labels: {},
-    provisionalTitle: null,
-    explicitTitle: null,
-    firstAgentContext: { attachments: [] },
-    buildSessionConfig: async (config) => ({
-      sessionConfig: config,
-      setupContinuation: { startAfterAgentCreate: vi.fn() },
-      createdWorkspaceId: "ws-new-worktree",
-    }),
-  });
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-source",
+        labels: {},
+        provisionalTitle: null,
+        explicitTitle: null,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({
+          sessionConfig: config,
+          setupContinuation: { kind: "agent", startAfterAgentCreate: () => {} },
+          createdWorkspaceId: "ws-new-worktree",
+        }),
+      },
+    );
 
-  const createOptions = createAgent.mock.calls[0]?.[2];
-  expect(createOptions?.workspaceId).toBe("ws-new-worktree");
+    const stored = await storage.get(snapshot.id);
+    expect(stored?.workspaceId).toBe("ws-new-worktree");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("mcp create stamps the new worktree's workspaceId, not the parent's", async () => {
-  const parentAgent = {
-    id: "parent-1",
-    provider: "codex",
-    cwd: "/tmp/paseo-create-test/repo",
-    workspaceId: "ws-parent",
-    runtimeInfo: null,
-  } as ManagedAgent;
-  const childSnapshot = {
-    id: "child-1",
-    provider: "codex",
-    cwd: "/tmp/paseo-create-test/repo/worktree",
-    runtimeInfo: null,
-  } as ManagedAgent;
-  const createAgent = vi.fn(async () => childSnapshot);
-  const createPaseoWorktree = vi.fn(async () => ({
-    worktree: { worktreePath: "/tmp/paseo-create-test/repo/worktree" },
-    intent: {},
-    workspace: { workspaceId: "ws-new-worktree" },
-    repoRoot: "/tmp/paseo-create-test/repo",
-    created: true,
-    setupContinuation: { kind: "agent" as const, startAfterAgentCreate: vi.fn() },
-  })) as unknown as Parameters<typeof createAgentCommand>[0]["createPaseoWorktree"];
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
 
-  const dependencies: Parameters<typeof createAgentCommand>[0] = {
-    agentManager: {
-      createAgent,
-      getAgent: vi.fn((id: string) => (id === "parent-1" ? parentAgent : childSnapshot)),
-      tryRunOutOfBand: vi.fn(() => false),
-      hasInFlightRun: vi.fn(() => false),
-      streamAgent: vi.fn(() => (async function* noop() {})()),
-      waitForAgentRunStart: vi.fn(async () => undefined),
-    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
-    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
-    logger: createTestLogger(),
-    providerSnapshotManager: {
-      resolveCreateConfig: vi.fn(async () => ({ modeId: undefined, featureValues: undefined })),
-    } as unknown as Parameters<typeof createAgentCommand>[0]["providerSnapshotManager"],
-    createPaseoWorktree,
-  };
+  try {
+    const { snapshot: parent } = await createAgentCommand(
+      { agentManager, agentStorage: storage, logger, providerSnapshotManager },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-parent",
+        labels: {},
+        provisionalTitle: null,
+        explicitTitle: null,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
 
-  await createAgentCommand(dependencies, {
-    kind: "mcp",
-    provider: "codex/gpt-5.4",
-    title: "child",
-    initialPrompt: "do the thing",
-    background: true,
-    notifyOnFinish: false,
-    callerAgentId: "parent-1",
-    worktree: { worktreeName: "feature", baseBranch: "main" },
-  });
+    const { snapshot: child } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager,
+        createPaseoWorktree: fakeWorktreeCreator({
+          repoRoot: workdir,
+          createdWorkspaceId: "ws-new-worktree",
+        }),
+      },
+      {
+        kind: "mcp",
+        provider: "codex/gpt-5.4",
+        title: "child",
+        initialPrompt: "do the thing",
+        background: true,
+        notifyOnFinish: false,
+        callerAgentId: parent.id,
+        worktree: { worktreeName: "feature", baseBranch: "main" },
+      },
+    );
 
-  const createOptions = createAgent.mock.calls[0]?.[2];
-  expect(createOptions?.workspaceId).toBe("ws-new-worktree");
+    const storedChild = await storage.get(child.id);
+    expect(storedChild?.workspaceId).toBe("ws-new-worktree");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });

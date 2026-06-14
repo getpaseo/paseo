@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import { realpathSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,8 +10,9 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
-import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
+import { AgentManager, type ManagedAgent } from "./agent-manager.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
@@ -1876,42 +1877,42 @@ describe("create_agent MCP tool", () => {
   });
 
   it("inherits the parent's workspaceId when an MCP child is created in the parent's working tree", async () => {
-    const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.getAgent.mockReturnValue({
-      id: "parent-agent",
-      cwd: existingCwd,
-      provider: "claude",
-      workspaceId: "wks_parent",
-      currentModeId: "bypassPermissions",
-    } as ManagedAgent);
-    spies.agentManager.createAgent.mockResolvedValue({
-      id: "child-agent",
-      cwd: existingCwd,
-      lifecycle: "idle",
-      currentModeId: null,
-      availableModes: [],
-      config: { title: "Child" },
-    } as ManagedAgent);
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      callerAgentId: "parent-agent",
-      providerSnapshotManager: createOpenCodeManager().manager,
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-workspace-inherit-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
       logger,
     });
-    const tool = registeredTool(server, "create_agent");
-    await tool.handler({
-      title: "Child",
-      provider: "codex/gpt-5.4",
-      initialPrompt: "Do work",
-    });
 
-    const [, , optionsArg] = spies.agentManager.createAgent.mock.calls[0];
-    expect(optionsArg).toEqual({
-      labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
-      workspaceId: "wks_parent",
-    });
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+      const result = await tool.handler({
+        title: "Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+      });
+
+      const childId = z.object({ agentId: z.string() }).parse(result.structuredContent).agentId;
+      const storedChild = await storage.get(childId);
+      expect(storedChild?.workspaceId).toBe("wks_parent");
+      expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 
   it("delegates MCP injection to AgentManager and passes through an undefined agent ID", async () => {
