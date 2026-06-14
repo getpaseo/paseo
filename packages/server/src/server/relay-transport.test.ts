@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type pino from "pino";
-import { startRelayTransport } from "./relay-transport";
+import {
+  getRelayProxyUrlForWebSocket,
+  isSocksProxyUrl,
+  startRelayTransport,
+} from "./relay-transport";
 
 function createMockLogger() {
   const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
@@ -21,6 +25,47 @@ function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: stri
   return logger.messages.some((entry) => {
     return entry.level === level && entry.args.some((arg) => arg === message);
   });
+}
+
+const PROXY_ENV_KEYS = [
+  "http_proxy",
+  "HTTP_PROXY",
+  "https_proxy",
+  "HTTPS_PROXY",
+  "ws_proxy",
+  "WS_PROXY",
+  "wss_proxy",
+  "WSS_PROXY",
+  "all_proxy",
+  "ALL_PROXY",
+  "no_proxy",
+  "NO_PROXY",
+  "npm_config_proxy",
+  "npm_config_http_proxy",
+  "npm_config_https_proxy",
+  "npm_config_ws_proxy",
+  "npm_config_wss_proxy",
+  "npm_config_no_proxy",
+] as const;
+
+function withProxyEnv<T>(env: Record<string, string>, fn: () => T): T {
+  const original = new Map<string, string | undefined>();
+  for (const key of PROXY_ENV_KEYS) {
+    original.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  Object.assign(process.env, env);
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of original.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 class FakeRelayWebSocket {
@@ -115,6 +160,59 @@ function createFakeWebSockets() {
     },
   };
 }
+
+describe("relay-transport proxy resolution", () => {
+  test("uses HTTPS_PROXY for secure WebSocket relay URLs", () => {
+    const proxyUrl = withProxyEnv({ HTTPS_PROXY: "http://proxy.example:8080" }, () =>
+      getRelayProxyUrlForWebSocket("wss://relay.paseo.sh/ws?serverId=srv_test&role=server&v=2"),
+    );
+
+    expect(proxyUrl).toBe("http://proxy.example:8080");
+  });
+
+  test("uses HTTP_PROXY for plain WebSocket relay URLs", () => {
+    const proxyUrl = withProxyEnv({ HTTP_PROXY: "http://proxy.example:8080" }, () =>
+      getRelayProxyUrlForWebSocket("ws://relay.paseo.sh/ws?serverId=srv_test&role=server&v=2"),
+    );
+
+    expect(proxyUrl).toBe("http://proxy.example:8080");
+  });
+
+  test("lets WS-specific proxy variables take precedence", () => {
+    const proxyUrl = withProxyEnv(
+      {
+        HTTPS_PROXY: "http://https-proxy.example:8080",
+        WSS_PROXY: "http://wss-proxy.example:8080",
+      },
+      () =>
+        getRelayProxyUrlForWebSocket("wss://relay.paseo.sh/ws?serverId=srv_test&role=server&v=2"),
+    );
+
+    expect(proxyUrl).toBe("http://wss-proxy.example:8080");
+  });
+
+  test("respects NO_PROXY for relay URLs", () => {
+    const proxyUrl = withProxyEnv(
+      {
+        HTTPS_PROXY: "http://proxy.example:8080",
+        NO_PROXY: "relay.paseo.sh",
+      },
+      () =>
+        getRelayProxyUrlForWebSocket("wss://relay.paseo.sh/ws?serverId=srv_test&role=server&v=2"),
+    );
+
+    expect(proxyUrl).toBe("");
+  });
+
+  test("detects SOCKS proxy URLs", () => {
+    expect(isSocksProxyUrl("socks://proxy.example:1080")).toBe(true);
+    expect(isSocksProxyUrl("socks4://proxy.example:1080")).toBe(true);
+    expect(isSocksProxyUrl("socks5://proxy.example:1080")).toBe(true);
+    expect(isSocksProxyUrl("socks5h://proxy.example:1080")).toBe(true);
+    expect(isSocksProxyUrl("http://proxy.example:8080")).toBe(false);
+    expect(isSocksProxyUrl("https://proxy.example:8080")).toBe(false);
+  });
+});
 
 describe("relay-transport control lifecycle", () => {
   const controllers: Array<{ stop: () => Promise<void> }> = [];

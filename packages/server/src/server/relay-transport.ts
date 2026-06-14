@@ -1,6 +1,9 @@
 /// <reference lib="dom" />
 import { EventEmitter } from "node:events";
-import { WebSocket } from "ws";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { getProxyForUrl } from "proxy-from-env";
+import { SocksProxyAgent } from "socks-proxy-agent";
+import { WebSocket, type ClientOptions } from "ws";
 import type pino from "pino";
 import {
   createDaemonChannel,
@@ -54,10 +57,71 @@ type ControlMessage =
 const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
-const RELAY_WEBSOCKET_OPTIONS = { handshakeTimeout: 10_000, perMessageDeflate: false } as const;
+const RELAY_WEBSOCKET_OPTIONS: ClientOptions = {
+  handshakeTimeout: 10_000,
+  perMessageDeflate: false,
+};
+type RelayProxyAgent = HttpsProxyAgent<string> | SocksProxyAgent;
+const RELAY_PROXY_AGENTS = new Map<string, RelayProxyAgent>();
+
+function toHttpProxyLookupUrl(webSocketUrl: string): string {
+  try {
+    const url = new URL(webSocketUrl);
+    if (url.protocol === "wss:") {
+      url.protocol = "https:";
+      return url.toString();
+    }
+    if (url.protocol === "ws:") {
+      url.protocol = "http:";
+      return url.toString();
+    }
+  } catch {
+    // Fall through to the original URL; proxy-from-env will return an empty
+    // string for invalid URLs.
+  }
+  return webSocketUrl;
+}
+
+export function getRelayProxyUrlForWebSocket(webSocketUrl: string): string {
+  // proxy-from-env natively supports WS_PROXY/WSS_PROXY and ALL_PROXY. Most
+  // environments only set HTTP_PROXY/HTTPS_PROXY, so fall back to the
+  // equivalent HTTP(S) URL for WebSocket relay connections.
+  const webSocketProxyUrl = getProxyForUrl(webSocketUrl);
+  if (webSocketProxyUrl) return webSocketProxyUrl;
+
+  const httpProxyLookupUrl = toHttpProxyLookupUrl(webSocketUrl);
+  if (httpProxyLookupUrl === webSocketUrl) return "";
+  return getProxyForUrl(httpProxyLookupUrl);
+}
+
+export function isSocksProxyUrl(proxyUrl: string): boolean {
+  try {
+    const protocol = new URL(proxyUrl).protocol.toLowerCase();
+    return protocol.startsWith("socks");
+  } catch {
+    return false;
+  }
+}
+
+function createRelayProxyAgent(proxyUrl: string): RelayProxyAgent {
+  return isSocksProxyUrl(proxyUrl) ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
+}
+
+function createRelayWebSocketOptions(url: string): ClientOptions {
+  const proxyUrl = getRelayProxyUrlForWebSocket(url);
+  if (!proxyUrl) return RELAY_WEBSOCKET_OPTIONS;
+
+  let agent = RELAY_PROXY_AGENTS.get(proxyUrl);
+  if (!agent) {
+    agent = createRelayProxyAgent(proxyUrl);
+    RELAY_PROXY_AGENTS.set(proxyUrl, agent);
+  }
+
+  return { ...RELAY_WEBSOCKET_OPTIONS, agent };
+}
 
 function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
-  return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
+  return new WebSocket(url, createRelayWebSocketOptions(url));
 }
 
 function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): string | ArrayBuffer {
