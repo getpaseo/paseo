@@ -312,6 +312,10 @@ type CreatePaseoWorktreePayload = Extract<
   SessionOutboundMessage,
   { type: "create_paseo_worktree_response" }
 >["payload"];
+type WorkspaceCreatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.create.response" }
+>["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
 export type FileExplorerDirectoryPayload = NonNullable<FileExplorerPayload["directory"]>;
 type LegacyFileExplorerFilePayload = NonNullable<FileExplorerPayload["file"]>;
@@ -3237,6 +3241,33 @@ export class DaemonClient {
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
       },
       responseType: "create_paseo_worktree_response",
+      timeout: 60000,
+    });
+  }
+
+  async createWorkspace(
+    input: {
+      backing: "local" | "worktree";
+      cwd?: string;
+      projectId?: string;
+      branch?: string;
+      baseBranch?: string;
+      title?: string;
+    },
+    requestId?: string,
+  ): Promise<WorkspaceCreatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.create.request",
+        backing: input.backing,
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+        ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+        ...(input.branch !== undefined ? { branch: input.branch } : {}),
+        ...(input.baseBranch !== undefined ? { baseBranch: input.baseBranch } : {}),
+        ...(input.title !== undefined ? { title: input.title } : {}),
+      },
+      responseType: "workspace.create.response",
       timeout: 60000,
     });
   }

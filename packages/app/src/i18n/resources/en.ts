@@ -830,6 +830,11 @@ export const en = {
   newWorkspace: {
     title: "New workspace",
     create: "Create",
+    backing: {
+      local: "Local",
+      worktree: "New worktree",
+    },
+    titlePlaceholder: "Title (optional)",
     errors: {
       hostDisconnected: "Host is not connected",
       createWorktreeFailed: "Failed to create worktree",

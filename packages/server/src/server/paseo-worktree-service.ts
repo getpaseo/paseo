@@ -208,18 +208,17 @@ async function upsertWorkspaceForWorktree(options: {
   const normalizedCwd = resolve(options.worktree.worktreePath);
   const normalizedInputCwd = resolve(options.inputCwd);
   const normalizedRepoRoot = resolve(options.repoRoot);
-  const existingWorkspace = await findWorkspaceByDirectory(
-    normalizedCwd,
-    options.deps.workspaceRegistry,
-  );
+  // Creation never deduplicates by directory: a worktree directory may back
+  // more than one workspace. We still resolve the source project from the
+  // originating checkout, but always mint a fresh workspace record.
   const sourceProject = await resolveSourceProjectForWorktree({
     inputCwd: normalizedInputCwd,
     projectId: options.projectId,
     repoRoot: normalizedRepoRoot,
-    existingWorkspace,
+    existingWorkspace: null,
     deps: options.deps,
   });
-  const workspaceId = existingWorkspace?.workspaceId ?? generateWorkspaceId();
+  const workspaceId = generateWorkspaceId();
   const now = new Date().toISOString();
 
   await options.deps.projectRegistry.upsert(
@@ -241,7 +240,7 @@ async function upsertWorkspaceForWorktree(options: {
     cwd: normalizedCwd,
     kind: "worktree",
     displayName: options.worktree.branchName || normalizedCwd,
-    createdAt: existingWorkspace?.createdAt ?? now,
+    createdAt: now,
     updatedAt: now,
     archivedAt: null,
   });
@@ -293,6 +292,39 @@ export async function ensureLocalCheckoutWorkspace(
     cwd: normalizedCwd,
     kind: "local_checkout",
     displayName: membership.workspaceDisplayName,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await deps.workspaceRegistry.upsert(workspace);
+  return workspace;
+}
+
+// Always create a NEW workspace record backed by the existing directory `cwd`.
+// Unlike ensureLocalCheckoutWorkspace this never reuses a same-cwd record: a
+// directory may back any number of workspaces. Used by explicit user creation.
+export async function createLocalCheckoutWorkspace(
+  options: { cwd: string; title?: string | null },
+  deps: EnsureLocalCheckoutWorkspaceDeps,
+): Promise<PersistedWorkspaceRecord> {
+  const normalizedCwd = resolve(options.cwd);
+  const checkout = await deps.workspaceGitService.getCheckout(normalizedCwd);
+  const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
+  const now = new Date().toISOString();
+  const projectRecord = await resolveProjectRecordForMembership({
+    membership,
+    timestamp: now,
+    projectRegistry: deps.projectRegistry,
+  });
+  await deps.projectRegistry.upsert(projectRecord);
+
+  const trimmedTitle = options.title?.trim();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: generateWorkspaceId(),
+    projectId: projectRecord.projectId,
+    cwd: normalizedCwd,
+    kind: membership.workspaceKind,
+    displayName: membership.workspaceDisplayName,
+    title: trimmedTitle ? trimmedTitle : null,
     createdAt: now,
     updatedAt: now,
   });
@@ -447,12 +479,4 @@ async function findWorkspaceForSource(options: {
     workspaces.find((workspace) => workspace.cwd === options.repoRoot && !workspace.archivedAt) ??
     null
   );
-}
-
-async function findWorkspaceByDirectory(
-  cwd: string,
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">,
-): Promise<PersistedWorkspaceRecord | null> {
-  const workspaces = await workspaceRegistry.list();
-  return workspaces.find((workspace) => workspace.cwd === cwd) ?? null;
 }

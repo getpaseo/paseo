@@ -1664,6 +1664,26 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Create a new workspace record. Unlike open_project, this never deduplicates by
+// directory: it always produces a fresh workspace. The backing directory is a
+// choice — an existing local checkout/directory, or a newly created worktree.
+export const WorkspaceCreateRequestSchema = z.object({
+  type: z.literal("workspace.create.request"),
+  backing: z.enum(["local", "worktree"]),
+  // local: path of the existing checkout/directory to back the workspace.
+  cwd: z.string().optional(),
+  // worktree: the project whose repo the worktree is cut from. local may also
+  // pass projectId, but the directory governs placement there.
+  projectId: z.string().optional(),
+  // worktree only: branch is the new/checked-out branch (slug); baseBranch is
+  // the branch to cut from.
+  branch: z.string().optional(),
+  baseBranch: z.string().optional(),
+  // Optional user-set title applied to the created workspace.
+  title: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const WorkspaceClearAttentionRequestSchema = z.object({
   type: z.literal("workspace.clear_attention.request"),
   workspaceId: z.union([z.string(), z.array(z.string())]),
@@ -1990,6 +2010,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LegacyOpenInEditorRequestSchema,
   OpenProjectRequestSchema,
   ArchiveWorkspaceRequestSchema,
+  WorkspaceCreateRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
@@ -2214,6 +2235,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceTitles: z.boolean().optional(),
         // COMPAT(workspaceProjects): added in v0.1.X, drop the gate when floor >= v0.1.X
         workspaceProjects: z.boolean().optional(),
+        // COMPAT(workspaceMultiplicity): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceMultiplicity: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2805,6 +2828,17 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string().or(z.array(z.string())),
     agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+export const WorkspaceCreateResponseSchema = z.object({
+  type: z.literal("workspace.create.response"),
+  payload: z.object({
+    workspace: WorkspaceDescriptorPayloadSchema.nullable(),
+    setupTerminalId: z.string().nullable(),
+    error: z.string().nullable(),
+    errorCode: z.string().optional(),
+    requestId: z.string(),
   }),
 });
 
@@ -3924,6 +3958,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentTimelineResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
+  WorkspaceCreateResponseSchema,
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
@@ -4090,6 +4125,8 @@ export type WorkspaceTitleSetResponse = z.infer<typeof WorkspaceTitleSetResponse
 export type WorkspaceTitleSetResponsePayload = z.infer<
   typeof WorkspaceTitleSetResponsePayloadSchema
 >;
+export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
+export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSchema>;
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;

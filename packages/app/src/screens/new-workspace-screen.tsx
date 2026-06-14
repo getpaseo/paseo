@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -14,6 +14,7 @@ import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit
 import { FileDropZone } from "@/components/file-drop-zone";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -101,6 +102,10 @@ interface NewWorkspaceProjectPickerInput {
   sourceDirectory?: string;
   projectId?: string;
   displayName?: string;
+  // When true (workspaceMultiplicity), every project is selectable because a
+  // local-backed workspace works for any directory, git or not. When false the
+  // picker stays limited to worktree-capable projects (legacy behavior).
+  allowAllProjects: boolean;
 }
 
 interface NewWorkspaceProjectPickerState {
@@ -477,6 +482,7 @@ function useNewWorkspaceProjectPicker({
   sourceDirectory,
   projectId,
   displayName: displayNameProp,
+  allowAllProjects,
 }: NewWorkspaceProjectPickerInput): NewWorkspaceProjectPickerState {
   const [manualProjectKey, setManualProjectKey] = useState<string | null>(null);
   const displayName = displayNameProp?.trim() ?? "";
@@ -509,9 +515,9 @@ function useNewWorkspaceProjectPicker({
       }),
     [lastActiveProject, projects, routeProject],
   );
-  const worktreeProjects = useMemo(
-    () => projects.filter((project) => project.canCreateWorktree),
-    [projects],
+  const selectableProjects = useMemo(
+    () => (allowAllProjects ? projects : projects.filter((project) => project.canCreateWorktree)),
+    [allowAllProjects, projects],
   );
 
   const selectedProjectKey = manualProjectKey ?? initialProject?.projectKey ?? null;
@@ -527,16 +533,17 @@ function useNewWorkspaceProjectPicker({
     [lastActiveProject, projects, routeProject, selectedProjectKey],
   );
   const { options: projectPickerOptions, projectByOptionId }: ProjectOptionData = useMemo(
-    () => computeProjectOptionData(worktreeProjects),
-    [worktreeProjects],
+    () => computeProjectOptionData(selectableProjects),
+    [selectableProjects],
   );
   const handleSelectProjectOption = useCallback(
     (id: string) => {
       const project = projectByOptionId.get(id);
-      if (!project?.canCreateWorktree) return;
+      if (!project) return;
+      if (!allowAllProjects && !project.canCreateWorktree) return;
       setManualProjectKey(project.projectKey);
     },
-    [projectByOptionId],
+    [allowAllProjects, projectByOptionId],
   );
 
   return {
@@ -549,6 +556,105 @@ function useNewWorkspaceProjectPicker({
     selectedProjectOptionId: selectedProject ? projectOptionId(selectedProject.projectKey) : "",
     projectTriggerLabel: selectedProject?.projectName ?? "Choose project",
     handleSelectProjectOption,
+  };
+}
+
+function WorkspaceBackingControls({
+  backing,
+  onBackingChange,
+  canCreateWorktree,
+  title,
+  onTitleChange,
+  disabled,
+  placeholderColor,
+}: {
+  backing: "local" | "worktree";
+  onBackingChange: (value: "local" | "worktree") => void;
+  canCreateWorktree: boolean;
+  title: string;
+  onTitleChange: (value: string) => void;
+  disabled: boolean;
+  placeholderColor: string;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo(
+    () => [
+      {
+        value: "local" as const,
+        label: t("newWorkspace.backing.local"),
+        disabled,
+        testID: "workspace-create-backing-local",
+        icon: ({ color, size }: { color: string; size: number }) => (
+          <Folder size={size} color={color} />
+        ),
+      },
+      {
+        value: "worktree" as const,
+        label: t("newWorkspace.backing.worktree"),
+        disabled: disabled || !canCreateWorktree,
+        testID: "workspace-create-backing-worktree",
+        icon: ({ color, size }: { color: string; size: number }) => (
+          <GitBranch size={size} color={color} />
+        ),
+      },
+    ],
+    [canCreateWorktree, disabled, t],
+  );
+  return (
+    <>
+      <SegmentedControl
+        size="sm"
+        options={options}
+        value={backing}
+        onValueChange={onBackingChange}
+        testID="workspace-create-backing"
+      />
+      <TextInput
+        testID="workspace-create-title-input"
+        value={title}
+        onChangeText={onTitleChange}
+        editable={!disabled}
+        placeholder={t("newWorkspace.titlePlaceholder")}
+        placeholderTextColor={placeholderColor}
+        style={styles.titleInput}
+        accessibilityLabel={t("newWorkspace.titlePlaceholder")}
+      />
+    </>
+  );
+}
+
+interface WorkspaceBackingState {
+  backing: "local" | "worktree";
+  setBacking: (value: "local" | "worktree") => void;
+  effectiveBacking: "local" | "worktree";
+  canCreateWorktree: boolean;
+  showRefPicker: boolean;
+}
+
+// Worktree backing only makes sense for a git checkout. The effective backing
+// falls back to local whenever the selected directory isn't git so the flow
+// never submits an impossible request.
+function useWorkspaceBacking(input: {
+  supportsMultiplicity: boolean;
+  selectedIsGit: boolean;
+}): WorkspaceBackingState {
+  const { supportsMultiplicity, selectedIsGit } = input;
+  const [backing, setBacking] = useState<"local" | "worktree">("local");
+  const canCreateWorktree = supportsMultiplicity && selectedIsGit;
+  const isWorktree = backing === "worktree" && canCreateWorktree;
+
+  useEffect(() => {
+    if (backing === "worktree" && !canCreateWorktree) {
+      setBacking("local");
+    }
+  }, [backing, canCreateWorktree]);
+
+  return {
+    backing,
+    setBacking,
+    effectiveBacking: isWorktree ? "worktree" : "local",
+    canCreateWorktree,
+    showRefPicker: !supportsMultiplicity || isWorktree,
   };
 }
 
@@ -607,6 +713,41 @@ async function createAndMergeWorkspace(input: {
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
     : normalizedWorkspace;
   input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
+  return normalizedWorkspace;
+}
+
+async function createMultiplicityWorkspace(input: {
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+  backing: "local" | "worktree";
+  project: HostProjectListItem;
+  selectedItem: PickerItem | null;
+  currentBranch: string | null;
+  title: string;
+  mergeWorkspaces: (
+    serverId: string,
+    workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
+  ) => void;
+  serverId: string;
+  createFailedMessage: string;
+}): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+  const trimmedTitle = input.title.trim();
+  const isWorktree = input.backing === "worktree";
+  const baseBranch = isWorktree
+    ? (resolveCheckoutRequest(input.selectedItem, input.currentBranch)?.refName ?? undefined)
+    : undefined;
+  const payload = await input.client.createWorkspace({
+    backing: input.backing,
+    cwd: input.project.iconWorkingDir,
+    projectId: input.project.projectKey,
+    ...(isWorktree ? { branch: createNameId() } : {}),
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(trimmedTitle ? { title: trimmedTitle } : {}),
+  });
+  if (payload.error || !payload.workspace) {
+    throw new Error(payload.error ?? input.createFailedMessage);
+  }
+  const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
+  input.mergeWorkspaces(input.serverId, [normalizedWorkspace]);
   return normalizedWorkspace;
 }
 
@@ -776,7 +917,12 @@ export function NewWorkspaceScreen({
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  // COMPAT(workspaceMultiplicity): added in v0.1.X, drop the gate when floor >= v0.1.X
+  const supportsWorkspaceMultiplicity = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceMultiplicity === true,
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
@@ -813,6 +959,7 @@ export function NewWorkspaceScreen({
     sourceDirectory: sourceDirectoryProp,
     projectId,
     displayName: displayNameProp,
+    allowAllProjects: supportsWorkspaceMultiplicity,
   });
   const projectIconDataByProjectKey = useProjectIconDataByProjectKey({ serverId, projects });
   const draftKey = `new-workspace:${serverId}:${selectedSourceDirectory ?? "choose-project"}`;
@@ -859,6 +1006,10 @@ export function NewWorkspaceScreen({
   });
 
   const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
+  const { effectiveBacking, setBacking, canCreateWorktree, showRefPicker } = useWorkspaceBacking({
+    supportsMultiplicity: supportsWorkspaceMultiplicity,
+    selectedIsGit: checkoutStatusQuery.data?.isGit === true,
+  });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: ["branch-suggestions", serverId, selectedSourceDirectory, debouncedPickerSearchQuery],
@@ -942,13 +1093,14 @@ export function NewWorkspaceScreen({
 
   const handleSelectProjectOption = useCallback(
     (id: string) => {
-      const project = projectByOptionId.get(id);
-      if (!project?.canCreateWorktree) return;
+      // selectProjectOption enforces selectability (worktree-only when
+      // multiplicity is off, any project when it's on); don't re-gate here on
+      // canCreateWorktree or non-git projects become unselectable.
       selectProjectOption(id);
       setProjectPickerOpen(false);
       setManualPickerSelection(null);
     },
-    [projectByOptionId, selectProjectOption],
+    [selectProjectOption],
   );
 
   const checkoutHintPrAttachment = useMemo(
@@ -1046,17 +1198,45 @@ export function NewWorkspaceScreen({
       if (createdWorkspace) {
         return createdWorkspace;
       }
-      const normalizedWorkspace = await createAndMergeWorkspace({
-        client: withConnectedClient(),
-        createInput: buildCreateWorktreeInput(input),
-        mergeWorkspaces,
-        serverId,
-        createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
-      });
+      if (!selectedProject) {
+        throw new Error("Choose a project");
+      }
+      const normalizedWorkspace = supportsWorkspaceMultiplicity
+        ? await createMultiplicityWorkspace({
+            client: withConnectedClient(),
+            backing: effectiveBacking,
+            project: selectedProject,
+            selectedItem,
+            currentBranch,
+            title,
+            mergeWorkspaces,
+            serverId,
+            createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+          })
+        : await createAndMergeWorkspace({
+            client: withConnectedClient(),
+            createInput: buildCreateWorktreeInput(input),
+            mergeWorkspaces,
+            serverId,
+            createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+          });
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
     },
-    [buildCreateWorktreeInput, createdWorkspace, mergeWorkspaces, serverId, t, withConnectedClient],
+    [
+      buildCreateWorktreeInput,
+      createdWorkspace,
+      currentBranch,
+      effectiveBacking,
+      mergeWorkspaces,
+      selectedItem,
+      selectedProject,
+      serverId,
+      supportsWorkspaceMultiplicity,
+      t,
+      title,
+      withConnectedClient,
+    ],
   );
 
   const handleSubmitNewWorkspace = useCallback(
@@ -1173,12 +1353,12 @@ export function NewWorkspaceScreen({
           description={project.iconWorkingDir}
           selected={selected}
           active={active}
-          disabled={isPending || !project.canCreateWorktree}
+          disabled={isPending || (!supportsWorkspaceMultiplicity && !project.canCreateWorktree)}
           onPress={onPress}
         />
       );
     },
-    [isPending, projectByOptionId, projectIconDataByProjectKey],
+    [isPending, projectByOptionId, projectIconDataByProjectKey, supportsWorkspaceMultiplicity],
   );
 
   const contentStyle = useMemo(
@@ -1245,35 +1425,48 @@ export function NewWorkspaceScreen({
             renderOption={renderProjectOption}
           />
         </View>
-        <View>
-          <RefPickerTrigger
-            pickerAnchorRef={pickerAnchorRef}
-            onPress={openPicker}
-            disabled={isPending || !selectedSourceDirectory}
-            badgePressableStyle={badgePressableStyle}
-            selectedItem={selectedItem}
-            triggerLabel={triggerLabel}
-            accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
-            tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
-            iconColor={theme.colors.foregroundMuted}
-            iconSize={theme.iconSize.sm}
+        {supportsWorkspaceMultiplicity ? (
+          <WorkspaceBackingControls
+            backing={effectiveBacking}
+            onBackingChange={setBacking}
+            canCreateWorktree={canCreateWorktree}
+            title={title}
+            onTitleChange={setTitle}
+            disabled={isPending}
+            placeholderColor={theme.colors.foregroundMuted}
           />
-          <Combobox
-            options={options}
-            value={selectedOptionId}
-            onSelect={handleSelectOption}
-            searchable
-            searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
-            title={t("newWorkspace.refPicker.title")}
-            open={pickerOpen}
-            onOpenChange={handlePickerOpenChange}
-            onSearchQueryChange={setPickerSearchQuery}
-            desktopPlacement="bottom-start"
-            anchorRef={pickerAnchorRef}
-            emptyText={pickerEmptyText}
-            renderOption={renderPickerOption}
-          />
-        </View>
+        ) : null}
+        {showRefPicker ? (
+          <View>
+            <RefPickerTrigger
+              pickerAnchorRef={pickerAnchorRef}
+              onPress={openPicker}
+              disabled={isPending || !selectedSourceDirectory}
+              badgePressableStyle={badgePressableStyle}
+              selectedItem={selectedItem}
+              triggerLabel={triggerLabel}
+              accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
+              tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
+              iconColor={theme.colors.foregroundMuted}
+              iconSize={theme.iconSize.sm}
+            />
+            <Combobox
+              options={options}
+              value={selectedOptionId}
+              onSelect={handleSelectOption}
+              searchable
+              searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
+              title={t("newWorkspace.refPicker.title")}
+              open={pickerOpen}
+              onOpenChange={handlePickerOpenChange}
+              onSearchQueryChange={setPickerSearchQuery}
+              desktopPlacement="bottom-start"
+              anchorRef={pickerAnchorRef}
+              emptyText={pickerEmptyText}
+              renderOption={renderPickerOption}
+            />
+          </View>
+        ) : null}
         {agentControlsWithDisabled ? (
           <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
         ) : null}
@@ -1299,8 +1492,10 @@ export function NewWorkspaceScreen({
     [
       acceptCheckoutHint,
       badgePressableStyle,
+      canCreateWorktree,
       checkoutHintPrAttachment,
       dismissCheckoutHint,
+      effectiveBacking,
       handlePickerOpenChange,
       handleProjectPickerOpenChange,
       handleSelectOption,
@@ -1311,6 +1506,8 @@ export function NewWorkspaceScreen({
       options,
       pickerEmptyText,
       pickerOpen,
+      setBacking,
+      setTitle,
       projectPickerOpen,
       projectPickerOptions,
       projectTriggerLabel,
@@ -1323,6 +1520,9 @@ export function NewWorkspaceScreen({
       selectedProjectOptionId,
       selectedSourceDirectory,
       setPickerSearchQuery,
+      showRefPicker,
+      supportsWorkspaceMultiplicity,
+      title,
       agentControlsWithDisabled,
       t,
       theme.colors.foregroundMuted,
@@ -1349,6 +1549,7 @@ export function NewWorkspaceScreen({
               onSubmitMessage={handleSubmitNewWorkspace}
               allowEmptySubmit={true}
               submitButtonAccessibilityLabel={t("newWorkspace.create")}
+              submitButtonTestID="workspace-create-submit"
               submitIcon="return"
               isSubmitLoading={pendingAction !== null}
               submitBehavior="preserve-and-lock"
@@ -1424,6 +1625,16 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
     gap: theme.spacing[1],
+  },
+  titleInput: {
+    height: 28,
+    minWidth: 140,
+    maxWidth: 240,
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius["2xl"],
+    backgroundColor: theme.colors.surface1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   checkoutHintBadge: {
     flexDirection: "row",

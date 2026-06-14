@@ -842,6 +842,11 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
+    backing: {
+      local: "Локально",
+      worktree: "Новый worktree",
+    },
+    titlePlaceholder: "Название (необязательно)",
     errors: {
       hostDisconnected: "Host не подключен",
       createWorktreeFailed: "Не удалось создать рабочее дерево.",

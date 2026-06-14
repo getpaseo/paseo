@@ -1154,6 +1154,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceTitles: true,
         // COMPAT(workspaceProjects): added in v0.1.X, drop the gate when floor >= v0.1.X
         workspaceProjects: true,
+        // COMPAT(workspaceMultiplicity): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceMultiplicity: true,
       },
     };
   }

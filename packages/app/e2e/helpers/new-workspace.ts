@@ -190,6 +190,44 @@ export async function clickNewWorkspaceButton(
   await submitNewWorkspacePrompt(page, input.prompt);
 }
 
+export async function selectNewWorkspaceProject(
+  page: Page,
+  input: { projectKey: string; projectDisplayName: string },
+): Promise<void> {
+  const trigger = page.getByTestId("new-workspace-project-picker-trigger");
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.click();
+
+  const option = page.getByTestId(`new-workspace-project-picker-option-${input.projectKey}`);
+  await expect(option).toBeVisible({ timeout: 30_000 });
+  await option.click();
+
+  await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
+}
+
+export async function selectWorkspaceBacking(
+  page: Page,
+  backing: "local" | "worktree",
+): Promise<void> {
+  const control = page.getByTestId(`workspace-create-backing-${backing}`);
+  await expect(control).toBeVisible({ timeout: 30_000 });
+  await control.click();
+}
+
+export async function fillWorkspaceTitle(page: Page, title: string): Promise<void> {
+  const input = page.getByTestId("workspace-create-title-input");
+  await expect(input).toBeVisible({ timeout: 30_000 });
+  await input.fill(title);
+}
+
+export async function submitNewWorkspaceEmpty(page: Page): Promise<void> {
+  const createButton = page
+    .getByTestId("message-input-root")
+    .getByRole("button", { name: "Create" });
+  await expect(createButton).toBeVisible({ timeout: 30_000 });
+  await createButton.click();
+}
+
 export async function openStartingRefPicker(page: Page): Promise<void> {
   const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });

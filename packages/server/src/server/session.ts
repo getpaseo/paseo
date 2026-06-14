@@ -242,6 +242,7 @@ import {
 import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
 import {
   attemptFirstAgentBranchAutoName,
+  createLocalCheckoutWorkspace,
   createPaseoWorktree,
   type CreatePaseoWorktreeInput,
   type CreatePaseoWorktreeResult,
@@ -2175,6 +2176,8 @@ export class Session {
         return this.handleOpenProjectRequest(msg);
       case "archive_workspace_request":
         return this.handleArchiveWorkspaceRequest(msg);
+      case "workspace.create.request":
+        return this.handleWorkspaceCreateRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.title.set.request":
@@ -6594,7 +6597,8 @@ export class Session {
       workspaceDirectory: result.workspace.cwd,
       projectKind: "git",
       workspaceKind: result.workspace.kind,
-      name: result.worktree.branchName || result.workspace.displayName,
+      name: result.workspace.title || result.worktree.branchName || result.workspace.displayName,
+      title: result.workspace.title,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -7381,6 +7385,168 @@ export class Session {
         "Failed to register workspace for imported agent",
       );
     }
+  }
+
+  private async handleWorkspaceCreateRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+  ): Promise<void> {
+    try {
+      if (request.backing === "local") {
+        await this.handleWorkspaceCreateLocal(request);
+        return;
+      }
+      await this.handleWorkspaceCreateWorktree(request);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create workspace";
+      this.sessionLogger.error(
+        { err: error, backing: request.backing, requestId: request.requestId },
+        "Failed to create workspace",
+      );
+      this.emit({
+        type: "workspace.create.response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          setupTerminalId: null,
+          error: message,
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceCreateLocal(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+  ): Promise<void> {
+    if (!request.cwd) {
+      this.emit({
+        type: "workspace.create.response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          setupTerminalId: null,
+          error: "cwd is required for a local-backed workspace",
+          errorCode: "cwd_required",
+        },
+      });
+      return;
+    }
+
+    const cwd = expandTilde(request.cwd);
+    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+    if (!directoryExists) {
+      this.emit({
+        type: "workspace.create.response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          setupTerminalId: null,
+          error: `Directory not found: ${cwd}`,
+          errorCode: "directory_not_found",
+        },
+      });
+      return;
+    }
+
+    const workspace = await createLocalCheckoutWorkspace(
+      { cwd, title: request.title ?? null },
+      {
+        projectRegistry: this.projectRegistry,
+        workspaceRegistry: this.workspaceRegistry,
+        workspaceGitService: this.workspaceGitService,
+      },
+    );
+    await this.syncWorkspaceGitObserverForWorkspace(workspace);
+    const descriptor = await this.describeWorkspaceRecord(workspace);
+    this.emit({
+      type: "workspace.create.response",
+      payload: {
+        requestId: request.requestId,
+        workspace: descriptor,
+        setupTerminalId: null,
+        error: null,
+      },
+    });
+    await this.emitWorkspaceUpdateForCwd(workspace.cwd);
+    void this.workspaceGitService
+      .getSnapshot(workspace.cwd, { force: true, includeGitHub: true, reason: "open_project" })
+      .catch((error) => {
+        this.sessionLogger.warn(
+          { err: error, cwd: workspace.cwd },
+          "Background snapshot refresh failed after workspace.create",
+        );
+      });
+  }
+
+  private async handleWorkspaceCreateWorktree(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+  ): Promise<void> {
+    if (!request.cwd && !request.projectId) {
+      this.emit({
+        type: "workspace.create.response",
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          setupTerminalId: null,
+          error: "cwd or projectId is required for a worktree-backed workspace",
+          errorCode: "source_required",
+        },
+      });
+      return;
+    }
+
+    const sourceCwd = await this.resolveWorktreeSourceCwd({
+      cwd: request.cwd,
+      projectId: request.projectId,
+    });
+
+    const result = await this.createPaseoWorktreeWorkflow(
+      {
+        cwd: sourceCwd,
+        projectId: request.projectId,
+        worktreeSlug: request.branch,
+      },
+      request.baseBranch
+        ? { resolveDefaultBranch: async () => request.baseBranch as string }
+        : undefined,
+    );
+
+    if (request.title?.trim()) {
+      await this.workspaceRegistry.upsert({
+        ...result.workspace,
+        title: request.title.trim(),
+        updatedAt: new Date().toISOString(),
+      });
+      result.workspace.title = request.title.trim();
+    }
+
+    const descriptor = await this.describeCreatedWorktreeWorkspace(result);
+    this.emit({
+      type: "workspace.create.response",
+      payload: {
+        requestId: request.requestId,
+        workspace: descriptor,
+        setupTerminalId: null,
+        error: null,
+      },
+    });
+    this.emit({
+      type: "workspace_update",
+      payload: { kind: "upsert", workspace: descriptor },
+    });
+  }
+
+  private async resolveWorktreeSourceCwd(input: {
+    cwd?: string;
+    projectId?: string;
+  }): Promise<string> {
+    if (input.cwd) {
+      return expandTilde(input.cwd);
+    }
+    const project = await this.projectRegistry.get(input.projectId as string);
+    if (!project || project.archivedAt) {
+      throw new Error(`Project not found: ${input.projectId}`);
+    }
+    return project.rootPath;
   }
 
   private async handleOpenProjectRequest(

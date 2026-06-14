@@ -849,6 +849,11 @@ export const fr: TranslationResources = {
   newWorkspace: {
     title: "Nouvel espace de travail",
     create: "Créer",
+    backing: {
+      local: "Local",
+      worktree: "Nouveau worktree",
+    },
+    titlePlaceholder: "Titre (facultatif)",
     errors: {
       hostDisconnected: "Hostn'est pas connecté",
       createWorktreeFailed: "Échec de la création de l'arbre de travail",

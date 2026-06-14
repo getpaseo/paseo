@@ -815,6 +815,11 @@ export const zhCN: TranslationResources = {
   newWorkspace: {
     title: "新建 workspace",
     create: "创建",
+    backing: {
+      local: "本地",
+      worktree: "新建 worktree",
+    },
+    titlePlaceholder: "标题（可选）",
     errors: {
       hostDisconnected: "Host 未连接",
       createWorktreeFailed: "创建 worktree 失败",

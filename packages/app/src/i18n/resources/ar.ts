@@ -824,6 +824,11 @@ export const ar: TranslationResources = {
   newWorkspace: {
     title: "مساحة عمل جديدة",
     create: "يخلق",
+    backing: {
+      local: "محلي",
+      worktree: "شجرة عمل جديدة",
+    },
+    titlePlaceholder: "العنوان (اختياري)",
     errors: {
       hostDisconnected: "Host غير متصل",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
