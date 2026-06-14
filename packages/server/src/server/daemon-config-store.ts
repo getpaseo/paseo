@@ -218,7 +218,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       ...persisted.features,
       dictation: {
         ...persisted.features?.dictation,
-        transcriptionPrompt: mutable.dictationTranscriptionPrompt,
+        transcriptionPrompt: mutable.dictationTranscriptionPrompt || undefined,
       },
     },
     agents: nextAgents,

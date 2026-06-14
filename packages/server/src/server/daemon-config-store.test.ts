@@ -166,6 +166,30 @@ describe("DaemonConfigStore", () => {
     expect(persisted.features?.dictation?.transcriptionPrompt).toBe("Keep filler words.");
   });
 
+  test("omits empty dictationTranscriptionPrompt from features.dictation", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({ dictationTranscriptionPrompt: "Keep filler words." });
+    store.patch({ dictationTranscriptionPrompt: "" });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.features?.dictation?.transcriptionPrompt).toBeUndefined();
+  });
+
   test("patch persists provider additional models into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
