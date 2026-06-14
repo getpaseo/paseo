@@ -28,6 +28,9 @@ const ThemedPackagePlus = withUnistyles(PackagePlus);
 const ThemedSvgXml = withUnistyles(SvgXml);
 const ThemedSearch = withUnistyles(Search);
 const ThemedExternalLink = withUnistyles(ExternalLink);
+const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+}));
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -145,13 +148,12 @@ export function ProviderCatalogList({
         <View style={styles.searchIcon}>
           <ThemedSearch size={SEARCH_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
         </View>
-        <TextInput
+        <ThemedTextInput
           testID="provider-catalog-search"
           value={search}
           onChangeText={setSearch}
           accessibilityLabel={t("providerCatalog.search")}
           placeholder={t("providerCatalog.search")}
-          placeholderTextColor={styles.placeholderColor.color}
           // @ts-expect-error - outlineStyle is web-only
           style={SEARCH_INPUT_STYLE}
           autoCapitalize="none"
@@ -280,9 +282,6 @@ const styles = StyleSheet.create((theme) => ({
   stateText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  placeholderColor: {
-    color: theme.colors.foregroundMuted,
   },
 }));
 
