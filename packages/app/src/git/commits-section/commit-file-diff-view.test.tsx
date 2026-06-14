@@ -37,36 +37,23 @@ vi.mock("react-native", () => ({
     React.createElement("div", { "data-testid": testID }, children),
   Text: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
     React.createElement("span", { "data-testid": testID }, children),
-  ScrollView: ({ children }: { children?: React.ReactNode }) =>
-    React.createElement("div", {}, children),
 }));
 
-// The shared unified-line row has its own dedicated render test
-// (diff-unified-line-row.test.tsx). Here we mock it to keep this suite focused on
-// the commit view's own logic (building lines, gutter width, loading/empty
-// states) while still surfacing the gutter number and token text it forwards.
-vi.mock("@/git/diff-unified-line-row", () => ({
-  DiffUnifiedLineRow: ({
-    line,
-    lineNumber,
-  }: {
-    line: { tokens?: { text: string }[]; content: string };
-    lineNumber: number | null;
-  }) =>
-    React.createElement(
-      "div",
-      {},
-      React.createElement("span", {}, lineNumber === null ? "" : String(lineNumber)),
-      React.createElement(
-        "span",
-        {},
-        line.tokens ? line.tokens.map((token) => token.text).join("") : line.content,
-      ),
-    ),
+// DiffFileBody is the shared body renderer that the Changes panel also uses; it
+// has its own dedicated render test (diff-file-body.test.tsx). Here we mock it to
+// keep this suite focused on the commit view's own logic (loading/empty/error
+// states and that a real ParsedDiffFile is forwarded with the resolved props).
+const { lastDiffFileBodyProps } = vi.hoisted(() => ({
+  lastDiffFileBodyProps: {
+    value: null as Record<string, unknown> | null,
+  },
 }));
 
-vi.mock("@/styles/unistyles-inline-style", () => ({
-  inlineUnistylesStyle: (style: Record<string, unknown>) => style,
+vi.mock("@/git/diff-file-body", () => ({
+  DiffFileBody: (props: { file: { path: string } }) => {
+    lastDiffFileBodyProps.value = props;
+    return React.createElement("div", { "data-testid": "diff-file-body" }, props.file.path);
+  },
 }));
 
 vi.mock("react-native-unistyles", () => ({
@@ -87,6 +74,16 @@ vi.mock("@/components/ui/loading-spinner", () => ({
 
 vi.mock("@/hooks/use-settings", () => ({
   useAppSettings: () => ({ settings: { codeFontSize: 12 } }),
+}));
+
+vi.mock("@/hooks/use-changes-preferences", () => ({
+  useChangesPreferences: () => ({
+    preferences: { wrapLines: false, layout: "unified", fileView: "list", hideWhitespace: false },
+  }),
+}));
+
+vi.mock("@/constants/layout", () => ({
+  useIsCompactFormFactor: () => false,
 }));
 
 vi.mock("@/constants/platform", () => ({ isNative: false, isWeb: true }));
@@ -154,6 +151,7 @@ describe("CommitFileDiffView", () => {
     root = null;
     container = null;
     commitFileDiff.value = null;
+    lastDiffFileBodyProps.value = null;
     vi.unstubAllGlobals();
   });
 
@@ -165,15 +163,20 @@ describe("CommitFileDiffView", () => {
     });
   }
 
-  it("renders highlighted token text and the gutter line number", () => {
-    commitFileDiff.value = { file: makeFile(), isLoading: false, error: null };
+  it("renders the diff through the shared DiffFileBody with resolved props", () => {
+    const file = makeFile();
+    commitFileDiff.value = { file, isLoading: false, error: null };
     render();
 
-    // Syntax-highlighted tokens render as separate spans whose combined text is the line.
-    expect(container?.textContent).toContain("const");
-    expect(container?.textContent).toContain("greeting = 1");
-    // The gutter shows the new-side line number for an added line.
-    expect(container?.textContent).toContain("1");
+    // The shared body renderer is used (pixel-identical to the Changes panel).
+    expect(container?.querySelector('[data-testid="diff-file-body"]')).not.toBeNull();
+    // The real ParsedDiffFile is forwarded along with the resolved layout/wrap/font props.
+    expect(lastDiffFileBodyProps.value?.file).toBe(file);
+    expect(lastDiffFileBodyProps.value?.layout).toBe("unified");
+    expect(lastDiffFileBodyProps.value?.wrapLines).toBe(false);
+    expect(lastDiffFileBodyProps.value?.codeFontSize).toBe(12);
+    // The per-commit view has no inline-review affordances.
+    expect(lastDiffFileBodyProps.value?.reviewActions).toBeUndefined();
   });
 
   it("shows the loading spinner while loading", () => {
@@ -181,14 +184,22 @@ describe("CommitFileDiffView", () => {
     render();
 
     expect(container?.querySelector('[data-icon="spinner"]')).not.toBeNull();
+    expect(container?.querySelector('[data-testid="diff-file-body"]')).toBeNull();
   });
 
-  it("shows the empty message when there are no diff lines", () => {
-    const file = makeFile();
-    file.hunks = [];
-    commitFileDiff.value = { file, isLoading: false, error: null };
+  it("shows the empty message when there is no file", () => {
+    commitFileDiff.value = { file: null, isLoading: false, error: null };
     render();
 
     expect(container?.textContent).toContain("workspace.git.diff.commits.fileDiffEmpty");
+    expect(container?.querySelector('[data-testid="diff-file-body"]')).toBeNull();
+  });
+
+  it("shows the error message on error", () => {
+    commitFileDiff.value = { file: null, isLoading: false, error: new Error("boom") };
+    render();
+
+    expect(container?.textContent).toContain("workspace.git.diff.commits.fileDiffError");
+    expect(container?.querySelector('[data-testid="diff-file-body"]')).toBeNull();
   });
 });
