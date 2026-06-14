@@ -55,7 +55,7 @@ vi.mock("@/components/diff-scroll", () => ({
     React.createElement("div", { "data-testid": "diff-scroll" }, children),
 }));
 
-vi.mock("@/git/diff-unified-line-row", () => ({
+vi.mock("./unified-line-row", () => ({
   DiffUnifiedLineRow: ({ lineNumber }: { lineNumber: number | null }) =>
     React.createElement("div", { "data-testid": "unified-row" }, String(lineNumber ?? "")),
   DiffGutterCell: ({ lineNumber }: { lineNumber: number | null }) =>
@@ -75,7 +75,7 @@ vi.mock("@/git/diff-unified-line-row", () => ({
   },
 }));
 
-vi.mock("@/git/diff-highlighted-text", () => ({
+vi.mock("./highlighted-text", () => ({
   HighlightedText: ({ tokens }: { tokens: { text: string }[] }) =>
     React.createElement("span", {}, tokens.map((token) => token.text).join("")),
   getWrappedTextStyle: () => ({}),
@@ -87,7 +87,7 @@ vi.mock("@/review", () => ({
   InlineReviewThread: () => null,
 }));
 
-import { DiffFileBody } from "./diff-file-body";
+import { DiffFileBody } from "./index";
 
 function makeFile(overrides: Partial<ParsedDiffFile> = {}): ParsedDiffFile {
   return {

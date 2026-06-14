@@ -31,7 +31,7 @@ vi.mock("react-native-unistyles", () => ({
 
 vi.mock("@/constants/platform", () => ({ isNative: false }));
 
-import { HighlightedText } from "./diff-highlighted-text";
+import { HighlightedText } from "./highlighted-text";
 
 describe("HighlightedText", () => {
   let root: Root | null = null;

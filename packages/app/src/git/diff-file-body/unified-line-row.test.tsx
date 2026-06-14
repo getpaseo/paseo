@@ -98,7 +98,7 @@ vi.mock("@/review", () => ({
   isInlineReviewEditorForTarget: () => false,
 }));
 
-import { DiffUnifiedLineRow } from "./diff-unified-line-row";
+import { DiffUnifiedLineRow } from "./unified-line-row";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import type { InlineReviewActions } from "@/review";
 

@@ -4,14 +4,14 @@ import { View, Text, type LayoutChangeEvent, type StyleProp, type ViewStyle } fr
 import { StyleSheet } from "react-native-unistyles";
 import type { ParsedDiffFile, DiffLine } from "@/git/use-diff-query";
 import { DiffScroll } from "@/components/diff-scroll";
-import { HighlightedText, getWrappedTextStyle } from "@/git/diff-highlighted-text";
+import { HighlightedText, getWrappedTextStyle } from "./highlighted-text";
 import {
   DiffGutterCell,
   DiffUnifiedLineRow,
   LongPressableLine,
   lineTypeBackground,
   styles as lineRowStyles,
-} from "@/git/diff-unified-line-row";
+} from "./unified-line-row";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import {
   buildSplitDiffRows,

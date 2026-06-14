@@ -3,7 +3,7 @@ import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-nat
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
 import type { DiffLine } from "@/git/use-diff-query";
-import { HighlightedText, getWrappedTextStyle } from "@/git/diff-highlighted-text";
+import { HighlightedText, getWrappedTextStyle } from "./highlighted-text";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import {
   formatDiffContentText,
