@@ -956,6 +956,8 @@ export class VoiceAssistantWebSocketServer {
               finalTimeoutMs: this.dictation?.finalTimeoutMs,
               stt: () => this.speech?.resolveDictationStt() ?? null,
               sttLanguage: this.speech?.resolveDictationSttLanguage() ?? "en",
+              transcriptionPrompt:
+                this.daemonConfigStore.get().dictationTranscriptionPrompt || undefined,
               getSpeechReadiness: () => this.speech!.getReadiness(),
             }
           : undefined,
@@ -1103,6 +1105,8 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
+        // COMPAT(dictationTranscriptionPrompt): added in v0.1.96, remove gate after 2026-12-13.
+        dictationTranscriptionPrompt: true,
       },
     };
   }
