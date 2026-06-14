@@ -185,7 +185,10 @@ function StatusGroupList({
         <View key={group.bucket} style={styles.statusGroupBlock}>
           <StatusGroupHeader group={group} collapsed={collapsedStatusGroupKeys.has(group.bucket)} />
           {!collapsedStatusGroupKeys.has(group.bucket) ? (
-            <View style={styles.statusWorkspaceListContainer}>
+            <View
+              style={styles.statusWorkspaceListContainer}
+              testID={`sidebar-status-group-rows-${group.bucket}`}
+            >
               {group.rows.map((workspace) => (
                 <StatusWorkspaceRow
                   key={workspace.workspaceKey}

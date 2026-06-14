@@ -2350,8 +2350,8 @@ describe("archivePaseoWorktree", () => {
       },
     );
 
-    // Default (false): the directory survives and last-reference resolution is skipped.
+    // Default (false): the directory survives. The explicit workspaceId is
+    // resolved by path, so no last-reference deletion runs.
     expect(existsSync(created.worktreePath)).toBe(true);
-    expect(listActiveWorkspaces).not.toHaveBeenCalled();
   });
 });

@@ -71,13 +71,7 @@ import {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-  useContextMenu,
-} from "@/components/ui/context-menu";
+import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -1647,217 +1641,6 @@ function WorkspaceRowWithMenu({
   );
 }
 
-function NonGitProjectRowWithMenuContent({
-  project,
-  displayName,
-  iconDataUri,
-  workspace,
-  selected,
-  onPress,
-  shortcutNumber,
-  showShortcutBadge,
-  drag,
-  isDragging,
-  dragHandleProps,
-}: {
-  project: SidebarProjectEntry;
-  displayName: string;
-  iconDataUri: string | null;
-  workspace: SidebarWorkspaceEntry;
-  selected: boolean;
-  onPress: () => void;
-  shortcutNumber: number | null;
-  showShortcutBadge: boolean;
-  drag: () => void;
-  isDragging: boolean;
-  dragHandleProps?: DraggableListDragHandleProps;
-}) {
-  const { t } = useTranslation();
-  const contextMenu = useContextMenu();
-  const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
-  const redirectAfterArchive = useCallback(() => {
-    redirectIfArchivingActiveWorkspace({
-      serverId: workspace.serverId,
-      workspaceId: workspace.workspaceId,
-      activeWorkspaceSelection: selectionForSelectedWorkspace(selected, workspace),
-    });
-  }, [selected, workspace]);
-
-  const archiveController = useWorkspaceArchive({
-    workspace,
-    onArchiveStarted: redirectAfterArchive,
-    onSetHiding: setIsArchivingWorkspace,
-  });
-
-  const handleArchiveWorkspace = useCallback(() => {
-    if (isArchivingWorkspace) {
-      return;
-    }
-    archiveController.beginArchive();
-  }, [archiveController, isArchivingWorkspace]);
-
-  return (
-    <>
-      <ProjectHeaderRow
-        project={project}
-        displayName={displayName}
-        iconDataUri={iconDataUri}
-        workspace={workspace}
-        selected={selected}
-        chevron={null}
-        onPress={onPress}
-        serverId={null}
-        canCreateWorktree={false}
-        shortcutNumber={shortcutNumber}
-        showShortcutBadge={showShortcutBadge}
-        drag={drag}
-        isDragging={isDragging}
-        isArchiving={isArchivingWorkspace}
-        menuController={contextMenu}
-        dragHandleProps={dragHandleProps}
-      />
-      <ContextMenuContent
-        align="start"
-        width={220}
-        mobileMode="sheet"
-        testID={`sidebar-workspace-context-${workspace.workspaceKey}`}
-      >
-        <ContextMenuItem
-          testID={`sidebar-workspace-context-${workspace.workspaceKey}-archive`}
-          status={isArchivingWorkspace ? "pending" : "idle"}
-          pendingLabel={t("sidebar.workspace.actions.archiving")}
-          destructive
-          onSelect={handleArchiveWorkspace}
-        >
-          {t("sidebar.workspace.actions.archive")}
-        </ContextMenuItem>
-      </ContextMenuContent>
-      <WorktreeDeletePrompt
-        visible={archiveController.deletePromptOpen}
-        workspaceName={workspace.name}
-        onKeep={archiveController.confirmKeepOnDisk}
-        onDelete={archiveController.confirmDeleteFromDisk}
-        onCancel={archiveController.cancelDeletePrompt}
-      />
-    </>
-  );
-}
-
-function NonGitProjectRowWithMenu(props: {
-  project: SidebarProjectEntry;
-  displayName: string;
-  iconDataUri: string | null;
-  workspace: SidebarWorkspaceEntry;
-  selected: boolean;
-  onPress: () => void;
-  shortcutNumber: number | null;
-  showShortcutBadge: boolean;
-  drag: () => void;
-  isDragging: boolean;
-  dragHandleProps?: DraggableListDragHandleProps;
-}) {
-  return (
-    <ContextMenu>
-      <NonGitProjectRowWithMenuContent {...props} />
-    </ContextMenu>
-  );
-}
-
-function FlattenedProjectRow({
-  project,
-  displayName,
-  iconDataUri,
-  rowModel,
-  onPress,
-  serverId,
-  onWorkspacePress,
-  onWorktreeCreated,
-  shortcutNumber,
-  showShortcutBadge,
-  drag,
-  isDragging,
-  dragHandleProps,
-  isProjectActive = false,
-  onRemoveProject,
-  removeProjectStatus,
-  selectionEnabled,
-  activeWorkspaceSelection,
-}: {
-  project: SidebarProjectEntry;
-  displayName: string;
-  iconDataUri: string | null;
-  rowModel: Extract<ReturnType<typeof buildSidebarProjectRowModel>, { kind: "workspace_link" }>;
-  onPress: () => void;
-  serverId: string | null;
-  onWorkspacePress?: () => void;
-  onWorktreeCreated?: (workspaceId: string) => void;
-  shortcutNumber: number | null;
-  showShortcutBadge: boolean;
-  drag: () => void;
-  isDragging: boolean;
-  dragHandleProps?: DraggableListDragHandleProps;
-  isProjectActive?: boolean;
-  onRemoveProject?: () => void;
-  removeProjectStatus?: "idle" | "pending";
-  selectionEnabled: boolean;
-  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
-}) {
-  const workspace = useSidebarWorkspaceEntry(serverId, rowModel.workspace.workspaceId);
-  const selected = isWorkspaceSelected({
-    selection: activeWorkspaceSelection,
-    serverId,
-    workspaceId: rowModel.workspace.workspaceId,
-    enabled: selectionEnabled,
-  });
-
-  if (!workspace) {
-    return null;
-  }
-
-  if (project.projectKind === "directory") {
-    return (
-      <NonGitProjectRowWithMenu
-        project={project}
-        displayName={displayName}
-        iconDataUri={iconDataUri}
-        workspace={workspace}
-        selected={selected}
-        onPress={onPress}
-        shortcutNumber={shortcutNumber}
-        showShortcutBadge={showShortcutBadge}
-        drag={drag}
-        isDragging={isDragging}
-        dragHandleProps={dragHandleProps}
-      />
-    );
-  }
-
-  return (
-    <ProjectHeaderRow
-      project={project}
-      displayName={displayName}
-      iconDataUri={iconDataUri}
-      workspace={workspace}
-      selected={selected}
-      chevron={rowModel.chevron}
-      onPress={onPress}
-      serverId={serverId}
-      canCreateWorktree={rowModel.trailingAction === "new_worktree"}
-      isProjectActive={isProjectActive}
-      onWorkspacePress={onWorkspacePress}
-      onWorktreeCreated={onWorktreeCreated}
-      shortcutNumber={shortcutNumber}
-      showShortcutBadge={showShortcutBadge}
-      drag={drag}
-      isDragging={isDragging}
-      menuController={null}
-      onRemoveProject={onRemoveProject}
-      removeProjectStatus={removeProjectStatus}
-      dragHandleProps={dragHandleProps}
-    />
-  );
-}
-
 interface WorkspaceRowItemProps {
   workspace: SidebarWorkspaceEntry;
   shortcutNumber: number | null;
@@ -1994,7 +1777,7 @@ function WorkspaceRow({
   );
 }
 
-function EmptyProjectNewWorkspaceRow({
+function ProjectNewWorkspaceRow({
   project,
   displayName,
   serverId,
@@ -2038,7 +1821,7 @@ function EmptyProjectNewWorkspaceRow({
         })}
         style={rowStyle}
         onPress={handlePress}
-        testID={`sidebar-project-empty-${project.projectKey}`}
+        testID={`sidebar-project-new-workspace-${project.projectKey}`}
       >
         <Plus size={14} color="#9ca3af" />
         <Text style={styles.emptyProjectRowText} numberOfLines={1}>
@@ -2208,93 +1991,58 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, serverId, displayName, t, toast, project.workspaces]);
 
-  const flattenedRowWorkspaceId =
-    rowModel.kind === "workspace_link" ? rowModel.workspace.workspaceId : null;
-  const handleFlattenedRowPress = useCallback(() => {
-    if (!serverId || !flattenedRowWorkspaceId) {
-      return;
-    }
-    onWorkspacePress?.();
-    navigateToWorkspace(serverId, flattenedRowWorkspaceId);
-  }, [serverId, flattenedRowWorkspaceId, onWorkspacePress]);
-
   const handleToggleCollapsed = useCallback(() => {
     onToggleCollapsed(project.projectKey);
   }, [onToggleCollapsed, project.projectKey]);
 
   return (
     <View style={styles.projectBlock}>
-      {rowModel.kind === "workspace_link" ? (
-        <FlattenedProjectRow
+      <ProjectHeaderRow
+        project={project}
+        displayName={displayName}
+        iconDataUri={iconDataUri}
+        workspace={null}
+        selected={false}
+        chevron={rowModel.chevron}
+        onPress={handleToggleCollapsed}
+        serverId={serverId}
+        canCreateWorktree={rowModel.trailingAction === "new_worktree"}
+        isProjectActive={active}
+        onWorkspacePress={onWorkspacePress}
+        onWorktreeCreated={onWorktreeCreated}
+        drag={drag}
+        isDragging={isDragging}
+        isArchiving={isRemovingProject}
+        menuController={null}
+        onRemoveProject={handleRemoveProject}
+        removeProjectStatus={isRemovingProject ? "pending" : "idle"}
+        dragHandleProps={dragHandleProps}
+      />
+
+      {!collapsed && project.workspaces.length > 0 ? (
+        <DraggableList
+          testID={`sidebar-workspace-list-${project.projectKey}`}
+          data={project.workspaces}
+          keyExtractor={workspaceKeyExtractor}
+          renderItem={renderWorkspace}
+          onDragEnd={handleWorkspaceDragEnd}
+          extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+          scrollEnabled={false}
+          useDragHandle
+          nestable={useNestable}
+          simultaneousGestureRef={parentGestureRef}
+          containerStyle={styles.workspaceListContainer}
+        />
+      ) : null}
+
+      {!collapsed ? (
+        <ProjectNewWorkspaceRow
           project={project}
           displayName={displayName}
-          iconDataUri={iconDataUri}
-          rowModel={rowModel}
-          onPress={handleFlattenedRowPress}
           serverId={serverId}
           onWorkspacePress={onWorkspacePress}
-          onWorktreeCreated={onWorktreeCreated}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(rowModel.workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          drag={drag}
-          isDragging={isDragging}
-          dragHandleProps={dragHandleProps}
-          isProjectActive={active}
-          onRemoveProject={handleRemoveProject}
-          removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
         />
-      ) : (
-        <>
-          <ProjectHeaderRow
-            project={project}
-            displayName={displayName}
-            iconDataUri={iconDataUri}
-            workspace={null}
-            selected={false}
-            chevron={rowModel.chevron}
-            onPress={handleToggleCollapsed}
-            serverId={serverId}
-            canCreateWorktree={rowModel.trailingAction === "new_worktree"}
-            isProjectActive={active}
-            onWorkspacePress={onWorkspacePress}
-            onWorktreeCreated={onWorktreeCreated}
-            drag={drag}
-            isDragging={isDragging}
-            isArchiving={isRemovingProject}
-            menuController={null}
-            onRemoveProject={handleRemoveProject}
-            removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-            dragHandleProps={dragHandleProps}
-          />
-
-          {!collapsed && project.workspaces.length === 0 ? (
-            <EmptyProjectNewWorkspaceRow
-              project={project}
-              displayName={displayName}
-              serverId={serverId}
-              onWorkspacePress={onWorkspacePress}
-            />
-          ) : null}
-
-          {!collapsed && project.workspaces.length > 0 ? (
-            <DraggableList
-              testID={`sidebar-workspace-list-${project.projectKey}`}
-              data={project.workspaces}
-              keyExtractor={workspaceKeyExtractor}
-              renderItem={renderWorkspace}
-              onDragEnd={handleWorkspaceDragEnd}
-              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-              scrollEnabled={false}
-              useDragHandle
-              nestable={useNestable}
-              simultaneousGestureRef={parentGestureRef}
-              containerStyle={styles.workspaceListContainer}
-            />
-          ) : null}
-        </>
-      )}
+      ) : null}
     </View>
   );
 }

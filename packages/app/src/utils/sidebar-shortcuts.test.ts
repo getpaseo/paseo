@@ -120,7 +120,7 @@ describe("buildSidebarShortcutModel", () => {
     expect(model.shortcutTargets[8]).toEqual({ serverId: "s", workspaceId: "ws-9" });
   });
 
-  it("still excludes collapsed single-workspace git projects because they are not flattened", () => {
+  it("excludes collapsed single-workspace git projects", () => {
     const projects = [
       project("p1", [
         workspace({
@@ -134,6 +134,26 @@ describe("buildSidebarShortcutModel", () => {
 
     const model = buildSidebarShortcutModel({
       projects,
+      collapsedProjectKeys: new Set<string>(["p1"]),
+    });
+
+    expect(model.shortcutTargets).toEqual([]);
+  });
+
+  it("excludes collapsed non-git projects", () => {
+    const nonGit = project("p1", [
+      workspace({
+        serverId: "s1",
+        workspaceId: "ws-script",
+        workspaceDirectory: "/scripts",
+        name: "scripts",
+      }),
+    ]);
+    nonGit.projectKind = "directory";
+    nonGit.canCreateWorktree = false;
+
+    const model = buildSidebarShortcutModel({
+      projects: [nonGit],
       collapsedProjectKeys: new Set<string>(["p1"]),
     });
 

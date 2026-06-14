@@ -190,9 +190,12 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
-      // A non-git project with a single workspace is flattened: the project row
-      // IS the workspace link, so no separate workspace row exists yet.
+      // Model B: a non-git project is an expandable parent like any other, with
+      // its single workspace already rendered as its own row underneath.
       await expect(page.getByTestId(`sidebar-project-row-${seeded.projectId}`)).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId(workspaceRowTestId(seeded.workspaceId))).toBeVisible({
         timeout: 30_000,
       });
 
@@ -207,8 +210,8 @@ test.describe("Workspace multiplicity creation flow", () => {
       expect(second.workspaceId).not.toBe(seeded.workspaceId);
       expect(second.workspaceDirectory).toBe(seeded.workspaceDirectory);
 
-      // With two workspaces the project becomes an expandable section: both the
-      // original and the new workspace now render as distinct rows under it.
+      // Both the original and the new workspace render as distinct rows under
+      // the same expandable parent.
       await expect(page.getByTestId(`sidebar-project-row-${seeded.projectId}`)).toBeVisible({
         timeout: 30_000,
       });

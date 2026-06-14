@@ -3210,6 +3210,7 @@ export class DaemonClient {
       worktreePath?: string;
       repoRoot?: string;
       branchName?: string;
+      workspaceId?: string;
       deleteWorktreeFromDisk?: boolean;
     },
     requestId?: string,
@@ -3221,6 +3222,7 @@ export class DaemonClient {
         worktreePath: input.worktreePath,
         repoRoot: input.repoRoot,
         branchName: input.branchName,
+        ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
         ...(input.deleteWorktreeFromDisk !== undefined
           ? { deleteWorktreeFromDisk: input.deleteWorktreeFromDisk }
           : {}),

@@ -55,7 +55,9 @@ test.describe("Empty project persists", () => {
       });
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
 
-      const newWorkspaceRow = page.getByTestId(`sidebar-project-empty-${workspace.projectId}`);
+      const newWorkspaceRow = page.getByTestId(
+        `sidebar-project-new-workspace-${workspace.projectId}`,
+      );
       await expect(newWorkspaceRow).toBeVisible({ timeout: 30_000 });
       await expect(newWorkspaceRow).toContainText(/new workspace/i);
 
@@ -64,7 +66,9 @@ test.describe("Empty project persists", () => {
       await page.reload();
       await waitForSidebarHydration(page);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByTestId(`sidebar-project-empty-${workspace.projectId}`)).toBeVisible({
+      await expect(
+        page.getByTestId(`sidebar-project-new-workspace-${workspace.projectId}`),
+      ).toBeVisible({
         timeout: 30_000,
       });
     } finally {

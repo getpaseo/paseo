@@ -14,6 +14,12 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 
+export interface ActiveWorkspaceRef {
+  workspaceId: string;
+  cwd: string;
+  kind?: "local_checkout" | "worktree" | "directory";
+}
+
 export interface ArchivePaseoWorktreeDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
@@ -23,8 +29,10 @@ export interface ArchivePaseoWorktreeDependencies {
   agentStorage: Pick<AgentStorage, "list">;
   resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   // Active (non-archived) workspaces, used to decide whether the workspace being
-  // archived is the last reference to its backing worktree directory.
-  listActiveWorkspaces: () => Promise<Array<{ workspaceId: string; cwd: string }>>;
+  // archived is the last reference to its backing worktree directory, and to
+  // break a same-cwd tie in favor of the worktree-kind record when archiving by
+  // path (no explicit workspaceId).
+  listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -55,6 +63,7 @@ export async function archivePaseoWorktree(
     repoRoot: string | null;
     worktreesRoot?: string;
     worktreesBaseRoot?: string;
+    workspaceId?: string;
     deleteWorktreeFromDisk?: boolean;
     requestId: string;
   },
@@ -68,7 +77,12 @@ export async function archivePaseoWorktree(
     targetPath = resolvedWorktree.worktreePath;
   }
 
-  const targetWorkspaceId = await dependencies.resolveWorkspaceIdForCwd(targetPath);
+  // A directory can back multiple workspaces (Model B), so resolving the target
+  // by cwd alone picks an arbitrary record. Prefer the explicit workspaceId the
+  // caller supplied; otherwise resolve by path, breaking a same-cwd tie toward
+  // the worktree-kind record.
+  const targetWorkspaceId =
+    options.workspaceId ?? (await resolveTargetWorkspaceId(dependencies, targetPath));
   if (!targetWorkspaceId) {
     dependencies.sessionLogger?.warn(
       { targetPath },
@@ -127,6 +141,28 @@ export async function archivePaseoWorktree(
   }
 
   return Array.from(archivedAgents);
+}
+
+// Resolves the workspace record to archive when no explicit workspaceId was
+// supplied. When several active workspaces share the exact target cwd, prefer
+// the worktree-kind record so archiving-by-path tears down the worktree rather
+// than an arbitrary sibling. Falls back to the path-based resolver otherwise.
+async function resolveTargetWorkspaceId(
+  dependencies: Pick<
+    ArchivePaseoWorktreeDependencies,
+    "resolveWorkspaceIdForCwd" | "listActiveWorkspaces"
+  >,
+  targetPath: string,
+): Promise<string | null> {
+  const targetDir = resolve(targetPath);
+  const exactMatches = (await dependencies.listActiveWorkspaces()).filter(
+    (workspace) => resolve(workspace.cwd) === targetDir,
+  );
+  const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
+  if (worktreeMatch) {
+    return worktreeMatch.workspaceId;
+  }
+  return dependencies.resolveWorkspaceIdForCwd(targetPath);
 }
 
 export type ArchiveWorkspaceContentsDependencies = Pick<

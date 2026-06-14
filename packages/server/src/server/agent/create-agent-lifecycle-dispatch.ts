@@ -3,7 +3,10 @@ import type pino from "pino";
 
 import type { GitHubService } from "../../services/github-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
-import { archivePaseoWorktree } from "../paseo-worktree-archive-service.js";
+import {
+  type ActiveWorkspaceRef,
+  archivePaseoWorktree,
+} from "../paseo-worktree-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -27,7 +30,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
   resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
-  listActiveWorkspaces: () => Promise<Array<{ workspaceId: string; cwd: string }>>;
+  listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => void;

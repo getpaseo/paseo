@@ -289,6 +289,10 @@ describe("archiveIfSafe", () => {
         targetPath: CWD,
         repoRoot: "/tmp/repo",
         worktreesRoot: WORKTREES_ROOT,
+        // A merged worktree is the last reference to its directory; remove it from
+        // disk so merged worktrees do not accumulate. Sibling protection still
+        // happens inside the service (last-reference + ownership gated).
+        deleteWorktreeFromDisk: true,
         requestId: "auto-archive-on-merge",
       },
     );

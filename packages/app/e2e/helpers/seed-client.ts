@@ -24,6 +24,17 @@ export interface SeedDaemonClient {
     } | null;
     error: string | null;
   }>;
+  createWorkspace(input: {
+    backing: "local" | "worktree";
+    cwd?: string;
+    projectId?: string;
+    branch?: string;
+    baseBranch?: string;
+    title?: string;
+  }): Promise<{
+    workspace: { id: string; name: string } | null;
+    error: string | null;
+  }>;
   createTerminal(
     cwd: string,
     name?: string,

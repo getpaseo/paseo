@@ -259,7 +259,10 @@ import {
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
-import { archiveWorkspaceContents } from "./paseo-worktree-archive-service.js";
+import {
+  type ActiveWorkspaceRef,
+  archiveWorkspaceContents,
+} from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
@@ -6936,11 +6939,15 @@ export class Session {
     return result;
   }
 
-  private async listActiveWorkspaceRefs(): Promise<Array<{ workspaceId: string; cwd: string }>> {
+  private async listActiveWorkspaceRefs(): Promise<ActiveWorkspaceRef[]> {
     const workspaces = await this.workspaceRegistry.list();
     return workspaces
       .filter((workspace) => !workspace.archivedAt)
-      .map((workspace) => ({ workspaceId: workspace.workspaceId, cwd: workspace.cwd }));
+      .map((workspace) => ({
+        workspaceId: workspace.workspaceId,
+        cwd: workspace.cwd,
+        kind: workspace.kind,
+      }));
   }
 
   private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {

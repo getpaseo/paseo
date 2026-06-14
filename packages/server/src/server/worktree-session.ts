@@ -453,6 +453,7 @@ export async function handlePaseoWorktreeArchiveRequest(
       worktreePath: msg.worktreePath,
       repoRoot: msg.repoRoot,
       branchName: msg.branchName,
+      workspaceId: msg.workspaceId,
       deleteWorktreeFromDisk: msg.deleteWorktreeFromDisk,
     });
     if (!result.ok) {

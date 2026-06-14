@@ -84,6 +84,7 @@ export function useWorkspaceArchive(input: {
         serverId: workspace.serverId,
         cwd: archiveDirectory,
         worktreePath: archiveDirectory,
+        workspaceId: workspace.workspaceId,
         deleteWorktreeFromDisk,
       }).catch((error) => {
         toast.error(

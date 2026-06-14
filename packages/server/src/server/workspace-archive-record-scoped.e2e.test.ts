@@ -212,6 +212,50 @@ test("archiving the last reference to a worktree honors deleteWorktreeFromDisk",
   await expect.poll(() => existsSync(deleteDir), { timeout: 10000, interval: 100 }).toBe(false);
 }, 60000);
 
+test("worktree archive targets the explicit workspaceId when a directory backs multiple workspaces", async () => {
+  const repoDir = createGitRepo();
+
+  const worktreeResult = await ctx.client.createWorkspace({
+    backing: "worktree",
+    cwd: repoDir,
+    branch: "targeted-worktree",
+    baseBranch: "main",
+  });
+  const worktreeWorkspace = worktreeResult.workspace;
+  if (!worktreeWorkspace?.workspaceDirectory) {
+    throw new Error(worktreeResult.error ?? "Failed to create worktree workspace");
+  }
+  const worktreeDir = worktreeWorkspace.workspaceDirectory;
+
+  // A local workspace records the SAME directory as its cwd. Resolving the
+  // archive target by cwd alone is ambiguous; the explicit workspaceId must win.
+  const localWorkspaceId = await createLocalWorkspace(worktreeDir, "local-sibling");
+  expect(localWorkspaceId).not.toBe(worktreeWorkspace.id);
+
+  const archive = await ctx.client.archivePaseoWorktree({
+    worktreePath: worktreeDir,
+    workspaceId: localWorkspaceId,
+  });
+  expect(archive.success).toBe(true);
+
+  // Exactly the targeted workspace is archived; the worktree-backed sibling stays.
+  await expect
+    .poll(async () => (await activeWorkspaceIds()).has(localWorkspaceId), {
+      timeout: 10000,
+      interval: 100,
+    })
+    .toBe(false);
+  const remaining = await activeWorkspaceIds();
+  expect(remaining.has(localWorkspaceId)).toBe(false);
+  expect(remaining.has(worktreeWorkspace.id)).toBe(true);
+  expect(existsSync(worktreeDir)).toBe(true);
+
+  await ctx.client.archivePaseoWorktree({
+    worktreePath: worktreeDir,
+    workspaceId: worktreeWorkspace.id,
+  });
+}, 60000);
+
 test("deleteWorktreeFromDisk keeps the worktree when a sibling workspace still references it", async () => {
   const repoDir = createGitRepo();
 

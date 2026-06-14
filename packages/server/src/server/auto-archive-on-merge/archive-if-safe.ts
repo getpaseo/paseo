@@ -4,6 +4,7 @@ import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
+  type ActiveWorkspaceRef,
   archivePaseoWorktree,
   killTerminalsForWorkspace,
 } from "../paseo-worktree-archive-service.js";
@@ -25,7 +26,7 @@ export interface AutoArchiveArchiveOptions {
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
   resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
-  listActiveWorkspaces: () => Promise<Array<{ workspaceId: string; cwd: string }>>;
+  listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -125,6 +126,10 @@ export async function archiveIfSafe(input: {
           repoRoot: ownership.repoRoot ?? null,
           worktreesRoot: ownership.worktreeRoot,
           worktreesBaseRoot: options.worktreesRoot,
+          // Last-reference + Paseo-ownership gated inside the service, so sibling
+          // workspaces sharing the directory stay protected. Removing the merged
+          // worktree off disk prevents merged worktrees from accumulating.
+          deleteWorktreeFromDisk: true,
           requestId: "auto-archive-on-merge",
         },
       );

@@ -1608,6 +1608,12 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   worktreePath: z.string().optional(),
   repoRoot: z.string().optional(),
   branchName: z.string().optional(),
+  // COMPAT(worktreeArchiveWorkspaceId): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
+  // Explicit workspace record to archive. A directory can back multiple workspaces
+  // (Model B), so resolving the target by cwd alone picks the wrong record. When
+  // present the daemon archives this exact workspace; when absent it falls back to
+  // resolving by worktreePath, preferring the worktree-kind record on a cwd tie.
+  workspaceId: z.string().optional(),
   // COMPAT(worktreeDiskDeletion): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
   // When true, and the workspace is the last active reference to a Paseo-owned
   // worktree, the daemon also removes the worktree directory from disk. Default
