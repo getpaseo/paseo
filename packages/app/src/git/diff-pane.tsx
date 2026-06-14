@@ -2460,9 +2460,9 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
-      {isDesktopWeb ? <CommitsSection serverId={serverId} cwd={cwd} /> : null}
-
       <View style={styles.diffContainer}>{bodyContent}</View>
+
+      {isDesktopWeb ? <CommitsSection serverId={serverId} cwd={cwd} /> : null}
     </View>
   );
 }

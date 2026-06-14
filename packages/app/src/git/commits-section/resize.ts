@@ -1,5 +1,6 @@
-// Pure layout math for the draggable separator between the commits section and
-// the diff content below it (see docs/floating-panels.md sibling layout).
+// Pure layout math for the draggable separator between the diff content above
+// and the commits drawer pinned at the bottom (see docs/floating-panels.md
+// sibling layout).
 
 /** Smallest the commits viewport may shrink to while staying usable. */
 export const COMMITS_SECTION_MIN_HEIGHT = 96;
@@ -8,8 +9,8 @@ export const COMMITS_SECTION_MIN_HEIGHT = 96;
 export const COMMITS_SECTION_MAX_HEIGHT = 600;
 
 /**
- * Space we always reserve for the diff below the commits section so dragging the
- * separator all the way down never collapses the diff out of view.
+ * Space we always reserve for the diff above the commits drawer so dragging the
+ * separator all the way up never collapses the diff out of view.
  */
 export const COMMITS_SECTION_DIFF_RESERVE = 160;
 

@@ -115,7 +115,9 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
         if (moveEvent.pointerId !== pointerId) {
           return;
         }
-        const next = clampCommitsSectionHeight(startHeight + (moveEvent.clientY - startY), bounds);
+        // Handle sits at the TOP of the bottom drawer: dragging up (clientY
+        // decreasing) grows the drawer, dragging down shrinks it.
+        const next = clampCommitsSectionHeight(startHeight - (moveEvent.clientY - startY), bounds);
         draftHeightRef.current = next;
         setDraftHeight(next);
       }
@@ -160,8 +162,9 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
   const sectionStyle = useMemo(
     () =>
       showResizableLayout
-        ? // The resize handle's bar is the visible divider in this mode, so the
-          // container drops its own bottom border to avoid a doubled line.
+        ? // The resize handle's bar (at the top of the drawer) is the visible
+          // divider in this mode, so the container drops its own top border to
+          // avoid a doubled line.
           [
             styles.container,
             styles.containerResizable,
@@ -223,6 +226,18 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
 
   return (
     <View style={sectionStyle}>
+      {showResizableLayout ? (
+        <View
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={t("workspace.git.diff.commits.resizeHandle")}
+          testID="commits-section-resize-handle"
+          style={RESIZE_HANDLE_STYLE}
+          onPointerDown={handleResizeStart}
+        >
+          <View pointerEvents="none" style={styles.resizeHandleBar} />
+        </View>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         testID="commits-section-header"
@@ -249,29 +264,17 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
         </View>
       </Pressable>
       {listContent}
-      {showResizableLayout ? (
-        <View
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label={t("workspace.git.diff.commits.resizeHandle")}
-          testID="commits-section-resize-handle"
-          style={RESIZE_HANDLE_STYLE}
-          onPointerDown={handleResizeStart}
-        >
-          <View pointerEvents="none" style={styles.resizeHandleBar} />
-        </View>
-      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
   },
   containerResizable: {
-    borderBottomWidth: 0,
+    borderTopWidth: 0,
   },
   header: {
     flexDirection: "row",
