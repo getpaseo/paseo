@@ -7,6 +7,7 @@ import {
 import {
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
+  migratePanelState,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
   selectPanelVisibility,
@@ -93,6 +94,14 @@ describe("panel-store explorer tab resolution", () => {
         },
       }),
     ).toBe("files");
+  });
+});
+
+describe("panel-store migration", () => {
+  it("defaults dotfile visibility to showing dotfiles", () => {
+    const state = migratePanelState({}, 10, { isWeb: false });
+
+    expect(state.explorerHideDotFiles).toBe(false);
   });
 });
 

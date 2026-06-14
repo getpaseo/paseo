@@ -22,6 +22,8 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   MoreVertical,
   RotateCw,
 } from "lucide-react-native";
@@ -43,6 +45,7 @@ import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-action
 import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
+import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "@/file-explorer/visibility";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { isWeb } from "@/constants/platform";
 
@@ -267,7 +270,9 @@ export function FileExplorerPane({
       workspaceRoot: normalizedWorkspaceRoot,
     });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
+  const hideDotFiles = usePanelStore((state) => state.explorerHideDotFiles);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
+  const toggleExplorerHideDotFiles = usePanelStore((state) => state.toggleExplorerHideDotFiles);
   const expandedPathsArray = usePanelStore((state) =>
     workspaceStateKey ? state.expandedPathsByWorkspace[workspaceStateKey] : undefined,
   );
@@ -303,8 +308,9 @@ export function FileExplorerPane({
       hasInitializedRef,
       workspaceStateKey,
       requestDirectoryListing,
+      hideDotFiles,
     });
-  }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
+  }, [hasWorkspaceScope, hideDotFiles, requestDirectoryListing, workspaceStateKey]);
 
   const handleToggleDirectory = useCallback(
     (entry: ExplorerEntry) =>
@@ -379,14 +385,26 @@ export function FileExplorerPane({
     setSortOption(SORT_OPTIONS[nextIndex].value);
   }, [sortOption, setSortOption]);
 
+  const handleToggleDotFiles = useCallback(() => {
+    toggleExplorerHideDotFiles();
+    if (hideDotFiles) {
+      requestPersistedExpandedPaths({
+        workspaceStateKey,
+        requestDirectoryListing,
+        hideDotFiles: false,
+      });
+    }
+  }, [hideDotFiles, requestDirectoryListing, toggleExplorerHideDotFiles, workspaceStateKey]);
+
   const refreshExplorer = useCallback(
     () =>
       refreshExplorerDirectories({
         hasWorkspaceScope,
         expandedPaths,
+        hideDotFiles,
         requestDirectoryListing,
       }),
-    [expandedPaths, hasWorkspaceScope, requestDirectoryListing],
+    [expandedPaths, hasWorkspaceScope, hideDotFiles, requestDirectoryListing],
   );
   const { refetch: refetchExplorer, isFetching: isRefreshFetching } = useQuery({
     queryKey: ["fileExplorerRefresh", serverId, workspaceStateKey],
@@ -409,8 +427,8 @@ export function FileExplorerPane({
   const currentSortLabel = resolveCurrentSortLabel(sortOption, sortLabels);
 
   const treeRows = useMemo(
-    () => resolveTreeRows({ directories, expandedPaths, sortOption }),
-    [directories, expandedPaths, sortOption],
+    () => resolveTreeRows({ directories, expandedPaths, sortOption, hideDotFiles }),
+    [directories, expandedPaths, hideDotFiles, sortOption],
   );
 
   const showInitialLoading = resolveShowInitialLoading({
@@ -477,12 +495,14 @@ export function FileExplorerPane({
         showBackFromError={showBackFromError}
         treeRows={treeRows}
         currentSortLabel={currentSortLabel}
+        hideDotFiles={hideDotFiles}
         isRefreshFetching={isRefreshFetching}
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         treeListRef={treeListRef}
         scrollbar={scrollbar}
         renderTreeRow={renderTreeRow}
         handleSortCycle={handleSortCycle}
+        handleToggleDotFiles={handleToggleDotFiles}
         handleRefresh={handleRefresh}
         handleBackFromError={handleBackFromError}
         handleRetry={handleRetry}
@@ -499,12 +519,14 @@ interface FileExplorerPaneContentProps {
   showBackFromError: boolean;
   treeRows: TreeRow[];
   currentSortLabel: string;
+  hideDotFiles: boolean;
   isRefreshFetching: boolean;
   showDesktopWebScrollbar: boolean;
   treeListRef: RefObject<FlatList<TreeRow> | null>;
   scrollbar: ReturnType<typeof useWebScrollViewScrollbar>;
   renderTreeRow: (info: ListRenderItemInfo<TreeRow>) => ReactElement;
   handleSortCycle: () => void;
+  handleToggleDotFiles: () => void;
   handleRefresh: () => void;
   handleBackFromError: () => void;
   handleRetry: () => void;
@@ -521,18 +543,38 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     showBackFromError,
     treeRows,
     currentSortLabel,
+    hideDotFiles,
     isRefreshFetching,
     showDesktopWebScrollbar,
     treeListRef,
     scrollbar,
     renderTreeRow,
     handleSortCycle,
+    handleToggleDotFiles,
     handleRefresh,
     handleBackFromError,
     handleRetry,
     sortTriggerStyle: sortTriggerStyleProp,
     iconButtonStyle: iconButtonStyleProp,
   } = props;
+
+  const dotfileToggleAccessibilityLabel = hideDotFiles
+    ? t("workspace.fileExplorer.actions.showDotFiles")
+    : t("workspace.fileExplorer.actions.hideDotFiles");
+  const emptyLabel = hideDotFiles
+    ? t("workspace.fileExplorer.empty.noVisibleFiles")
+    : t("workspace.fileExplorer.empty.noFiles");
+  const dotfileToggleStyle = useCallback(
+    (state: PressableStateCallbackType) => [
+      iconButtonStyleProp(state),
+      hideDotFiles && styles.iconButtonActive,
+    ],
+    [hideDotFiles, iconButtonStyleProp],
+  );
+  const dotfileToggleAccessibilityState = useMemo(
+    () => ({ selected: hideDotFiles }),
+    [hideDotFiles],
+  );
 
   if (error) {
     return (
@@ -561,14 +603,6 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     );
   }
 
-  if (treeRows.length === 0) {
-    return (
-      <View style={styles.centerState}>
-        <Text style={styles.emptyText}>{t("workspace.fileExplorer.empty.noFiles")}</Text>
-      </View>
-    );
-  }
-
   return (
     <View style={TREE_PANE_CONTAINER_STYLE}>
       <View style={styles.paneHeader} testID="files-pane-header">
@@ -576,45 +610,67 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
           <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
           <ChevronDown size={12} color={theme.colors.foregroundMuted} />
         </Pressable>
-        <Pressable
-          onPress={handleRefresh}
-          disabled={isRefreshFetching}
-          hitSlop={8}
-          style={iconButtonStyleProp}
-          accessibilityRole="button"
-          accessibilityLabel={
-            isRefreshFetching
-              ? t("workspace.fileExplorer.actions.refreshing")
-              : t("workspace.fileExplorer.actions.refresh")
-          }
-        >
-          <View style={styles.refreshIcon}>
-            {isRefreshFetching ? (
-              <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        <View style={styles.headerActions}>
+          <Pressable
+            onPress={handleToggleDotFiles}
+            hitSlop={8}
+            style={dotfileToggleStyle}
+            accessibilityRole="button"
+            accessibilityLabel={dotfileToggleAccessibilityLabel}
+            accessibilityState={dotfileToggleAccessibilityState}
+          >
+            {hideDotFiles ? (
+              <EyeOff size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
             ) : (
-              <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              <Eye size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
             )}
-          </View>
-        </Pressable>
+          </Pressable>
+          <Pressable
+            onPress={handleRefresh}
+            disabled={isRefreshFetching}
+            hitSlop={8}
+            style={iconButtonStyleProp}
+            accessibilityRole="button"
+            accessibilityLabel={
+              isRefreshFetching
+                ? t("workspace.fileExplorer.actions.refreshing")
+                : t("workspace.fileExplorer.actions.refresh")
+            }
+          >
+            <View style={styles.refreshIcon}>
+              {isRefreshFetching ? (
+                <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              ) : (
+                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              )}
+            </View>
+          </Pressable>
+        </View>
       </View>
-      <FlatList
-        ref={treeListRef}
-        style={styles.treeList}
-        data={treeRows}
-        renderItem={renderTreeRow}
-        keyExtractor={treeRowKeyExtractor}
-        testID="file-explorer-tree-scroll"
-        contentContainerStyle={styles.entriesContent}
-        onLayout={scrollbar.onLayout}
-        onScroll={scrollbar.onScroll}
-        onContentSizeChange={scrollbar.onContentSizeChange}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-        initialNumToRender={24}
-        maxToRenderPerBatch={40}
-        windowSize={12}
-      />
-      {scrollbar.overlay}
+      {treeRows.length === 0 ? (
+        <View style={styles.centerState}>
+          <Text style={styles.emptyText}>{emptyLabel}</Text>
+        </View>
+      ) : (
+        <FlatList
+          ref={treeListRef}
+          style={styles.treeList}
+          data={treeRows}
+          renderItem={renderTreeRow}
+          keyExtractor={treeRowKeyExtractor}
+          testID="file-explorer-tree-scroll"
+          contentContainerStyle={styles.entriesContent}
+          onLayout={scrollbar.onLayout}
+          onScroll={scrollbar.onScroll}
+          onContentSizeChange={scrollbar.onContentSizeChange}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          initialNumToRender={24}
+          maxToRenderPerBatch={40}
+          windowSize={12}
+        />
+      )}
+      {treeRows.length > 0 ? scrollbar.overlay : null}
     </View>
   );
 }
@@ -643,12 +699,14 @@ function buildTreeRows({
   directories,
   expandedPaths,
   sortOption,
+  hideDotFiles,
   path,
   depth,
 }: {
   directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
   expandedPaths: Set<string>;
   sortOption: SortOption;
+  hideDotFiles: boolean;
   path: string;
   depth: number;
 }): TreeRow[] {
@@ -658,7 +716,10 @@ function buildTreeRows({
   }
 
   const rows: TreeRow[] = [];
-  const entries = sortEntries(directory.entries, sortOption);
+  const entries = sortEntries(
+    filterVisibleExplorerEntries(directory.entries, hideDotFiles),
+    sortOption,
+  );
 
   for (const entry of entries) {
     rows.push({ entry, depth });
@@ -668,6 +729,7 @@ function buildTreeRows({
           directories,
           expandedPaths,
           sortOption,
+          hideDotFiles,
           path: entry.path,
           depth: depth + 1,
         }),
@@ -731,15 +793,24 @@ function resolveTreeRows({
   directories,
   expandedPaths,
   sortOption,
+  hideDotFiles,
 }: {
   directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
   expandedPaths: Set<string>;
   sortOption: SortOption;
+  hideDotFiles: boolean;
 }): TreeRow[] {
   if (!directories.get(".")) {
     return [];
   }
-  return buildTreeRows({ directories, expandedPaths, sortOption, path: ".", depth: 0 });
+  return buildTreeRows({
+    directories,
+    expandedPaths,
+    sortOption,
+    hideDotFiles,
+    path: ".",
+    depth: 0,
+  });
 }
 
 type StartDownloadFn = ReturnType<typeof useDownloadStore.getState>["startDownload"];
@@ -856,6 +927,7 @@ async function initializeExplorer({
   hasInitializedRef,
   workspaceStateKey,
   requestDirectoryListing,
+  hideDotFiles,
 }: {
   hasWorkspaceScope: boolean;
   hasInitializedRef: RefObject<boolean>;
@@ -864,6 +936,7 @@ async function initializeExplorer({
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<boolean>;
+  hideDotFiles: boolean;
 }): Promise<void> {
   if (!hasWorkspaceScope || hasInitializedRef.current) {
     return;
@@ -877,25 +950,27 @@ async function initializeExplorer({
     hasInitializedRef.current = false;
     return;
   }
-  requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing });
+  requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing, hideDotFiles });
 }
 
 function requestPersistedExpandedPaths({
   workspaceStateKey,
   requestDirectoryListing,
+  hideDotFiles,
 }: {
   workspaceStateKey: string | null;
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<boolean>;
+  hideDotFiles: boolean;
 }): void {
   const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
   if (!persistedPaths) {
     return;
   }
   for (const path of persistedPaths) {
-    if (path !== ".") {
+    if (path !== "." && (!hideDotFiles || !isHiddenExplorerPath(path))) {
       void requestDirectoryListing(path, {
         recordHistory: false,
         setCurrentPath: false,
@@ -907,10 +982,12 @@ function requestPersistedExpandedPaths({
 async function refreshExplorerDirectories({
   hasWorkspaceScope,
   expandedPaths,
+  hideDotFiles,
   requestDirectoryListing,
 }: {
   hasWorkspaceScope: boolean;
   expandedPaths: Set<string>;
+  hideDotFiles: boolean;
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
@@ -919,7 +996,9 @@ async function refreshExplorerDirectories({
   if (!hasWorkspaceScope) {
     return null;
   }
-  const directoryPaths = Array.from(expandedPaths);
+  const directoryPaths = Array.from(expandedPaths).filter(
+    (path) => !hideDotFiles || !isHiddenExplorerPath(path),
+  );
   if (!directoryPaths.includes(".")) {
     directoryPaths.unshift(".");
   }
@@ -1010,6 +1089,11 @@ const styles = StyleSheet.create((theme) => ({
   sortTriggerText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
   },
   treeList: {
     flex: 1,
@@ -1152,6 +1236,9 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   iconButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  iconButtonActive: {
     backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {

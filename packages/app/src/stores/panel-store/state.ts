@@ -207,6 +207,12 @@ function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
   }
 }
 
+function migratePanelExplorerDotfileVisibility(state: MigratablePanelState): void {
+  if (typeof state.explorerHideDotFiles !== "boolean") {
+    state.explorerHideDotFiles = false;
+  }
+}
+
 export function migratePanelState(
   persistedState: unknown,
   version: number,
@@ -244,6 +250,9 @@ export function migratePanelState(
     !state.diffExpandedPathsByWorkspace
   ) {
     state.diffExpandedPathsByWorkspace = {};
+  }
+  if (version < 11 || typeof state.explorerHideDotFiles !== "boolean") {
+    migratePanelExplorerDotfileVisibility(state);
   }
 
   return state;

@@ -358,9 +358,12 @@ export const fr: TranslationResources = {
         retry: "Réessayer",
         refresh: "Actualiser les fichiers",
         refreshing: "Actualisation des fichiers",
+        hideDotFiles: "Masquer les fichiers point",
+        showDotFiles: "Afficher les fichiers point",
       },
       empty: {
         noFiles: "Aucun fichier",
+        noVisibleFiles: "Aucun fichier visible",
       },
       states: {
         unavailable: "Workspacen'est pas disponible",

@@ -355,9 +355,12 @@ export const ar: TranslationResources = {
         retry: "أعد المحاولة",
         refresh: "تحديث الملفات",
         refreshing: "تحديث الملفات",
+        hideDotFiles: "إخفاء ملفات النقطة",
+        showDotFiles: "إظهار ملفات النقطة",
       },
       empty: {
         noFiles: "لا توجد ملفات",
+        noVisibleFiles: "لا توجد ملفات مرئية",
       },
       states: {
         unavailable: "Workspace غير متوفر",

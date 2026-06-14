@@ -75,6 +75,7 @@ export interface PanelState {
   sidebarWidth: number;
   explorerWidth: number;
   explorerSortOption: SortOption;
+  explorerHideDotFiles: boolean;
   explorerFilesSplitRatio: number;
 
   // Actions
@@ -101,6 +102,7 @@ export interface PanelState {
   setSidebarWidth: (width: number) => void;
   setExplorerWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
+  toggleExplorerHideDotFiles: () => void;
   setExplorerFilesSplitRatio: (ratio: number) => void;
 }
 
@@ -127,6 +129,7 @@ export const usePanelStore = create<PanelState>()(
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
       explorerSortOption: "name",
+      explorerHideDotFiles: false,
       explorerFilesSplitRatio: DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
 
       toggleFocusMode: () =>
@@ -262,6 +265,8 @@ export const usePanelStore = create<PanelState>()(
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setExplorerWidth: (width) => set({ explorerWidth: clampExplorerWidth(width) }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
+      toggleExplorerHideDotFiles: () =>
+        set((state) => ({ explorerHideDotFiles: !state.explorerHideDotFiles })),
       setExplorerFilesSplitRatio: (ratio) =>
         set({
           explorerFilesSplitRatio: Number.isFinite(ratio)
@@ -271,7 +276,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 10,
+      version: 11,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) =>
         migratePanelState(persistedState, version, { isWeb }) as unknown as PanelState,
@@ -285,6 +290,7 @@ export const usePanelStore = create<PanelState>()(
         sidebarWidth: state.sidebarWidth,
         explorerWidth: state.explorerWidth,
         explorerSortOption: state.explorerSortOption,
+        explorerHideDotFiles: state.explorerHideDotFiles,
         explorerFilesSplitRatio: state.explorerFilesSplitRatio,
       }),
     },
@@ -315,6 +321,7 @@ export function usePanelState(isMobile: boolean) {
   const explorerTabByCheckout = usePanelStore((state) => state.explorerTabByCheckout);
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
   const explorerSortOption = usePanelStore((state) => state.explorerSortOption);
+  const explorerHideDotFiles = usePanelStore((state) => state.explorerHideDotFiles);
   const explorerFilesSplitRatio = usePanelStore((state) => state.explorerFilesSplitRatio);
   const setExplorerTab = usePanelStore((state) => state.setExplorerTab);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
@@ -323,6 +330,7 @@ export function usePanelState(isMobile: boolean) {
   );
   const setExplorerWidth = usePanelStore((state) => state.setExplorerWidth);
   const setExplorerSortOption = usePanelStore((state) => state.setExplorerSortOption);
+  const toggleExplorerHideDotFiles = usePanelStore((state) => state.toggleExplorerHideDotFiles);
   const setExplorerFilesSplitRatio = usePanelStore((state) => state.setExplorerFilesSplitRatio);
 
   return {
@@ -336,12 +344,14 @@ export function usePanelState(isMobile: boolean) {
     explorerTabByCheckout,
     explorerWidth,
     explorerSortOption,
+    explorerHideDotFiles,
     explorerFilesSplitRatio,
     setExplorerTab,
     setExplorerTabForCheckout,
     activateExplorerTabForCheckout,
     setExplorerWidth,
     setExplorerSortOption,
+    toggleExplorerHideDotFiles,
     setExplorerFilesSplitRatio,
   };
 }
