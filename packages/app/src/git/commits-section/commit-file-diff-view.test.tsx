@@ -92,6 +92,45 @@ vi.mock("@/git/use-commit-file-diff", () => ({
   useCommitFileDiff: () => commitFileDiff.value,
 }));
 
+// Inline-review infra is exercised end-to-end by the review suite; here we mock
+// it so we can assert the per-commit view wires reviewActions + a per-commit
+// attachment source. buildReviewDraftKey is mocked to a deterministic,
+// commit-namespaced key so the registered sourceKey is verifiable.
+const { reviewState } = vi.hoisted(() => ({
+  reviewState: {
+    actions: { addComment: () => {} } as Record<string, unknown>,
+    attachment: null as Record<string, unknown> | null,
+  },
+}));
+
+vi.mock("@/review", () => ({
+  buildReviewDraftKey: (input: { commitSha?: string | null }) => `review-commit-${input.commitSha}`,
+  useInlineReviewController: () => reviewState.actions,
+  useReviewAttachmentSnapshot: () => reviewState.attachment,
+}));
+
+const { workspaceAttachments } = vi.hoisted(() => ({
+  workspaceAttachments: {
+    scopeKey: "scope-key",
+    setWorkspaceAttachments: vi.fn(),
+    clearWorkspaceAttachments: vi.fn(),
+  },
+}));
+
+vi.mock("@/attachments/workspace-attachments-store", () => ({
+  useWorkspaceAttachmentScopeKey: () => workspaceAttachments.scopeKey,
+  useWorkspaceAttachmentsStore: (
+    selector: (state: {
+      setWorkspaceAttachments: typeof workspaceAttachments.setWorkspaceAttachments;
+      clearWorkspaceAttachments: typeof workspaceAttachments.clearWorkspaceAttachments;
+    }) => unknown,
+  ) =>
+    selector({
+      setWorkspaceAttachments: workspaceAttachments.setWorkspaceAttachments,
+      clearWorkspaceAttachments: workspaceAttachments.clearWorkspaceAttachments,
+    }),
+}));
+
 import { CommitFileDiffView } from "./commit-file-diff-view";
 
 function makeFile(): ParsedDiffFile {
@@ -152,13 +191,22 @@ describe("CommitFileDiffView", () => {
     container = null;
     commitFileDiff.value = null;
     lastDiffFileBodyProps.value = null;
+    reviewState.attachment = null;
+    workspaceAttachments.setWorkspaceAttachments.mockClear();
+    workspaceAttachments.clearWorkspaceAttachments.mockClear();
     vi.unstubAllGlobals();
   });
 
   function render(): void {
     act(() => {
       root?.render(
-        <CommitFileDiffView serverId="server-1" cwd="/tmp/repo" sha="abc" path="src/app.ts" />,
+        <CommitFileDiffView
+          serverId="server-1"
+          workspaceId="ws-1"
+          cwd="/tmp/repo"
+          sha="abc"
+          path="src/app.ts"
+        />,
       );
     });
   }
@@ -175,8 +223,38 @@ describe("CommitFileDiffView", () => {
     expect(lastDiffFileBodyProps.value?.layout).toBe("unified");
     expect(lastDiffFileBodyProps.value?.wrapLines).toBe(false);
     expect(lastDiffFileBodyProps.value?.codeFontSize).toBe(12);
-    // The per-commit view has no inline-review affordances.
-    expect(lastDiffFileBodyProps.value?.reviewActions).toBeUndefined();
+    // Inline-review affordances are wired: the gutter "+" appears because a real
+    // reviewActions object is forwarded (not undefined) when a file is present.
+    expect(lastDiffFileBodyProps.value?.reviewActions).toBe(reviewState.actions);
+  });
+
+  it("registers the per-commit review attachment under its own commit-scoped source", () => {
+    const file = makeFile();
+    commitFileDiff.value = { file, isLoading: false, error: null };
+    // Snapshot recomputes to a non-null attachment when the commit has comments.
+    reviewState.attachment = { kind: "review", reviewDraftKey: "review-commit-abc" };
+    render();
+
+    // The attachment registers under the per-commit reviewDraftKey source so it
+    // coexists with the Changes-panel (default-source) review instead of clobbering it.
+    expect(workspaceAttachments.setWorkspaceAttachments).toHaveBeenCalledWith({
+      scopeKey: "scope-key",
+      sourceKey: "review-commit-abc",
+      attachments: [reviewState.attachment],
+    });
+  });
+
+  it("registers an empty attachment list for the commit source when there are no comments", () => {
+    const file = makeFile();
+    commitFileDiff.value = { file, isLoading: false, error: null };
+    reviewState.attachment = null;
+    render();
+
+    expect(workspaceAttachments.setWorkspaceAttachments).toHaveBeenCalledWith({
+      scopeKey: "scope-key",
+      sourceKey: "review-commit-abc",
+      attachments: [],
+    });
   });
 
   it("shows the loading spinner while loading", () => {

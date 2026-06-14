@@ -10,6 +10,7 @@ interface CommitRowProps {
   commit: CheckoutCommit;
   expanded: boolean;
   serverId: string;
+  workspaceId?: string | null;
   cwd: string;
   fileView: "list" | "tree";
   onToggle: (sha: string) => void;
@@ -20,6 +21,7 @@ export const CommitRow = memo(function CommitRow({
   commit,
   expanded,
   serverId,
+  workspaceId,
   cwd,
   fileView,
   onToggle,
@@ -80,6 +82,7 @@ export const CommitRow = memo(function CommitRow({
           commit={commit}
           fileView={fileView}
           serverId={serverId}
+          workspaceId={workspaceId}
           cwd={cwd}
           openFilePath={openFilePath}
           onFilePress={handleFilePress}

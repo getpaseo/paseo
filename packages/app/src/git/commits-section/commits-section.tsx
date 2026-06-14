@@ -20,11 +20,12 @@ import { clampCommitsSectionHeight, commitsSectionHeightBounds } from "./resize"
 
 interface CommitsSectionProps {
   serverId: string;
+  workspaceId?: string | null;
   cwd: string;
   onFilePress?: FilePressHandler;
 }
 
-export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionProps) {
+export function CommitsSection({ serverId, workspaceId, cwd, onFilePress }: CommitsSectionProps) {
   const { t } = useTranslation();
   const { commits, capabilityMissing, isLoading, error } = useCheckoutCommitsQuery({
     serverId,
@@ -206,6 +207,7 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
       commit={commit}
       expanded={expandedShas.has(commit.sha)}
       serverId={serverId}
+      workspaceId={workspaceId}
       cwd={cwd}
       fileView={fileView}
       onToggle={handleToggleCommit}

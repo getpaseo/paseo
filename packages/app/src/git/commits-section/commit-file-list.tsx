@@ -107,6 +107,7 @@ interface CommitFileListProps {
   commit: CheckoutCommit;
   fileView: "list" | "tree";
   serverId: string;
+  workspaceId?: string | null;
   cwd: string;
   openFilePath: string | null;
   onFilePress: FilePressHandler;
@@ -124,6 +125,7 @@ export const CommitFileList = memo(function CommitFileList({
   commit,
   fileView,
   serverId,
+  workspaceId,
   cwd,
   openFilePath,
   onFilePress,
@@ -133,6 +135,7 @@ export const CommitFileList = memo(function CommitFileList({
       <CommitFileTree
         commit={commit}
         serverId={serverId}
+        workspaceId={workspaceId}
         cwd={cwd}
         openFilePath={openFilePath}
         onFilePress={onFilePress}
@@ -153,7 +156,13 @@ export const CommitFileList = memo(function CommitFileList({
             onFilePress={onFilePress}
           />
           {openFilePath === file.path ? (
-            <CommitFileDiffView serverId={serverId} cwd={cwd} sha={commit.sha} path={file.path} />
+            <CommitFileDiffView
+              serverId={serverId}
+              workspaceId={workspaceId}
+              cwd={cwd}
+              sha={commit.sha}
+              path={file.path}
+            />
           ) : null}
         </View>
       ))}
@@ -164,12 +173,20 @@ export const CommitFileList = memo(function CommitFileList({
 interface CommitFileTreeProps {
   commit: CheckoutCommit;
   serverId: string;
+  workspaceId?: string | null;
   cwd: string;
   openFilePath: string | null;
   onFilePress: FilePressHandler;
 }
 
-function CommitFileTree({ commit, serverId, cwd, openFilePath, onFilePress }: CommitFileTreeProps) {
+function CommitFileTree({
+  commit,
+  serverId,
+  workspaceId,
+  cwd,
+  openFilePath,
+  onFilePress,
+}: CommitFileTreeProps) {
   // Directories default to expanded: we track only the explicitly collapsed
   // ones and subtract them from the full directory universe.
   const [collapsedDirPaths, setCollapsedDirPaths] = useState<ReadonlySet<string>>(() => new Set());
@@ -248,7 +265,13 @@ function CommitFileTree({ commit, serverId, cwd, openFilePath, onFilePress }: Co
               onFilePress={onFilePress}
             />
             {openFilePath === row.path ? (
-              <CommitFileDiffView serverId={serverId} cwd={cwd} sha={commit.sha} path={row.path} />
+              <CommitFileDiffView
+                serverId={serverId}
+                workspaceId={workspaceId}
+                cwd={cwd}
+                sha={commit.sha}
+                path={row.path}
+              />
             ) : null}
           </View>
         );
