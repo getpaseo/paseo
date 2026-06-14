@@ -20,6 +20,10 @@ interface InFlightTerminalCreateRequest {
 
 let inFlightTerminalCreateRequest: InFlightTerminalCreateRequest | null = null;
 
+// The conpty failure signal is process-scoped, not request-scoped. Serializing
+// creates keeps an async spawn failure attributable to exactly one request.
+let createTerminalQueue: Promise<void> = Promise.resolve();
+
 // node-pty completes its Windows conpty spawn asynchronously on a separate
 // conout worker thread. When that spawn fails (bad cwd, missing command, etc.)
 // it throws an exception there that cannot be caught at the call site and would
@@ -133,6 +137,12 @@ manager.subscribeTerminalsChanged((event) => {
   });
 });
 
+function enqueueCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
+  const nextRequest = createTerminalQueue.then(() => handleCreateTerminalRequest(message));
+  createTerminalQueue = nextRequest.catch(() => {});
+  return nextRequest;
+}
+
 async function handleCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
   const request: InFlightTerminalCreateRequest = {
     requestId: message.requestId,
@@ -184,7 +194,7 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "createTerminal": {
-      await handleCreateTerminalRequest(message);
+      await enqueueCreateTerminalRequest(message);
       return;
     }
 
