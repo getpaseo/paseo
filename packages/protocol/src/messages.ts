@@ -666,6 +666,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),
+  workspaceId: z.string().optional(),
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -1790,12 +1791,14 @@ export const RegisterPushTokenMessageSchema = z.object({
 export const ListTerminalsRequestSchema = z.object({
   type: z.literal("list_terminals_request"),
   cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
   requestId: z.string(),
 });
 
 export const SubscribeTerminalsRequestSchema = z.object({
   type: z.literal("subscribe_terminals_request"),
   cwd: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const UnsubscribeTerminalsRequestSchema = z.object({
@@ -1806,6 +1809,7 @@ export const UnsubscribeTerminalsRequestSchema = z.object({
 export const CreateTerminalRequestSchema = z.object({
   type: z.literal("create_terminal_request"),
   cwd: z.string(),
+  workspaceId: z.string().optional(),
   name: z.string().optional(),
   agentId: z.string().optional(),
   command: z.string().optional(),
@@ -2181,6 +2185,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(workspaceOwnership): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceOwnership: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3691,6 +3697,7 @@ const TerminalInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   cwd: z.string(),
+  workspaceId: z.string().optional(),
   title: z.string().optional(),
   activity: TerminalActivitySchema.nullable().optional(),
 });

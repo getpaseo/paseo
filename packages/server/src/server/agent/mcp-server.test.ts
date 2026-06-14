@@ -1871,6 +1871,45 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("inherits the parent's workspaceId when an MCP child is created in the parent's working tree", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      provider: "claude",
+      workspaceId: "wks_parent",
+      currentModeId: "bypassPermissions",
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.handler({
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+
+    const [, , optionsArg] = spies.agentManager.createAgent.mock.calls[0];
+    expect(optionsArg).toEqual({
+      labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+      workspaceId: "wks_parent",
+    });
+  });
+
   it("delegates MCP injection to AgentManager and passes through an undefined agent ID", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({

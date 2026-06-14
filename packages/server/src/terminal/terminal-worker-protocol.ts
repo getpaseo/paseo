@@ -13,6 +13,7 @@ export interface WorkerTerminalInfo {
   id: string;
   name: string;
   cwd: string;
+  workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
 }
@@ -20,6 +21,7 @@ export interface WorkerTerminalInfo {
 export interface WorkerCreateTerminalOptions {
   id?: string;
   cwd: string;
+  workspaceId?: string;
   name?: string;
   title?: string;
   env?: Record<string, string>;
@@ -39,6 +41,7 @@ export type TerminalWorkerRequest =
       type: "getTerminals";
       requestId: string;
       cwd: string;
+      workspaceId?: string;
     }
   | {
       type: "createTerminal";

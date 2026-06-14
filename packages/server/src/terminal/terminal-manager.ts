@@ -15,6 +15,7 @@ export interface TerminalListItem {
   id: string;
   name: string;
   cwd: string;
+  workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
 }
@@ -37,10 +38,11 @@ export interface TerminalActivityTransitionEvent {
 export type TerminalActivityListener = (event: TerminalActivityTransitionEvent) => void;
 
 export interface TerminalManager {
-  getTerminals(cwd: string): Promise<TerminalSession[]>;
+  getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
     id?: string;
     cwd: string;
+    workspaceId?: string;
     name?: string;
     title?: string;
     env?: Record<string, string>;
@@ -184,6 +186,7 @@ export function createTerminalManager(
       id: input.session.id,
       name: input.session.name,
       cwd: input.session.cwd,
+      ...(input.session.workspaceId ? { workspaceId: input.session.workspaceId } : {}),
       title: input.session.getTitle(),
       activity: input.session.getActivity(),
     };
@@ -235,7 +238,10 @@ export function createTerminalManager(
   }
 
   return {
-    async getTerminals(cwd: string): Promise<TerminalSession[]> {
+    async getTerminals(
+      cwd: string,
+      options?: { workspaceId?: string },
+    ): Promise<TerminalSession[]> {
       assertAbsolutePath(cwd);
 
       // Terminals are bucketed by exact cwd, but an agent can open a terminal in
@@ -247,12 +253,24 @@ export function createTerminalManager(
           sessions.push(...bucketSessions);
         }
       }
+
+      // When the query carries a workspaceId, two workspaces sharing a cwd must
+      // not see each other's terminals. Exclude sessions owned by a different
+      // workspace; keep sessions without an owner (COMPAT: created by clients
+      // that predate terminal workspace ownership).
+      if (options?.workspaceId !== undefined) {
+        return sessions.filter(
+          (session) =>
+            session.workspaceId === undefined || session.workspaceId === options.workspaceId,
+        );
+      }
       return sessions;
     },
 
     async createTerminal(options: {
       id?: string;
       cwd: string;
+      workspaceId?: string;
       name?: string;
       title?: string;
       env?: Record<string, string>;
@@ -286,6 +304,7 @@ export function createTerminalManager(
           await createTerminal({
             id: terminalId,
             cwd: options.cwd,
+            ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),

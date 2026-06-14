@@ -7,7 +7,11 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
-import { deriveProjectGroupingName, generateWorkspaceId } from "./workspace-registry-model.js";
+import {
+  classifyDirectoryForProjectMembership,
+  deriveProjectGroupingName,
+  generateWorkspaceId,
+} from "./workspace-registry-model.js";
 import {
   createWorktreeCore,
   type CreateWorktreeCoreDeps,
@@ -244,6 +248,88 @@ async function upsertWorkspaceForWorktree(options: {
 
   await options.deps.workspaceRegistry.upsert(workspace);
   return (await options.deps.workspaceRegistry.get(workspace.workspaceId)) ?? workspace;
+}
+
+export interface EnsureLocalCheckoutWorkspaceDeps {
+  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list" | "upsert">;
+  workspaceGitService: Pick<WorkspaceGitService, "getCheckout">;
+}
+
+// Return the existing active local_checkout workspace for `cwd`, or create a new
+// one. Never deduplicates `cwd` away from sibling workspaces (e.g. worktrees or
+// other checkouts in the same directory): only an active local_checkout at the
+// exact same directory is reused. Used by the CLI and the legacy fallback when a
+// record needs a concrete owning workspace.
+export async function ensureLocalCheckoutWorkspace(
+  cwd: string,
+  deps: EnsureLocalCheckoutWorkspaceDeps,
+): Promise<PersistedWorkspaceRecord> {
+  const normalizedCwd = resolve(cwd);
+  const workspaces = await deps.workspaceRegistry.list();
+  const existing = workspaces.find(
+    (workspace) =>
+      !workspace.archivedAt &&
+      workspace.kind === "local_checkout" &&
+      resolve(workspace.cwd) === normalizedCwd,
+  );
+  if (existing) {
+    return existing;
+  }
+
+  const checkout = await deps.workspaceGitService.getCheckout(normalizedCwd);
+  const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
+  const now = new Date().toISOString();
+  const projectRecord = await resolveProjectRecordForMembership({
+    membership,
+    timestamp: now,
+    projectRegistry: deps.projectRegistry,
+  });
+  await deps.projectRegistry.upsert(projectRecord);
+
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: generateWorkspaceId(),
+    projectId: projectRecord.projectId,
+    cwd: normalizedCwd,
+    kind: "local_checkout",
+    displayName: membership.workspaceDisplayName,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await deps.workspaceRegistry.upsert(workspace);
+  return workspace;
+}
+
+async function resolveProjectRecordForMembership(options: {
+  membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
+  timestamp: string;
+  projectRegistry: Pick<ProjectRegistry, "get" | "list">;
+}) {
+  const rootPath = options.membership.projectRootPath;
+  const projects = await options.projectRegistry.list();
+  const existingProject =
+    projects.find((project) => !project.archivedAt && project.rootPath === rootPath) ??
+    projects.find((project) => project.rootPath === rootPath) ??
+    null;
+
+  if (!existingProject) {
+    return createPersistedProjectRecord({
+      projectId: options.membership.projectKey,
+      rootPath,
+      kind: options.membership.projectKind,
+      displayName: options.membership.projectName,
+      createdAt: options.timestamp,
+      updatedAt: options.timestamp,
+    });
+  }
+
+  return {
+    ...existingProject,
+    rootPath,
+    kind: options.membership.projectKind,
+    archivedAt: null,
+    updatedAt: options.timestamp,
+  };
 }
 
 interface SourceProjectForWorktree {

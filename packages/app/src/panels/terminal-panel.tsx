@@ -9,6 +9,7 @@ import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { queryClient } from "@/query/query-client";
+import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -41,13 +42,19 @@ function useTerminalPanelDescriptor(
   const workspaceDirectory = useWorkspaceDirectory(context.serverId, context.workspaceId);
   const terminalsQuery = useQuery(
     {
-      queryKey: ["terminals", context.serverId, workspaceDirectory] as const,
+      queryKey: buildTerminalsQueryKey(
+        context.serverId,
+        workspaceDirectory,
+        context.workspaceId || null,
+      ),
       enabled: Boolean(client && workspaceDirectory),
       queryFn: async (): Promise<ListTerminalsPayload> => {
         if (!client || !workspaceDirectory) {
           throw new Error("Workspace directory not found");
         }
-        return client.listTerminals(workspaceDirectory);
+        return client.listTerminals(workspaceDirectory, undefined, {
+          workspaceId: context.workspaceId || undefined,
+        });
       },
       staleTime: 5_000,
     },

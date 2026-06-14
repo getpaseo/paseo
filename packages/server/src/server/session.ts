@@ -3174,7 +3174,7 @@ export class Session {
         {
           kind: "session",
           config: createAgentConfig,
-          workspaceId: msg.workspaceId,
+          workspaceId: createdWorktree ? createdWorktree.workspace.workspaceId : msg.workspaceId,
           worktreeName,
           initialPrompt,
           clientMessageId,
@@ -6074,7 +6074,7 @@ export class Session {
   }
 
   private async listTerminalActivityContributions(): Promise<
-    Array<{ cwd: string; activity: TerminalActivity | null }>
+    Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   > {
     const terminalManager = this.terminalManager;
     if (!terminalManager) {
@@ -6084,10 +6084,17 @@ export class Session {
     const terminalsByDirectory = await Promise.all(
       directories.map((cwd) => terminalManager.getTerminals(cwd)),
     );
-    return terminalsByDirectory.flat().map((session) => ({
-      cwd: session.cwd,
-      activity: session.getActivity(),
-    }));
+    return terminalsByDirectory.flat().map((session) => {
+      const contribution: { cwd: string; workspaceId?: string; activity: TerminalActivity | null } =
+        {
+          cwd: session.cwd,
+          activity: session.getActivity(),
+        };
+      if (session.workspaceId) {
+        contribution.workspaceId = session.workspaceId;
+      }
+      return contribution;
+    });
   }
 
   /**

@@ -9,18 +9,24 @@ import {
   deriveWorkspaceKind,
   detectStaleWorkspaces,
   generateWorkspaceId,
+  resolveWorkspaceIdForRecord,
 } from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
-function createWorkspaceRecord(cwd: string, workspaceId: string) {
+function createWorkspaceRecord(
+  cwd: string,
+  workspaceId: string,
+  overrides?: { createdAt?: string; archivedAt?: string },
+) {
   return createPersistedWorkspaceRecord({
     workspaceId,
     projectId: workspaceId,
     cwd,
     kind: "directory",
     displayName: basename(cwd) || cwd,
-    createdAt: "2026-03-01T00:00:00.000Z",
-    updatedAt: "2026-03-01T00:00:00.000Z",
+    createdAt: overrides?.createdAt ?? "2026-03-01T00:00:00.000Z",
+    updatedAt: overrides?.createdAt ?? "2026-03-01T00:00:00.000Z",
+    archivedAt: overrides?.archivedAt ?? null,
   });
 }
 
@@ -224,5 +230,67 @@ describe("git worktree grouping", () => {
         mainRepoRoot: "/tmp/repo",
       }),
     ).toBe("worktree");
+  });
+});
+
+describe("resolveWorkspaceIdForRecord", () => {
+  test("resolves a stamped record to its workspaceId, ignoring cwd matches", () => {
+    const workspaces = [
+      createWorkspaceRecord("/tmp/repo", "ws-a"),
+      createWorkspaceRecord("/tmp/repo", "ws-b"),
+    ];
+
+    const resolved = resolveWorkspaceIdForRecord(
+      { workspaceId: "ws-b", cwd: "/tmp/repo" },
+      workspaces,
+    );
+
+    expect(resolved).toBe("ws-b");
+  });
+
+  test("falls back to the single cwd match for a legacy record without workspaceId", () => {
+    const workspaces = [
+      createWorkspaceRecord("/tmp/repo", "ws-only"),
+      createWorkspaceRecord("/tmp/other", "ws-other"),
+    ];
+
+    const resolved = resolveWorkspaceIdForRecord({ cwd: "/tmp/repo" }, workspaces);
+
+    expect(resolved).toBe("ws-only");
+  });
+
+  test("resolves a legacy record with multiple cwd matches to the deterministic oldest", () => {
+    const workspaces = [
+      createWorkspaceRecord("/tmp/repo", "ws-newer", { createdAt: "2026-03-02T00:00:00.000Z" }),
+      createWorkspaceRecord("/tmp/repo", "ws-older", { createdAt: "2026-03-01T00:00:00.000Z" }),
+    ];
+
+    const resolved = resolveWorkspaceIdForRecord({ cwd: "/tmp/repo" }, workspaces);
+
+    expect(resolved).toBe("ws-older");
+  });
+
+  test("returns null for a legacy record with no cwd match", () => {
+    const workspaces = [createWorkspaceRecord("/tmp/other", "ws-other")];
+
+    const resolved = resolveWorkspaceIdForRecord({ cwd: "/tmp/repo" }, workspaces);
+
+    expect(resolved).toBeNull();
+  });
+
+  test("falls back to cwd when the stamped workspaceId points at an archived workspace", () => {
+    const workspaces = [
+      createWorkspaceRecord("/tmp/repo", "ws-archived", {
+        archivedAt: "2026-03-05T00:00:00.000Z",
+      }),
+      createWorkspaceRecord("/tmp/repo", "ws-live"),
+    ];
+
+    const resolved = resolveWorkspaceIdForRecord(
+      { workspaceId: "ws-archived", cwd: "/tmp/repo" },
+      workspaces,
+    );
+
+    expect(resolved).toBe("ws-live");
   });
 });

@@ -73,8 +73,9 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     [isRouteFocused, client, isConnected, workspaceDirectory],
   );
   const queryKey = useMemo(
-    () => buildTerminalsQueryKey(normalizedServerId, workspaceDirectory),
-    [normalizedServerId, workspaceDirectory],
+    () =>
+      buildTerminalsQueryKey(normalizedServerId, workspaceDirectory, normalizedWorkspaceId || null),
+    [normalizedServerId, normalizedWorkspaceId, workspaceDirectory],
   );
 
   const query = useQuery({
@@ -84,7 +85,9 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return await client.listTerminals(workspaceDirectory);
+      return await client.listTerminals(workspaceDirectory, undefined, {
+        workspaceId: normalizedWorkspaceId || undefined,
+      });
     },
     staleTime: TERMINALS_QUERY_STALE_TIME,
   });
@@ -125,8 +128,11 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         ? await client.createTerminal(workspaceDirectory, _input.profile.name, undefined, {
             command: _input.profile.command,
             args: _input.profile.args,
+            workspaceId: normalizedWorkspaceId || undefined,
           })
-        : await client.createTerminal(workspaceDirectory);
+        : await client.createTerminal(workspaceDirectory, undefined, undefined, {
+            workspaceId: normalizedWorkspaceId || undefined,
+          });
       // The daemon reports a failed spawn (e.g. a profile command that isn't
       // installed) via payload.error with a null terminal. Surface it instead
       // of silently treating the create as a no-op success.
@@ -189,13 +195,24 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       }));
     });
 
-    client.subscribeTerminals({ cwd: workspaceDirectory });
+    client.subscribeTerminals({
+      cwd: workspaceDirectory,
+      workspaceId: normalizedWorkspaceId || undefined,
+    });
 
     return () => {
       unsubscribeChanged();
       client.unsubscribeTerminals({ cwd: workspaceDirectory });
     };
-  }, [client, isConnected, isRouteFocused, queryClient, queryKey, workspaceDirectory]);
+  }, [
+    client,
+    isConnected,
+    isRouteFocused,
+    normalizedWorkspaceId,
+    queryClient,
+    queryKey,
+    workspaceDirectory,
+  ]);
 
   useEffect(() => {
     if (!pendingCreateInput) {

@@ -115,6 +115,7 @@ function cloneTerminalInfo(info: WorkerTerminalInfo): WorkerTerminalInfo {
     id: info.id,
     name: info.name,
     cwd: info.cwd,
+    ...(info.workspaceId ? { workspaceId: info.workspaceId } : {}),
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
   };
@@ -177,6 +178,7 @@ export function createWorkerTerminalManager(
         id: record.info.id,
         name: record.info.name,
         cwd: record.info.cwd,
+        ...(record.info.workspaceId ? { workspaceId: record.info.workspaceId } : {}),
         ...(record.info.title ? { title: record.info.title } : {}),
         activity: record.activity,
       });
@@ -218,6 +220,9 @@ export function createWorkerTerminalManager(
       },
       get cwd() {
         return record.info.cwd;
+      },
+      get workspaceId() {
+        return record.info.workspaceId;
       },
       send(message: ClientMessage): void {
         if (message.type === "resize") {
@@ -498,6 +503,7 @@ export function createWorkerTerminalManager(
         id: terminal.id,
         name: terminal.name,
         cwd: terminal.cwd,
+        ...(terminal.workspaceId ? { workspaceId: terminal.workspaceId } : {}),
         ...(terminal.title ? { title: terminal.title } : {}),
         activity: terminal.activity,
       })),
@@ -625,8 +631,15 @@ export function createWorkerTerminalManager(
   }
 
   return {
-    async getTerminals(cwd: string): Promise<TerminalSession[]> {
-      const result = (await sendRequest({ type: "getTerminals", cwd })) as WorkerTerminalInfo[];
+    async getTerminals(
+      cwd: string,
+      options?: { workspaceId?: string },
+    ): Promise<TerminalSession[]> {
+      const result = (await sendRequest({
+        type: "getTerminals",
+        cwd,
+        ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
+      })) as WorkerTerminalInfo[];
       return toSessions(result);
     },
 

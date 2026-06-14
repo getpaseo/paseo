@@ -879,7 +879,7 @@ export class DaemonClient {
       compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
     }
   >();
-  private terminalDirectorySubscriptions = new Set<string>();
+  private terminalDirectorySubscriptions = new Map<string, { workspaceId?: string }>();
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
@@ -1895,10 +1895,13 @@ export class DaemonClient {
     if (this.terminalDirectorySubscriptions.size === 0) {
       return;
     }
-    for (const cwd of this.terminalDirectorySubscriptions) {
+    for (const [cwd, subscription] of this.terminalDirectorySubscriptions) {
       this.sendSessionMessage({
         type: "subscribe_terminals_request",
         cwd,
+        ...(subscription.workspaceId !== undefined
+          ? { workspaceId: subscription.workspaceId }
+          : {}),
       });
     }
   }
@@ -3835,14 +3838,15 @@ export class DaemonClient {
   // Terminals
   // ============================================================================
 
-  subscribeTerminals(input: { cwd: string }): void {
-    this.terminalDirectorySubscriptions.add(input.cwd);
+  subscribeTerminals(input: { cwd: string; workspaceId?: string }): void {
+    this.terminalDirectorySubscriptions.set(input.cwd, { workspaceId: input.workspaceId });
     if (!this.transport || this.connectionState.status !== "connected") {
       return;
     }
     this.sendSessionMessage({
       type: "subscribe_terminals_request",
       cwd: input.cwd,
+      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
     });
   }
 
@@ -3857,11 +3861,16 @@ export class DaemonClient {
     });
   }
 
-  async listTerminals(cwd?: string, requestId?: string): Promise<ListTerminalsPayload> {
+  async listTerminals(
+    cwd?: string,
+    requestId?: string,
+    options?: { workspaceId?: string },
+  ): Promise<ListTerminalsPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "list_terminals_request",
       ...(cwd === undefined ? {} : { cwd }),
+      ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       requestId: resolvedRequestId,
     });
     return this.sendCorrelatedRequest({
@@ -3877,7 +3886,7 @@ export class DaemonClient {
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[] },
+    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
   ): Promise<CreateTerminalPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -3887,6 +3896,7 @@ export class DaemonClient {
       agentId: options?.agentId,
       command: options?.command,
       args: options?.args,
+      ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       requestId: resolvedRequestId,
     });
     return this.sendCorrelatedRequest({

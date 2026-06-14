@@ -123,7 +123,10 @@ export class TerminalSessionController {
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
 
-  private readonly subscribedDirectories = new Set<string>();
+  // Maps a subscribed cwd to the workspaceId that subscription was made with (if
+  // any). The workspaceId scopes the snapshot so two workspaces sharing a cwd
+  // don't see each other's terminals; absent for old clients (COMPAT).
+  private readonly subscribedDirectories = new Map<string, string | undefined>();
   private unsubscribeTerminalsChanged: (() => void) | null = null;
   private readonly exitSubscriptions = new Map<string, () => void>();
   private readonly activeStreams = new Map<number, ActiveTerminalStream>();
@@ -293,6 +296,7 @@ export class TerminalSessionController {
     terminals: Array<{
       id: string;
       name: string;
+      workspaceId?: string;
       title?: string;
       activity: TerminalActivity | null;
     }>;
@@ -307,10 +311,11 @@ export class TerminalSessionController {
   }
 
   private toTerminalInfo(
-    terminal: Pick<TerminalSession, "id" | "name" | "getTitle" | "getActivity">,
+    terminal: Pick<TerminalSession, "id" | "name" | "workspaceId" | "getTitle" | "getActivity">,
   ): {
     id: string;
     name: string;
+    workspaceId?: string;
     title?: string;
     activity: TerminalActivity | null;
   } {
@@ -319,6 +324,7 @@ export class TerminalSessionController {
     return {
       id: terminal.id,
       name: terminal.name,
+      ...(terminal.workspaceId ? { workspaceId: terminal.workspaceId } : {}),
       ...(title ? { title } : {}),
       activity,
     };
@@ -330,7 +336,7 @@ export class TerminalSessionController {
     // or above the terminal's cwd, keyed by that root, carrying the full
     // aggregated list — so the client's cache replacement doesn't drop the
     // terminals that live directly at the root.
-    const matchingRoots = Array.from(this.subscribedDirectories).filter((root) =>
+    const matchingRoots = Array.from(this.subscribedDirectories.keys()).filter((root) =>
       this.isPathWithinRoot(root, event.cwd),
     );
     for (const root of matchingRoots) {
@@ -339,7 +345,7 @@ export class TerminalSessionController {
   }
 
   private handleSubscribeTerminalsRequest(msg: SubscribeTerminalsRequest): void {
-    this.subscribedDirectories.add(msg.cwd);
+    this.subscribedDirectories.set(msg.cwd, msg.workspaceId);
     void this.emitTerminalsSnapshotForRoot(msg.cwd);
   }
 
@@ -352,7 +358,10 @@ export class TerminalSessionController {
       return;
     }
     try {
-      const terminals = await this.getTerminalsForWorkspaceRoot(cwd);
+      const terminals = await this.getTerminalsForWorkspaceRoot(
+        cwd,
+        this.subscribedDirectories.get(cwd),
+      );
       for (const terminal of terminals) {
         this.ensureExitSubscription(terminal);
       }
@@ -384,7 +393,7 @@ export class TerminalSessionController {
     try {
       const terminals =
         typeof msg.cwd === "string"
-          ? await this.getTerminalsForWorkspaceRoot(msg.cwd)
+          ? await this.getTerminalsForWorkspaceRoot(msg.cwd, msg.workspaceId)
           : await this.getAllTerminalSessions();
       for (const terminal of terminals) {
         this.ensureExitSubscription(terminal);
@@ -422,12 +431,15 @@ export class TerminalSessionController {
     return terminalsByDirectory.flat();
   }
 
-  private async getTerminalsForWorkspaceRoot(cwd: string): Promise<TerminalSession[]> {
+  private async getTerminalsForWorkspaceRoot(
+    cwd: string,
+    workspaceId?: string,
+  ): Promise<TerminalSession[]> {
     if (!this.terminalManager) {
       return [];
     }
 
-    const terminals = await this.terminalManager.getTerminals(cwd);
+    const terminals = await this.terminalManager.getTerminals(cwd, { workspaceId });
     const workspaceRoots = await this.listTerminalWorkspaceRoots();
     if (workspaceRoots.length === 0) {
       return terminals;
@@ -500,6 +512,7 @@ export class TerminalSessionController {
 
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
+        ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
         name: msg.name,
         command: msg.command,
         args: msg.args,
@@ -512,6 +525,7 @@ export class TerminalSessionController {
             id: session.id,
             name: session.name,
             cwd: session.cwd,
+            ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
             ...(session.getTitle() ? { title: session.getTitle() } : {}),
             activity: session.getActivity(),
           },

@@ -132,6 +132,7 @@ interface AgentCreateOptions {
   initialPrompt?: string;
   env?: Record<string, string>;
   initialTitle?: string | null;
+  workspaceId?: string;
 }
 
 export async function createAgentCommand(
@@ -208,6 +209,9 @@ async function resolveSessionCreateAgent(
       initialPrompt: trimmedPrompt,
       env: input.env,
       initialTitle: input.provisionalTitle,
+      // A legacy git/worktreeName worktree creates a fresh workspace, so the
+      // agent must not inherit the source workspaceId (mirrors the MCP path).
+      workspaceId: setupContinuation ? undefined : input.workspaceId,
     },
     metadataInitialPrompt: trimmedPrompt,
     prompt: hasPromptContent ? prompt : undefined,
@@ -246,6 +250,12 @@ async function resolveMcpCreateAgent(
     initialPrompt: input.initialPrompt,
   });
 
+  // A child agent created in its parent's working tree belongs to the parent's
+  // workspace. When a new worktree is created the child lives in a fresh
+  // workspace, so it stays unstamped here.
+  const inheritedWorkspaceId =
+    parentAgent && !setupContinuation ? parentAgent.workspaceId : undefined;
+
   const { modeId: resolvedMode, featureValues: resolvedFeatures } =
     await dependencies.providerSnapshotManager.resolveCreateConfig({
       cwd: resolvedCwd,
@@ -274,7 +284,13 @@ async function resolveMcpCreateAgent(
       thinkingOptionId: input.thinking,
       ...(resolvedFeatures ? { featureValues: resolvedFeatures } : {}),
     },
-    createOptions: labels ? { labels } : undefined,
+    createOptions:
+      labels || inheritedWorkspaceId
+        ? {
+            ...(labels ? { labels } : {}),
+            ...(inheritedWorkspaceId ? { workspaceId: inheritedWorkspaceId } : {}),
+          }
+        : undefined,
     metadataInitialPrompt: trimmedPrompt,
     prompt: trimmedPrompt,
     explicitTitle: input.title.trim(),

@@ -15,7 +15,10 @@ import {
 import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
-import { resolveActiveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
+import {
+  resolveActiveWorkspaceRecordForCwd,
+  resolveWorkspaceIdForRecord,
+} from "./workspace-registry-model.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 
 type WorkspaceIdResolver = (cwd: string) => string | undefined;
@@ -92,7 +95,7 @@ export interface WorkspaceDirectoryDeps {
   };
   listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
   listTerminalActivityContributions(): Promise<
-    Array<{ cwd: string; activity: TerminalActivity | null }>
+    Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   >;
   isProviderVisibleToClient(provider: string): boolean;
   buildWorkspaceDescriptor(input: {
@@ -210,9 +213,7 @@ export class WorkspaceDirectory {
     );
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
-    const workspaceIdsByDirectory = new Map(
-      activeRecords.map((workspace) => [resolve(workspace.cwd), workspace.workspaceId] as const),
-    );
+    const activeWorkspaceIds = new Set(activeRecords.map((workspace) => workspace.workspaceId));
     const resolveActiveWorkspaceIdForCwd: WorkspaceIdResolver = (cwd) =>
       resolveActiveWorkspaceRecordForCwd(cwd, activeRecords)?.workspaceId;
 
@@ -239,6 +240,62 @@ export class WorkspaceDirectory {
     const activeAgents = agents.filter(
       (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
     );
+    this.applyAgentBucketContributions({
+      activeAgents,
+      activeRecords,
+      activeWorkspaceIds,
+      descriptorsByWorkspaceId,
+    });
+
+    // Terminal activity contributions: working terminal → running bucket.
+    const terminalEntriesByWorkspaceId = this.applyTerminalContributions(
+      terminalContributions,
+      activeRecords,
+      resolveActiveWorkspaceIdForCwd,
+      descriptorsByWorkspaceId,
+    );
+
+    const contributingAgentsByWorkspaceId = groupAgentsByWorkspaceId(
+      activeAgents,
+      activeRecords,
+      activeWorkspaceIds,
+    );
+
+    // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
+    // on `resolveStatusEnteredAt`).
+    const nowIso = new Date().toISOString();
+    for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
+      const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
+      const terminalEntries = terminalEntriesByWorkspaceId.get(workspaceId) ?? [];
+      const result = this.resolveStatusEnteredAt({
+        workspaceId,
+        winningBucket: descriptor.status,
+        contributingAgents,
+        terminalEntries,
+        previous: this.bucketHistoryByWorkspaceId.get(workspaceId) ?? null,
+        nowIso,
+      });
+      descriptor.statusEnteredAt = result.statusEnteredAt;
+      if (result.recordUpdate) {
+        this.bucketHistoryByWorkspaceId.set(workspaceId, result.recordUpdate);
+      } else if (result.recordDelete) {
+        this.bucketHistoryByWorkspaceId.delete(workspaceId);
+      }
+    }
+
+    return descriptorsByWorkspaceId;
+  }
+
+  // Aggregate each agent's state bucket into its owning workspace descriptor,
+  // keeping the highest-priority bucket. Delegated agents contribute to their
+  // delegation root's workspace; their own status is ignored unless running.
+  private applyAgentBucketContributions(params: {
+    activeAgents: AgentSnapshotPayload[];
+    activeRecords: PersistedWorkspaceRecord[];
+    activeWorkspaceIds: ReadonlySet<string>;
+    descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
+  }): void {
+    const { activeAgents, activeRecords, activeWorkspaceIds, descriptorsByWorkspaceId } = params;
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
 
     for (const agent of activeAgents) {
@@ -263,8 +320,8 @@ export class WorkspaceDirectory {
         });
       }
 
-      const workspaceId = workspaceIdsByDirectory.get(resolve(workspaceAgent.cwd));
-      if (workspaceId === undefined) {
+      const workspaceId = resolveWorkspaceIdForRecord(workspaceAgent, activeRecords);
+      if (workspaceId === null || !activeWorkspaceIds.has(workspaceId)) {
         continue;
       }
       const existing = descriptorsByWorkspaceId.get(workspaceId);
@@ -278,48 +335,17 @@ export class WorkspaceDirectory {
         existing.status = bucket;
       }
     }
-
-    // Terminal activity contributions: working terminal → running bucket.
-    const terminalEntriesByWorkspaceId = this.applyTerminalContributions(
-      terminalContributions,
-      resolveActiveWorkspaceIdForCwd,
-      descriptorsByWorkspaceId,
-    );
-
-    // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
-    // on `resolveStatusEnteredAt`).
-    const nowIso = new Date().toISOString();
-    for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
-      const contributingAgents = agents.filter(
-        (agent) =>
-          !agent.archivedAt &&
-          this.deps.isProviderVisibleToClient(agent.provider) &&
-          workspaceIdsByDirectory.get(resolve(agent.cwd)) === workspaceId,
-      );
-      const terminalEntries = terminalEntriesByWorkspaceId.get(workspaceId) ?? [];
-      const result = this.resolveStatusEnteredAt({
-        workspaceId,
-        winningBucket: descriptor.status,
-        contributingAgents,
-        terminalEntries,
-        previous: this.bucketHistoryByWorkspaceId.get(workspaceId) ?? null,
-        nowIso,
-      });
-      descriptor.statusEnteredAt = result.statusEnteredAt;
-      if (result.recordUpdate) {
-        this.bucketHistoryByWorkspaceId.set(workspaceId, result.recordUpdate);
-      } else if (result.recordDelete) {
-        this.bucketHistoryByWorkspaceId.delete(workspaceId);
-      }
-    }
-
-    return descriptorsByWorkspaceId;
   }
 
   // Apply working terminal contributions to descriptor statuses and build a map
   // of terminal timestamp entries per workspace for use in `resolveStatusEnteredAt`.
   private applyTerminalContributions(
-    terminalContributions: Array<{ cwd: string; activity: TerminalActivity | null }>,
+    terminalContributions: Array<{
+      cwd: string;
+      workspaceId?: string;
+      activity: TerminalActivity | null;
+    }>,
+    activeRecords: PersistedWorkspaceRecord[],
     resolveWorkspaceIdForCwd: WorkspaceIdResolver,
     descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>,
   ): Map<string, Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>> {
@@ -327,7 +353,7 @@ export class WorkspaceDirectory {
       string,
       Array<{ bucket: WorkspaceStateBucket; changedAtIso: string }>
     >();
-    for (const { cwd, activity } of terminalContributions) {
+    for (const { cwd, workspaceId: contributedWorkspaceId, activity } of terminalContributions) {
       if (!activity) {
         continue;
       }
@@ -339,7 +365,12 @@ export class WorkspaceDirectory {
       } else {
         continue;
       }
-      const workspaceId = resolveWorkspaceIdForCwd(cwd);
+      const workspaceId = contributedWorkspaceId
+        ? (resolveWorkspaceIdForRecord(
+            { workspaceId: contributedWorkspaceId, cwd },
+            activeRecords,
+          ) ?? resolveWorkspaceIdForCwd(cwd))
+        : resolveWorkspaceIdForCwd(cwd);
       if (workspaceId === undefined) {
         continue;
       }
@@ -556,6 +587,24 @@ export class WorkspaceDirectory {
       },
     };
   }
+}
+
+function groupAgentsByWorkspaceId(
+  agents: AgentSnapshotPayload[],
+  activeRecords: PersistedWorkspaceRecord[],
+  activeWorkspaceIds: ReadonlySet<string>,
+): Map<string, AgentSnapshotPayload[]> {
+  const byWorkspaceId = new Map<string, AgentSnapshotPayload[]>();
+  for (const agent of agents) {
+    const workspaceId = resolveWorkspaceIdForRecord(agent, activeRecords);
+    if (workspaceId === null || !activeWorkspaceIds.has(workspaceId)) {
+      continue;
+    }
+    const entries = byWorkspaceId.get(workspaceId) ?? [];
+    entries.push(agent);
+    byWorkspaceId.set(workspaceId, entries);
+  }
+  return byWorkspaceId;
 }
 
 function resolveDelegationRootAgent(
