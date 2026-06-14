@@ -8,7 +8,7 @@ import {
   selectRecommendedProjectPaths,
   selectResolveWorkspaceIdByCwd,
   selectWorkspace,
-  selectWorkspaceExecutionAuthority,
+  selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
   selectWorkspaceOrderByScopeForServer,
@@ -142,34 +142,30 @@ describe("selectWorkspace", () => {
   });
 });
 
-describe("selectWorkspaceExecutionAuthority", () => {
-  it("preserves the old missing-workspace message with the requested id", () => {
+describe("selectWorkspaceDirectory", () => {
+  it("returns the workspace directory, never the opaque workspace id", () => {
+    const workspace = createWorkspace({
+      id: "wks_3f9a2b1c",
+      workspaceDirectory: "/Users/dev/project",
+    });
+    initializeWorkspaces([workspace]);
+
+    const directory = selectWorkspaceDirectory(
+      useSessionStore.getState(),
+      SERVER_ID,
+      "wks_3f9a2b1c",
+    );
+
+    expect(directory).toBe("/Users/dev/project");
+    expect(directory).not.toBe("wks_3f9a2b1c");
+  });
+
+  it("returns null when the workspace is missing", () => {
     initializeWorkspaces([]);
 
     expect(
-      selectWorkspaceExecutionAuthority(useSessionStore.getState(), SERVER_ID, "missing-id"),
-    ).toMatchObject({
-      ok: false,
-      message: "Workspace not found: missing-id",
-    });
-  });
-
-  it("keeps deep-equal authority references under unrelated workspace updates", () => {
-    const workspaceA = createWorkspace({ id: "workspace-a", name: "A" });
-    const workspaceB = createWorkspace({ id: "workspace-b", name: "B" });
-    initializeWorkspaces([workspaceA, workspaceB]);
-
-    const tracked = trackSelector(
-      useSessionStore,
-      (state) => selectWorkspaceExecutionAuthority(state, SERVER_ID, workspaceA.id),
-      workspaceEqualityFns.deep,
-    );
-    const before = tracked.current;
-
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceB, status: "running" }]);
-    expect(tracked.current).toBe(before);
-
-    tracked.stop();
+      selectWorkspaceDirectory(useSessionStore.getState(), SERVER_ID, "missing-id"),
+    ).toBeNull();
   });
 });
 

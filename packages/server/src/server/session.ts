@@ -6799,7 +6799,10 @@ export class Session {
       projectRegistry: this.projectRegistry,
     });
     if (!existingWorkspace) {
-      this.removeWorkspaceGitSubscription(workspaceId);
+      const watchTarget = this.resolveWorkspaceGitWatchTarget(workspaceId);
+      if (watchTarget) {
+        this.removeWorkspaceGitSubscription(watchTarget.cwd);
+      }
       return;
     }
 
@@ -6819,9 +6822,22 @@ export class Session {
       );
     }
 
-    await this.removeWorkspaceGitWatchTarget(existingWorkspace.cwd);
-    this.scriptRuntimeStore?.removeForWorkspace(existingWorkspace.cwd);
-    this.removeWorkspaceGitSubscription(workspaceId);
+    await this.teardownArchivedWorkspace({
+      workspaceId: existingWorkspace.workspaceId,
+      cwd: existingWorkspace.cwd,
+    });
+  }
+
+  // Git watch and subscription state is keyed by directory; the script runtime
+  // store is keyed by the opaque workspace id. Each cleanup uses its own key so an
+  // opaque id is never resolved as a filesystem path.
+  private async teardownArchivedWorkspace(input: {
+    workspaceId: string;
+    cwd: string;
+  }): Promise<void> {
+    await this.removeWorkspaceGitWatchTarget(input.cwd);
+    this.scriptRuntimeStore?.removeForWorkspace(input.workspaceId);
+    this.removeWorkspaceGitSubscription(input.cwd);
   }
 
   private async reconcileAndEmitWorkspaceUpdates(): Promise<void> {
@@ -6856,9 +6872,10 @@ export class Session {
       result.changesApplied.map(async (change) => {
         switch (change.kind) {
           case "workspace_archived":
-            await this.removeWorkspaceGitWatchTarget(change.directory);
-            this.scriptRuntimeStore?.removeForWorkspace(change.directory);
-            this.removeWorkspaceGitSubscription(change.workspaceId);
+            await this.teardownArchivedWorkspace({
+              workspaceId: change.workspaceId,
+              cwd: change.directory,
+            });
             changedWorkspaceIds.add(change.workspaceId);
             break;
           case "workspace_updated":

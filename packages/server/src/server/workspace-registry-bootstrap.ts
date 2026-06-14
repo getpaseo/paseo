@@ -71,7 +71,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   );
   const records = await options.agentStorage.list();
   const activeRecords = records.filter((record) => !record.archivedAt);
-  const recordsByWorkspaceKey = new Map<
+  const recordsByDirectoryKey = new Map<
     string,
     {
       membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
@@ -86,13 +86,13 @@ export async function bootstrapWorkspaceRegistries(options: {
         cwd: normalizedCwd,
         checkout,
       });
-      return { record, membership, workspaceKey: membership.workspaceId };
+      return { record, membership, directoryKey: membership.workspaceDirectoryKey };
     }),
   );
-  for (const { record, membership, workspaceKey } of placements) {
-    const existing = recordsByWorkspaceKey.get(workspaceKey) ?? { membership, records: [] };
+  for (const { record, membership, directoryKey } of placements) {
+    const existing = recordsByDirectoryKey.get(directoryKey) ?? { membership, records: [] };
     existing.records.push(record);
-    recordsByWorkspaceKey.set(workspaceKey, existing);
+    recordsByDirectoryKey.set(directoryKey, existing);
   }
 
   const projectRanges = new Map<string, { createdAt: string | null; updatedAt: string | null }>();
@@ -104,7 +104,7 @@ export async function bootstrapWorkspaceRegistries(options: {
     updatedAt: string;
   }[] = [];
 
-  for (const entry of recordsByWorkspaceKey.values()) {
+  for (const entry of recordsByDirectoryKey.values()) {
     const { membership, records: workspaceRecords } = entry;
     const workspaceCwd = membership.checkout.cwd;
     let workspaceCreatedAt: string | null = null;
@@ -173,7 +173,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       projectsFile: path.join(options.paseoHome, "projects", "projects.json"),
       workspacesFile: path.join(options.paseoHome, "projects", "workspaces.json"),
       materializedProjects: projectRanges.size,
-      materializedWorkspaces: recordsByWorkspaceKey.size,
+      materializedWorkspaces: recordsByDirectoryKey.size,
     },
     "Workspace registries bootstrapped from existing agent storage",
   );

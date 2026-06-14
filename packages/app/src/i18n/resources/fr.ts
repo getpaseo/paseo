@@ -1330,7 +1330,7 @@ export const fr: TranslationResources = {
       creatingAgent: "Agent créateur",
     },
     file: {
-      executionDirectoryMissing: "Répertoire d'exécutionWorkspaceintrouvable.",
+      directoryMissing: "Répertoire Workspace introuvable.",
       loading: "Chargement du fichier...",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu binaire indisponible",

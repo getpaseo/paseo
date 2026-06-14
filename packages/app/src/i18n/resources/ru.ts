@@ -1319,7 +1319,7 @@ export const ru: TranslationResources = {
       creatingAgent: "Создание агента",
     },
     file: {
-      executionDirectoryMissing: "Каталог выполнения Workspace не найден.",
+      directoryMissing: "Каталог Workspace не найден.",
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",

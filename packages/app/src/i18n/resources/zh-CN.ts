@@ -1275,7 +1275,7 @@ export const zhCN: TranslationResources = {
       creatingAgent: "正在创建 Agent",
     },
     file: {
-      executionDirectoryMissing: "未找到 workspace 执行目录。",
+      directoryMissing: "未找到 workspace 目录。",
       loading: "正在加载文件...",
       noPreview: "没有可用预览",
       binaryPreviewUnavailable: "二进制预览不可用",

@@ -1,13 +1,14 @@
 import { describe, expect, test, vi } from "vitest";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 
 import {
   classifyDirectoryForProjectMembership,
   deriveProjectGroupingName,
   deriveProjectRootPath,
+  deriveWorkspaceDirectoryKey,
   deriveWorkspaceKind,
-  deriveWorkspaceId,
   detectStaleWorkspaces,
+  generateWorkspaceId,
 } from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
@@ -94,10 +95,10 @@ describe("detectStaleWorkspaces", () => {
   });
 });
 
-describe("deriveWorkspaceId", () => {
+describe("deriveWorkspaceDirectoryKey", () => {
   test("uses git worktree root when available", () => {
     expect(
-      deriveWorkspaceId("/tmp/repo/packages/app", {
+      deriveWorkspaceDirectoryKey("/tmp/repo/packages/app", {
         cwd: "/tmp/repo/packages/app",
         isGit: true,
         currentBranch: "main",
@@ -113,7 +114,7 @@ describe("deriveWorkspaceId", () => {
     const cwd = String.raw`E:\project\node-ai`;
 
     expect(
-      deriveWorkspaceId(cwd, {
+      deriveWorkspaceDirectoryKey(cwd, {
         cwd,
         isGit: true,
         currentBranch: "main",
@@ -129,7 +130,7 @@ describe("deriveWorkspaceId", () => {
     const cwd = "/tmp/repo/../repo/scratch";
 
     expect(
-      deriveWorkspaceId(cwd, {
+      deriveWorkspaceDirectoryKey(cwd, {
         cwd,
         isGit: false,
         currentBranch: null,
@@ -139,6 +140,30 @@ describe("deriveWorkspaceId", () => {
         mainRepoRoot: null,
       }),
     ).toBe(resolve("/tmp/repo/scratch"));
+  });
+});
+
+describe("opaque workspace id versus directory key", () => {
+  test("generates opaque workspace ids that are not filesystem paths", () => {
+    const workspaceId = generateWorkspaceId();
+
+    expect(workspaceId).toMatch(/^wks_[0-9a-f]+$/);
+    expect(isAbsolute(workspaceId)).toBe(false);
+  });
+
+  test("derives a path-shaped directory key that is never an opaque workspace id", () => {
+    const directoryKey = deriveWorkspaceDirectoryKey("/tmp/repo/scratch", {
+      cwd: "/tmp/repo/scratch",
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    });
+
+    expect(directoryKey).toBe(resolve("/tmp/repo/scratch"));
+    expect(directoryKey.startsWith("wks_")).toBe(false);
   });
 });
 
@@ -158,9 +183,9 @@ describe("git worktree grouping", () => {
     });
 
     expect(membership).toMatchObject({
-      // Slice 1: IDs are still path-shaped; these assertions change in Step B.
+      // Path-derived directory key, distinct from the opaque workspace id (generated separately).
       cwd: resolve("/tmp/repo-feature"),
-      workspaceId: "/tmp/repo-feature",
+      workspaceDirectoryKey: "/tmp/repo-feature",
       workspaceKind: "worktree",
       workspaceDisplayName: "feature/plain",
       projectKey: "remote:github.com/acme/repo",

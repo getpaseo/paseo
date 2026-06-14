@@ -75,7 +75,7 @@ import {
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
@@ -276,7 +276,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const workspaceRoot = agent.cwd?.trim() || "";
-    const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+    const workspaceId = resolveWorkspaceIdByDirectory({
       workspaces: useSessionStore.getState().sessions[resolvedServerId]?.workspaces?.values(),
       workspaceDirectory: workspaceRoot,
     });

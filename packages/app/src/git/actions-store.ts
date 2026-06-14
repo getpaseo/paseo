@@ -14,9 +14,9 @@ import {
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
 import {
-  resolveWorkspaceIdByExecutionDirectory,
+  resolveWorkspaceIdByDirectory,
   resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-execution";
+} from "@/utils/workspace-identity";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { i18n } from "@/i18n/i18next";
 
@@ -158,7 +158,7 @@ function snapshotWorktreeArchiveState(input: {
   worktreePath: string;
 }): WorktreeArchiveSnapshot {
   const workspaces = useSessionStore.getState().sessions[input.serverId]?.workspaces;
-  const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+  const workspaceId = resolveWorkspaceIdByDirectory({
     workspaces: workspaces?.values(),
     workspaceDirectory: input.worktreePath,
   });

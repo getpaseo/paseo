@@ -11,7 +11,7 @@ import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry
 import { queryClient } from "@/query/query-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
+import { useWorkspace } from "@/stores/session-store-hooks";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -37,21 +37,15 @@ function useTerminalPanelDescriptor(
 ): PanelDescriptor {
   const { t } = useTranslation();
   const client = useSessionStore((state) => state.sessions[context.serverId]?.client ?? null);
-  const workspaceAuthority = useWorkspaceExecutionAuthority(context.serverId, context.workspaceId)!;
-  const workspaceDirectory = workspaceAuthority.ok
-    ? workspaceAuthority.authority.workspaceDirectory
-    : null;
+  const workspace = useWorkspace(context.serverId, context.workspaceId);
+  const workspaceDirectory = workspace?.workspaceDirectory || null;
   const terminalsQuery = useQuery(
     {
       queryKey: ["terminals", context.serverId, workspaceDirectory] as const,
       enabled: Boolean(client && workspaceDirectory),
       queryFn: async (): Promise<ListTerminalsPayload> => {
         if (!client || !workspaceDirectory) {
-          throw new Error(
-            workspaceAuthority.ok
-              ? "Workspace execution directory not found"
-              : workspaceAuthority.message,
-          );
+          throw new Error("Workspace directory not found");
         }
         return client.listTerminals(workspaceDirectory);
       },
@@ -76,13 +70,9 @@ function useTerminalPanelDescriptor(
 function TerminalPanel() {
   const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
-  const workspaceAuthority = useWorkspaceExecutionAuthority(serverId, workspaceId)!;
-  const workspaceDirectory = workspaceAuthority.ok
-    ? workspaceAuthority.authority.workspaceDirectory
-    : null;
-  const isGitCheckout = workspaceAuthority.ok
-    ? workspaceAuthority.authority.workspace.projectKind === "git"
-    : false;
+  const workspace = useWorkspace(serverId, workspaceId);
+  const workspaceDirectory = workspace?.workspaceDirectory || null;
+  const isGitCheckout = workspace?.projectKind === "git";
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const handleOpenFileExplorer = useCallback(() => {
     if (!workspaceDirectory) {
@@ -102,11 +92,7 @@ function TerminalPanel() {
   if (!workspaceDirectory) {
     return (
       <View style={CENTERED_PADDED_STYLE}>
-        <Text>
-          {workspaceAuthority.ok
-            ? "Workspace execution directory not found."
-            : workspaceAuthority.message}
-        </Text>
+        <Text>Workspace directory not found.</Text>
       </View>
     );
   }

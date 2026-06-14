@@ -22,7 +22,7 @@ import type {
   DaemonClient,
 } from "@getpaseo/client/internal/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
-import { requireWorkspaceExecutionAuthority } from "@/utils/workspace-execution";
+import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ImageAttachment, MessagePayload } from "@/composer/types";
@@ -300,9 +300,10 @@ export function WorkspaceSetupDialog() {
 
         const wirePayload = splitComposerAttachmentsForSubmit(attachments);
         const encodedImages = await encodeImages(wirePayload.images);
-        const workspaceDirectory = requireWorkspaceExecutionAuthority({
-          workspace: ensuredWorkspace,
-        }).workspaceDirectory;
+        const workspaceDirectory = requireWorkspaceDirectory({
+          workspaceId: ensuredWorkspace.id,
+          workspaceDirectory: ensuredWorkspace.workspaceDirectory,
+        });
         const agent = await connectedClient.createAgent(
           buildCreateAgentOptions({
             composerState,

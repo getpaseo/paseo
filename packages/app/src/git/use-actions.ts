@@ -15,7 +15,7 @@ import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import { buildHostRootRoute } from "@/utils/host-routes";
 import {
@@ -496,7 +496,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       return;
     }
 
-    const archivedWorkspaceId = resolveWorkspaceIdByExecutionDirectory({
+    const archivedWorkspaceId = resolveWorkspaceIdByDirectory({
       workspaces: workspaceList,
       workspaceDirectory: worktreePath,
     });
