@@ -41,6 +41,34 @@ vi.mock("react-native", () => ({
     React.createElement("div", {}, children),
 }));
 
+// The shared unified-line row has its own dedicated render test
+// (diff-unified-line-row.test.tsx). Here we mock it to keep this suite focused on
+// the commit view's own logic (building lines, gutter width, loading/empty
+// states) while still surfacing the gutter number and token text it forwards.
+vi.mock("@/git/diff-unified-line-row", () => ({
+  DiffUnifiedLineRow: ({
+    line,
+    lineNumber,
+  }: {
+    line: { tokens?: { text: string }[]; content: string };
+    lineNumber: number | null;
+  }) =>
+    React.createElement(
+      "div",
+      {},
+      React.createElement("span", {}, lineNumber === null ? "" : String(lineNumber)),
+      React.createElement(
+        "span",
+        {},
+        line.tokens ? line.tokens.map((token) => token.text).join("") : line.content,
+      ),
+    ),
+}));
+
+vi.mock("@/styles/unistyles-inline-style", () => ({
+  inlineUnistylesStyle: (style: Record<string, unknown>) => style,
+}));
+
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
     create: (factory: unknown) =>
