@@ -241,7 +241,6 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
     type: "fetch_workspaces_request",
     requestId: "workspace-refetch-request",
-    filter: { idPrefix: "workspace_sdk" },
     page: { limit: 25 },
   });
 

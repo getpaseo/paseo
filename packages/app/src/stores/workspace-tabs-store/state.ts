@@ -59,6 +59,7 @@ export function buildWorkspaceTabPersistenceKey(input: {
   if (!serverId || !workspaceId) {
     return null;
   }
+  // workspaceId is opaque; do not parse this key back into a path.
   return `${serverId}:${workspaceId}`;
 }
 

@@ -110,11 +110,7 @@ import { createWorkspaceBrowser, useBrowserStore } from "@/stores/browser-store"
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
-import {
-  getWorkspaceExecutionAuthority,
-  resolveWorkspaceRouteId,
-  type WorkspaceExecutionAuthorityResult,
-} from "@/utils/workspace-execution";
+import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -169,7 +165,6 @@ import {
 } from "@/screens/workspace/workspace-bulk-close";
 import { resolveCloseAgentTabPolicy } from "@/subagents";
 import { findAdjacentPane } from "@/utils/split-navigation";
-import { isAbsolutePath } from "@/utils/path";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
@@ -981,13 +976,13 @@ function useCloseTabs(): UseCloseTabsResult {
 
 interface WorkspaceHeaderMenuProps {
   normalizedServerId: string;
-  normalizedWorkspaceId: string;
   currentBranchName: string | null;
   showWorkspaceSetup: boolean;
   showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
   importAgentDisabled: boolean;
+  copyPathDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
@@ -1068,13 +1063,13 @@ function WorkspaceHeaderMenuTriggerIcon({
 
 function WorkspaceHeaderMenu({
   normalizedServerId,
-  normalizedWorkspaceId,
   currentBranchName,
   showWorkspaceSetup,
   showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
   importAgentDisabled,
+  copyPathDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
   menuNewBrowserIcon,
@@ -1147,7 +1142,7 @@ function WorkspaceHeaderMenu({
         <DropdownMenuItem
           testID="workspace-header-copy-path"
           leading={menuCopyIcon}
-          disabled={!isAbsolutePath(normalizedWorkspaceId)}
+          disabled={copyPathDisabled}
           onSelect={onCopyWorkspacePath}
         >
           {t("workspace.header.actions.copyPath")}
@@ -1219,6 +1214,7 @@ interface WorkspaceHeaderTitleBarProps {
   isMobile: boolean;
   createTerminalDisabled: boolean;
   importAgentDisabled: boolean;
+  copyPathDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
@@ -1256,6 +1252,7 @@ function WorkspaceHeaderTitleBar({
   isMobile,
   createTerminalDisabled,
   importAgentDisabled,
+  copyPathDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
   menuNewBrowserIcon,
@@ -1305,13 +1302,13 @@ function WorkspaceHeaderTitleBar({
       <View style={styles.compactHeaderMenuCluster}>
         <WorkspaceHeaderMenu
           normalizedServerId={normalizedServerId}
-          normalizedWorkspaceId={normalizedWorkspaceId}
           currentBranchName={currentBranchName}
           showWorkspaceSetup={showWorkspaceSetup}
           showCreateBrowserTab={showCreateBrowserTab}
           isMobile={isMobile}
           createTerminalDisabled={createTerminalDisabled}
           importAgentDisabled={importAgentDisabled}
+          copyPathDisabled={copyPathDisabled}
           menuNewAgentIcon={menuNewAgentIcon}
           menuNewTerminalIcon={menuNewTerminalIcon}
           menuNewBrowserIcon={menuNewBrowserIcon}
@@ -1358,7 +1355,7 @@ function parsePaneDirection(actionId: string): PaneDirection | null {
 }
 
 interface RenderWorkspaceContentInput {
-  isMissingWorkspaceExecutionAuthority: boolean;
+  isMissingWorkspaceDirectory: boolean;
   activeTabDescriptor: WorkspaceTabDescriptor | null;
   hasHydratedAgents: boolean;
   mountedFocusedPaneTabIds: string[];
@@ -1373,7 +1370,7 @@ interface RenderWorkspaceContentInput {
 
 function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.ReactNode {
   const {
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     activeTabDescriptor,
     hasHydratedAgents,
     mountedFocusedPaneTabIds,
@@ -1383,11 +1380,11 @@ function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.React
     buildMobilePaneContentModel,
   } = input;
 
-  if (isMissingWorkspaceExecutionAuthority) {
+  if (isMissingWorkspaceDirectory) {
     return (
       <View style={styles.emptyState}>
         <Text style={styles.emptyStateText}>
-          Workspace execution directory is missing. Reload workspace data before opening tabs.
+          Workspace directory is missing. Reload workspace data before opening tabs.
         </Text>
       </View>
     );
@@ -1478,22 +1475,6 @@ function deriveWorkspaceHeaderFields(input: {
     shouldShowWorkspaceHeaderSubtitle: renderState.shouldShowSubtitle,
     isGitCheckout: renderState.isGitCheckout,
     currentBranchName: renderState.currentBranchName,
-  };
-}
-
-interface WorkspaceAuthorityState {
-  workspaceDirectory: string | null;
-  isMissingWorkspaceExecutionAuthority: boolean;
-}
-
-function resolveWorkspaceAuthorityState(
-  workspaceAuthority: WorkspaceExecutionAuthorityResult,
-  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
-): WorkspaceAuthorityState {
-  const authority = workspaceAuthority.ok ? workspaceAuthority.authority : null;
-  return {
-    workspaceDirectory: authority?.workspaceDirectory ?? null,
-    isMissingWorkspaceExecutionAuthority: Boolean(workspaceDescriptor && !authority),
   };
 }
 
@@ -1815,15 +1796,8 @@ function WorkspaceScreenContent({
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const workspaceAuthority = useMemo(
-    () =>
-      getWorkspaceExecutionAuthority({
-        workspace: workspaceDescriptor,
-      }),
-    [workspaceDescriptor],
-  );
-  const { workspaceDirectory, isMissingWorkspaceExecutionAuthority } =
-    resolveWorkspaceAuthorityState(workspaceAuthority, workspaceDescriptor);
+  const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
+  const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
   const openImportSheet = useCallback(() => {
@@ -1907,7 +1881,7 @@ function WorkspaceScreenContent({
     workspaceDirectory,
     workspaceScripts,
     hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     onTerminalCreated: handleTerminalCreated,
     onScriptTerminalSelected: handleScriptTerminalSelected,
     onWorkspacePathUnavailable: handleWorkspacePathUnavailable,
@@ -3288,7 +3262,7 @@ function WorkspaceScreenContent({
     [buildPaneContentModel],
   );
   const content = renderWorkspaceContent({
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     activeTabDescriptor,
     hasHydratedAgents,
     mountedFocusedPaneTabIds,
@@ -3441,11 +3415,13 @@ function WorkspaceScreenContent({
         ) : null}
         {!isMobile && isGitCheckout ? (
           <>
-            <WorkspaceGitActions
-              serverId={normalizedServerId}
-              cwd={normalizedWorkspaceId}
-              hideLabels={showCompactButtonLabels}
-            />
+            {workspaceDirectory ? (
+              <WorkspaceGitActions
+                serverId={normalizedServerId}
+                cwd={workspaceDirectory}
+                hideLabels={showCompactButtonLabels}
+              />
+            ) : null}
             <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
               <TooltipTrigger asChild>
                 <Pressable
@@ -3690,6 +3666,7 @@ function WorkspaceScreenContent({
                 isMobile={isMobile}
                 createTerminalDisabled={createTerminalDisabled}
                 importAgentDisabled={!canOpenImportSheet}
+                copyPathDisabled={!workspaceDirectory}
                 menuNewAgentIcon={menuNewAgentIcon}
                 menuNewTerminalIcon={menuNewTerminalIcon}
                 menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}

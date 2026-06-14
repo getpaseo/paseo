@@ -414,9 +414,11 @@ function createWorkspaceHandleFactory(daemonClient: DaemonClient): WorkspaceHand
       id,
       latest: () => latest,
       refetch: async (options) => {
+        // Best-effort: fetches one page and matches by id client-side, so a workspace beyond
+        // the first page won't be found. TODO: add a "get workspace by id" lookup and resolve
+        // by exact id instead of paging.
         const result = await daemonClient.fetchWorkspaces({
           requestId: options?.requestId,
-          filter: { idPrefix: id },
           page: { limit: 25 },
         });
         latest = result.entries.find((entry) => entry.id === id) ?? null;

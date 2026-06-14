@@ -5,7 +5,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useResolveWorkspaceIdByCwd } from "@/stores/session-store-hooks";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildHostRootRoute } from "@/utils/host-routes";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 
 export default function HostAgentReadyRoute() {
@@ -93,7 +93,7 @@ function HostAgentReadyRouteContent() {
         }
         const cwd = result?.agent?.cwd?.trim();
         const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
-        const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+        const workspaceId = resolveWorkspaceIdByDirectory({
           workspaces: workspaces?.values(),
           workspaceDirectory: cwd,
         });

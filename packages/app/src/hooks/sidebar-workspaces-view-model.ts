@@ -8,6 +8,12 @@ import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
+function workspaceNameFromDirectory(directory: string): string {
+  const trimmed = directory.trim().replace(/[\\/]+$/g, "");
+  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
+}
+
 export type SidebarStateBucket = WorkspaceDescriptor["status"];
 
 export interface SidebarWorkspaceEntry {
@@ -54,7 +60,7 @@ function createStructuralWorkspaceEntry(input: {
     workspaceDirectory: undefined,
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
-    name: input.workspaceId,
+    name: workspaceNameFromDirectory(input.project.iconWorkingDir) || input.workspaceId,
     statusBucket: "done",
     statusEnteredAt: null,
     archivingAt: null,

@@ -1,4 +1,5 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { resolve } from "node:path";
 import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -6,7 +7,7 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
-import { deriveProjectGroupingName, normalizeWorkspaceId } from "./workspace-registry-model.js";
+import { deriveProjectGroupingName, generateWorkspaceId } from "./workspace-registry-model.js";
 import {
   createWorktreeCore,
   type CreateWorktreeCoreDeps,
@@ -195,11 +196,14 @@ async function upsertWorkspaceForWorktree(options: {
   projectId?: string;
   repoRoot: string;
   worktree: WorktreeConfig;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
+  deps: Pick<
+    CreatePaseoWorktreeDeps,
+    "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
+  >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = normalizeWorkspaceId(options.worktree.worktreePath);
-  const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
-  const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
+  const normalizedCwd = resolve(options.worktree.worktreePath);
+  const normalizedInputCwd = resolve(options.inputCwd);
+  const normalizedRepoRoot = resolve(options.repoRoot);
   const existingWorkspace = await findWorkspaceByDirectory(
     normalizedCwd,
     options.deps.workspaceRegistry,
@@ -211,7 +215,7 @@ async function upsertWorkspaceForWorktree(options: {
     existingWorkspace,
     deps: options.deps,
   });
-  const workspaceId = normalizedCwd;
+  const workspaceId = existingWorkspace?.workspaceId ?? generateWorkspaceId();
   const now = new Date().toISOString();
 
   await options.deps.projectRegistry.upsert(

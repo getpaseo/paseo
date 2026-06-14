@@ -14,6 +14,7 @@ export interface AgentHandle {
   page: Page;
   client: SeedDaemonClient;
   agentId: string;
+  workspaceId: string;
   cwd: string;
   provider: RewindFlowProvider;
 }
@@ -61,14 +62,17 @@ function fullAccessConfig(provider: RewindFlowProvider): ProviderLaunchConfig {
   }
 }
 
-function agentRoute(cwd: string, agentId: string): string {
-  return `${buildHostWorkspaceRoute(getServerId(), cwd)}?open=${encodeURIComponent(
+function agentRoute(workspaceId: string, agentId: string): string {
+  return `${buildHostWorkspaceRoute(getServerId(), workspaceId)}?open=${encodeURIComponent(
     `agent:${agentId}`,
   )}`;
 }
 
-async function openAgent(page: Page, input: { cwd: string; agentId: string }): Promise<void> {
-  await page.goto(agentRoute(input.cwd, input.agentId));
+async function openAgent(
+  page: Page,
+  input: { workspaceId: string; agentId: string },
+): Promise<void> {
+  await page.goto(agentRoute(input.workspaceId, input.agentId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },
@@ -180,10 +184,11 @@ export async function launchAgent(input: {
     page: input.page,
     client,
     agentId: agent.id,
+    workspaceId: opened.workspace.id,
     cwd: input.cwd,
     provider: input.provider,
   };
-  await openAgent(input.page, { cwd: input.cwd, agentId: agent.id });
+  await openAgent(input.page, { workspaceId: opened.workspace.id, agentId: agent.id });
   return handle;
 }
 

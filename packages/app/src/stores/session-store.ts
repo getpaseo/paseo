@@ -27,8 +27,11 @@ import type {
   ServerCapabilities,
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
+import {
+  normalizeWorkspaceOpaqueId,
+  normalizeWorkspacePath,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -149,7 +152,10 @@ export function normalizeWorkspaceDescriptor(
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectRootPath: payload.projectRootPath,
-    workspaceDirectory: payload.workspaceDirectory,
+    // Canonicalize the workspace directory once, at the store boundary, so every
+    // consumer can read workspace.workspaceDirectory directly. Empty means "no
+    // usable directory" (older daemons may omit it; the wire field is optional).
+    workspaceDirectory: normalizeWorkspacePath(payload.workspaceDirectory) ?? "",
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,

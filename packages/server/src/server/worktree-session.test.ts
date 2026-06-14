@@ -479,6 +479,7 @@ function createAgentStorageStub(): Pick<AgentStorage, "list"> {
 
 function createWorkspaceArchivingDeps() {
   return {
+    resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-test"),
     emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -1317,7 +1318,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         branchName: "fix-attached-pr-context",
       },
       workspace: {
-        workspaceId: "/tmp/worktrees/fix-attached-pr-context",
+        workspaceId: "ws-fix-attached-pr-context",
         projectId: "/tmp/repo",
         cwd: "/tmp/worktrees/fix-attached-pr-context",
         kind: "worktree" as const,
@@ -1722,7 +1723,6 @@ describe("archivePaseoWorktree", () => {
       runSetup: false,
       paseoHome,
     });
-
     const teardownStartTimes: Record<string, number> = {};
     const teardownEndTimes: Record<string, number> = {};
     const archiveAgentSpy = vi.fn(async (agentId: string) => {
@@ -1793,13 +1793,14 @@ describe("archivePaseoWorktree", () => {
       runSetup: false,
       paseoHome,
     });
-    const affectedIds = [created.worktreePath];
+    const workspaceId = "ws-archive-marked-during-close";
+    const affectedIds = [workspaceId];
     const liveAgent = createManagedAgentForArchive({
       id: "agent-1",
       cwd: created.worktreePath,
     });
     const workspaceRecord: PersistedWorkspaceRecord = {
-      workspaceId: created.worktreePath,
+      workspaceId,
       projectId: repoDir,
       cwd: created.worktreePath,
       kind: "worktree",
@@ -1813,13 +1814,13 @@ describe("archivePaseoWorktree", () => {
     const archivedWorkspaceIds = new Set<string>();
     const archivingByWorkspaceId = new Map<string, string>();
     const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async (workspaceIds: Iterable<string>) => {
-      for (const workspaceId of workspaceIds) {
-        if (archivedWorkspaceIds.has(workspaceId)) {
+      for (const emittedWorkspaceId of workspaceIds) {
+        if (archivedWorkspaceIds.has(emittedWorkspaceId)) {
           emitted.push({
             type: "workspace_update",
             payload: {
               kind: "remove",
-              id: workspaceId,
+              id: emittedWorkspaceId,
             },
           });
           continue;
@@ -1830,7 +1831,7 @@ describe("archivePaseoWorktree", () => {
             kind: "upsert",
             workspace: {
               ...createWorkspaceDescriptor({ workspace: workspaceRecord, repoDir }),
-              archivingAt: archivingByWorkspaceId.get(workspaceId) ?? null,
+              archivingAt: archivingByWorkspaceId.get(emittedWorkspaceId) ?? null,
             },
           },
         });
@@ -1861,21 +1862,24 @@ describe("archivePaseoWorktree", () => {
           archiveSnapshot,
         },
         agentStorage: createAgentStorageStub(),
-        archiveWorkspaceRecord: vi.fn(async (workspaceId: string) => {
-          archivedWorkspaceIds.add(workspaceId);
+        resolveWorkspaceIdForCwd: vi.fn(async (cwd: string) =>
+          cwd === created.worktreePath ? workspaceId : null,
+        ),
+        archiveWorkspaceRecord: vi.fn(async (archivedWorkspaceId: string) => {
+          archivedWorkspaceIds.add(archivedWorkspaceId);
         }),
         emit: (message) => emitted.push(message),
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => {
           events.push(`mark:${Array.from(workspaceIds).join(",")}`);
-          for (const workspaceId of workspaceIds) {
-            archivingByWorkspaceId.set(workspaceId, archivingAt);
+          for (const markedWorkspaceId of workspaceIds) {
+            archivingByWorkspaceId.set(markedWorkspaceId, archivingAt);
           }
         },
         clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => {
           events.push(`clear:${Array.from(workspaceIds).join(",")}`);
-          for (const workspaceId of workspaceIds) {
-            archivingByWorkspaceId.delete(workspaceId);
+          for (const clearedWorkspaceId of workspaceIds) {
+            archivingByWorkspaceId.delete(clearedWorkspaceId);
           }
         },
         isPathWithinRoot: createIsPathWithinRoot(),
@@ -1895,14 +1899,14 @@ describe("archivePaseoWorktree", () => {
         message.type === "workspace_update",
     );
     expect(events.slice(0, 3)).toEqual([
-      `mark:${created.worktreePath}`,
-      `emit:${created.worktreePath}`,
+      `mark:${workspaceId}`,
+      `emit:${workspaceId}`,
       "close:start",
     ]);
     expect(workspaceUpdates[0]?.payload).toEqual({
       kind: "upsert",
       workspace: expect.objectContaining({
-        id: created.worktreePath,
+        id: workspaceId,
         archivingAt: expect.any(String),
       }),
     });
@@ -1913,18 +1917,15 @@ describe("archivePaseoWorktree", () => {
     expect(workspaceUpdates[1]?.payload).toEqual({
       kind: "upsert",
       workspace: expect.objectContaining({
-        id: created.worktreePath,
+        id: workspaceId,
         archivingAt,
       }),
     });
     expect(workspaceUpdates.at(-1)?.payload).toEqual({
       kind: "remove",
-      id: created.worktreePath,
+      id: workspaceId,
     });
-    expect(events.slice(-2)).toEqual([
-      `clear:${created.worktreePath}`,
-      `emit:${created.worktreePath}`,
-    ]);
+    expect(events.slice(-2)).toEqual([`clear:${workspaceId}`, `emit:${workspaceId}`]);
     expect(
       emitted.find((message) => message.type === "paseo_worktree_archive_response"),
     ).toMatchObject({
@@ -1960,6 +1961,7 @@ describe("archivePaseoWorktree", () => {
       runSetup: false,
       paseoHome,
     });
+    const workspaceId = "ws-archive-delete-fails";
     const archivingByWorkspaceId = new Map<string, string>();
     const archivedWorkspaceIds = new Set<string>();
     const emittedUpdates: Array<
@@ -1973,8 +1975,8 @@ describe("archivePaseoWorktree", () => {
           workspaceId: string;
         }
     > = [];
-    const archiveWorkspaceRecord = vi.fn(async (workspaceId: string) => {
-      archivedWorkspaceIds.add(workspaceId);
+    const archiveWorkspaceRecord = vi.fn(async (archivedWorkspaceId: string) => {
+      archivedWorkspaceIds.add(archivedWorkspaceId);
     });
 
     await expect(
@@ -1991,31 +1993,34 @@ describe("archivePaseoWorktree", () => {
             }),
           },
           agentStorage: createAgentStorageStub(),
+          resolveWorkspaceIdForCwd: vi.fn(async (cwd: string) =>
+            cwd === created.worktreePath ? workspaceId : null,
+          ),
           archiveWorkspaceRecord,
           emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async (workspaceIds: Iterable<string>) => {
-            for (const workspaceId of workspaceIds) {
-              if (archivedWorkspaceIds.has(workspaceId)) {
+            for (const emittedWorkspaceId of workspaceIds) {
+              if (archivedWorkspaceIds.has(emittedWorkspaceId)) {
                 emittedUpdates.push({
                   kind: "remove",
-                  workspaceId,
+                  workspaceId: emittedWorkspaceId,
                 });
                 continue;
               }
               emittedUpdates.push({
                 kind: "upsert",
-                workspaceId,
-                archivingAt: archivingByWorkspaceId.get(workspaceId) ?? null,
+                workspaceId: emittedWorkspaceId,
+                archivingAt: archivingByWorkspaceId.get(emittedWorkspaceId) ?? null,
               });
             }
           }),
           markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => {
-            for (const workspaceId of workspaceIds) {
-              archivingByWorkspaceId.set(workspaceId, archivingAt);
+            for (const markedWorkspaceId of workspaceIds) {
+              archivingByWorkspaceId.set(markedWorkspaceId, archivingAt);
             }
           },
           clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => {
-            for (const workspaceId of workspaceIds) {
-              archivingByWorkspaceId.delete(workspaceId);
+            for (const clearedWorkspaceId of workspaceIds) {
+              archivingByWorkspaceId.delete(clearedWorkspaceId);
             }
           },
           isPathWithinRoot: createIsPathWithinRoot(),
@@ -2032,15 +2037,15 @@ describe("archivePaseoWorktree", () => {
 
     expect(existsSync(created.worktreePath)).toBe(true);
     expect(existsSync(path.join(repoDir, "teardown-start.log"))).toBe(true);
-    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(created.worktreePath);
+    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
     expect(emittedUpdates[0]).toEqual({
       kind: "upsert",
-      workspaceId: created.worktreePath,
+      workspaceId,
       archivingAt: expect.any(String),
     });
     expect(emittedUpdates.at(-1)).toEqual({
       kind: "remove",
-      workspaceId: created.worktreePath,
+      workspaceId,
     });
   });
 

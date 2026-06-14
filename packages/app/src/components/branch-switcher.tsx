@@ -10,6 +10,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { ScreenTitle } from "@/components/headers/screen-title";
 
 interface BranchSwitcherProps {
@@ -35,11 +36,13 @@ export function BranchSwitcher({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const toast = useToast();
   const queryClient = useQueryClient();
+  const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
 
   const { branchOptions, isOpen, setIsOpen, handleBranchSelect } = useBranchSwitcher({
     client,
     normalizedServerId: serverId,
     normalizedWorkspaceId: workspaceId,
+    workspaceDirectory,
     currentBranchName,
     isGitCheckout,
     isConnected,

@@ -40,10 +40,7 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
-import {
-  requireWorkspaceExecutionDirectory,
-  resolveWorkspaceExecutionDirectory,
-} from "@/utils/workspace-execution";
+import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
@@ -355,7 +352,7 @@ function StatusWorkspaceRowWithMenu({
   const queryClient = useQueryClient();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
-  const workspaceDirectory = resolveWorkspaceExecutionDirectory({
+  const workspaceDirectory = resolveWorkspaceDirectory({
     workspaceDirectory: workspace.workspaceDirectory,
   });
   const archiveStatus = useCheckoutGitActionsStore((state) =>
@@ -391,7 +388,7 @@ function StatusWorkspaceRowWithMenu({
     if (!confirmed) return;
     let archiveDirectory: string;
     try {
-      archiveDirectory = requireWorkspaceExecutionDirectory({
+      archiveDirectory = requireWorkspaceDirectory({
         workspaceId: workspace.workspaceId,
         workspaceDirectory: workspace.workspaceDirectory,
       });
@@ -441,7 +438,7 @@ function StatusWorkspaceRowWithMenu({
   const handleCopyPath = useCallback(() => {
     let copyTargetDirectory: string;
     try {
-      copyTargetDirectory = requireWorkspaceExecutionDirectory({
+      copyTargetDirectory = requireWorkspaceDirectory({
         workspaceId: workspace.workspaceId,
         workspaceDirectory: workspace.workspaceDirectory,
       });
@@ -462,7 +459,7 @@ function StatusWorkspaceRowWithMenu({
     mutationFn: async (branch: string) => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      const targetCwd = requireWorkspaceExecutionDirectory({
+      const targetCwd = requireWorkspaceDirectory({
         workspaceId: workspace.workspaceId,
         workspaceDirectory: workspace.workspaceDirectory,
       });

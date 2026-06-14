@@ -96,15 +96,16 @@ export async function archiveAgentCommand(
   agentId: string,
 ): Promise<ArchiveAgentResult> {
   const liveAgent = dependencies.agentManager.getAgent(agentId);
+  let record: StoredAgentRecord | null;
   if (liveAgent) {
     await cancelAgentRunCommand(dependencies, agentId);
     await dependencies.agentManager.clearAgentAttention(agentId).catch(() => undefined);
     await dependencies.agentManager.archiveAgent(agentId);
+    record = await dependencies.agentStorage.get(agentId);
   } else {
-    await archiveStoredAgent(dependencies, agentId);
+    record = await archiveStoredAgent(dependencies, agentId);
   }
 
-  const record = await dependencies.agentStorage.get(agentId);
   if (!record) {
     throw new Error(`Agent not found in storage after archive: ${agentId}`);
   }
@@ -174,16 +175,16 @@ export async function setAgentModeCommand(
 async function archiveStoredAgent(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage">,
   agentId: string,
-): Promise<void> {
+): Promise<StoredAgentRecord> {
   const existing = await dependencies.agentStorage.get(agentId);
   if (!existing) {
     throw new Error(`Agent not found: ${agentId}`);
   }
 
   if (existing.archivedAt) {
-    return;
+    return existing;
   }
 
   const archivedAt = new Date().toISOString();
-  await dependencies.agentManager.archiveSnapshot(agentId, archivedAt);
+  return dependencies.agentManager.archiveSnapshot(agentId, archivedAt);
 }

@@ -38,7 +38,7 @@ interface UseWorkspaceTerminalsInput {
   workspaceDirectory: string | null;
   workspaceScripts: WorkspaceDescriptor["scripts"];
   hasHydratedWorkspaces: boolean;
-  isMissingWorkspaceExecutionAuthority: boolean;
+  isMissingWorkspaceDirectory: boolean;
   onTerminalCreated: (input: { terminalId: string; paneId?: string }) => void;
   onScriptTerminalSelected: (terminalId: string) => void;
   onWorkspacePathUnavailable: () => void;
@@ -56,7 +56,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     workspaceDirectory,
     workspaceScripts,
     hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     onTerminalCreated,
     onScriptTerminalSelected,
     onWorkspacePathUnavailable,
@@ -209,7 +209,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       return;
     }
 
-    if (hasHydratedWorkspaces && isMissingWorkspaceExecutionAuthority) {
+    if (hasHydratedWorkspaces && isMissingWorkspaceDirectory) {
       setPendingCreateInput(null);
       onWorkspacePathUnavailable();
     }
@@ -217,7 +217,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     canCreateNow,
     createMutation,
     hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     onWorkspacePathUnavailable,
     pendingCreateInput,
   ]);
@@ -233,7 +233,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         return;
       }
 
-      if (hasHydratedWorkspaces && isMissingWorkspaceExecutionAuthority) {
+      if (hasHydratedWorkspaces && isMissingWorkspaceDirectory) {
         onWorkspacePathUnavailable();
         return;
       }
@@ -245,7 +245,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       canCreateNow,
       createMutation,
       hasHydratedWorkspaces,
-      isMissingWorkspaceExecutionAuthority,
+      isMissingWorkspaceDirectory,
       onTerminalCreateQueued,
       onWorkspacePathUnavailable,
       pendingCreateInput,
