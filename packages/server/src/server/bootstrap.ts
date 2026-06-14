@@ -240,6 +240,7 @@ export interface PaseoDaemonConfig {
   mcpInjectIntoAgents?: boolean;
   autoArchiveAfterMerge?: boolean;
   appendSystemPrompt?: string;
+  dictationTranscriptionPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   staticDir: string;
   mcpDebug: boolean;
@@ -316,6 +317,7 @@ export async function createPaseoDaemon(
       },
       autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
       appendSystemPrompt: config.appendSystemPrompt ?? "",
+      dictationTranscriptionPrompt: config.dictationTranscriptionPrompt ?? "",
       ...(config.terminalProfiles !== undefined
         ? { terminalProfiles: config.terminalProfiles }
         : {}),

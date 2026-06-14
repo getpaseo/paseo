@@ -139,6 +139,8 @@ export const MutableDaemonConfigSchema = z
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
+    // COMPAT(dictationTranscriptionPrompt): added in v0.1.96, remove gate after 2026-12-13.
+    dictationTranscriptionPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
   })
   .passthrough();
@@ -152,6 +154,7 @@ export const MutableDaemonConfigPatchSchema = z
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
+    dictationTranscriptionPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
   })
   .partial()
@@ -2174,6 +2177,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(dictationTranscriptionPrompt): added in v0.1.96, remove gate after 2026-12-13.
+        dictationTranscriptionPrompt: z.boolean().optional(),
       })
       .optional(),
   })

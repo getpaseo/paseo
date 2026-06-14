@@ -1,5 +1,10 @@
-import { describe, expect, test } from "vitest";
-import { FileExplorerRequestSchema, SessionOutboundMessageSchema } from "./messages.js";
+import { describe, expect, it, test } from "vitest";
+import {
+  FileExplorerRequestSchema,
+  MutableDaemonConfigSchema,
+  ServerInfoStatusPayloadSchema,
+  SessionOutboundMessageSchema,
+} from "./messages.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
   return {
@@ -159,5 +164,35 @@ describe("file explorer request compatibility", () => {
       requestId: "req-new",
       acceptBinary: true,
     });
+  });
+});
+
+describe("dictationTranscriptionPrompt", () => {
+  it("defaults dictationTranscriptionPrompt to empty string", () => {
+    const parsed = MutableDaemonConfigSchema.parse({ mcp: { injectIntoAgents: true } });
+    expect(parsed.dictationTranscriptionPrompt).toBe("");
+  });
+
+  it("preserves a provided dictationTranscriptionPrompt", () => {
+    const parsed = MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: true },
+      dictationTranscriptionPrompt: "Keep filler words.",
+    });
+    expect(parsed.dictationTranscriptionPrompt).toBe("Keep filler words.");
+  });
+
+  it("accepts the capability flag and parses payloads without it", () => {
+    const withFlag = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "s1",
+      features: { dictationTranscriptionPrompt: true },
+    });
+    expect(withFlag.features?.dictationTranscriptionPrompt).toBe(true);
+
+    const withoutFlag = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "s1",
+    });
+    expect(withoutFlag.features?.dictationTranscriptionPrompt).toBeUndefined();
   });
 });

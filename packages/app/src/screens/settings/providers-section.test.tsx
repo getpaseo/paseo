@@ -224,6 +224,7 @@ function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDa
     metadataGeneration: { providers: [] },
     autoArchiveAfterMerge: false,
     appendSystemPrompt: "",
+    dictationTranscriptionPrompt: "",
   };
 }
 
