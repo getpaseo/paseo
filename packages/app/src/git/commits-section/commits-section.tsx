@@ -6,7 +6,7 @@ import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutCommitsQuery } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { CommitRow } from "./commit-row";
-import type { FilePressHandler } from "./shared";
+import { type FilePressHandler, dotStyles } from "./shared";
 
 interface CommitsSectionProps {
   serverId: string;
@@ -92,9 +92,9 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
           {commits.length}
         </Text>
         <View style={styles.legend}>
-          <View style={styles.dotLocal} />
+          <View style={dotStyles.dotLocal} />
           <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendLocal")}</Text>
-          <View style={styles.dotRemote} />
+          <View style={dotStyles.legendDotRemote} />
           <Text style={styles.legendText}>{t("workspace.git.diff.commits.legendRemote")}</Text>
         </View>
       </Pressable>
@@ -116,8 +116,6 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
     </View>
   );
 }
-
-const LEGEND_DOT_SIZE = 8;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -161,21 +159,6 @@ const styles = StyleSheet.create((theme) => ({
   legendText: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
-  },
-  dotLocal: {
-    width: LEGEND_DOT_SIZE,
-    height: LEGEND_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.statusSuccess,
-  },
-  dotRemote: {
-    width: LEGEND_DOT_SIZE,
-    height: LEGEND_DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: "transparent",
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.foregroundMuted,
-    marginLeft: theme.spacing[1],
   },
   list: {
     paddingBottom: theme.spacing[1],

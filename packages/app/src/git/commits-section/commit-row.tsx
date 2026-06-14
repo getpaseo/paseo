@@ -7,7 +7,7 @@ import { DiffStat } from "@/components/diff-stat";
 import { getFileIconSvg } from "@/components/material-file-icons";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { CommitFileDiffView } from "./commit-file-diff-view";
-import type { CheckoutCommitFile, FilePressHandler } from "./shared";
+import { type CheckoutCommitFile, type FilePressHandler, dotStyles } from "./shared";
 
 interface CommitFileRowProps {
   commit: CheckoutCommit;
@@ -108,7 +108,7 @@ export const CommitRow = memo(function CommitRow({
         </View>
         <View
           testID={commit.isOnRemote ? "commit-dot-remote" : "commit-dot-local"}
-          style={commit.isOnRemote ? styles.dotRemote : styles.dotLocal}
+          style={commit.isOnRemote ? dotStyles.dotRemote : dotStyles.dotLocal}
         />
         <Text style={styles.shortSha}>{commit.shortSha}</Text>
         <Text style={styles.subject} numberOfLines={1}>
@@ -141,8 +141,6 @@ export const CommitRow = memo(function CommitRow({
   );
 });
 
-const DOT_SIZE = 8;
-
 const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
@@ -161,22 +159,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   chevronExpanded: {
     transform: [{ rotate: "90deg" }],
-  },
-  dotLocal: {
-    width: DOT_SIZE,
-    height: DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.statusSuccess,
-    flexShrink: 0,
-  },
-  dotRemote: {
-    width: DOT_SIZE,
-    height: DOT_SIZE,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: "transparent",
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.foregroundMuted,
-    flexShrink: 0,
   },
   shortSha: {
     fontSize: theme.fontSize.xs,
