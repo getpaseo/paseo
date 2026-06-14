@@ -135,19 +135,30 @@ export function DiffGutterCell({
     ],
     [type],
   );
+  // The inline-review system is scoped to the current checkout; per-commit
+  // diffs render without reviewActions and must not surface a commenting
+  // affordance. Gating the review target on reviewActions presence makes
+  // InlineReviewGutterCell's canComment false → no "+", disabled Pressable, no
+  // a11y "add comment" label. With reviewActions present (Changes panel) the
+  // target passes through unchanged.
+  const canReview = reviewActions !== undefined;
+  const effectiveReviewTarget = canReview ? reviewTarget : null;
   const comments = useMemo(
     () =>
-      reviewTarget
-        ? (reviewActions?.commentsByTarget.get(reviewTarget.key) ?? EMPTY_COMMENTS)
+      effectiveReviewTarget
+        ? (reviewActions?.commentsByTarget.get(effectiveReviewTarget.key) ?? EMPTY_COMMENTS)
         : EMPTY_COMMENTS,
-    [reviewTarget, reviewActions?.commentsByTarget],
+    [effectiveReviewTarget, reviewActions?.commentsByTarget],
   );
-  const isEditorOpen = isInlineReviewEditorForTarget(reviewActions?.editor ?? null, reviewTarget);
+  const isEditorOpen = isInlineReviewEditorForTarget(
+    reviewActions?.editor ?? null,
+    effectiveReviewTarget,
+  );
   const onStartComment = reviewActions?.onStartComment ?? noopStartComment;
 
   return (
     <InlineReviewGutterCell
-      reviewTarget={reviewTarget}
+      reviewTarget={effectiveReviewTarget}
       comments={comments}
       isEditorOpen={isEditorOpen}
       isLineHovered={isLineHovered}

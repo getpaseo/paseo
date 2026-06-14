@@ -72,17 +72,45 @@ vi.mock("@/styles/unistyles-inline-style", () => ({
   inlineUnistylesStyle: (style: Record<string, unknown>) => style,
 }));
 
+const gutterCellCalls = vi.hoisted(() => [] as Array<{ reviewTarget: unknown }>);
+
 vi.mock("@/review", () => ({
-  InlineReviewGutterCell: ({ children, style }: { children?: React.ReactNode; style?: unknown }) =>
-    React.createElement(
+  InlineReviewGutterCell: ({
+    children,
+    style,
+    reviewTarget,
+  }: {
+    children?: React.ReactNode;
+    style?: unknown;
+    reviewTarget?: unknown;
+  }) => {
+    gutterCellCalls.push({ reviewTarget: reviewTarget ?? null });
+    return React.createElement(
       "div",
-      { "data-gutter": "1", "data-style": JSON.stringify(flattenStyle(style)) },
+      {
+        "data-gutter": "1",
+        "data-has-target": reviewTarget ? "1" : "0",
+        "data-style": JSON.stringify(flattenStyle(style)),
+      },
       children,
-    ),
+    );
+  },
   isInlineReviewEditorForTarget: () => false,
 }));
 
 import { DiffUnifiedLineRow } from "./diff-unified-line-row";
+import type { ReviewableDiffTarget } from "@/utils/diff-layout";
+import type { InlineReviewActions } from "@/review";
+
+const REVIEW_TARGET = { key: "target-key" } as unknown as ReviewableDiffTarget;
+
+function makeReviewActions(): InlineReviewActions {
+  return {
+    commentsByTarget: new Map(),
+    editor: null,
+    onStartComment: vi.fn(),
+  } as unknown as InlineReviewActions;
+}
 
 function makeLine(type: DiffLine["type"], content: string): DiffLine {
   return {
@@ -112,6 +140,7 @@ describe("DiffUnifiedLineRow", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    gutterCellCalls.length = 0;
   });
 
   afterEach(() => {
@@ -125,7 +154,14 @@ describe("DiffUnifiedLineRow", () => {
     vi.unstubAllGlobals();
   });
 
-  function render(line: DiffLine, lineNumber: number | null): void {
+  function render(
+    line: DiffLine,
+    lineNumber: number | null,
+    options?: {
+      reviewTarget?: ReviewableDiffTarget | null;
+      reviewActions?: InlineReviewActions;
+    },
+  ): void {
     act(() => {
       root?.render(
         <DiffUnifiedLineRow
@@ -134,6 +170,8 @@ describe("DiffUnifiedLineRow", () => {
           gutterWidth={40}
           gutterTestID="gutter"
           contentTestID="content"
+          reviewTarget={options?.reviewTarget}
+          reviewActions={options?.reviewActions}
         />,
       );
     });
@@ -163,5 +201,26 @@ describe("DiffUnifiedLineRow", () => {
       .map((el) => JSON.parse(el.getAttribute("data-style") ?? "{}"))
       .filter((s) => typeof s.backgroundColor === "string");
     expect(rowStyles.some((s) => s.backgroundColor === "rgba(248, 81, 73, 0.1)")).toBe(true);
+  });
+
+  it("does not surface the comment affordance without reviewActions (per-commit diff)", () => {
+    render(makeLine("add", "x"), 1, { reviewTarget: REVIEW_TARGET });
+
+    // Without reviewActions, DiffGutterCell must hand a null reviewTarget to
+    // InlineReviewGutterCell so canComment is false (no "+", disabled, no a11y
+    // add-comment label) even though the diff produced a reviewTarget.
+    expect(gutterCellCalls.length).toBeGreaterThan(0);
+    expect(gutterCellCalls.every((call) => call.reviewTarget === null)).toBe(true);
+    expect(container?.querySelector('[data-has-target="1"]')).toBeNull();
+  });
+
+  it("passes the reviewTarget through when reviewActions is present (Changes panel)", () => {
+    render(makeLine("add", "x"), 1, {
+      reviewTarget: REVIEW_TARGET,
+      reviewActions: makeReviewActions(),
+    });
+
+    expect(gutterCellCalls.some((call) => call.reviewTarget === REVIEW_TARGET)).toBe(true);
+    expect(container?.querySelector('[data-has-target="1"]')).not.toBeNull();
   });
 });
