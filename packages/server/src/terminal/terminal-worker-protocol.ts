@@ -143,4 +143,6 @@ export type TerminalWorkerEvent =
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
+// The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so
+// the parent can cache the input-mode preamble instead of re-deriving it.
 export type TerminalWorkerStateResult = TerminalStateSnapshot | null;

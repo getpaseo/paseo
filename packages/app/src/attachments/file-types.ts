@@ -69,6 +69,11 @@ export function getFileExtension(path: string): string {
   return normalizedPath.slice(extensionIndex).toLowerCase();
 }
 
+export function getFileTypeLabel(path: string): string | null {
+  const extension = getFileExtension(path).slice(1);
+  return extension ? extension.toUpperCase() : null;
+}
+
 export function getMimeTypeFromPath(path: string): string {
   return MIME_TYPE_BY_EXTENSION[getFileExtension(path)] ?? "application/octet-stream";
 }

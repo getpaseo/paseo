@@ -36,6 +36,9 @@ export interface TerminalCommandFinishedInfo {
 export interface TerminalStateSnapshot {
   state: TerminalState;
   revision: number;
+  // Input-mode replay preamble at snapshot time. Populated by the terminal
+  // worker so the daemon main loop doesn't have to re-derive it from output.
+  replayPreamble?: string;
 }
 
 export interface TerminalStateSnapshotOptions {
@@ -58,7 +61,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
   | { type: "snapshot"; state: TerminalState; revision?: number }
-  | { type: "snapshotReady"; revision?: number }
+  | { type: "snapshotReady"; revision?: number; replayPreamble?: string }
   | { type: "titleChange"; title?: string };
 
 export interface TerminalSession {
@@ -606,7 +609,12 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   let processExited = false;
   const processExitWaiters = new Set<() => void>();
   let exitInfo: TerminalExitInfo | null = null;
-  let recentOutputText = "";
+  // Recent output is retained as whole chunks plus a running char length so we
+  // avoid reallocating a ~16KB string on every pty chunk. We keep enough whole
+  // chunks that their join always contains at least the last
+  // TERMINAL_EXIT_OUTPUT_CHAR_LIMIT chars; the exact tail is sliced at exit.
+  const recentOutputChunks: string[] = [];
+  let recentOutputLength = 0;
   let title: string | undefined;
   let titleMode: "auto" | "manual" = presetTitle?.trim() ? "manual" : "auto";
   let pendingTitle: string | undefined;
@@ -777,7 +785,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       lastOutputLines:
         lastOutputLines.length > 0
           ? lastOutputLines
-          : extractLastOutputLinesFromText(recentOutputText, TERMINAL_EXIT_OUTPUT_LINE_LIMIT),
+          : extractLastOutputLinesFromText(
+              recentOutputChunks.join("").slice(-TERMINAL_EXIT_OUTPUT_CHAR_LIMIT),
+              TERMINAL_EXIT_OUTPUT_LINE_LIMIT,
+            ),
     };
   }
 
@@ -803,6 +814,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
     disposed = true;
     pendingInput = "";
+    recentOutputChunks.length = 0;
+    recentOutputLength = 0;
     inputModeTracker.reset();
     if (inputFlushImmediate) {
       clearImmediate(inputFlushImmediate);
@@ -837,9 +850,23 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     for (const response of inputModeUpdate.responses) {
       ptyProcess.write(response);
     }
-    recentOutputText = `${recentOutputText}${data}`;
-    if (recentOutputText.length > TERMINAL_EXIT_OUTPUT_CHAR_LIMIT) {
-      recentOutputText = recentOutputText.slice(-TERMINAL_EXIT_OUTPUT_CHAR_LIMIT);
+    recentOutputChunks.push(data);
+    recentOutputLength += data.length;
+    // Drop whole leading chunks while the rest still covers the char limit, so
+    // the retained join always contains at least the last limit chars.
+    while (
+      recentOutputChunks.length > 1 &&
+      recentOutputLength - recentOutputChunks[0].length >= TERMINAL_EXIT_OUTPUT_CHAR_LIMIT
+    ) {
+      recentOutputLength -= recentOutputChunks[0].length;
+      recentOutputChunks.shift();
+    }
+    // We never drop the last chunk, so a single chunk larger than the cap would
+    // grow the buffer unbounded; slice its tail to keep the cap hard.
+    if (recentOutputChunks.length === 1 && recentOutputLength > TERMINAL_EXIT_OUTPUT_CHAR_LIMIT) {
+      const tail = recentOutputChunks[0].slice(-TERMINAL_EXIT_OUTPUT_CHAR_LIMIT);
+      recentOutputChunks[0] = tail;
+      recentOutputLength = tail.length;
     }
     writeOutputToHeadless(data);
   });
@@ -993,7 +1020,13 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       if (!disposed && active && listeners.has(subscriptionListener)) {
         snapshotDelivered = true;
         if (initialSnapshot === "ready") {
-          listener({ type: "snapshotReady", revision: stateRevision });
+          // Carry the input-mode preamble so the snapshot-less "ready" path
+          // (live restore) can replay it without a separate state fetch.
+          listener({
+            type: "snapshotReady",
+            revision: stateRevision,
+            replayPreamble: getReplayPreamble(),
+          });
         } else {
           listener({ type: "snapshot", ...getStateSnapshot() });
         }

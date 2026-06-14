@@ -1,4 +1,6 @@
 import { useCallback, useRef } from "react";
+import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { copyDesktopAttachmentFile } from "@/desktop/attachments/desktop-file-commands";
 import { readDesktopFileBase64 } from "@/desktop/attachments/desktop-preview-url";
@@ -113,6 +115,25 @@ function pickFilesWithWebInput(): Promise<PickedFile[] | null> {
   });
 }
 
+async function pickFilesWithDocumentPicker(): Promise<PickedFile[] | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+
+  if (result.canceled || result.assets.length === 0) {
+    return null;
+  }
+
+  return await Promise.all(
+    result.assets.map(async (asset) => ({
+      fileName: asset.name,
+      mimeType: asset.mimeType ?? getMimeTypeFromPath(asset.name),
+      bytes: await new File(asset.uri).bytes(),
+    })),
+  );
+}
+
 export function useFilePicker() {
   const isPickingRef = useRef(false);
 
@@ -131,8 +152,7 @@ export function useFilePicker() {
         return await pickFilesWithWebInput();
       }
 
-      // Native not supported yet
-      return null;
+      return await pickFilesWithDocumentPicker();
     } catch (error) {
       console.error("[FilePicker] Failed to pick files:", error);
       throw error;

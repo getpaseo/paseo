@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
@@ -11,6 +12,8 @@ import type {
   TerminalWorkerRequest,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
+
+type TerminalRow = TerminalState["grid"][number];
 
 function nodeTerminalCommand(script: string): { command: string; args: string[] } {
   return {
@@ -38,15 +41,30 @@ function getVisibleText(session: TerminalSession): string {
   return getVisibleTextFromState(session.getState());
 }
 
+function rowToText(row: TerminalRow): string {
+  return row
+    .map((cell) => cell.char)
+    .join("")
+    .trimEnd();
+}
+
 function getVisibleTextFromState(state: TerminalState): string {
-  return state.grid
-    .map((row) =>
-      row
-        .map((cell) => cell.char)
-        .join("")
-        .trimEnd(),
-    )
-    .join("\n");
+  return state.grid.map(rowToText).join("\n");
+}
+
+function getRenderedTextFromState(state: TerminalState): string {
+  return [...state.scrollback, ...state.grid].map(rowToText).join("\n");
+}
+
+function readRenderedTokenIndexesFromState(state: TerminalState): number[] {
+  const indexes: number[] = [];
+  for (const match of getRenderedTextFromState(state).matchAll(/\[(\d+)\]/g)) {
+    const value = match[1];
+    if (value !== undefined) {
+      indexes.push(Number(value));
+    }
+  }
+  return indexes;
 }
 
 function createTerminalState(): TerminalState {
@@ -176,6 +194,69 @@ it("creates a terminal through the worker and streams output", async () => {
   expect(snapshots).toBe(snapshotsBeforeOutput);
 });
 
+it("delivers rapid small writes complete and in order through worker coalescing", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
+  temporaryDirs.push(cwd);
+  const burstGatePath = join(cwd, "burst-ready");
+  manager = createWorkerTerminalManager();
+  // The file gate starts the burst after this test subscribes without depending
+  // on platform-specific PTY input echo/canonical-mode behavior.
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd,
+      env: { PASEO_TERMINAL_BURST_GATE: burstGatePath },
+      ...nodeTerminalCommand(`
+      const fs = require("node:fs");
+      const gatePath = process.env.PASEO_TERMINAL_BURST_GATE;
+      const gate = setInterval(() => {
+        if (!gatePath || !fs.existsSync(gatePath)) {
+          return;
+        }
+        clearInterval(gate);
+        for (let i = 0; i < 500; i++) {
+          process.stdout.write("[" + i + "]\\n");
+        }
+      }, 10);
+      setInterval(() => {}, 1000);
+    `),
+    }),
+  );
+
+  const events: Array<{ type: string; data?: string }> = [];
+  session.subscribe((message) => {
+    if (message.type === "output") {
+      events.push({ type: "output", data: message.data });
+    } else if (message.type === "snapshot" || message.type === "snapshotReady") {
+      events.push({ type: message.type });
+    }
+  });
+
+  // Let the snapshot subscription settle, then trigger the burst.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  writeFileSync(burstGatePath, "go");
+
+  const expected = Array.from({ length: 500 }, (_, index) => index);
+  let received: number[] = [];
+  await waitForCondition(async () => {
+    const snapshot = await manager!.getTerminalState(session.id);
+    received = snapshot ? readRenderedTokenIndexesFromState(snapshot.state) : [];
+    return expected.every((value, index) => received[index] === value);
+  }, 10000);
+
+  expect(received).toEqual(expected);
+
+  await waitForCondition(() => events.some((event) => event.type === "output"), 10000);
+
+  // No snapshot may land after output it should have preceded: every snapshot
+  // event must come before the first output event.
+  const firstOutputIndex = events.findIndex((event) => event.type === "output");
+  expect(firstOutputIndex).toBeGreaterThanOrEqual(0);
+  const snapshotAfterOutput = events
+    .slice(firstOutputIndex + 1)
+    .find((event) => event.type === "snapshot" || event.type === "snapshotReady");
+  expect(snapshotAfterOutput).toBeUndefined();
+});
+
 it("pulls fresh terminal state from the worker authority", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-state-"));
   temporaryDirs.push(cwd);
@@ -199,6 +280,37 @@ it("pulls fresh terminal state from the worker authority", async () => {
 
   expect(visibleText).toContain("worker-state-ready");
 });
+
+// Windows ConPTY normalizes away the kitty keyboard escape the child writes, so it
+// never reaches the worker's input-mode tracker and the preamble stays empty. The
+// preamble-caching contract is verified on Linux/macOS; the daemon's input-mode
+// handling runs identically on every platform once the escape is observed.
+it.skipIf(isPlatform("win32"))(
+  "caches the input-mode replay preamble from the worker after getTerminalState",
+  async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
+    temporaryDirs.push(cwd);
+    manager = createWorkerTerminalManager();
+    // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
+    // tracker records and reflects in its replay preamble (\x1b[=1;1u).
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd,
+        ...nodeTerminalCommand(`
+      process.stdout.write("\\u001b[>1u");
+      setInterval(() => {}, 1000);
+    `),
+      }),
+    );
+
+    await waitForCondition(async () => {
+      const snapshot = await manager!.getTerminalState(session.id);
+      return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
+    }, 10000);
+
+    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
+  },
+);
 
 it("refreshes cached terminal title after worker title changes", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
