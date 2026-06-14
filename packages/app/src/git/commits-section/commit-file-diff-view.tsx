@@ -66,6 +66,8 @@ const DiffLineRow = memo(function DiffLineRow({
         {formatDiffGutterText(lineNumber)}
       </Text>
       {line.type !== "header" && visibleTokens ? (
+        // wrapLines is intentionally omitted: the commit file diff lives inside a
+        // horizontal ScrollView, so lines scroll rather than wrap.
         <HighlightedText tokens={visibleTokens} />
       ) : (
         <Text style={textStyle}>{formatDiffContentText(line.content)}</Text>

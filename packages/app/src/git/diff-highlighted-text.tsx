@@ -16,12 +16,12 @@ interface HighlightedTextProps {
   testID?: string;
 }
 
-type WrappedWebTextStyle = TextStyle & {
+export type WrappedWebTextStyle = TextStyle & {
   whiteSpace?: "pre" | "pre-wrap";
   overflowWrap?: "normal" | "anywhere";
 };
 
-function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefined {
+export function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefined {
   if (isNative) {
     return undefined;
   }
