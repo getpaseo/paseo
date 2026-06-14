@@ -1,6 +1,7 @@
 import {
   normalizeHostPort,
   normalizeLoopbackToLocalhost,
+  parseConnectionUri,
 } from "@getpaseo/protocol/daemon-endpoints";
 import {
   DirectTcpHostConnectionSchema,
@@ -205,6 +206,26 @@ export function connectionFromListen(listen: string): HostConnection | null {
   if (normalizedListen.startsWith("unix://")) {
     const path = normalizedListen.slice("unix://".length).trim();
     return path ? { id: `socket:${path}`, type: "directSocket", path } : null;
+  }
+
+  if (normalizedListen.startsWith("tcp://")) {
+    try {
+      const parsed = parseConnectionUri(normalizedListen);
+      const endpoint = normalizeLoopbackToLocalhost(
+        normalizeHostPort(
+          parsed.isIpv6 ? `[${parsed.host}]:${parsed.port}` : `${parsed.host}:${parsed.port}`,
+        ),
+      );
+      return DirectTcpHostConnectionSchema.parse({
+        id: `direct:${endpoint}`,
+        type: "directTcp",
+        endpoint,
+        useTls: parsed.useTls,
+        ...(parsed.password ? { password: parsed.password } : {}),
+      });
+    } catch {
+      return null;
+    }
   }
 
   if (normalizedListen.startsWith("\\\\.\\pipe\\")) {

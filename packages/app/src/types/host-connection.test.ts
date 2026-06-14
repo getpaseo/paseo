@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { normalizeStoredHostProfile } from "./host-connection";
+import { connectionFromListen, normalizeStoredHostProfile } from "./host-connection";
+
+describe("connectionFromListen", () => {
+  it("parses TLS direct TCP connection URIs", () => {
+    expect(connectionFromListen("tcp://daemon.localhost:1355?ssl=true")).toEqual({
+      id: "direct:daemon.localhost:1355",
+      type: "directTcp",
+      endpoint: "daemon.localhost:1355",
+      useTls: true,
+    });
+  });
+});
 
 describe("normalizeStoredHostProfile", () => {
   it("loads direct TCP connections stored before TLS and password fields existed", () => {

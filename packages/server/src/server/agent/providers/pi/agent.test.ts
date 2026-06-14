@@ -218,6 +218,85 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("bridges Pi plan approval confirmations through plan permissions", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const plan = "# Plan\n\n## Context\nReview this before implementation.";
+
+    await session.startTurn("plan");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "plan-1",
+      method: "confirm",
+      title: "Plan",
+      message: plan,
+    });
+
+    const permission = await events.nextPermissionRequest();
+    expect(permission.request).toMatchObject({
+      id: "plan-1",
+      provider: "pi",
+      kind: "plan",
+      title: "Plan",
+      description: "Review the proposed plan before implementation starts.",
+      input: { plan },
+      actions: [
+        {
+          id: "reject",
+          label: "Reject",
+          behavior: "deny",
+          variant: "danger",
+          intent: "dismiss",
+        },
+        {
+          id: "implement",
+          label: "Implement",
+          behavior: "allow",
+          variant: "primary",
+          intent: "implement",
+        },
+      ],
+      metadata: {
+        extensionUiMethod: "confirm",
+        planText: plan,
+        source: "pi_plan_mode",
+      },
+    });
+
+    await session.respondToPermission("plan-1", {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "plan-1", response: { confirmed: true } },
+    ]);
+  });
+
+  test("rejects Pi plan approval confirmations without cancelling the dialog protocol", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "plan-reject",
+      method: "confirm",
+      title: "Plan",
+      message: "# Plan\n\nDo the work.",
+    });
+    await events.nextPermissionRequest();
+
+    await session.respondToPermission("plan-reject", {
+      behavior: "deny",
+      selectedActionId: "reject",
+      message: "Rejected by user",
+    });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "plan-reject", response: { confirmed: false } },
+    ]);
+  });
+
   test("bridges Pi RPC input and confirm extension UI responses", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

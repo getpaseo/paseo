@@ -13,6 +13,7 @@ import {
   type AgentMode,
   type AgentModelDefinition,
   type McpServerConfig,
+  type AgentPermissionAction,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPersistenceHandle,
@@ -746,6 +747,57 @@ function isPiAskUserFreeformOption(option: string): boolean {
   return option === PI_ASK_USER_FREEFORM_SENTINEL;
 }
 
+function piPlanApprovalText(
+  event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
+): string | null {
+  const title = optionalString(event.title)?.trim();
+  const message = optionalString(event.message)?.trim();
+  if (title !== "Plan" || !message) {
+    return null;
+  }
+  return message;
+}
+
+function buildPiPlanPermissionActions(): AgentPermissionAction[] {
+  return [
+    {
+      id: "reject",
+      label: "Reject",
+      behavior: "deny",
+      variant: "danger",
+      intent: "dismiss",
+    },
+    {
+      id: "implement",
+      label: "Implement",
+      behavior: "allow",
+      variant: "primary",
+      intent: "implement",
+    },
+  ];
+}
+
+function buildPiPlanApprovalPermission(
+  event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
+  planText: string,
+): AgentPermissionRequest {
+  return {
+    id: event.id,
+    provider: PI_PROVIDER,
+    name: "PiPlanApproval",
+    kind: "plan",
+    title: "Plan",
+    description: "Review the proposed plan before implementation starts.",
+    input: { plan: planText },
+    actions: buildPiPlanPermissionActions(),
+    metadata: {
+      extensionUiMethod: "confirm",
+      planText,
+      source: "pi_plan_mode",
+    },
+  };
+}
+
 function mapExtensionUiRequestToPermission(
   event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
   options: ExtensionUiMappingOptions = {},
@@ -784,7 +836,11 @@ function mapExtensionUiRequestToPermission(
         options: [],
         multiSelect: false,
       });
-    case "confirm":
+    case "confirm": {
+      const planText = piPlanApprovalText(event);
+      if (planText) {
+        return buildPiPlanApprovalPermission(event, planText);
+      }
       return buildExtensionUiQuestionPermission(event, {
         question: [optionalString(event.title), optionalString(event.message)]
           .filter(Boolean)
@@ -792,6 +848,7 @@ function mapExtensionUiRequestToPermission(
         options: ["Yes", "No"],
         multiSelect: false,
       });
+    }
     default:
       return null;
   }
@@ -935,11 +992,15 @@ function buildExtensionUiResponse(
   request: AgentPermissionRequest,
   response: AgentPermissionResponse,
 ): { value?: string; confirmed?: boolean; cancelled?: boolean } {
+  const method = optionalString(request.metadata?.extensionUiMethod);
+  if (request.kind === "plan" && method === "confirm") {
+    return { confirmed: response.behavior === "allow" };
+  }
+
   if (response.behavior === "deny") {
     return { cancelled: true };
   }
 
-  const method = optionalString(request.metadata?.extensionUiMethod);
   const answer = firstPermissionAnswer(response.updatedInput);
   if (answer === null) {
     return { cancelled: true };
