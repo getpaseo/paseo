@@ -415,6 +415,76 @@ describe("terminal-session-controller subdirectory aggregation", () => {
   });
 });
 
+describe("terminal-session-controller workspace-scoped subscriptions", () => {
+  test("two workspaces sharing a cwd subscribe and unsubscribe independently", async () => {
+    const cwd = "/work/shared";
+    const terminalA: TerminalSession = {
+      ...listSession({ id: "a", name: "A", cwd }),
+      workspaceId: "ws-a",
+    };
+    const terminalB: TerminalSession = {
+      ...listSession({ id: "b", name: "B", cwd }),
+      workspaceId: "ws-b",
+    };
+
+    let changedListener: ((event: TerminalsChangedEvent) => void) | null = null;
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(async (_cwd: string, options?: { workspaceId?: string }) =>
+        options?.workspaceId === "ws-b" ? [terminalB] : [terminalA],
+      ),
+      createTerminal: vi.fn(),
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => [cwd]),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn((listener) => {
+        changedListener = listener;
+        return vi.fn();
+      }),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+    };
+
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+    });
+    controller.start();
+
+    controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-a" });
+    controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await flushMicrotasks();
+    outboundMessages.length = 0;
+
+    // Tearing down workspace B must not drop workspace A's live subscription.
+    controller.dispatch({ type: "unsubscribe_terminals_request", cwd, workspaceId: "ws-b" });
+
+    changedListener?.({ cwd, terminals: [{ id: "a", name: "A", cwd, workspaceId: "ws-a" }] });
+    await flushMicrotasks();
+
+    expect(outboundMessages).toEqual([
+      {
+        type: "terminals_changed",
+        payload: {
+          cwd,
+          terminals: [{ id: "a", name: "A", workspaceId: "ws-a", activity: null }],
+        },
+      },
+    ]);
+  });
+});
+
 describe("terminal-session-controller backpressure snapshot fallback", () => {
   async function setup(getClientBufferedAmount: () => number | null): Promise<{
     pushOutput: (data: string) => void;

@@ -745,7 +745,6 @@ export async function createPaseoDaemon(
     await archivePersistedWorkspaceRecord({
       workspaceId,
       workspaceRegistry,
-      projectRegistry,
     });
   };
   const resolveWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {

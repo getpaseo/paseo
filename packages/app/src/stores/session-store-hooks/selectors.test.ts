@@ -232,6 +232,29 @@ describe("workspace structure composition", () => {
     tracked.stop();
   });
 
+  it("renders a project with zero active workspaces as an empty project parent", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    useSessionStore.getState().setWorkspaces(SERVER_ID, new Map());
+    useSessionStore.getState().setEmptyProjects(SERVER_ID, [
+      {
+        projectId: "empty-project",
+        projectDisplayName: "Empty Project",
+        projectCustomName: null,
+        projectRootPath: "/repo/empty",
+        projectKind: "git",
+      },
+    ]);
+
+    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
+    expect(projects).toEqual([
+      expect.objectContaining({
+        projectKey: "empty-project",
+        projectName: "Empty Project",
+        workspaceKeys: [],
+      }),
+    ]);
+  });
+
   it("changes when a structure-relevant project identity field changes", () => {
     const workspace = createWorkspace({
       id: "workspace-a",

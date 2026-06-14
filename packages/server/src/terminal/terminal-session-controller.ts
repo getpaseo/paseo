@@ -34,6 +34,7 @@ import {
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 
 const MAX_TERMINAL_STREAM_SLOTS = 256;
 
@@ -123,10 +124,14 @@ export class TerminalSessionController {
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
 
-  // Maps a subscribed cwd to the workspaceId that subscription was made with (if
-  // any). The workspaceId scopes the snapshot so two workspaces sharing a cwd
-  // don't see each other's terminals; absent for old clients (COMPAT).
-  private readonly subscribedDirectories = new Map<string, string | undefined>();
+  // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
+  // terminalSubscriptionKey: two workspaces sharing a cwd subscribe and unsub
+  // independently, and each only receives its own workspace's terminals. The
+  // workspaceId is absent for old clients, which key to the cwd alone.
+  private readonly subscribedDirectories = new Map<
+    string,
+    { cwd: string; workspaceId: string | undefined }
+  >();
   private unsubscribeTerminalsChanged: (() => void) | null = null;
   private readonly exitSubscriptions = new Map<string, () => void>();
   private readonly activeStreams = new Map<number, ActiveTerminalStream>();
@@ -336,44 +341,52 @@ export class TerminalSessionController {
     // or above the terminal's cwd, keyed by that root, carrying the full
     // aggregated list — so the client's cache replacement doesn't drop the
     // terminals that live directly at the root.
-    const matchingRoots = Array.from(this.subscribedDirectories.keys()).filter((root) =>
-      this.isPathWithinRoot(root, event.cwd),
+    const matchingSubscriptions = Array.from(this.subscribedDirectories.values()).filter(
+      (subscription) => this.isPathWithinRoot(subscription.cwd, event.cwd),
     );
-    for (const root of matchingRoots) {
-      await this.emitTerminalsSnapshotForRoot(root);
+    for (const subscription of matchingSubscriptions) {
+      await this.emitTerminalsSnapshotForSubscription(subscription);
     }
   }
 
   private handleSubscribeTerminalsRequest(msg: SubscribeTerminalsRequest): void {
-    this.subscribedDirectories.set(msg.cwd, msg.workspaceId);
-    void this.emitTerminalsSnapshotForRoot(msg.cwd);
+    const subscription = { cwd: msg.cwd, workspaceId: msg.workspaceId };
+    this.subscribedDirectories.set(terminalSubscriptionKey(msg.cwd, msg.workspaceId), subscription);
+    void this.emitTerminalsSnapshotForSubscription(subscription);
   }
 
   private handleUnsubscribeTerminalsRequest(msg: UnsubscribeTerminalsRequest): void {
-    this.subscribedDirectories.delete(msg.cwd);
+    this.subscribedDirectories.delete(terminalSubscriptionKey(msg.cwd, msg.workspaceId));
   }
 
-  private async emitTerminalsSnapshotForRoot(cwd: string): Promise<void> {
-    if (!this.terminalManager || !this.subscribedDirectories.has(cwd)) {
+  private async emitTerminalsSnapshotForSubscription(subscription: {
+    cwd: string;
+    workspaceId: string | undefined;
+  }): Promise<void> {
+    const key = terminalSubscriptionKey(subscription.cwd, subscription.workspaceId);
+    if (!this.terminalManager || !this.subscribedDirectories.has(key)) {
       return;
     }
     try {
       const terminals = await this.getTerminalsForWorkspaceRoot(
-        cwd,
-        this.subscribedDirectories.get(cwd),
+        subscription.cwd,
+        subscription.workspaceId,
       );
       for (const terminal of terminals) {
         this.ensureExitSubscription(terminal);
       }
-      if (!this.subscribedDirectories.has(cwd)) {
+      if (!this.subscribedDirectories.has(key)) {
         return;
       }
       this.emitTerminalsChangedSnapshot({
-        cwd,
+        cwd: subscription.cwd,
         terminals: terminals.map((terminal) => this.toTerminalInfo(terminal)),
       });
     } catch (error) {
-      this.sessionLogger.warn({ err: error, cwd }, "Failed to emit initial terminal snapshot");
+      this.sessionLogger.warn(
+        { err: error, cwd: subscription.cwd },
+        "Failed to emit initial terminal snapshot",
+      );
     }
   }
 

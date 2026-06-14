@@ -1150,6 +1150,10 @@ export class VoiceAssistantWebSocketServer {
         checkoutRefresh: true,
         // COMPAT(workspaceOwnership): added in v0.1.X, drop the gate when floor >= v0.1.X
         workspaceOwnership: true,
+        // COMPAT(workspaceTitles): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceTitles: true,
+        // COMPAT(workspaceProjects): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceProjects: true,
       },
     };
   }

@@ -11,11 +11,9 @@ import {
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
+import { useMutation } from "@tanstack/react-query";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
-import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import {
   memo,
   useCallback,
@@ -1532,7 +1530,6 @@ function WorkspaceRowWithMenu({
   const { t } = useTranslation();
   const toast = useToast();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-  const queryClient = useQueryClient();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const workspaceDirectory = resolveWorkspaceDirectory({
@@ -1679,26 +1676,12 @@ function WorkspaceRowWithMenu({
   }, [t, toast, workspace.name]);
 
   const renameMutation = useMutation({
-    mutationFn: async (branch: string) => {
+    mutationFn: async (title: string) => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
       if (!client) {
         throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       }
-      const targetCwd = requireWorkspaceDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
-      const payload = await client.renameBranch({ cwd: targetCwd, branch });
-      if (!payload.success || payload.error) {
-        throw new Error(payload.error?.message ?? t("sidebar.workspace.rename.invalidBranchName"));
-      }
-      return { targetCwd };
-    },
-    onSuccess: async ({ targetCwd }) => {
-      await invalidateCheckoutGitQueriesForClient(queryClient, {
-        serverId: workspace.serverId,
-        cwd: targetCwd,
-      });
+      await client.setWorkspaceTitle(workspace.workspaceId, title.length === 0 ? null : title);
     },
   });
 
@@ -1712,18 +1695,9 @@ function WorkspaceRowWithMenu({
 
   const handleSubmitRename = useCallback(
     async (value: string) => {
-      await renameMutation.mutateAsync(slugify(value));
+      await renameMutation.mutateAsync(value.trim());
     },
     [renameMutation],
-  );
-
-  const validateRenameSlug = useCallback(
-    (value: string): string | null => {
-      const result = validateBranchSlug(slugify(value));
-      if (result.valid) return null;
-      return result.error ?? t("sidebar.workspace.rename.invalidBranchName");
-    },
-    [t],
   );
 
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
@@ -1780,18 +1754,16 @@ function WorkspaceRowWithMenu({
         onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
-        onRename={canCopyBranchName ? handleOpenRename : undefined}
+        onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
         title={t("sidebar.workspace.rename.title")}
-        initialValue={workspace.name}
-        placeholder="branch-name"
+        initialValue={workspace.title ?? workspace.name}
+        placeholder={workspace.name}
         submitLabel={t("sidebar.workspace.rename.submit")}
-        validate={validateRenameSlug}
-        maxLength={MAX_SLUG_LENGTH}
         onClose={handleCloseRename}
         onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
@@ -2172,6 +2144,61 @@ function WorkspaceRow({
   );
 }
 
+function EmptyProjectNewWorkspaceRow({
+  project,
+  displayName,
+  serverId,
+  onWorkspacePress,
+}: {
+  project: SidebarProjectEntry;
+  displayName: string;
+  serverId: string | null;
+  onWorkspacePress?: () => void;
+}) {
+  const { t } = useTranslation();
+  const [isHovered, setIsHovered] = useState(false);
+
+  const handlePress = useCallback(() => {
+    if (!serverId) {
+      return;
+    }
+    onWorkspacePress?.();
+    router.navigate(
+      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
+        displayName,
+        projectId: project.projectKey,
+      }) as Href,
+    );
+  }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
+
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+
+  const rowStyle = useMemo(
+    () => [styles.emptyProjectRow, isHovered && styles.emptyProjectRowHovered],
+    [isHovered],
+  );
+
+  return (
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t("sidebar.workspace.actions.createWorkspaceFor", {
+          projectName: displayName,
+        })}
+        style={rowStyle}
+        onPress={handlePress}
+        testID={`sidebar-project-empty-${project.projectKey}`}
+      >
+        <Plus size={14} color="#9ca3af" />
+        <Text style={styles.emptyProjectRowText} numberOfLines={1}>
+          {t("sidebar.workspace.actions.newWorkspace")}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function ProjectBlock({
   project,
   collapsed,
@@ -2392,7 +2419,16 @@ function ProjectBlock({
             dragHandleProps={dragHandleProps}
           />
 
-          {!collapsed ? (
+          {!collapsed && project.workspaces.length === 0 ? (
+            <EmptyProjectNewWorkspaceRow
+              project={project}
+              displayName={displayName}
+              serverId={serverId}
+              onWorkspacePress={onWorkspacePress}
+            />
+          ) : null}
+
+          {!collapsed && project.workspaces.length > 0 ? (
             <DraggableList
               testID={`sidebar-workspace-list-${project.projectKey}`}
               data={project.workspaces}
@@ -3016,6 +3052,25 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[1],
     userSelect: "none",
+  },
+  emptyProjectRow: {
+    minHeight: 36,
+    marginBottom: theme.spacing[1],
+    paddingVertical: theme.spacing[2],
+    paddingLeft: theme.spacing[3] + theme.spacing[3],
+    paddingRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    userSelect: "none",
+  },
+  emptyProjectRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  emptyProjectRowText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   workspaceRowMain: {
     flexDirection: "row",

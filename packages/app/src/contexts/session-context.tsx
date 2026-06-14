@@ -42,7 +42,9 @@ import {
   type MessageEntry,
   type SessionState,
   type WorkspaceDescriptor,
+  type EmptyProjectDescriptor,
   normalizeWorkspaceDescriptor,
+  normalizeEmptyProjectDescriptor,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
@@ -473,6 +475,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
   const setAgents = useSessionStore((state) => state.setAgents);
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
+  const setEmptyProjects = useSessionStore((state) => state.setEmptyProjects);
+  const addEmptyProject = useSessionStore((state) => state.addEmptyProject);
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const removeWorkspace = useSessionStore((state) => state.removeWorkspace);
   const setAgentLastActivity = useSessionStore((state) => state.setAgentLastActivity);
@@ -540,6 +544,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       const workspaces = new Map<string, WorkspaceDescriptor>();
+      const emptyProjects = new Map<string, EmptyProjectDescriptor>();
       let cursor: string | null = null;
       let includeSubscribe = options?.subscribe ?? false;
 
@@ -561,6 +566,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           workspaces.set(workspace.id, workspace);
         }
 
+        // Empty project parents only ride on the first page.
+        for (const project of payload.emptyProjects ?? []) {
+          const descriptor = normalizeEmptyProjectDescriptor(project);
+          emptyProjects.set(descriptor.projectId, descriptor);
+        }
+
         if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) {
           break;
         }
@@ -573,9 +584,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       setWorkspaces(serverId, workspaces);
+      setEmptyProjects(serverId, emptyProjects.values());
       setHasHydratedWorkspaces(serverId, true);
     },
-    [client, isConnected, serverId, setHasHydratedWorkspaces, setWorkspaces],
+    [client, isConnected, serverId, setEmptyProjects, setHasHydratedWorkspaces, setWorkspaces],
   );
 
   const applyAuthoritativeAgentSnapshot = useCallback(
@@ -1290,6 +1302,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         });
         removeWorkspaceSetup({ serverId, workspaceId: message.payload.id });
         removeWorkspace(serverId, message.payload.id);
+        if (message.payload.emptyProject) {
+          addEmptyProject(serverId, normalizeEmptyProjectDescriptor(message.payload.emptyProject));
+        }
         return;
       }
       const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
@@ -1712,6 +1727,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     mergeWorkspaces,
     removeWorkspace,
     removeWorkspaceSetup,
+    addEmptyProject,
     setAgentLastActivity,
     setPendingPermissions,
     setHasHydratedAgents,

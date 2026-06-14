@@ -51,6 +51,7 @@ export function createSidebarWorkspaceEntry(input: {
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
+    title: input.workspace.title ?? null,
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,

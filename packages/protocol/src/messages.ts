@@ -798,6 +798,14 @@ export const ProjectRenameRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceTitleSetRequestSchema = z.object({
+  type: z.literal("workspace.title.set.request"),
+  workspaceId: z.string(),
+  // Null or empty string clears the title and reverts to the derived name.
+  title: z.string().nullable(),
+  requestId: z.string(),
+});
+
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
@@ -1335,6 +1343,19 @@ export const ProjectRenameResponseSchema = z.object({
   payload: ProjectRenameResponsePayloadSchema,
 });
 
+export const WorkspaceTitleSetResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  accepted: z.boolean(),
+  title: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceTitleSetResponseSchema = z.object({
+  type: z.literal("workspace.title.set.response"),
+  payload: WorkspaceTitleSetResponsePayloadSchema,
+});
+
 export const SetVoiceModeResponseMessageSchema = z.object({
   type: z.literal("set_voice_mode_response"),
   payload: z.object({
@@ -1804,6 +1825,7 @@ export const SubscribeTerminalsRequestSchema = z.object({
 export const UnsubscribeTerminalsRequestSchema = z.object({
   type: z.literal("unsubscribe_terminals_request"),
   cwd: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const CreateTerminalRequestSchema = z.object({
@@ -1901,6 +1923,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
+  WorkspaceTitleSetRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -2187,6 +2210,10 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceOwnership): added in v0.1.X, drop the gate when floor >= v0.1.X
         workspaceOwnership: z.boolean().optional(),
+        // COMPAT(workspaceTitles): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceTitles: z.boolean().optional(),
+        // COMPAT(workspaceProjects): added in v0.1.X, drop the gate when floor >= v0.1.X
+        workspaceProjects: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2458,6 +2485,12 @@ export const WorkspaceDescriptorPayloadSchema = z
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
     name: z.string(),
+    // COMPAT(workspaceTitles): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+    // When the user has titled a workspace, `name` carries the resolved value
+    // (title) and `title` mirrors the raw override so the rename UI can prefill
+    // its input and offer a "reset to branch name" action. Null means the name
+    // is derived from the branch/directory.
+    title: z.string().nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -2568,12 +2601,27 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
   }),
 });
 
+// COMPAT(workspaceProjects): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+// A project parent that has zero active workspaces. The sidebar renders it as an
+// empty project row so projects persist after their last workspace is archived.
+export const WorkspaceProjectDescriptorPayloadSchema = z.object({
+  projectId: z.string(),
+  projectDisplayName: z.string(),
+  projectCustomName: z.string().nullable().optional(),
+  projectRootPath: z.string(),
+  projectKind: z.enum(["git", "non_git", "directory"]),
+});
+
 export const FetchWorkspacesResponseMessageSchema = z.object({
   type: z.literal("fetch_workspaces_response"),
   payload: z.object({
     requestId: z.string(),
     subscriptionId: z.string().nullable().optional(),
     entries: z.array(WorkspaceDescriptorPayloadSchema),
+    // COMPAT(workspaceProjects): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+    // Project parents with no active workspaces. Old daemons omit it; old clients
+    // ignore it. Only populated on the first page (no cursor).
+    emptyProjects: z.array(WorkspaceProjectDescriptorPayloadSchema).optional().default([]),
     pageInfo: z.object({
       nextCursor: z.string().nullable(),
       prevCursor: z.string().nullable(),
@@ -2592,6 +2640,13 @@ export const WorkspaceUpdateMessageSchema = z.object({
     z.object({
       kind: z.literal("remove"),
       id: z.string(),
+      // COMPAT(workspaceProjects): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+      // When archiving this workspace leaves its project with no active
+      // workspaces, the daemon includes the now-empty project parent so the
+      // sidebar keeps rendering it without waiting for a full re-hydration. Old
+      // daemons omit it; old clients ignore it and surface the empty project on
+      // their next workspace fetch instead.
+      emptyProject: WorkspaceProjectDescriptorPayloadSchema.optional(),
     }),
   ]),
 });
@@ -3885,6 +3940,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
+  WorkspaceTitleSetResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
@@ -3990,6 +4046,9 @@ export type ProjectCheckoutLitePayload = z.infer<typeof ProjectCheckoutLitePaylo
 export type ProjectPlacementPayload = z.infer<typeof ProjectPlacementPayloadSchema>;
 export type WorkspaceStateBucket = z.infer<typeof WorkspaceStateBucketSchema>;
 export type WorkspaceDescriptorPayload = z.infer<typeof WorkspaceDescriptorPayloadSchema>;
+export type WorkspaceProjectDescriptorPayload = z.infer<
+  typeof WorkspaceProjectDescriptorPayloadSchema
+>;
 export type WorkspaceScriptLifecycle = z.infer<typeof WorkspaceScriptLifecycleSchema>;
 export type WorkspaceScriptHealth = z.infer<typeof WorkspaceScriptHealthSchema>;
 export type WorkspaceScriptPayload = z.infer<typeof WorkspaceScriptPayloadSchema>;
@@ -4027,6 +4086,10 @@ export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureRespo
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
+export type WorkspaceTitleSetResponse = z.infer<typeof WorkspaceTitleSetResponseSchema>;
+export type WorkspaceTitleSetResponsePayload = z.infer<
+  typeof WorkspaceTitleSetResponsePayloadSchema
+>;
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
 export type AgentPermissionRequestMessage = z.infer<typeof AgentPermissionRequestMessageSchema>;
@@ -4143,6 +4206,7 @@ export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessage
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
+export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;

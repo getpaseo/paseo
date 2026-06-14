@@ -15,6 +15,7 @@ import {
 import { getParentAgentIdFromLabels, isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
 import { SortablePager } from "./pagination/sortable-pager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
+import { resolveProjectDisplayName } from "./workspace-registry.js";
 import {
   resolveActiveWorkspaceRecordForCwd,
   resolveWorkspaceIdForRecord,
@@ -55,6 +56,7 @@ type FetchWorkspacesResponsePayload = Extract<
 >["payload"];
 type FetchWorkspacesResponseEntry = FetchWorkspacesResponsePayload["entries"][number];
 type FetchWorkspacesResponsePageInfo = FetchWorkspacesResponsePayload["pageInfo"];
+type WorkspaceProjectDescriptor = FetchWorkspacesResponsePayload["emptyProjects"][number];
 
 export type WorkspaceUpdatesFilter = FetchWorkspacesRequestFilter;
 
@@ -365,13 +367,10 @@ export class WorkspaceDirectory {
       } else {
         continue;
       }
-      const workspaceId = contributedWorkspaceId
-        ? (resolveWorkspaceIdForRecord(
-            { workspaceId: contributedWorkspaceId, cwd },
-            activeRecords,
-          ) ?? resolveWorkspaceIdForCwd(cwd))
-        : resolveWorkspaceIdForCwd(cwd);
-      if (workspaceId === undefined) {
+      const workspaceId =
+        resolveWorkspaceIdForRecord({ workspaceId: contributedWorkspaceId, cwd }, activeRecords) ??
+        resolveWorkspaceIdForCwd(cwd);
+      if (workspaceId == null) {
         continue;
       }
       const existing = descriptorsByWorkspaceId.get(workspaceId);
@@ -499,6 +498,32 @@ export class WorkspaceDirectory {
     return resolveRegisteredWorkspaceIdForCwd(cwd, workspaces);
   }
 
+  // Project parents that have no active workspaces. These persist as first-class
+  // empty projects so the sidebar can render an empty project row with a
+  // "+ New workspace" affordance.
+  async listEmptyProjects(): Promise<WorkspaceProjectDescriptor[]> {
+    const [persistedWorkspaces, persistedProjects] = await Promise.all([
+      this.deps.workspaceRegistry.list(),
+      this.deps.projectRegistry.list(),
+    ]);
+    const projectIdsWithActiveWorkspaces = new Set(
+      persistedWorkspaces
+        .filter((workspace) => !workspace.archivedAt)
+        .map((workspace) => workspace.projectId),
+    );
+    return persistedProjects
+      .filter(
+        (project) => !project.archivedAt && !projectIdsWithActiveWorkspaces.has(project.projectId),
+      )
+      .map((project) => ({
+        projectId: project.projectId,
+        projectDisplayName: resolveProjectDisplayName(project),
+        projectCustomName: project.customName ?? null,
+        projectRootPath: project.rootPath,
+        projectKind: project.kind,
+      }));
+  }
+
   async listDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
     return Array.from(
       (
@@ -537,6 +562,7 @@ export class WorkspaceDirectory {
 
   async listFetchEntries(request: FetchWorkspacesRequestMessage): Promise<{
     entries: FetchWorkspacesResponseEntry[];
+    emptyProjects: WorkspaceProjectDescriptor[];
     pageInfo: FetchWorkspacesResponsePageInfo;
   }> {
     const filter = request.filter;
@@ -563,6 +589,15 @@ export class WorkspaceDirectory {
         ? this.pager.encode(pagedEntries[pagedEntries.length - 1], sort)
         : null;
 
+    // Empty project parents ride only on the first page so the sidebar can render
+    // them without them being duplicated across pagination.
+    const projectIdFilter = filter?.projectId?.trim();
+    const emptyProjects = cursorToken
+      ? []
+      : (await this.listEmptyProjects()).filter(
+          (project) => !projectIdFilter || project.projectId === projectIdFilter,
+        );
+
     this.deps.logger.debug(
       {
         requestId: request.requestId,
@@ -580,6 +615,7 @@ export class WorkspaceDirectory {
 
     return {
       entries: pagedEntries,
+      emptyProjects,
       pageInfo: {
         nextCursor,
         prevCursor: request.page?.cursor ?? null,

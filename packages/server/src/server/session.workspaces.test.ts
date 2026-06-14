@@ -857,7 +857,7 @@ test("workspace reconciliation reports archived workspaces to subscribed clients
 
   expect(changedWorkspaceIds).toEqual(new Set(["ws-missing"]));
   expect(workspaces.get("ws-missing")?.archivedAt).toBeTruthy();
-  expect(projects.get("proj-missing")?.archivedAt).toBeTruthy();
+  expect(projects.get("proj-missing")?.archivedAt).toBeFalsy();
 });
 
 test("agent_update placement does not refresh git snapshots", async () => {
@@ -2761,6 +2761,67 @@ test("workspace update stream keeps persisted workspace visible after agents sto
       name: "repo",
       status: "done",
       activityAt: null,
+    },
+  });
+});
+
+test("archiving the last workspace emits a remove carrying the now-empty project", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+  });
+
+  const project = createPersistedProjectRecord({
+    projectId: "proj-empty-after-archive",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const archivedWorkspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-last",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+    archivedAt: "2026-03-02T12:00:00.000Z",
+  });
+
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [archivedWorkspace];
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaceId === archivedWorkspace.workspaceId ? archivedWorkspace : null;
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-1",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+  session.reconcileActiveWorkspaceRecords = async () => new Set();
+  // The archived workspace no longer resolves to an active descriptor.
+  session.buildWorkspaceDescriptorMap = async () => new Map();
+
+  await session.emitWorkspaceUpdatesForWorkspaceIds([archivedWorkspace.workspaceId], {
+    skipReconcile: true,
+  });
+
+  const removeUpdate = filterByType(emitted, "workspace_update").find(
+    (message) => message.payload.kind === "remove",
+  );
+  expect(removeUpdate?.payload).toEqual({
+    kind: "remove",
+    id: archivedWorkspace.workspaceId,
+    emptyProject: {
+      projectId: project.projectId,
+      projectDisplayName: "repo",
+      projectCustomName: null,
+      projectRootPath: REPO_CWD,
+      projectKind: "git",
     },
   });
 });
@@ -5151,6 +5212,145 @@ test("project.rename.request returns accepted=false when project is not found", 
     projectId: "does-not-exist",
     accepted: false,
     customName: null,
+  });
+  expect(response?.payload.error).toBeTruthy();
+});
+
+test("workspace.title.set.request stores the title and emits an updated descriptor", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const projects = new Map([[project.projectId, project]]);
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.list = async () => Array.from(projects.values());
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    workspaces.set(parsed.workspaceId, parsed);
+  };
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  await session.handleMessage({
+    type: "workspace.title.set.request",
+    workspaceId: workspace.workspaceId,
+    title: "  Payments work  ",
+    requestId: "req-title-1",
+  });
+
+  const response = findByType(emitted, "workspace.title.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-title-1",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    title: "Payments work",
+    error: null,
+  });
+
+  expect(workspaces.get(workspace.workspaceId)?.title).toBe("Payments work");
+
+  const update = findByType(emitted, "workspace_update");
+  expect(update?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: "ws-1",
+      name: "Payments work",
+      title: "Payments work",
+    },
+  });
+});
+
+test("workspace.title.set.request with whitespace-only title clears the title", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    title: "Old title",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    workspaces.set(parsed.workspaceId, parsed);
+  };
+
+  await session.handleMessage({
+    type: "workspace.title.set.request",
+    workspaceId: workspace.workspaceId,
+    title: "   ",
+    requestId: "req-title-clear",
+  });
+
+  const response = findByType(emitted, "workspace.title.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-title-clear",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    title: null,
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.title).toBeNull();
+});
+
+test("workspace.title.set.request returns accepted=false when workspace is not found", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.workspaceRegistry.get = async () => null;
+
+  await session.handleMessage({
+    type: "workspace.title.set.request",
+    workspaceId: "does-not-exist",
+    title: "X",
+    requestId: "req-title-missing",
+  });
+
+  const response = findByType(emitted, "workspace.title.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-title-missing",
+    workspaceId: "does-not-exist",
+    accepted: false,
+    title: null,
   });
   expect(response?.payload.error).toBeTruthy();
 });

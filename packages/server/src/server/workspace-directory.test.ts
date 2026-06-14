@@ -395,3 +395,97 @@ describe("WorkspaceDirectory", () => {
     expect(descriptor.statusEnteredAt).toBe("2027-01-01T00:00:00.000Z");
   });
 });
+
+describe("WorkspaceDirectory empty projects", () => {
+  function makeDirectory(input: {
+    projects: PersistedProjectRecord[];
+    workspaces: PersistedWorkspaceRecord[];
+  }): WorkspaceDirectory {
+    return new WorkspaceDirectory({
+      logger: createTestLogger(),
+      projectRegistry: { list: async () => input.projects },
+      workspaceRegistry: { list: async () => input.workspaces },
+      listAgentPayloads: async () => [],
+      listTerminalActivityContributions: async () => [],
+      isProviderVisibleToClient: () => true,
+      buildWorkspaceDescriptor: async ({ workspace }) => ({
+        id: workspace.workspaceId,
+        projectId: workspace.projectId,
+        projectDisplayName: "project",
+        projectCustomName: null,
+        projectRootPath: "/workspace/project",
+        workspaceDirectory: workspace.cwd,
+        projectKind: "non_git",
+        workspaceKind: workspace.kind,
+        name: workspace.displayName,
+        archivingAt: null,
+        status: "done",
+        activityAt: null,
+        diffStat: null,
+        gitRuntime: null,
+        githubRuntime: null,
+      }),
+    });
+  }
+
+  function project(input: Partial<PersistedProjectRecord> & { projectId: string }) {
+    return {
+      rootPath: `/workspace/${input.projectId}`,
+      kind: "non_git",
+      displayName: input.projectId,
+      customName: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+      archivedAt: null,
+      ...input,
+    } satisfies PersistedProjectRecord;
+  }
+
+  test("surfaces a project with no active workspaces as an empty project", async () => {
+    const directory = makeDirectory({
+      projects: [project({ projectId: "empty", customName: "Renamed" })],
+      workspaces: [],
+    });
+
+    const result = await directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "r1",
+    });
+
+    expect(result.entries).toEqual([]);
+    expect(result.emptyProjects).toEqual([
+      {
+        projectId: "empty",
+        projectDisplayName: "Renamed",
+        projectCustomName: "Renamed",
+        projectRootPath: "/workspace/empty",
+        projectKind: "non_git",
+      },
+    ]);
+  });
+
+  test("excludes projects that still have an active workspace", async () => {
+    const directory = makeDirectory({
+      projects: [project({ projectId: "with-ws" }), project({ projectId: "empty" })],
+      workspaces: [
+        {
+          workspaceId: "ws-1",
+          projectId: "with-ws",
+          cwd: "/workspace/with-ws",
+          kind: "directory",
+          displayName: "main",
+          createdAt: NOW,
+          updatedAt: NOW,
+          archivedAt: null,
+        },
+      ],
+    });
+
+    const result = await directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "r1",
+    });
+
+    expect(result.emptyProjects.map((p) => p.projectId)).toEqual(["empty"]);
+  });
+});

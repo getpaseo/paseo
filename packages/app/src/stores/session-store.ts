@@ -26,6 +26,7 @@ import type {
   ProjectPlacementPayload,
   ServerCapabilities,
   WorkspaceDescriptorPayload,
+  WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceOpaqueId,
@@ -129,6 +130,7 @@ export interface WorkspaceDescriptor {
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
+  title?: string | null;
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -160,6 +162,7 @@ export function normalizeWorkspaceDescriptor(
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,
+    title: payload.title ?? null,
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
@@ -168,6 +171,26 @@ export function normalizeWorkspaceDescriptor(
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
     project: payload.project,
+  };
+}
+
+export interface EmptyProjectDescriptor {
+  projectId: string;
+  projectDisplayName: string;
+  projectCustomName: string | null;
+  projectRootPath: string;
+  projectKind: WorkspaceDescriptorPayload["projectKind"];
+}
+
+export function normalizeEmptyProjectDescriptor(
+  payload: WorkspaceProjectDescriptorPayload,
+): EmptyProjectDescriptor {
+  return {
+    projectId: payload.projectId,
+    projectDisplayName: payload.projectDisplayName,
+    projectCustomName: payload.projectCustomName ?? null,
+    projectRootPath: payload.projectRootPath,
+    projectKind: payload.projectKind,
   };
 }
 
@@ -306,6 +329,9 @@ export interface SessionState {
   agents: Map<string, Agent>;
   agentDetails: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
+  // Project parents with no active workspaces, keyed by projectId. Rendered as
+  // empty project rows in the sidebar.
+  emptyProjects: Map<string, EmptyProjectDescriptor>;
 
   // Permissions
   pendingPermissions: Map<string, PendingPermission>;
@@ -427,6 +453,8 @@ interface SessionStoreActions {
   ) => void;
   mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => void;
   removeWorkspace: (serverId: string, workspaceId: string) => void;
+  setEmptyProjects: (serverId: string, emptyProjects: Iterable<EmptyProjectDescriptor>) => void;
+  addEmptyProject: (serverId: string, emptyProject: EmptyProjectDescriptor) => void;
 
   // Agent activity timestamps
   setAgentLastActivity: (agentId: string, timestamp: Date) => void;
@@ -498,6 +526,7 @@ function createInitialSessionState(serverId: string, client: DaemonClient): Sess
     agents: new Map(),
     agentDetails: new Map(),
     workspaces: new Map(),
+    emptyProjects: new Map(),
     pendingPermissions: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
@@ -1174,6 +1203,51 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, workspaces: preservedWorkspaces },
+            },
+          };
+        });
+      },
+
+      setEmptyProjects: (serverId, emptyProjects) => {
+        const next = new Map<string, EmptyProjectDescriptor>();
+        for (const project of emptyProjects) {
+          next.set(project.projectId, project);
+        }
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          if (session.emptyProjects.size === 0 && next.size === 0) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, emptyProjects: next },
+            },
+          };
+        });
+      },
+
+      addEmptyProject: (serverId, emptyProject) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const existing = session.emptyProjects.get(emptyProject.projectId);
+          if (existing && equal(existing, emptyProject)) {
+            return prev;
+          }
+          const next = new Map(session.emptyProjects);
+          next.set(emptyProject.projectId, emptyProject);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, emptyProjects: next },
             },
           };
         });

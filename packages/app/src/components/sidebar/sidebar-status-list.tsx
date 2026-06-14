@@ -35,10 +35,8 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
-import { slugify, validateBranchSlug, MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -349,7 +347,6 @@ function StatusWorkspaceRowWithMenu({
   const { t } = useTranslation();
   const toast = useToast();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-  const queryClient = useQueryClient();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const workspaceDirectory = resolveWorkspaceDirectory({
@@ -456,24 +453,10 @@ function StatusWorkspaceRowWithMenu({
   }, [toast, workspace.name]);
 
   const renameMutation = useMutation({
-    mutationFn: async (branch: string) => {
+    mutationFn: async (title: string) => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      const targetCwd = requireWorkspaceDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
-      const payload = await client.renameBranch({ cwd: targetCwd, branch });
-      if (!payload.success || payload.error) {
-        throw new Error(payload.error?.message ?? "Failed to rename branch");
-      }
-      return { targetCwd };
-    },
-    onSuccess: async ({ targetCwd }) => {
-      await invalidateCheckoutGitQueriesForClient(queryClient, {
-        serverId: workspace.serverId,
-        cwd: targetCwd,
-      });
+      await client.setWorkspaceTitle(workspace.workspaceId, title.length === 0 ? null : title);
     },
   });
 
@@ -481,15 +464,10 @@ function StatusWorkspaceRowWithMenu({
   const handleCloseRename = useCallback(() => setIsRenameOpen(false), []);
   const handleSubmitRename = useCallback(
     async (value: string) => {
-      await renameMutation.mutateAsync(slugify(value));
+      await renameMutation.mutateAsync(value.trim());
     },
     [renameMutation],
   );
-  const validateRenameSlug = useCallback((value: string): string | null => {
-    const result = validateBranchSlug(slugify(value));
-    if (result.valid) return null;
-    return result.error ?? "Invalid branch name";
-  }, []);
 
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
@@ -540,18 +518,16 @@ function StatusWorkspaceRowWithMenu({
         onArchive={isWorktree ? archiveWorktreeAfterConfirmation : hideWorkspaceAfterConfirmation}
         onCopyBranchName={workspace.projectKind === "git" ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
-        onRename={workspace.projectKind === "git" ? handleOpenRename : undefined}
+        onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
         title="Rename workspace"
-        initialValue={workspace.name}
-        placeholder="branch-name"
+        initialValue={workspace.title ?? workspace.name}
+        placeholder={workspace.name}
         submitLabel="Rename"
-        validate={validateRenameSlug}
-        maxLength={MAX_SLUG_LENGTH}
         onClose={handleCloseRename}
         onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}

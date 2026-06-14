@@ -20,6 +20,7 @@ function ws(
     projectKind: input.projectKind ?? "git",
     workspaceKind: input.workspaceKind ?? "worktree",
     name: input.name ?? "main",
+    title: input.title ?? null,
     statusBucket: input.statusBucket ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: null,

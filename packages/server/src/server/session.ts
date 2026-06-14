@@ -164,6 +164,7 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   resolveProjectDisplayName,
+  resolveWorkspaceDisplayName,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -493,6 +494,7 @@ type FetchWorkspacesResponsePayload = Extract<
 >["payload"];
 type FetchWorkspacesResponseEntry = FetchWorkspacesResponsePayload["entries"][number];
 type FetchWorkspacesResponsePageInfo = FetchWorkspacesResponsePayload["pageInfo"];
+type WorkspaceProjectDescriptorPayload = FetchWorkspacesResponsePayload["emptyProjects"][number];
 type WorkspaceUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" }
@@ -2175,6 +2177,8 @@ export class Session {
         return this.handleArchiveWorkspaceRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
+      case "workspace.title.set.request":
+        return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "file_explorer_request":
         return this.handleFileExplorerRequest(msg);
       case "project_icon_request":
@@ -2661,6 +2665,82 @@ export class Session {
           accepted: false,
           customName: null,
           error: getErrorMessageOr(error, "Failed to rename project"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceTitleSetRequest(
+    workspaceId: string,
+    title: string | null,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { workspaceId, requestId, hasTitle: typeof title === "string" },
+      "session: workspace.title.set.request",
+    );
+
+    try {
+      const existing = await this.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        this.emit({
+          type: "workspace.title.set.response",
+          payload: {
+            requestId,
+            workspaceId,
+            accepted: false,
+            title: null,
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+
+      const trimmed = title?.trim() ?? "";
+      const nextTitle = trimmed.length === 0 ? null : trimmed;
+
+      await this.workspaceRegistry.upsert({
+        ...existing,
+        title: nextTitle,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "workspace.title.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          title: nextTitle,
+          error: null,
+        },
+      });
+
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
+        skipReconcile: true,
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.title.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set workspace title: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "workspace.title.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: false,
+          title: null,
+          error: getErrorMessageOr(error, "Failed to set workspace title"),
         },
       });
     }
@@ -6420,7 +6500,8 @@ export class Session {
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
-      name: workspace.displayName,
+      name: resolveWorkspaceDisplayName(workspace),
+      title: workspace.title,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -6491,7 +6572,7 @@ export class Session {
 
     return {
       ...base,
-      name: displayName,
+      name: workspace.title ?? displayName,
       diffStat: snapshot.git.diffStat ?? null,
       gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
@@ -6582,6 +6663,7 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
   ): Promise<{
     entries: FetchWorkspacesResponseEntry[];
+    emptyProjects: WorkspaceProjectDescriptorPayload[];
     pageInfo: FetchWorkspacesResponsePageInfo;
   }> {
     try {
@@ -6855,7 +6937,6 @@ export class Session {
       workspaceId,
       archivedAt: archiveTimestamp,
       workspaceRegistry: this.workspaceRegistry,
-      projectRegistry: this.projectRegistry,
     });
     if (!existingWorkspace) {
       const watchTarget = this.resolveWorkspaceGitWatchTarget(workspaceId);
@@ -7004,6 +7085,7 @@ export class Session {
         this.bufferOrEmitWorkspaceUpdate(subscription, {
           kind: "remove",
           id: workspaceId,
+          ...(await this.resolveEmptyProjectForArchivedWorkspace(workspaceId)),
         });
         continue;
       }
@@ -7028,6 +7110,22 @@ export class Session {
     if (!options?.skipReconcile) {
       void this.reconcileAndEmitWorkspaceUpdates();
     }
+  }
+
+  // When a workspace is archived its project may become empty. Resolve the
+  // now-empty project parent so the `remove` update can carry it, keeping the
+  // sidebar's empty project row in sync without a full re-hydration.
+  private async resolveEmptyProjectForArchivedWorkspace(
+    workspaceId: string,
+  ): Promise<{ emptyProject: WorkspaceProjectDescriptorPayload } | null> {
+    const archivedWorkspace = await this.workspaceRegistry.get(workspaceId);
+    if (!archivedWorkspace) {
+      return null;
+    }
+    const emptyProject = (await this.workspaceDirectory.listEmptyProjects()).find(
+      (project) => project.projectId === archivedWorkspace.projectId,
+    );
+    return emptyProject ? { emptyProject } : null;
   }
 
   private async emitWorkspaceUpdateForCwd(

@@ -89,6 +89,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
+import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 import {
   asUint8Array,
   decodeFileTransferFrame,
@@ -879,7 +880,7 @@ export class DaemonClient {
       compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean };
     }
   >();
-  private terminalDirectorySubscriptions = new Map<string, { workspaceId?: string }>();
+  private terminalDirectorySubscriptions = new Map<string, { cwd: string; workspaceId?: string }>();
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
@@ -1895,10 +1896,10 @@ export class DaemonClient {
     if (this.terminalDirectorySubscriptions.size === 0) {
       return;
     }
-    for (const [cwd, subscription] of this.terminalDirectorySubscriptions) {
+    for (const subscription of this.terminalDirectorySubscriptions.values()) {
       this.sendSessionMessage({
         type: "subscribe_terminals_request",
-        cwd,
+        cwd: subscription.cwd,
         ...(subscription.workspaceId !== undefined
           ? { workspaceId: subscription.workspaceId }
           : {}),
@@ -2065,6 +2066,27 @@ export class DaemonClient {
       throw new Error(payload.error ?? "renameProject rejected");
     }
     return { customName: payload.customName };
+  }
+
+  async setWorkspaceTitle(
+    workspaceId: string,
+    title: string | null,
+    requestId?: string,
+  ): Promise<{ title: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.title.set.request",
+        workspaceId,
+        title,
+      },
+      responseType: "workspace.title.set.response",
+      timeout: 10000,
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceTitle rejected");
+    }
+    return { title: payload.title };
   }
 
   async resumeAgent(
@@ -3839,7 +3861,10 @@ export class DaemonClient {
   // ============================================================================
 
   subscribeTerminals(input: { cwd: string; workspaceId?: string }): void {
-    this.terminalDirectorySubscriptions.set(input.cwd, { workspaceId: input.workspaceId });
+    this.terminalDirectorySubscriptions.set(terminalSubscriptionKey(input.cwd, input.workspaceId), {
+      cwd: input.cwd,
+      workspaceId: input.workspaceId,
+    });
     if (!this.transport || this.connectionState.status !== "connected") {
       return;
     }
@@ -3850,14 +3875,17 @@ export class DaemonClient {
     });
   }
 
-  unsubscribeTerminals(input: { cwd: string }): void {
-    this.terminalDirectorySubscriptions.delete(input.cwd);
+  unsubscribeTerminals(input: { cwd: string; workspaceId?: string }): void {
+    this.terminalDirectorySubscriptions.delete(
+      terminalSubscriptionKey(input.cwd, input.workspaceId),
+    );
     if (!this.transport || this.connectionState.status !== "connected") {
       return;
     }
     this.sendSessionMessage({
       type: "unsubscribe_terminals_request",
       cwd: input.cwd,
+      ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
     });
   }
 

@@ -26,6 +26,9 @@ export interface SidebarWorkspaceEntry {
   projectKind: WorkspaceDescriptor["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
+  // Raw user-set title (null when the name is derived from branch/directory).
+  // Prefills the rename input and signals whether a reset is available.
+  title: string | null;
   statusBucket: SidebarStateBucket;
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -61,6 +64,7 @@ function createStructuralWorkspaceEntry(input: {
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
     name: workspaceNameFromDirectory(input.project.iconWorkingDir) || input.workspaceId,
+    title: null,
     statusBucket: "done",
     statusEnteredAt: null,
     archivingAt: null,

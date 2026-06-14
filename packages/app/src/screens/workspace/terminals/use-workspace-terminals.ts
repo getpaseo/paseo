@@ -183,26 +183,37 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       return;
     }
 
+    const paneWorkspaceId = normalizedWorkspaceId || undefined;
+
     const unsubscribeChanged = client.on("terminals_changed", (message) => {
       if (message.payload.cwd !== workspaceDirectory) {
         return;
       }
 
+      // Two workspaces can share a cwd, so the push can carry terminals from a
+      // sibling workspace. Keep only the ones whose workspaceId matches this
+      // pane; terminals without a workspaceId predate Model B and belong to
+      // whichever pane is watching the cwd.
+      const matchingTerminals = message.payload.terminals.filter(
+        (terminal) =>
+          terminal.workspaceId === undefined || terminal.workspaceId === paneWorkspaceId,
+      );
+
       queryClient.setQueryData<ListTerminalsPayload>(queryKey, (current) => ({
         cwd: message.payload.cwd,
-        terminals: message.payload.terminals,
+        terminals: matchingTerminals,
         requestId: current?.requestId ?? `terminals-changed-${Date.now()}`,
       }));
     });
 
     client.subscribeTerminals({
       cwd: workspaceDirectory,
-      workspaceId: normalizedWorkspaceId || undefined,
+      workspaceId: paneWorkspaceId,
     });
 
     return () => {
       unsubscribeChanged();
-      client.unsubscribeTerminals({ cwd: workspaceDirectory });
+      client.unsubscribeTerminals({ cwd: workspaceDirectory, workspaceId: paneWorkspaceId });
     };
   }, [
     client,

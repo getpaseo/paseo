@@ -28,6 +28,7 @@ function workspace(input: {
     projectKind: "git",
     workspaceKind: "checkout",
     name: input.name,
+    title: null,
     statusBucket: input.statusBucket ?? "done",
     archivingAt: null,
     statusEnteredAt: input.statusEnteredAt ?? null,
