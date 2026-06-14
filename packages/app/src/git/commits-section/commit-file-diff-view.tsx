@@ -5,8 +5,16 @@ import { useTranslation } from "react-i18next";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { buildUnifiedDiffLines, type UnifiedDiffDisplayLine } from "@/utils/diff-layout";
-import { formatDiffContentText, formatDiffGutterText } from "@/utils/diff-rendering";
+import {
+  formatDiffContentText,
+  formatDiffGutterText,
+  hasVisibleDiffTokens,
+} from "@/utils/diff-rendering";
 import { useCommitFileDiff } from "@/git/use-commit-file-diff";
+import { HighlightedText } from "@/git/diff-highlighted-text";
+import { lineNumberGutterWidth } from "@/components/code-insets";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { useAppSettings } from "@/hooks/use-settings";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
@@ -24,9 +32,24 @@ function lineContainerStyle(type: UnifiedDiffDisplayLine["line"]["type"]) {
   return styles.contextLine;
 }
 
-const DiffLineRow = memo(function DiffLineRow({ entry }: { entry: UnifiedDiffDisplayLine }) {
+const DiffLineRow = memo(function DiffLineRow({
+  entry,
+  gutterWidth,
+}: {
+  entry: UnifiedDiffDisplayLine;
+  gutterWidth: number;
+}) {
   const { line, lineNumber } = entry;
   const containerStyle = useMemo(() => [styles.line, lineContainerStyle(line.type)], [line.type]);
+  const gutterStyle = useMemo(
+    () => [
+      styles.gutter,
+      inlineUnistylesStyle({ width: gutterWidth }),
+      line.type === "add" && styles.addGutterText,
+      line.type === "remove" && styles.removeGutterText,
+    ],
+    [line.type, gutterWidth],
+  );
   const textStyle = useMemo(
     () => [
       styles.lineText,
@@ -36,19 +59,33 @@ const DiffLineRow = memo(function DiffLineRow({ entry }: { entry: UnifiedDiffDis
     ],
     [line.type],
   );
+  const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
   return (
     <View style={containerStyle}>
-      <Text style={styles.gutter} numberOfLines={1}>
+      <Text style={gutterStyle} numberOfLines={1}>
         {formatDiffGutterText(lineNumber)}
       </Text>
-      <Text style={textStyle}>{formatDiffContentText(line.content)}</Text>
+      {line.type !== "header" && visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} />
+      ) : (
+        <Text style={textStyle}>{formatDiffContentText(line.content)}</Text>
+      )}
     </View>
   );
 });
 
 function CommitFileDiffBody({ file }: { file: ParsedDiffFile }) {
   const { t } = useTranslation();
+  const { settings } = useAppSettings();
+  const codeFontSize = settings.codeFontSize;
   const lines = useMemo(() => buildUnifiedDiffLines(file), [file]);
+  const gutterWidth = useMemo(() => {
+    let maxLineNo = 0;
+    for (const hunk of file.hunks) {
+      maxLineNo = Math.max(maxLineNo, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount);
+    }
+    return lineNumberGutterWidth(maxLineNo, codeFontSize);
+  }, [file, codeFontSize]);
 
   if (file.status === "binary") {
     return <Text style={styles.message}>{t("workspace.git.diff.binaryFile")}</Text>;
@@ -64,7 +101,7 @@ function CommitFileDiffBody({ file }: { file: ParsedDiffFile }) {
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
       <View style={styles.lines}>
         {lines.map((entry) => (
-          <DiffLineRow key={entry.key} entry={entry} />
+          <DiffLineRow key={entry.key} entry={entry} gutterWidth={gutterWidth} />
         ))}
       </View>
     </ScrollView>
@@ -130,13 +167,18 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
   },
   gutter: {
-    width: 44,
     textAlign: "right",
     paddingRight: theme.spacing[2],
     fontSize: theme.fontSize.code,
     lineHeight: theme.lineHeight.diff,
     fontFamily: theme.fontFamily.mono,
     color: theme.colors.foregroundMuted,
+  },
+  addGutterText: {
+    color: theme.colors.diffAddition,
+  },
+  removeGutterText: {
+    color: theme.colors.diffDeletion,
   },
   lineText: {
     paddingRight: theme.spacing[3],
