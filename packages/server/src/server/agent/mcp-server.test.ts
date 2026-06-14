@@ -1068,12 +1068,14 @@ describe("create_agent MCP tool", () => {
       expect(broadcasts[0]).toBe(createdWorkspaceIds[0]);
       expect(setupContinuations).toEqual(["agent"]);
       expect(startedAgentSetupIds).toEqual(["agent-with-worktree"]);
+      // The agent is stamped with the freshly created worktree's workspaceId so
+      // workspaceId-scoped archive can find and tear it down later.
       expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
         expect.objectContaining({
           cwd: expect.stringContaining("agent-worktree"),
         }),
         undefined,
-        undefined,
+        { workspaceId: createdWorkspaceIds[0] },
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -1329,7 +1331,7 @@ describe("create_agent MCP tool", () => {
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/tmp/worktrees/pr-123" }),
       undefined,
-      undefined,
+      { workspaceId: "ws-pr-123" },
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();

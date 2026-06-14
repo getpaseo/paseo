@@ -34,7 +34,7 @@ export function generateWorkspaceId(): string {
   return `wks_${randomBytes(8).toString("hex")}`;
 }
 
-// COMPAT(workspaceOwnership): added in v0.1.X, drop the gate when floor >= v0.1.X.
+// COMPAT(workspaceOwnership): added in v0.1.97, drop the gate when floor >= v0.1.97.
 // Resolves the owning workspace for a record (agent/terminal) that may predate
 // workspaceId stamping. New records always carry workspaceId and hit the first
 // branch; legacy records fall back to cwd matching. When several active

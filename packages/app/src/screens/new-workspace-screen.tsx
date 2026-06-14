@@ -917,7 +917,7 @@ export function NewWorkspaceScreen({
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
-  // COMPAT(workspaceMultiplicity): added in v0.1.X, drop the gate when floor >= v0.1.X
+  // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceMultiplicity === true,
   );

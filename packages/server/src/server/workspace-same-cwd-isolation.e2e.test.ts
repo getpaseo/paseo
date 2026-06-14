@@ -79,10 +79,6 @@ test("two workspaces sharing one cwd stay isolated by workspaceId", async () => 
   try {
     await client.connect();
 
-    // The feature only works when the daemon advertises workspace ownership.
-    const serverInfo = client.getLastServerInfoMessage();
-    expect(serverInfo?.features?.workspaceOwnership).toBe(true);
-
     // Both seeded workspaces are visible and start with no contributing agents.
     expect(await statusByWorkspaceId(client)).toEqual(
       new Map([

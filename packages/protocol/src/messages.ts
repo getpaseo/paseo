@@ -2240,13 +2240,7 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
-        // COMPAT(workspaceOwnership): added in v0.1.X, drop the gate when floor >= v0.1.X
-        workspaceOwnership: z.boolean().optional(),
-        // COMPAT(workspaceTitles): added in v0.1.X, drop the gate when floor >= v0.1.X
-        workspaceTitles: z.boolean().optional(),
-        // COMPAT(workspaceProjects): added in v0.1.X, drop the gate when floor >= v0.1.X
-        workspaceProjects: z.boolean().optional(),
-        // COMPAT(workspaceMultiplicity): added in v0.1.X, drop the gate when floor >= v0.1.X
+        // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
       })
       .optional(),
@@ -2519,7 +2513,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
     name: z.string(),
-    // COMPAT(workspaceTitles): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+    // COMPAT(workspaceTitles): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
     // When the user has titled a workspace, `name` carries the resolved value
     // (title) and `title` mirrors the raw override so the rename UI can prefill
     // its input and offer a "reset to branch name" action. Null means the name
@@ -2635,7 +2629,7 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
   }),
 });
 
-// COMPAT(workspaceProjects): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+// COMPAT(workspaceProjects): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
 // A project parent that has zero active workspaces. The sidebar renders it as an
 // empty project row so projects persist after their last workspace is archived.
 export const WorkspaceProjectDescriptorPayloadSchema = z.object({
@@ -2652,7 +2646,7 @@ export const FetchWorkspacesResponseMessageSchema = z.object({
     requestId: z.string(),
     subscriptionId: z.string().nullable().optional(),
     entries: z.array(WorkspaceDescriptorPayloadSchema),
-    // COMPAT(workspaceProjects): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+    // COMPAT(workspaceProjects): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
     // Project parents with no active workspaces. Old daemons omit it; old clients
     // ignore it. Only populated on the first page (no cursor).
     emptyProjects: z.array(WorkspaceProjectDescriptorPayloadSchema).optional().default([]),
@@ -2674,7 +2668,7 @@ export const WorkspaceUpdateMessageSchema = z.object({
     z.object({
       kind: z.literal("remove"),
       id: z.string(),
-      // COMPAT(workspaceProjects): added in v0.1.X, drop the optional gate when floor >= v0.1.X.
+      // COMPAT(workspaceProjects): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
       // When archiving this workspace leaves its project with no active
       // workspaces, the daemon includes the now-empty project parent so the
       // sidebar keeps rendering it without waiting for a full re-hydration. Old

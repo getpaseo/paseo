@@ -92,7 +92,7 @@ test("session create stamps the requested workspaceId when no worktree setup run
   );
 });
 
-test("session create drops the source workspaceId when a worktree setup continuation runs", async () => {
+test("session create stamps the new worktree's workspaceId when a setup continuation runs", async () => {
   const snapshot = {
     id: "agent-1",
     provider: "codex",
@@ -112,9 +112,66 @@ test("session create drops the source workspaceId when a worktree setup continua
     buildSessionConfig: async (config) => ({
       sessionConfig: config,
       setupContinuation: { startAfterAgentCreate: vi.fn() },
+      createdWorkspaceId: "ws-new-worktree",
     }),
   });
 
   const createOptions = createAgent.mock.calls[0]?.[2];
-  expect(createOptions?.workspaceId).toBeUndefined();
+  expect(createOptions?.workspaceId).toBe("ws-new-worktree");
+});
+
+test("mcp create stamps the new worktree's workspaceId, not the parent's", async () => {
+  const parentAgent = {
+    id: "parent-1",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test/repo",
+    workspaceId: "ws-parent",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const childSnapshot = {
+    id: "child-1",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test/repo/worktree",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => childSnapshot);
+  const createPaseoWorktree = vi.fn(async () => ({
+    worktree: { worktreePath: "/tmp/paseo-create-test/repo/worktree" },
+    intent: {},
+    workspace: { workspaceId: "ws-new-worktree" },
+    repoRoot: "/tmp/paseo-create-test/repo",
+    created: true,
+    setupContinuation: { kind: "agent" as const, startAfterAgentCreate: vi.fn() },
+  })) as unknown as Parameters<typeof createAgentCommand>[0]["createPaseoWorktree"];
+
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn((id: string) => (id === "parent-1" ? parentAgent : childSnapshot)),
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      streamAgent: vi.fn(() => (async function* noop() {})()),
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: {
+      resolveCreateConfig: vi.fn(async () => ({ modeId: undefined, featureValues: undefined })),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["providerSnapshotManager"],
+    createPaseoWorktree,
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "codex/gpt-5.4",
+    title: "child",
+    initialPrompt: "do the thing",
+    background: true,
+    notifyOnFinish: false,
+    callerAgentId: "parent-1",
+    worktree: { worktreeName: "feature", baseBranch: "main" },
+  });
+
+  const createOptions = createAgent.mock.calls[0]?.[2];
+  expect(createOptions?.workspaceId).toBe("ws-new-worktree");
 });

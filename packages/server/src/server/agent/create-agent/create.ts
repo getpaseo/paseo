@@ -247,7 +247,7 @@ async function resolveMcpCreateAgent(
         allowCustomCwd: input.callerContext?.allowCustomCwd ?? true,
       })
     : expandUserPath(input.cwd ?? process.cwd());
-  const { resolvedCwd, setupContinuation } = await resolveMcpCwd({
+  const { resolvedCwd, setupContinuation, createdWorkspaceId } = await resolveMcpCwd({
     dependencies,
     cwd,
     worktree: input.worktree,
@@ -255,10 +255,11 @@ async function resolveMcpCreateAgent(
   });
 
   // A child agent created in its parent's working tree belongs to the parent's
-  // workspace. When a new worktree is created the child lives in a fresh
-  // workspace, so it stays unstamped here.
-  const inheritedWorkspaceId =
-    parentAgent && !setupContinuation ? parentAgent.workspaceId : undefined;
+  // workspace. When a new worktree is created the child lives in that fresh
+  // workspace, so it is stamped with the new worktree's workspaceId instead
+  // (mirrors the session path) — keeping the agent discoverable by
+  // workspaceId-scoped archive.
+  const workspaceId = setupContinuation ? createdWorkspaceId : parentAgent?.workspaceId;
 
   const { modeId: resolvedMode, featureValues: resolvedFeatures } =
     await dependencies.providerSnapshotManager.resolveCreateConfig({
@@ -289,10 +290,10 @@ async function resolveMcpCreateAgent(
       ...(resolvedFeatures ? { featureValues: resolvedFeatures } : {}),
     },
     createOptions:
-      labels || inheritedWorkspaceId
+      labels || workspaceId
         ? {
             ...(labels ? { labels } : {}),
-            ...(inheritedWorkspaceId ? { workspaceId: inheritedWorkspaceId } : {}),
+            ...(workspaceId ? { workspaceId } : {}),
           }
         : undefined,
     metadataInitialPrompt: trimmedPrompt,
@@ -407,7 +408,11 @@ async function resolveMcpCwd(params: {
   cwd: string;
   initialPrompt: string;
   worktree: CreateAgentFromMcpInput["worktree"];
-}): Promise<{ resolvedCwd: string; setupContinuation?: AgentWorktreeSetupContinuation }> {
+}): Promise<{
+  resolvedCwd: string;
+  setupContinuation?: AgentWorktreeSetupContinuation;
+  createdWorkspaceId?: string;
+}> {
   const { dependencies, worktree } = params;
   if (!worktree) {
     return { resolvedCwd: params.cwd };
@@ -463,6 +468,7 @@ async function resolveMcpCwd(params: {
   return {
     resolvedCwd: createdWorktree.worktree.worktreePath,
     setupContinuation: createdWorktree.setupContinuation,
+    createdWorkspaceId: createdWorktree.workspace.workspaceId,
   };
 }
 

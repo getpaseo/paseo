@@ -286,6 +286,15 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     } satisfies CommandError;
   }
 
+  if (options.worktree && !options.workspace && process.env.PASEO_WORKSPACE_ID) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--worktree cannot be combined with an ambient PASEO_WORKSPACE_ID",
+      details:
+        "PASEO_WORKSPACE_ID selects an existing workspace; --worktree mints a new one. Unset PASEO_WORKSPACE_ID to use --worktree.",
+    } satisfies CommandError;
+  }
+
   if (outputSchema && options.detach) {
     throw {
       code: "INVALID_OPTIONS",
@@ -409,15 +418,16 @@ interface RunWorkspace {
 //   2. $PASEO_WORKSPACE_ID         -> exported by workspace terminals
 //   3. --worktree <name>           -> mint a new worktree-backed workspace
 //   4. bare run                    -> mint a new local-backed workspace for cwd
-// --worktree is rejected alongside --workspace (validateRunOptions); $PASEO_WORKSPACE_ID
-// is an ambient default, so an explicit --worktree takes it over.
+// --worktree is rejected alongside both --workspace and an ambient
+// $PASEO_WORKSPACE_ID (validateRunOptions), so worktree resolution here never
+// races an existing-workspace selection.
 async function resolveRunWorkspace(
   client: ConnectedDaemonClient,
   options: AgentRunOptions,
   cwd: string,
 ): Promise<RunWorkspace> {
-  // An explicit --worktree mints its own workspace and overrides the ambient
-  // PASEO_WORKSPACE_ID; --workspace is rejected alongside --worktree upstream.
+  // An explicit --worktree mints its own workspace; --workspace and an ambient
+  // PASEO_WORKSPACE_ID are both rejected alongside --worktree upstream.
   const explicit = options.worktree
     ? undefined
     : options.workspace?.trim() || process.env.PASEO_WORKSPACE_ID?.trim();

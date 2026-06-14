@@ -1262,7 +1262,14 @@ export const useSessionStore = create<SessionStore>()(
           }
           const next = new Map(session.workspaces);
           let changed = false;
+          // A workspace landing in a project means that project is no longer
+          // empty: prune any stale empty descriptor so it stops governing the
+          // project's rendered metadata.
+          const nextEmptyProjects = new Map(session.emptyProjects);
           for (const workspace of nextEntries) {
+            if (nextEmptyProjects.delete(workspace.projectId)) {
+              changed = true;
+            }
             const existing = next.get(workspace.id);
             const nextWorkspace = preserveWorkspaceDescriptorIdentity(workspace, existing);
             if (existing === nextWorkspace) {
@@ -1278,7 +1285,7 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: next },
+              [serverId]: { ...session, workspaces: next, emptyProjects: nextEmptyProjects },
             },
           };
         });
