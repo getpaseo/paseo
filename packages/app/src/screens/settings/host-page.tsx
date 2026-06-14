@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { DEFAULT_DICTATION_TRANSCRIPTION_PROMPT } from "@getpaseo/protocol/dictation-prompt";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   getTerminalProfileIcon,
@@ -258,6 +259,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
         <SettingsSection title={t("settings.hostSections.agents")}>
           <InjectPaseoToolsCard serverId={serverId} />
           <AppendSystemPromptCard serverId={serverId} />
+          <DictationPromptCard serverId={serverId} />
         </SettingsSection>
       ) : (
         <View style={EMPTY_CARD_STYLE}>
@@ -874,6 +876,124 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
               {isSaving
                 ? t("settings.host.orchestration.systemPrompt.saving")
                 : t("settings.host.orchestration.systemPrompt.save")}
+            </Button>
+          </View>
+        </AdaptiveModalSheet>
+      ) : null}
+    </>
+  );
+}
+
+function DictationPromptCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const isSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.dictationTranscriptionPrompt === true,
+  );
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const persistedPrompt = config?.dictationTranscriptionPrompt ?? "";
+  const [draft, setDraft] = useState(persistedPrompt);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const header = useMemo<SheetHeader>(
+    () => ({ title: t("settings.host.orchestration.dictationPrompt.sheetTitle") }),
+    [t],
+  );
+
+  useEffect(() => {
+    setDraft(persistedPrompt);
+  }, [persistedPrompt]);
+
+  const hasChanges = draft !== persistedPrompt;
+
+  const handleOpen = useCallback(() => {
+    setDraft(persistedPrompt);
+    setIsEditing(true);
+  }, [persistedPrompt]);
+
+  const handleClose = useCallback(() => {
+    if (isSaving) return;
+    setDraft(persistedPrompt);
+    setIsEditing(false);
+  }, [isSaving, persistedPrompt]);
+
+  const handleSave = useCallback(() => {
+    setIsSaving(true);
+    void patchConfig({ dictationTranscriptionPrompt: draft })
+      .then(() => {
+        setIsEditing(false);
+        return;
+      })
+      .catch((error) => {
+        console.error("[HostPage] Failed to save dictation prompt", error);
+      })
+      .finally(() => setIsSaving(false));
+  }, [draft, patchConfig]);
+
+  const handleReset = useCallback(() => {
+    setDraft(persistedPrompt);
+  }, [persistedPrompt]);
+
+  if (!isConnected || !isSupported) return null;
+
+  return (
+    <>
+      <View style={settingsStyles.card} testID="host-page-dictation-prompt-card">
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.orchestration.dictationPrompt.title")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.host.orchestration.dictationPrompt.hint")}
+            </Text>
+          </View>
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleOpen}
+            testID="host-page-dictation-prompt-edit"
+          >
+            {t("settings.host.orchestration.dictationPrompt.edit")}
+          </Button>
+        </View>
+      </View>
+
+      {isEditing ? (
+        <AdaptiveModalSheet
+          header={header}
+          visible
+          onClose={handleClose}
+          testID="host-page-dictation-prompt-sheet"
+          desktopMaxWidth={560}
+        >
+          <SettingsTextAreaCard
+            testID="host-page-dictation-prompt-input"
+            accessibilityLabel={t("settings.host.orchestration.dictationPrompt.accessibilityLabel")}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={DEFAULT_DICTATION_TRANSCRIPTION_PROMPT}
+          />
+          <View style={styles.appendPromptActions}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={handleReset}
+              disabled={!hasChanges || isSaving}
+              testID="host-page-dictation-prompt-reset"
+            >
+              {t("settings.host.orchestration.dictationPrompt.reset")}
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onPress={handleSave}
+              disabled={!hasChanges || isSaving}
+              testID="host-page-dictation-prompt-save"
+            >
+              {isSaving
+                ? t("settings.host.orchestration.dictationPrompt.saving")
+                : t("settings.host.orchestration.dictationPrompt.save")}
             </Button>
           </View>
         </AdaptiveModalSheet>
