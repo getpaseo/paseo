@@ -98,6 +98,7 @@ describe("DaemonConfigStore", () => {
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
       },
       undefined,
     );
@@ -129,6 +130,7 @@ describe("DaemonConfigStore", () => {
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
       },
       undefined,
     );
@@ -139,6 +141,29 @@ describe("DaemonConfigStore", () => {
 
     const persisted = loadPersistedConfig(paseoHome);
     expect(persisted.daemon?.appendSystemPrompt).toBe("Prefer terse replies.");
+  });
+
+  test("persists dictationTranscriptionPrompt to features.dictation", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
+      },
+      undefined,
+    );
+
+    store.patch({ dictationTranscriptionPrompt: "Keep filler words." });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.features?.dictation?.transcriptionPrompt).toBe("Keep filler words.");
   });
 
   test("patch persists provider additional models into config.json", () => {
@@ -153,6 +178,7 @@ describe("DaemonConfigStore", () => {
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
       },
       undefined,
     );
@@ -193,6 +219,7 @@ describe("DaemonConfigStore", () => {
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
       },
       undefined,
     );
@@ -217,6 +244,7 @@ describe("DaemonConfigStore", () => {
         metadataGeneration: { providers: [] },
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
       },
       undefined,
     );
@@ -267,6 +295,7 @@ describe("DaemonConfigStore", () => {
         providers: {},
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
         metadataGeneration: { providers: [{ provider: "claude", model: "haiku" }] },
       },
       undefined,
@@ -289,6 +318,7 @@ describe("DaemonConfigStore", () => {
         providers: {},
         autoArchiveAfterMerge: false,
         appendSystemPrompt: "",
+        dictationTranscriptionPrompt: "",
         metadataGeneration: { providers: [] },
       },
       undefined,

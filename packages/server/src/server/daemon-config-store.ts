@@ -214,6 +214,13 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         ? { terminalProfiles: mutable.terminalProfiles }
         : {}),
     },
+    features: {
+      ...persisted.features,
+      dictation: {
+        ...persisted.features?.dictation,
+        transcriptionPrompt: mutable.dictationTranscriptionPrompt,
+      },
+    },
     agents: nextAgents,
   } as PersistedConfig;
 }
