@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { SvgXml } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ExternalLink, PackagePlus, Search } from "lucide-react-native";
-import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { isWeb } from "@/constants/platform";
 import {
   useAcpProviderCatalog,
   type AcpProviderCatalogItem,
@@ -145,13 +145,15 @@ export function ProviderCatalogList({
         <View style={styles.searchIcon}>
           <ThemedSearch size={SEARCH_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
         </View>
-        <AdaptiveTextInput
+        <TextInput
           testID="provider-catalog-search"
           value={search}
           onChangeText={setSearch}
           accessibilityLabel={t("providerCatalog.search")}
           placeholder={t("providerCatalog.search")}
-          style={styles.searchInput}
+          placeholderTextColor={styles.placeholderColor.color}
+          // @ts-expect-error - outlineStyle is web-only
+          style={SEARCH_INPUT_STYLE}
           autoCapitalize="none"
           autoCorrect={false}
         />
@@ -279,4 +281,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
+  placeholderColor: {
+    color: theme.colors.foregroundMuted,
+  },
 }));
+
+const SEARCH_INPUT_STYLE = [styles.searchInput, isWeb && { outlineStyle: "none" }];
