@@ -32,7 +32,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       wrapLines: true,
       hideWhitespace: false,
       fileView: "list",
-      commitsCollapsed: false,
+      commitsCollapsed: true,
       commitsSectionHeight: 240,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
@@ -57,7 +57,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       hideWhitespace: true,
       wrapLines: false,
       fileView: "list",
-      commitsCollapsed: false,
+      commitsCollapsed: true,
       commitsSectionHeight: 240,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
@@ -92,28 +92,28 @@ describe("changes preferences fileView", () => {
 });
 
 describe("changes preferences commitsCollapsed", () => {
-  it("defaults commitsCollapsed to false", () => {
-    expect(DEFAULT_CHANGES_PREFERENCES.commitsCollapsed).toBe(false);
+  it("defaults commitsCollapsed to true", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.commitsCollapsed).toBe(true);
   });
 
-  it("round-trips commitsCollapsed: true", async () => {
+  it("round-trips commitsCollapsed: false", async () => {
     const storage = createInMemoryKeyValueStorage({
-      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsCollapsed: true }),
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsCollapsed: false }),
     });
 
     const prefs = await loadChangesPreferencesFromStorage(storage);
 
-    expect(prefs.commitsCollapsed).toBe(true);
+    expect(prefs.commitsCollapsed).toBe(false);
   });
 
-  it("falls back to false for invalid commitsCollapsed", async () => {
+  it("falls back to true for invalid commitsCollapsed", async () => {
     const storage = createInMemoryKeyValueStorage({
       [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsCollapsed: "nope" }),
     });
 
     const prefs = await loadChangesPreferencesFromStorage(storage);
 
-    expect(prefs.commitsCollapsed).toBe(false);
+    expect(prefs.commitsCollapsed).toBe(true);
   });
 });
 

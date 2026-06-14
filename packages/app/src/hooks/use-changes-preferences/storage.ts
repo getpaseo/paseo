@@ -31,7 +31,7 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   wrapLines: false,
   hideWhitespace: false,
   fileView: "list",
-  commitsCollapsed: false,
+  commitsCollapsed: true,
   commitsSectionHeight: 240,
 };
 
