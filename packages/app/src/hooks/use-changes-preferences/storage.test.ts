@@ -33,6 +33,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       hideWhitespace: false,
       fileView: "list",
       commitsCollapsed: false,
+      commitsSectionHeight: 240,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
@@ -57,6 +58,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       wrapLines: false,
       fileView: "list",
       commitsCollapsed: false,
+      commitsSectionHeight: 240,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
     expect(storage.entries.size).toBe(1);
@@ -112,6 +114,32 @@ describe("changes preferences commitsCollapsed", () => {
     const prefs = await loadChangesPreferencesFromStorage(storage);
 
     expect(prefs.commitsCollapsed).toBe(false);
+  });
+});
+
+describe("changes preferences commitsSectionHeight", () => {
+  it("defaults commitsSectionHeight to 240", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.commitsSectionHeight).toBe(240);
+  });
+
+  it("round-trips commitsSectionHeight: 320", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsSectionHeight: 320 }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.commitsSectionHeight).toBe(320);
+  });
+
+  it("falls back to 240 for invalid commitsSectionHeight", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ commitsSectionHeight: "tall" }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.commitsSectionHeight).toBe(240);
   });
 });
 
