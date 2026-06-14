@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { extname } from "node:path";
-import { execCommand } from "./spawn.js";
-import { isWindowsCommandScript } from "./windows-command.js";
+import { execCommand } from "../utils/spawn.js";
+import { isWindowsCommandScript } from "../utils/windows-command.js";
+import { windowsExecutableResolution } from "./windows.js";
 
-export { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
+export { quoteWindowsArgument, quoteWindowsCommand } from "../utils/windows-command.js";
 
 type Which = (command: string, options: { all: true }) => Promise<string[]>;
 
@@ -102,14 +102,10 @@ export function executableExists(
   executablePath: string,
   exists: typeof existsSync = existsSync,
 ): string | null {
-  if (exists(executablePath)) return executablePath;
-  if (process.platform === "win32" && !extname(executablePath)) {
-    for (const ext of [".exe", ".cmd"]) {
-      const candidate = executablePath + ext;
-      if (exists(candidate)) return candidate;
-    }
+  if (process.platform === "win32") {
+    return windowsExecutableResolution.exists(executablePath, { exists });
   }
-  return null;
+  return exists(executablePath) ? executablePath : null;
 }
 
 export async function findExecutable(
@@ -119,6 +115,15 @@ export async function findExecutable(
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
+  }
+
+  if (process.platform === "win32") {
+    return windowsExecutableResolution.find(trimmed, {
+      enumeratePathCandidates: enumerateCandidates,
+      probeExecutable,
+      exists: existsSync,
+      probeTimeoutMs,
+    });
   }
 
   if (hasPathSeparator(trimmed)) {

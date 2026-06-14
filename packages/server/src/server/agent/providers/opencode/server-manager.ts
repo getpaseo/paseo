@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import net from "node:net";
 import type { Logger } from "pino";
 
-import { findExecutable } from "../../../../utils/executable.js";
+import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import {

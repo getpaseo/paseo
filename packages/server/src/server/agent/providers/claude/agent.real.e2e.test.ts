@@ -16,7 +16,7 @@ import {
   getRealProviderConfig,
   getRealProviderRuntimeSettings,
 } from "../../../daemon-e2e/real-provider-test-config.js";
-import { findExecutable } from "../../../../utils/executable.js";
+import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
 import { claudeQuery } from "./query.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";

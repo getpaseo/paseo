@@ -3,11 +3,12 @@ import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
+import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 
@@ -202,6 +203,64 @@ export function resolveDefaultTerminalShell(
   }
 
   return env.SHELL || "/bin/sh";
+}
+
+export interface ResolvedTerminalCommand {
+  command: string;
+  args: string[];
+}
+
+export interface ResolveTerminalSpawnCommandOptions {
+  platform?: NodeJS.Platform;
+  env?: Record<string, string | undefined>;
+  resolveExecutable?: (name: string) => Promise<string | null>;
+}
+
+/**
+ * Resolve a terminal profile command (e.g. `claude`) into something node-pty's
+ * conpty backend can actually launch on Windows.
+ *
+ * On Windows, conpty's underlying `CreateProcess` does not apply `PATHEXT`, so a
+ * bare `claude` (installed by npm as `claude.cmd`) fails with `error code: 2`
+ * (`ERROR_FILE_NOT_FOUND`). Worse, conpty completes the spawn asynchronously on
+ * its own conout worker thread, so that failure surfaces as an uncaught
+ * exception that takes down the whole terminal worker process. Resolving the
+ * real path up front — and routing `.cmd`/`.bat` shims through `cmd.exe /c`
+ * (node-pty has no `shell` option) — keeps the profile launchable.
+ *
+ * Non-Windows and the default-shell path (no explicit command) are unchanged.
+ */
+export async function resolveTerminalSpawnCommand(
+  command: string,
+  args: string[],
+  options: ResolveTerminalSpawnCommandOptions = {},
+): Promise<ResolvedTerminalCommand> {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") {
+    return { command, args };
+  }
+
+  const resolveExecutable = options.resolveExecutable ?? findExecutable;
+  const resolved = await resolveExecutable(command);
+  if (!resolved) {
+    // Leave the command as-is so the terminal itself surfaces the "not found"
+    // error to the user instead of silently doing nothing.
+    return { command, args };
+  }
+
+  // `.cmd`/`.bat` shims are batch scripts that conpty's CreateProcess cannot
+  // launch directly; they must run through cmd.exe (node-pty has no `shell`
+  // option, so build the `cmd /c` invocation ourselves). Checked by extension
+  // rather than isWindowsCommandScript() because that helper gates on the live
+  // process.platform, which is wrong once we're already on the win32 branch.
+  const extension = extname(resolved).toLowerCase();
+  if (extension === ".cmd" || extension === ".bat") {
+    const env = options.env ?? process.env;
+    const comSpec = env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
+    return { command: comSpec, args: ["/c", resolved, ...args] };
+  }
+
+  return { command: resolved, args };
 }
 
 export function resolveZshShellIntegrationDir(): string {
@@ -636,8 +695,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
   // Create PTY
-  const spawnCommand = command ?? resolvedShell;
-  const spawnArgs = command ? args : [];
+  const { command: spawnCommand, args: spawnArgs } = command
+    ? await resolveTerminalSpawnCommand(command, args)
+    : { command: resolvedShell, args: [] as string[] };
   const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
     name: "xterm-256color",
     cols,

@@ -5,7 +5,7 @@ import {
   parseGitRemoteLocation,
   type GitHubRemoteIdentity as ResolvedGitHubRemoteIdentity,
 } from "@getpaseo/protocol/git-remote";
-import { findExecutable } from "./executable.js";
+import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { execCommand } from "./spawn.js";
 
 let sshExecutableLookup: Promise<string | null> | null = null;

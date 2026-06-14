@@ -5,7 +5,7 @@ import path from "node:path";
 import pino from "pino";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { findExecutable } from "../../../utils/executable.js";
+import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { PiCliRuntime } from "./pi/cli-runtime.js";
 

@@ -9,10 +9,32 @@ import type {
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
+type TerminalCreateRequest = Extract<TerminalWorkerRequest, { type: "createTerminal" }>;
+
 const manager = createTerminalManager();
 const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
 const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
 let ipcClosing = false;
+
+interface InFlightTerminalCreateRequest {
+  requestId: string;
+  errorReported: boolean;
+}
+
+let inFlightTerminalCreateRequest: InFlightTerminalCreateRequest | null = null;
+
+// The conpty failure signal is process-scoped, not request-scoped. Serializing
+// creates keeps an async spawn failure attributable to exactly one request.
+let createTerminalQueue: Promise<void> = Promise.resolve();
+
+// node-pty completes its Windows conpty spawn asynchronously on a separate
+// conout worker thread. When that spawn fails (bad cwd, missing command, etc.)
+// it throws an exception there that cannot be caught at the call site and would
+// otherwise crash this worker process and sever every existing terminal.
+process.on("uncaughtException", (error) => {
+  console.error("Terminal worker uncaught exception (kept alive):", error);
+  reportInFlightTerminalCreateFailure(error);
+});
 
 function sendToParent(message: TerminalWorkerToParentMessage): void {
   if (ipcClosing || !process.connected || !process.send) {
@@ -46,6 +68,23 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     cwd: session.cwd,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
   };
+}
+
+function terminalWorkerErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Terminal worker request failed";
+}
+
+function reportInFlightTerminalCreateFailure(error: unknown): void {
+  if (!inFlightTerminalCreateRequest || inFlightTerminalCreateRequest.errorReported) {
+    return;
+  }
+  inFlightTerminalCreateRequest.errorReported = true;
+  sendToParent({
+    type: "response",
+    requestId: inFlightTerminalCreateRequest.requestId,
+    ok: false,
+    error: terminalWorkerErrorMessage(error),
+  });
 }
 
 function clearTerminalSubscriptions(terminalId: string): void {
@@ -146,6 +185,49 @@ manager.subscribeTerminalsChanged((event) => {
   });
 });
 
+function enqueueCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
+  const nextRequest = createTerminalQueue.then(() => handleCreateTerminalRequest(message));
+  createTerminalQueue = nextRequest.catch(() => {});
+  return nextRequest;
+}
+
+async function handleCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
+  const request: InFlightTerminalCreateRequest = {
+    requestId: message.requestId,
+    errorReported: false,
+  };
+  inFlightTerminalCreateRequest = request;
+  try {
+    const session = await manager.createTerminal(message.options);
+    if (request.errorReported) {
+      session.kill();
+      return;
+    }
+    watchTerminal(session);
+    const initialSnapshot = session.getStateSnapshot();
+    sendToParent({
+      type: "terminalCreated",
+      terminal: toTerminalInfo(session),
+      state: initialSnapshot.state,
+    });
+    sendToParent({
+      type: "response",
+      requestId: message.requestId,
+      ok: true,
+      result: {
+        terminal: toTerminalInfo(session),
+        state: initialSnapshot.state,
+      },
+    });
+  } catch (error) {
+    reportInFlightTerminalCreateFailure(error);
+  } finally {
+    if (inFlightTerminalCreateRequest === request) {
+      inFlightTerminalCreateRequest = null;
+    }
+  }
+}
+
 async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
   switch (message.type) {
     case "getTerminals": {
@@ -160,23 +242,7 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "createTerminal": {
-      const session = await manager.createTerminal(message.options);
-      watchTerminal(session);
-      const initialSnapshot = session.getStateSnapshot();
-      sendToParent({
-        type: "terminalCreated",
-        terminal: toTerminalInfo(session),
-        state: initialSnapshot.state,
-      });
-      sendToParent({
-        type: "response",
-        requestId: message.requestId,
-        ok: true,
-        result: {
-          terminal: toTerminalInfo(session),
-          state: initialSnapshot.state,
-        },
-      });
+      await enqueueCreateTerminalRequest(message);
       return;
     }
 
@@ -285,7 +351,7 @@ process.on("message", (message: TerminalWorkerRequest) => {
       type: "response",
       requestId: message.requestId,
       ok: false,
-      error: error instanceof Error ? error.message : "Terminal worker request failed",
+      error: terminalWorkerErrorMessage(error),
     });
   });
 });
