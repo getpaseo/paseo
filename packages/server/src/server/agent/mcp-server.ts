@@ -30,7 +30,7 @@ import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../persistence-hooks.js";
 import {
-  killTerminalsUnderPath,
+  killTerminalsForWorkspace,
   type ArchivePaseoWorktreeDependencies,
 } from "../paseo-worktree-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
@@ -94,6 +94,7 @@ export interface AgentMcpServerOptions {
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
   resolveWorkspaceIdForCwd?: ArchivePaseoWorktreeDependencies["resolveWorkspaceIdForCwd"];
+  listActiveWorkspaces?: ArchivePaseoWorktreeDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
@@ -2218,6 +2219,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           repoRoot,
           worktreePath,
           worktreeSlug,
+          // This tool's contract is to delete the worktree; on-disk removal still
+          // only happens when no sibling workspace references the directory.
+          deleteWorktreeFromDisk: true,
         },
       );
       if (!result.ok) {
@@ -2410,6 +2414,9 @@ function archiveWorktreeDependencies(
   if (!options.resolveWorkspaceIdForCwd) {
     throw new Error("Workspace resolver is required to archive worktrees");
   }
+  if (!options.listActiveWorkspaces) {
+    throw new Error("Active workspace lister is required to archive worktrees");
+  }
   if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
     throw new Error("Workspace update emitter is required to archive worktrees");
   }
@@ -2427,20 +2434,18 @@ function archiveWorktreeDependencies(
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
     resolveWorkspaceIdForCwd: options.resolveWorkspaceIdForCwd,
+    listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
     clearWorkspaceArchiving: options.clearWorkspaceArchiving,
-    isPathWithinRoot: isSameOrDescendantPath,
-    killTerminalsUnderPath: (rootPath: string) =>
-      killTerminalsUnderPath(
+    killTerminalsForWorkspace: (workspaceId: string) =>
+      killTerminalsForWorkspace(
         {
           terminalManager: context.terminalManager,
-          isPathWithinRoot: isSameOrDescendantPath,
-          killTrackedTerminal: () => {},
           sessionLogger: context.logger,
         },
-        rootPath,
+        workspaceId,
       ),
     sessionLogger: context.logger,
   };

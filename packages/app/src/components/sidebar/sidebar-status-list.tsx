@@ -40,10 +40,9 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
-import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
+import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
+import { WorktreeDeletePrompt } from "@/workspace/worktree-delete-prompt";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
-import { confirmRiskyWorktreeArchive } from "@/git/worktree-archive-warning";
-import { confirmDialog } from "@/utils/confirm-dialog";
 import * as Clipboard from "expo-clipboard";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -346,13 +345,12 @@ function StatusWorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-  const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
+  const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const workspaceDirectory = resolveWorkspaceDirectory({
     workspaceDirectory: workspace.workspaceDirectory,
   });
-  const archiveStatus = useCheckoutGitActionsStore((state) =>
+  const worktreeArchiveStatus = useCheckoutGitActionsStore((state) =>
     workspaceDirectory
       ? state.getStatus({
           serverId: workspace.serverId,
@@ -362,7 +360,7 @@ function StatusWorkspaceRowWithMenu({
       : "idle",
   );
   const isWorktree = workspace.workspaceKind === "worktree";
-  const isArchiving = isWorktree ? workspace.archivingAt !== null : isArchivingWorkspace;
+  const isArchiving = isWorktree ? workspace.archivingAt !== null : isHidingWorkspace;
 
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
@@ -374,63 +372,16 @@ function StatusWorkspaceRowWithMenu({
     });
   }, [selected, workspace]);
 
-  const archiveWorktreeAfterConfirmation = useCallback(async () => {
-    if (isArchiving) return;
-    const confirmed = await confirmRiskyWorktreeArchive({
-      worktreeName: workspace.name,
-      isDirty: workspace.archiveHasUncommittedChanges,
-      aheadOfOrigin: workspace.archiveUnpushedCommitCount,
-      diffStat: workspace.diffStat,
-    });
-    if (!confirmed) return;
-    let archiveDirectory: string;
-    try {
-      archiveDirectory = requireWorkspaceDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Workspace path not available");
-      return;
-    }
-    redirectAfterArchive();
-    void archiveWorktree({
-      serverId: workspace.serverId,
-      cwd: archiveDirectory,
-      worktreePath: archiveDirectory,
-    }).catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to archive worktree");
-    });
-  }, [archiveWorktree, isArchiving, redirectAfterArchive, toast, workspace]);
+  const archiveController = useWorkspaceArchive({
+    workspace,
+    onArchiveStarted: redirectAfterArchive,
+    onSetHiding: setIsHidingWorkspace,
+  });
 
-  const hideWorkspaceAfterConfirmation = useCallback(async () => {
-    if (isArchivingWorkspace) return;
-    const confirmed = await confirmDialog({
-      title: "Hide workspace?",
-      message: `Hide "${workspace.name}" from the sidebar?\n\nFiles on disk will not be changed.`,
-      confirmLabel: "Hide",
-      cancelLabel: "Cancel",
-      destructive: true,
-    });
-    if (!confirmed) return;
-    const client = getHostRuntimeStore().getClient(workspace.serverId);
-    if (!client) {
-      toast.error(t("workspace.terminal.hostDisconnected"));
-      return;
-    }
-    setIsArchivingWorkspace(true);
-    try {
-      await archiveWorkspaceOptimistically({
-        client,
-        workspace,
-        afterHide: redirectAfterArchive,
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to hide workspace");
-    } finally {
-      setIsArchivingWorkspace(false);
-    }
-  }, [isArchivingWorkspace, redirectAfterArchive, t, toast, workspace]);
+  const handleArchive = useCallback(() => {
+    if (isArchiving) return;
+    archiveController.beginArchive();
+  }, [archiveController, isArchiving]);
 
   const handleCopyPath = useCallback(() => {
     let copyTargetDirectory: string;
@@ -486,19 +437,15 @@ function StatusWorkspaceRowWithMenu({
     enabled: selected && !isArchiving,
     priority: 0,
     handle: () => {
-      if (isWorktree) {
-        void archiveWorktreeAfterConfirmation();
-      } else {
-        void hideWorkspaceAfterConfirmation();
-      }
+      handleArchive();
       return true;
     },
   });
 
   let computedArchiveStatus: "idle" | "pending" | "success" = "idle";
   if (isWorktree) {
-    computedArchiveStatus = archiveStatus;
-  } else if (isArchivingWorkspace) {
+    computedArchiveStatus = worktreeArchiveStatus;
+  } else if (isHidingWorkspace) {
     computedArchiveStatus = "pending";
   }
 
@@ -512,15 +459,22 @@ function StatusWorkspaceRowWithMenu({
         showShortcutBadge={showShortcutBadge}
         onPress={onPress}
         isArchiving={isArchiving}
-        archiveLabel={isWorktree ? "Archive worktree" : "Hide from sidebar"}
+        archiveLabel={t("sidebar.workspace.actions.archive")}
         archiveStatus={computedArchiveStatus}
-        archivePendingLabel={isWorktree ? "Archiving..." : "Hiding..."}
-        onArchive={isWorktree ? archiveWorktreeAfterConfirmation : hideWorkspaceAfterConfirmation}
+        archivePendingLabel={t("sidebar.workspace.actions.archiving")}
+        onArchive={handleArchive}
         onCopyBranchName={workspace.projectKind === "git" ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+      />
+      <WorktreeDeletePrompt
+        visible={archiveController.deletePromptOpen}
+        workspaceName={workspace.name}
+        onKeep={archiveController.confirmKeepOnDisk}
+        onDelete={archiveController.confirmDeleteFromDisk}
+        onCancel={archiveController.cancelDeletePrompt}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}

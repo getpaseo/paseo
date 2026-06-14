@@ -750,6 +750,14 @@ export async function createPaseoDaemon(
   const resolveWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
     return resolveRegisteredWorkspaceIdForCwd(cwd, await workspaceRegistry.list());
   };
+  const listActiveWorkspacesExternal = async (): Promise<
+    Array<{ workspaceId: string; cwd: string }>
+  > => {
+    const workspaces = await workspaceRegistry.list();
+    return workspaces
+      .filter((workspace) => !workspace.archivedAt)
+      .map((workspace) => ({ workspaceId: workspace.workspaceId, cwd: workspace.cwd }));
+  };
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
     const workspaceIdList = Array.from(workspaceIds);
     for (const session of wsServer?.listActiveSessions() ?? []) {
@@ -785,6 +793,7 @@ export async function createPaseoDaemon(
     terminalManager,
     logger,
     resolveWorkspaceIdForCwd: resolveWorkspaceIdForCwdExternal,
+    listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
@@ -808,6 +817,7 @@ export async function createPaseoDaemon(
         github,
         workspaceGitService,
         resolveWorkspaceIdForCwd: resolveWorkspaceIdForCwdExternal,
+        listActiveWorkspaces: listActiveWorkspacesExternal,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,

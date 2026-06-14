@@ -35,6 +35,9 @@ import {
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
   setupContinuation?: AgentWorktreeSetupContinuation;
+  // Set when this build created a fresh worktree workspace. The agent must be
+  // stamped with it so workspaceId-scoped archive can find the agent later.
+  createdWorkspaceId?: string;
 }
 
 interface CreateAgentCommandDependencies {
@@ -185,7 +188,7 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
-  const { sessionConfig, setupContinuation } = await input.buildSessionConfig(
+  const { sessionConfig, setupContinuation, createdWorkspaceId } = await input.buildSessionConfig(
     input.config,
     input.git,
     input.worktreeName,
@@ -210,8 +213,9 @@ async function resolveSessionCreateAgent(
       env: input.env,
       initialTitle: input.provisionalTitle,
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
-      // agent must not inherit the source workspaceId (mirrors the MCP path).
-      workspaceId: setupContinuation ? undefined : input.workspaceId,
+      // agent belongs to that workspace, not the source one (mirrors the MCP
+      // path). createdWorkspaceId is the freshly created worktree's workspace.
+      workspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
     },
     metadataInitialPrompt: trimmedPrompt,
     prompt: hasPromptContent ? prompt : undefined,

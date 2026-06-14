@@ -806,6 +806,12 @@ export const ar: TranslationResources = {
         hideConfirm: "يخفي",
         cancel: "يلغي",
       },
+      deleteWorktreePrompt: {
+        title: "أرشفة مساحة العمل",
+        message: "هل تريد أيضًا إزالة شجرة العمل من القرص؟",
+        keep: "الاحتفاظ على القرص",
+        delete: "حذف",
+      },
       rename: {
         title: "إعادة تسمية مساحة العمل",
         submit: "إعادة تسمية",

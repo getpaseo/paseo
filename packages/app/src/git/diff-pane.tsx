@@ -2106,7 +2106,11 @@ export function GitDiffPane({
     }),
     [],
   );
-  const { gitActions, branchLabel } = useGitActions({ serverId, cwd, icons: gitActionsIcons });
+  const { gitActions, branchLabel, worktreeDeletePrompt } = useGitActions({
+    serverId,
+    cwd,
+    icons: gitActionsIcons,
+  });
   const committedDiffDescription = useMemo(
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
     [baseRefLabel, branchLabel],
@@ -2161,6 +2165,7 @@ export function GitDiffPane({
             </Text>
           </View>
           {isGit ? <GitActionsSplitButton gitActions={gitActions} /> : null}
+          {worktreeDeletePrompt}
         </View>
       ) : null}
 

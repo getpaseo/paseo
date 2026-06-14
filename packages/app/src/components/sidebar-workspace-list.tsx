@@ -119,14 +119,9 @@ import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
-import {
-  confirmRiskyWorktreeArchive,
-  type WorktreeArchiveWarningLabels,
-} from "@/git/worktree-archive-warning";
-import {
-  archiveWorkspaceOptimistically,
-  archiveWorkspacesOptimistically,
-} from "@/workspace/workspace-archive";
+import { archiveWorkspacesOptimistically } from "@/workspace/workspace-archive";
+import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
+import { WorktreeDeletePrompt } from "@/workspace/worktree-delete-prompt";
 import {
   isWeb as platformIsWeb,
   isNative as platformIsNative,
@@ -181,40 +176,6 @@ const syncedLoaderColorMapping = (theme: Theme) => ({
       ? theme.colors.palette.amber[700]
       : theme.colors.palette.amber[500],
 });
-
-function getWorktreeArchiveWarningLabels(
-  t: (key: string, options?: Record<string, unknown>) => string,
-): WorktreeArchiveWarningLabels {
-  return {
-    title: (worktreeName) => t("workspace.git.actions.archiveWarning.title", { worktreeName }),
-    confirm: t("workspace.git.actions.archiveWarning.confirm"),
-    cancel: t("workspace.git.actions.archiveWarning.cancel"),
-    uncommittedChanges: t("workspace.git.actions.archiveWarning.uncommittedChanges"),
-    uncommittedChangesWithDiff: (diffStat) =>
-      t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
-    addedLine: (count) =>
-      t(
-        count === 1
-          ? "workspace.git.actions.archiveWarning.addedLine"
-          : "workspace.git.actions.archiveWarning.addedLines",
-        { count },
-      ),
-    deletedLine: (count) =>
-      t(
-        count === 1
-          ? "workspace.git.actions.archiveWarning.deletedLine"
-          : "workspace.git.actions.archiveWarning.deletedLines",
-        { count },
-      ),
-    unpushedCommit: (count) =>
-      t(
-        count === 1
-          ? "workspace.git.actions.archiveWarning.unpushedCommit"
-          : "workspace.git.actions.archiveWarning.unpushedCommits",
-        { count },
-      ),
-  };
-}
 
 function getPrIconUniMapping(state: PrHint["state"]) {
   switch (state) {
@@ -1529,13 +1490,12 @@ function WorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-  const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
+  const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const workspaceDirectory = resolveWorkspaceDirectory({
     workspaceDirectory: workspace.workspaceDirectory,
   });
-  const archiveStatus = useCheckoutGitActionsStore((state) =>
+  const worktreeArchiveStatus = useCheckoutGitActionsStore((state) =>
     workspaceDirectory
       ? state.getStatus({
           serverId: workspace.serverId,
@@ -1545,7 +1505,7 @@ function WorkspaceRowWithMenu({
       : "idle",
   );
   const isWorktree = workspace.workspaceKind === "worktree";
-  const isArchiving = isWorktree ? workspace.archivingAt !== null : isArchivingWorkspace;
+  const isArchiving = isWorktree ? workspace.archivingAt !== null : isHidingWorkspace;
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
@@ -1554,102 +1514,18 @@ function WorkspaceRowWithMenu({
     });
   }, [selected, workspace]);
 
-  const archiveWorktreeAfterConfirmation = useCallback(async () => {
+  const archiveController = useWorkspaceArchive({
+    workspace,
+    onArchiveStarted: redirectAfterArchive,
+    onSetHiding: setIsHidingWorkspace,
+  });
+
+  const handleArchive = useCallback(() => {
     if (isArchiving) {
       return;
     }
-
-    const confirmed = await confirmRiskyWorktreeArchive(
-      {
-        worktreeName: workspace.name,
-        isDirty: workspace.archiveHasUncommittedChanges,
-        aheadOfOrigin: workspace.archiveUnpushedCommitCount,
-        diffStat: workspace.diffStat,
-      },
-      getWorktreeArchiveWarningLabels(t),
-    );
-
-    if (!confirmed) {
-      return;
-    }
-    let archiveDirectory: string;
-    try {
-      archiveDirectory = requireWorkspaceDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t("sidebar.workspace.toasts.workspacePathUnavailable"),
-      );
-      return;
-    }
-
-    if (!archiveDirectory) {
-      toast.error(t("sidebar.workspace.toasts.workspacePathUnavailable"));
-      return;
-    }
-
-    redirectAfterArchive();
-
-    void archiveWorktree({
-      serverId: workspace.serverId,
-      cwd: archiveDirectory,
-      worktreePath: archiveDirectory,
-    }).catch((error) => {
-      const message =
-        error instanceof Error ? error.message : t("sidebar.workspace.toasts.archiveFailed");
-      toast.error(message);
-    });
-  }, [archiveWorktree, isArchiving, redirectAfterArchive, t, toast, workspace]);
-
-  const handleArchiveWorktree = useCallback(() => {
-    void archiveWorktreeAfterConfirmation();
-  }, [archiveWorktreeAfterConfirmation]);
-
-  const hideWorkspaceAfterConfirmation = useCallback(async () => {
-    if (isArchivingWorkspace) {
-      return;
-    }
-
-    const confirmed = await confirmDialog({
-      title: t("sidebar.workspace.confirmations.hideTitle"),
-      message: t("sidebar.workspace.confirmations.hideMessage", { workspaceName: workspace.name }),
-      confirmLabel: t("sidebar.workspace.confirmations.hideConfirm"),
-      cancelLabel: t("sidebar.workspace.confirmations.cancel"),
-      destructive: true,
-    });
-    if (!confirmed) {
-      return;
-    }
-
-    const client = getHostRuntimeStore().getClient(workspace.serverId);
-    if (!client) {
-      toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
-      return;
-    }
-
-    setIsArchivingWorkspace(true);
-    try {
-      await archiveWorkspaceOptimistically({
-        client,
-        workspace,
-        afterHide: redirectAfterArchive,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t("sidebar.workspace.toasts.hideFailed"),
-      );
-    } finally {
-      setIsArchivingWorkspace(false);
-    }
-  }, [isArchivingWorkspace, redirectAfterArchive, t, toast, workspace]);
-
-  const handleArchiveWorkspace = useCallback(() => {
-    void hideWorkspaceAfterConfirmation();
-  }, [hideWorkspaceAfterConfirmation]);
+    archiveController.beginArchive();
+  }, [archiveController, isArchiving]);
 
   const handleCopyPath = useCallback(() => {
     let copyTargetDirectory: string;
@@ -1717,11 +1593,7 @@ function WorkspaceRowWithMenu({
     enabled: selected && !isArchiving,
     priority: 0,
     handle: () => {
-      if (isWorktree) {
-        void archiveWorktreeAfterConfirmation();
-      } else {
-        handleArchiveWorkspace();
-      }
+      handleArchive();
       return true;
     },
   });
@@ -1740,23 +1612,26 @@ function WorkspaceRowWithMenu({
         isCreating={isCreating}
         dragHandleProps={dragHandleProps}
         menuController={null}
-        archiveLabel={
-          isWorktree
-            ? t("sidebar.workspace.actions.archiveWorktree")
-            : t("sidebar.workspace.actions.hideFromSidebar")
-        }
-        archiveStatus={getWorkspaceArchiveStatus(isWorktree, archiveStatus, isArchivingWorkspace)}
-        archivePendingLabel={
-          isWorktree
-            ? t("sidebar.workspace.actions.archiving")
-            : t("sidebar.workspace.actions.hiding")
-        }
-        onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
+        archiveLabel={t("sidebar.workspace.actions.archive")}
+        archiveStatus={getWorkspaceArchiveStatus(
+          isWorktree,
+          worktreeArchiveStatus,
+          isHidingWorkspace,
+        )}
+        archivePendingLabel={t("sidebar.workspace.actions.archiving")}
+        onArchive={handleArchive}
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+      />
+      <WorktreeDeletePrompt
+        visible={archiveController.deletePromptOpen}
+        workspaceName={workspace.name}
+        onKeep={archiveController.confirmKeepOnDisk}
+        onDelete={archiveController.confirmDeleteFromDisk}
+        onCancel={archiveController.cancelDeletePrompt}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
@@ -1798,7 +1673,6 @@ function NonGitProjectRowWithMenuContent({
   dragHandleProps?: DraggableListDragHandleProps;
 }) {
   const { t } = useTranslation();
-  const toast = useToast();
   const contextMenu = useContextMenu();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const redirectAfterArchive = useCallback(() => {
@@ -1809,49 +1683,18 @@ function NonGitProjectRowWithMenuContent({
     });
   }, [selected, workspace]);
 
+  const archiveController = useWorkspaceArchive({
+    workspace,
+    onArchiveStarted: redirectAfterArchive,
+    onSetHiding: setIsArchivingWorkspace,
+  });
+
   const handleArchiveWorkspace = useCallback(() => {
     if (isArchivingWorkspace) {
       return;
     }
-
-    void (async () => {
-      const confirmed = await confirmDialog({
-        title: t("sidebar.workspace.confirmations.hideTitle"),
-        message: t("sidebar.workspace.confirmations.hideMessage", {
-          workspaceName: workspace.name,
-        }),
-        confirmLabel: t("sidebar.workspace.confirmations.hideConfirm"),
-        cancelLabel: t("sidebar.workspace.confirmations.cancel"),
-        destructive: true,
-      });
-      if (!confirmed) {
-        return;
-      }
-
-      const client = getHostRuntimeStore().getClient(workspace.serverId);
-      if (!client) {
-        toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
-        return;
-      }
-
-      setIsArchivingWorkspace(true);
-      void (async () => {
-        try {
-          await archiveWorkspaceOptimistically({
-            client,
-            workspace,
-            afterHide: redirectAfterArchive,
-          });
-        } catch (error) {
-          toast.error(
-            error instanceof Error ? error.message : t("sidebar.workspace.toasts.hideFailed"),
-          );
-        } finally {
-          setIsArchivingWorkspace(false);
-        }
-      })();
-    })();
-  }, [isArchivingWorkspace, redirectAfterArchive, t, toast, workspace]);
+    archiveController.beginArchive();
+  }, [archiveController, isArchivingWorkspace]);
 
   return (
     <>
@@ -1882,13 +1725,20 @@ function NonGitProjectRowWithMenuContent({
         <ContextMenuItem
           testID={`sidebar-workspace-context-${workspace.workspaceKey}-archive`}
           status={isArchivingWorkspace ? "pending" : "idle"}
-          pendingLabel={t("sidebar.workspace.actions.hiding")}
+          pendingLabel={t("sidebar.workspace.actions.archiving")}
           destructive
           onSelect={handleArchiveWorkspace}
         >
-          {t("sidebar.workspace.actions.hideFromSidebar")}
+          {t("sidebar.workspace.actions.archive")}
         </ContextMenuItem>
       </ContextMenuContent>
+      <WorktreeDeletePrompt
+        visible={archiveController.deletePromptOpen}
+        workspaceName={workspace.name}
+        onKeep={archiveController.confirmKeepOnDisk}
+        onDelete={archiveController.confirmDeleteFromDisk}
+        onCancel={archiveController.cancelDeletePrompt}
+      />
     </>
   );
 }

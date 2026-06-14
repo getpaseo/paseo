@@ -824,6 +824,12 @@ export const ru: TranslationResources = {
         hideConfirm: "Скрывать",
         cancel: "Отмена",
       },
+      deleteWorktreePrompt: {
+        title: "Архивировать рабочее пространство",
+        message: "Также удалить рабочее дерево с диска?",
+        keep: "Оставить на диске",
+        delete: "Удалить",
+      },
       rename: {
         title: "Переименовать рабочую область",
         submit: "Переименовать",

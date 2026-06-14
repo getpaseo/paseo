@@ -812,6 +812,12 @@ export const en = {
         hideConfirm: "Hide",
         cancel: "Cancel",
       },
+      deleteWorktreePrompt: {
+        title: "Archive workspace",
+        message: "Also remove the worktree from disk?",
+        keep: "Keep on disk",
+        delete: "Delete",
+      },
       rename: {
         title: "Rename workspace",
         submit: "Rename",

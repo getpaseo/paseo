@@ -3206,7 +3206,12 @@ export class DaemonClient {
   }
 
   async archivePaseoWorktree(
-    input: { worktreePath?: string; repoRoot?: string; branchName?: string },
+    input: {
+      worktreePath?: string;
+      repoRoot?: string;
+      branchName?: string;
+      deleteWorktreeFromDisk?: boolean;
+    },
     requestId?: string,
   ): Promise<PaseoWorktreeArchivePayload> {
     return this.sendCorrelatedSessionRequest({
@@ -3216,6 +3221,9 @@ export class DaemonClient {
         worktreePath: input.worktreePath,
         repoRoot: input.repoRoot,
         branchName: input.branchName,
+        ...(input.deleteWorktreeFromDisk !== undefined
+          ? { deleteWorktreeFromDisk: input.deleteWorktreeFromDisk }
+          : {}),
       },
       responseType: "paseo_worktree_archive_response",
       timeout: 60000,

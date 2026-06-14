@@ -13,6 +13,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "connect"
   | "createPaseoWorktree"
   | "fetchWorkspaces"
+  | "getPaseoWorktreeList"
   | "openProject"
 >;
 

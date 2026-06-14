@@ -100,6 +100,7 @@ export interface ArchivePaseoWorktreeCommandInput {
   worktreePath?: string;
   worktreeSlug?: string;
   branchName?: string;
+  deleteWorktreeFromDisk?: boolean;
 }
 
 export type ArchivePaseoWorktreeCommandResult =
@@ -139,6 +140,7 @@ export async function archivePaseoWorktreeCommand(
     repoRoot,
     worktreesRoot: ownership.worktreeRoot,
     worktreesBaseRoot: dependencies.worktreesRoot,
+    deleteWorktreeFromDisk: input.deleteWorktreeFromDisk,
     requestId: input.requestId,
   });
 

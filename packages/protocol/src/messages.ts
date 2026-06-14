@@ -1608,6 +1608,11 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   worktreePath: z.string().optional(),
   repoRoot: z.string().optional(),
   branchName: z.string().optional(),
+  // COMPAT(worktreeDiskDeletion): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
+  // When true, and the workspace is the last active reference to a Paseo-owned
+  // worktree, the daemon also removes the worktree directory from disk. Default
+  // false: archiving only removes the workspace record and leaves the directory.
+  deleteWorktreeFromDisk: z.boolean().optional().default(false),
   requestId: z.string(),
 });
 

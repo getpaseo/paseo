@@ -832,6 +832,12 @@ export const es: TranslationResources = {
         hideConfirm: "Esconder",
         cancel: "Cancelar",
       },
+      deleteWorktreePrompt: {
+        title: "Archivar espacio de trabajo",
+        message: "¿También eliminar el worktree del disco?",
+        keep: "Conservar en disco",
+        delete: "Eliminar",
+      },
       rename: {
         title: "Cambiar nombre del espacio de trabajo",
         submit: "Rebautizar",

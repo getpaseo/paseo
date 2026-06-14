@@ -1445,6 +1445,7 @@ describe("create_agent MCP tool", () => {
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
         resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-tool-worktree"),
+        listActiveWorkspaces: vi.fn(async () => []),
         archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving,
@@ -1528,6 +1529,7 @@ describe("create_agent MCP tool", () => {
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
         resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-mcp"),
+        listActiveWorkspaces: vi.fn(async () => []),
         archiveWorkspaceRecord: vi.fn(async () => undefined),
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
         markWorkspaceArchiving: vi.fn(),

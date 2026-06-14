@@ -13,7 +13,7 @@ import type {
   UnsubscribeTerminalRequest,
   UnsubscribeTerminalsRequest,
 } from "../server/messages.js";
-import { killTerminalsUnderPath as killWorktreeTerminalsUnderPath } from "../server/paseo-worktree-archive-service.js";
+import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/paseo-worktree-archive-service.js";
 import {
   TerminalStreamOpcode,
   decodeTerminalResizePayload,
@@ -246,17 +246,14 @@ export class TerminalSessionController {
     return { terminalId, success: true };
   }
 
-  async killTerminalsUnderPath(rootPath: string): Promise<void> {
-    return killWorktreeTerminalsUnderPath(
+  async killTerminalsForWorkspace(workspaceId: string): Promise<void> {
+    return killWorkspaceTerminals(
       {
-        isPathWithinRoot: (pathRoot, candidatePath) =>
-          this.isPathWithinRoot(pathRoot, candidatePath),
-        killTrackedTerminal: (terminalId, options) => this.killTracked(terminalId, options),
         detachTerminalStream: (terminalId, options) => void this.detachStream(terminalId, options),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
       },
-      rootPath,
+      workspaceId,
     );
   }
 

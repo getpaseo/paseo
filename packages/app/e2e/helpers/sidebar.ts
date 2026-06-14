@@ -34,6 +34,36 @@ export async function archiveWorktreeFromSidebar(page: Page, workspaceId: string
   const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
   await expect(archiveItem).toBeVisible({ timeout: 10_000 });
   await archiveItem.click();
+
+  // Archiving the last reference to a worktree opens the keep/delete prompt.
+  // This helper deletes the worktree from disk; callers that want to keep it use
+  // openWorktreeDeletePrompt directly.
+  const deleteButton = page.getByTestId("worktree-delete-confirm-delete");
+  await expect(deleteButton).toBeVisible({ timeout: 10_000 });
+  await deleteButton.click();
+}
+
+// Opens the archive flow for a last-reference worktree and stops at the inline
+// keep/delete prompt, which the caller resolves by clicking keep or delete.
+export async function openWorktreeDeletePrompt(page: Page, workspaceId: string): Promise<void> {
+  const serverId = getServerId();
+  const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.hover();
+
+  const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
+  await expect(kebab).toBeVisible({ timeout: 10_000 });
+  await kebab.click();
+
+  // A dirty/unsynced worktree raises a browser confirm before the prompt; accept
+  // it so the prompt opens deterministically either way.
+  page.once("dialog", (dialog) => void dialog.accept());
+
+  const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
+  await expect(archiveItem).toBeVisible({ timeout: 10_000 });
+  await archiveItem.click();
+
+  await expect(page.getByTestId("worktree-delete-confirm-keep")).toBeVisible({ timeout: 10_000 });
 }
 
 export async function expectWorkspaceAbsentFromSidebar(

@@ -94,6 +94,7 @@ function createHarness(overrides?: {
     agentStorage: {} as AutoArchiveArchiveOptions["agentStorage"],
     terminalManager: {} as AutoArchiveArchiveOptions["terminalManager"],
     resolveWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
+    listActiveWorkspaces: vi.fn(async () => []),
     archiveWorkspaceRecord: vi.fn(),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -114,8 +115,7 @@ function createHarness(overrides?: {
   const deps: ArchiveIfSafeDependencies = {
     archivePaseoWorktree,
     isPaseoOwnedWorktreeCwd,
-    killTerminalsUnderPath: vi.fn(),
-    isPathWithinRoot: vi.fn(() => true),
+    killTerminalsForWorkspace: vi.fn(),
   };
   const log = createLogger();
   const inFlight = new Set<string>();

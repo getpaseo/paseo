@@ -259,6 +259,7 @@ import {
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
+import { archiveWorkspaceContents } from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
@@ -969,6 +970,7 @@ export class Session {
         this.createPaseoWorktreeWorkflow(input, workflowOptions),
       archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
       resolveWorkspaceIdForCwd: (cwd) => this.resolveWorkspaceIdForCwd(cwd),
+      listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
       archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
       emit: (message) => this.emit(message),
       emitAgentRemove: (agentId) => {
@@ -984,9 +986,8 @@ export class Session {
       markWorkspaceArchiving: (workspaceIds, archivingAt) =>
         this.markWorkspaceArchiving(workspaceIds, archivingAt),
       clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-      isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
-      killTerminalsUnderPath: (rootPath) =>
-        this.terminalController.killTerminalsUnderPath(rootPath),
+      killTerminalsForWorkspace: (workspaceId) =>
+        this.terminalController.killTerminalsForWorkspace(workspaceId),
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager;
@@ -3609,6 +3610,7 @@ export class Session {
   ): Promise<{
     sessionConfig: AgentSessionConfig;
     setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
+    createdWorkspaceId?: string;
   }> {
     return buildWorktreeAgentSessionConfig(
       {
@@ -5907,6 +5909,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         resolveWorkspaceIdForCwd: (cwd) => this.resolveWorkspaceIdForCwd(cwd),
+        listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
         archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
@@ -5914,10 +5917,8 @@ export class Session {
         markWorkspaceArchiving: (workspaceIds, archivingAt) =>
           this.markWorkspaceArchiving(workspaceIds, archivingAt),
         clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
-        isPathWithinRoot: (rootPath, candidatePath) =>
-          this.isPathWithinRoot(rootPath, candidatePath),
-        killTerminalsUnderPath: (rootPath) =>
-          this.terminalController.killTerminalsUnderPath(rootPath),
+        killTerminalsForWorkspace: (workspaceId) =>
+          this.terminalController.killTerminalsForWorkspace(workspaceId),
         sessionLogger: this.sessionLogger,
       },
       msg,
@@ -6935,6 +6936,13 @@ export class Session {
     return result;
   }
 
+  private async listActiveWorkspaceRefs(): Promise<Array<{ workspaceId: string; cwd: string }>> {
+    const workspaces = await this.workspaceRegistry.list();
+    return workspaces
+      .filter((workspace) => !workspace.archivedAt)
+      .map((workspace) => ({ workspaceId: workspace.workspaceId, cwd: workspace.cwd }));
+  }
+
   private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
     const archiveTimestamp = archivedAt ?? new Date().toISOString();
     const existingWorkspace = await archivePersistedWorkspaceRecord({
@@ -7855,7 +7863,26 @@ export class Session {
         throw new Error("Use worktree archive for Paseo worktrees");
       }
       const archivedAt = new Date().toISOString();
-      await this.archiveWorkspaceRecord(existing.workspaceId, archivedAt);
+      // Archive removes the task (the workspace record) and everything the
+      // workspace owns — its agents and terminals — scoped by workspaceId so a
+      // sibling workspace sharing the same directory is untouched. The directory
+      // itself is never deleted here; local checkouts are not Paseo-owned.
+      this.markWorkspaceArchiving([existing.workspaceId], archivedAt);
+      try {
+        await archiveWorkspaceContents(
+          {
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            killTerminalsForWorkspace: (workspaceId) =>
+              this.terminalController.killTerminalsForWorkspace(workspaceId),
+            sessionLogger: this.sessionLogger,
+          },
+          existing.workspaceId,
+        );
+        await this.archiveWorkspaceRecord(existing.workspaceId, archivedAt);
+      } finally {
+        this.clearWorkspaceArchiving([existing.workspaceId]);
+      }
       await this.emitWorkspaceUpdateForCwd(existing.cwd);
       this.emit({
         type: "archive_workspace_response",
