@@ -23,7 +23,7 @@ import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
-import { useWorkspace } from "@/stores/session-store-hooks";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
@@ -317,8 +317,11 @@ export function WorkspaceDraftAgentTab({
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const workspace = useWorkspace(serverId, workspaceId);
-  const workspaceDirectory = workspace?.workspaceDirectory || null;
+  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
+    workspaceDirectory: w.workspaceDirectory,
+    id: w.id,
+  }));
+  const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const draftSetup = initialSetup ?? null;
   const draftWorkingDirectory = resolveDraftWorkingDirectory({
     workspaceDirectory,
@@ -470,7 +473,7 @@ export function WorkspaceDraftAgentTab({
         attachments,
         client,
         workspaceDirectory: draftWorkingDirectory,
-        workspaceId: workspace?.id ?? null,
+        workspaceId: workspaceFields?.id ?? null,
         autoSubmitConfig,
         composerState,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
