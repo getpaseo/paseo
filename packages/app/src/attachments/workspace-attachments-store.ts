@@ -42,6 +42,7 @@ function normalizeCwd(cwd: string): string {
 
 export function buildWorkspaceAttachmentScopeKey(input: WorkspaceAttachmentScopeInput): string {
   const workspaceId = input.workspaceId?.trim();
+  // workspaceId is opaque; do not parse this key back into a path.
   const workspacePart = workspaceId
     ? `workspace=${encodeScopePart(workspaceId)}`
     : `cwd=${encodeScopePart(normalizeCwd(input.cwd))}`;

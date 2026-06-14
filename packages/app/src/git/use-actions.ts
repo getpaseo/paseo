@@ -15,8 +15,9 @@ import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
+import { buildHostRootRoute } from "@/utils/host-routes";
 import {
   confirmRiskyWorktreeArchive,
   type WorktreeArchiveWarningLabels,
@@ -495,18 +496,18 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       return;
     }
 
-    const archivedWorkspaceId =
-      resolveWorkspaceIdByExecutionDirectory({
-        workspaces: workspaceList,
-        workspaceDirectory: worktreePath,
-      }) ?? worktreePath;
-    router.replace(
-      buildWorkspaceArchiveRedirectRoute({
-        serverId,
-        archivedWorkspaceId,
-        workspaces: workspaceList,
-      }) as Href,
-    );
+    const archivedWorkspaceId = resolveWorkspaceIdByDirectory({
+      workspaces: workspaceList,
+      workspaceDirectory: worktreePath,
+    });
+    const redirectRoute = archivedWorkspaceId
+      ? buildWorkspaceArchiveRedirectRoute({
+          serverId,
+          archivedWorkspaceId,
+          workspaces: workspaceList,
+        })
+      : buildHostRootRoute(serverId);
+    router.replace(redirectRoute as Href);
     void runArchiveWorktree({ serverId, cwd, worktreePath }).catch((err) => {
       toastActionError(err, t("workspace.git.actions.toasts.failedArchive"));
     });

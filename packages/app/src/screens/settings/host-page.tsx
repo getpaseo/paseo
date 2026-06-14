@@ -767,6 +767,46 @@ function AutoArchiveMergedWorkspacesCard({ serverId }: { serverId: string }) {
   );
 }
 
+function EnableTerminalAgentHooksCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({ enableTerminalAgentHooks: next }).catch((error) => {
+        console.error("[HostPage] Failed to update terminal agent hooks", error);
+        Alert.alert(
+          "Unable to update terminal agent hooks",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    },
+    [patchConfig],
+  );
+
+  if (!isConnected) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-terminal-agent-hooks-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Enable terminal agent hooks</Text>
+          <Text style={settingsStyles.rowHint}>
+            Get notifications and status from terminal agents. This installs hooks in your agent
+            config files.
+          </Text>
+        </View>
+        <Switch
+          value={config?.enableTerminalAgentHooks === true}
+          onValueChange={handleValueChange}
+          accessibilityLabel="Enable terminal agent hooks"
+          testID="host-page-terminal-agent-hooks-switch"
+        />
+      </View>
+    </View>
+  );
+}
+
 function AppendSystemPromptCard({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -1449,6 +1489,9 @@ export function HostTerminalsPage({ serverId }: { serverId: string }) {
 
   return (
     <View>
+      <SettingsSection title="Terminal agents">
+        <EnableTerminalAgentHooksCard serverId={serverId} />
+      </SettingsSection>
       <TerminalProfilesSection serverId={serverId} />
     </View>
   );

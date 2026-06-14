@@ -6,9 +6,9 @@ import {
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import {
-  resolveWorkspaceIdByExecutionDirectory,
+  resolveWorkspaceIdByDirectory,
   resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-execution";
+} from "@/utils/workspace-identity";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
 export interface RouteSelectionInput {
@@ -77,7 +77,7 @@ export function navigateToWorkspace(
   const workspaceAgents = resolvedWorkspaceId
     ? Array.from(deps.getSessionAgents(serverId)).filter(
         (agent) =>
-          resolveWorkspaceIdByExecutionDirectory({
+          resolveWorkspaceIdByDirectory({
             workspaces: workspaces?.values(),
             workspaceDirectory: agent.cwd,
           }) === resolvedWorkspaceId,

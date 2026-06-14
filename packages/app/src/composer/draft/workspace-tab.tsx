@@ -23,7 +23,7 @@ import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
-import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
@@ -121,7 +121,7 @@ async function submitDraftCreateRequest(input: {
   attachments?: unknown;
   client: DaemonClient | null;
   workspaceDirectory: string | null;
-  workspaceExecutionAuthority: { workspaceId: string } | null;
+  workspaceId: string | null;
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
@@ -141,13 +141,13 @@ async function submitDraftCreateRequest(input: {
     attachments,
     client,
     workspaceDirectory,
-    workspaceExecutionAuthority,
+    workspaceId,
     autoSubmitConfig,
     composerState,
   } = input;
 
   invariant(workspaceDirectory, "Workspace directory is required");
-  invariant(workspaceExecutionAuthority, "Workspace authority is required");
+  invariant(workspaceId, "Workspace id is required");
   if (!client) {
     throw new Error(input.hostDisconnectedMessage);
   }
@@ -175,7 +175,7 @@ async function submitDraftCreateRequest(input: {
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
   const result = await client.createAgent({
     config,
-    workspaceId: workspaceExecutionAuthority.workspaceId,
+    workspaceId,
     ...(text ? { initialPrompt: text } : {}),
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
@@ -317,9 +317,11 @@ export function WorkspaceDraftAgentTab({
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const workspaceAuthority = useWorkspaceExecutionAuthority(serverId, workspaceId);
-  const workspaceExecutionAuthority = workspaceAuthority?.ok ? workspaceAuthority.authority : null;
-  const workspaceDirectory = workspaceExecutionAuthority?.workspaceDirectory ?? null;
+  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
+    workspaceDirectory: w.workspaceDirectory,
+    id: w.id,
+  }));
+  const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const draftSetup = initialSetup ?? null;
   const draftWorkingDirectory = resolveDraftWorkingDirectory({
     workspaceDirectory,
@@ -471,7 +473,7 @@ export function WorkspaceDraftAgentTab({
         attachments,
         client,
         workspaceDirectory: draftWorkingDirectory,
-        workspaceExecutionAuthority,
+        workspaceId: workspaceFields?.id ?? null,
         autoSubmitConfig,
         composerState,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),

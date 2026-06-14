@@ -38,7 +38,6 @@ test("session create forwards clientMessageId to the initial prompt run options"
     explicitTitle: "Explicit title",
     firstAgentContext: { attachments: [] },
     buildSessionConfig: async (config) => ({ sessionConfig: config }),
-    resolveWorkspace: async () => ({ workspaceId: "workspace-1" }),
   });
 
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {

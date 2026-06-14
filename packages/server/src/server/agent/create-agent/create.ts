@@ -32,10 +32,6 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 
-export interface CreateAgentWorkspace {
-  workspaceId: string;
-}
-
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
   setupContinuation?: AgentWorktreeSetupContinuation;
@@ -79,7 +75,6 @@ export interface CreateAgentFromSessionInput {
     legacyWorktreeName?: string,
     firstAgentContext?: FirstAgentContext,
   ) => Promise<CreateAgentSessionWorktreeResult>;
-  resolveWorkspace: (input: { cwd: string; workspaceId?: string }) => Promise<CreateAgentWorkspace>;
 }
 
 export interface CreateAgentFromMcpInput {
@@ -134,7 +129,6 @@ interface ResolvedCreateAgent {
 
 interface AgentCreateOptions {
   labels?: Record<string, string>;
-  workspaceId?: string;
   initialPrompt?: string;
   env?: Record<string, string>;
   initialTitle?: string | null;
@@ -196,10 +190,6 @@ async function resolveSessionCreateAgent(
     input.worktreeName,
     input.firstAgentContext,
   );
-  const workspace = await input.resolveWorkspace({
-    cwd: sessionConfig.cwd,
-    workspaceId: input.workspaceId,
-  });
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);
@@ -215,7 +205,6 @@ async function resolveSessionCreateAgent(
     config: sessionConfig,
     createOptions: {
       labels: input.labels,
-      workspaceId: workspace.workspaceId,
       initialPrompt: trimmedPrompt,
       env: input.env,
       initialTitle: input.provisionalTitle,

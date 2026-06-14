@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import type { ScriptStatusUpdateMessage } from "@getpaseo/protocol/messages";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 export function patchWorkspaceScripts(
   workspaces: Map<string, WorkspaceDescriptor>,

@@ -5,12 +5,14 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import type { ToastApi } from "@/components/toast-host";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
+import { createBranchSwitcherOperations } from "@/git/branch-switcher-operations";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
 interface UseBranchSwitcherInput {
   client: DaemonClient | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  workspaceDirectory: string | null;
   currentBranchName: string | null;
   isGitCheckout: boolean;
   isConnected: boolean;
@@ -30,6 +32,7 @@ export function useBranchSwitcher({
   client,
   normalizedServerId,
   normalizedWorkspaceId,
+  workspaceDirectory,
   currentBranchName,
   isGitCheckout,
   isConnected,
@@ -39,22 +42,29 @@ export function useBranchSwitcher({
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
 
+  // Git operations are bound to the workspace directory; the opaque workspace id is
+  // used only for query cache identity below, never as a cwd.
+  const operations = useMemo(
+    () =>
+      client && workspaceDirectory
+        ? createBranchSwitcherOperations(client, workspaceDirectory)
+        : null,
+    [client, workspaceDirectory],
+  );
+
   const branchSuggestionsQuery = useQuery({
     queryKey: ["branchSuggestions", normalizedServerId, normalizedWorkspaceId],
     queryFn: async () => {
-      if (!client) {
+      if (!operations) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
-      const payload = await client.getBranchSuggestions({
-        cwd: normalizedWorkspaceId,
-        limit: 200,
-      });
+      const payload = await operations.getBranchSuggestions(200);
       if (payload.error) {
         throw new Error(payload.error);
       }
       return payload.branches ?? [];
     },
-    enabled: isOpen && isGitCheckout && Boolean(client) && isConnected,
+    enabled: isOpen && isGitCheckout && Boolean(operations) && isConnected,
     retry: false,
     staleTime: 15_000,
   });
@@ -70,20 +80,21 @@ export function useBranchSwitcher({
   );
 
   const invalidateStashAndCheckout = useCallback(async () => {
+    if (!workspaceDirectory) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: stashListQueryKey }),
       invalidateCheckoutGitQueriesForClient(queryClient, {
         serverId: normalizedServerId,
-        cwd: normalizedWorkspaceId,
+        cwd: workspaceDirectory,
       }),
     ]);
-  }, [queryClient, stashListQueryKey, normalizedServerId, normalizedWorkspaceId]);
+  }, [queryClient, stashListQueryKey, normalizedServerId, workspaceDirectory]);
 
   const maybeRestoreStashForBranch = useCallback(
     async (branchId: string) => {
-      if (!client) return;
+      if (!operations) return;
       try {
-        const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
+        const stashPayload = await operations.listPaseoStashes();
         const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
         if (!targetStash) return;
         const shouldRestore = await confirmDialog({
@@ -93,7 +104,7 @@ export function useBranchSwitcher({
           cancelLabel: t("branchSwitcher.later"),
         });
         if (!shouldRestore) return;
-        const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
+        const popPayload = await operations.popStash(targetStash.index);
         if (popPayload.error) {
           toast.error(popPayload.error.message);
         } else {
@@ -104,12 +115,12 @@ export function useBranchSwitcher({
         // Non-critical — user can still restore on next branch switch
       }
     },
-    [client, invalidateStashAndCheckout, normalizedWorkspaceId, toast, t],
+    [operations, invalidateStashAndCheckout, toast, t],
   );
 
   const stashAndSwitch = useCallback(
     async (branchId: string) => {
-      if (!client) return;
+      if (!operations) return;
       const shouldStash = await confirmDialog({
         title: t("branchSwitcher.uncommittedTitle"),
         message: t("branchSwitcher.uncommittedMessage"),
@@ -119,15 +130,13 @@ export function useBranchSwitcher({
       if (!shouldStash) return;
 
       try {
-        const stashPayload = await client.stashSave(normalizedWorkspaceId, {
-          branch: currentBranchName ?? undefined,
-        });
+        const stashPayload = await operations.saveStash(currentBranchName ?? undefined);
         if (stashPayload.error) {
           toast.error(stashPayload.error.message);
           return;
         }
         await invalidateStashAndCheckout();
-        const switchPayload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branchId);
+        const switchPayload = await operations.switchBranch(branchId);
         if (switchPayload.error) {
           toast.error(switchPayload.error.message);
           return;
@@ -137,7 +146,7 @@ export function useBranchSwitcher({
         toast.error(err instanceof Error ? err.message : t("branchSwitcher.failedToStash"));
       }
     },
-    [client, currentBranchName, invalidateStashAndCheckout, normalizedWorkspaceId, toast, t],
+    [operations, currentBranchName, invalidateStashAndCheckout, toast, t],
   );
 
   const handleBranchSelect = useCallback(
@@ -145,9 +154,9 @@ export function useBranchSwitcher({
       if (branchId === currentBranchName) return;
 
       void (async () => {
-        if (!client) return;
+        if (!operations) return;
         try {
-          const payload = await client.checkoutSwitchBranch(normalizedWorkspaceId, branchId);
+          const payload = await operations.switchBranch(branchId);
           if (payload.error) {
             // If the error is about uncommitted changes, offer the stash dialog
             if (payload.error.message.toLowerCase().includes("uncommitted")) {
@@ -166,11 +175,10 @@ export function useBranchSwitcher({
       })();
     },
     [
-      client,
+      operations,
       currentBranchName,
       invalidateStashAndCheckout,
       maybeRestoreStashForBranch,
-      normalizedWorkspaceId,
       stashAndSwitch,
       t,
       toast,

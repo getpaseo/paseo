@@ -1258,7 +1258,7 @@ describe("create_agent MCP tool", () => {
           baseRefName: "main",
         },
         workspace: {
-          workspaceId: "/tmp/worktrees/pr-123",
+          workspaceId: "ws-pr-123",
           projectId: REPO_CWD,
           cwd: "/tmp/worktrees/pr-123",
           kind: "worktree" as const,
@@ -1395,7 +1395,7 @@ describe("create_agent MCP tool", () => {
       });
       expect(setupContinuations).toEqual([undefined]);
       expect(broadcasts).toHaveLength(1);
-      expect(broadcasts[0]).toContain("tool-worktree");
+      expect(broadcasts[0]).toMatch(/^wks_[0-9a-f]{16}$/);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1444,6 +1444,7 @@ describe("create_agent MCP tool", () => {
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
+        resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-tool-worktree"),
         archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving,
@@ -1473,16 +1474,14 @@ describe("create_agent MCP tool", () => {
         force: true,
         reason: "mcp:archive-worktree",
       });
-      expect(archiveWorkspaceRecord).toHaveBeenCalledWith(created.structuredContent.worktreePath);
+      expect(archiveWorkspaceRecord).toHaveBeenCalledWith("ws-archive-tool-worktree");
       expect(markWorkspaceArchiving).toHaveBeenCalledWith(
-        [created.structuredContent.worktreePath],
+        ["ws-archive-tool-worktree"],
         expect.any(String),
       );
-      expect(clearWorkspaceArchiving).toHaveBeenCalledWith([
-        created.structuredContent.worktreePath,
-      ]);
+      expect(clearWorkspaceArchiving).toHaveBeenCalledWith(["ws-archive-tool-worktree"]);
       expect(Array.from(emitWorkspaceUpdatesForWorkspaceIds.mock.calls[0]?.[0] ?? [])).toEqual([
-        created.structuredContent.worktreePath,
+        "ws-archive-tool-worktree",
       ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -1528,6 +1527,7 @@ describe("create_agent MCP tool", () => {
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
+        resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-mcp"),
         archiveWorkspaceRecord: vi.fn(async () => undefined),
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
         markWorkspaceArchiving: vi.fn(),

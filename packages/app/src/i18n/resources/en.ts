@@ -1298,7 +1298,7 @@ export const en = {
       creatingAgent: "Creating agent",
     },
     file: {
-      executionDirectoryMissing: "Workspace execution directory not found.",
+      directoryMissing: "Workspace directory not found.",
       loading: "Loading file...",
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",

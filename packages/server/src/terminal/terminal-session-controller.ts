@@ -33,6 +33,7 @@ import {
 } from "./terminal-restore.js";
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 
 const MAX_TERMINAL_STREAM_SLOTS = 256;
 
@@ -289,7 +290,12 @@ export class TerminalSessionController {
 
   private emitTerminalsChangedSnapshot(input: {
     cwd: string;
-    terminals: Array<{ id: string; name: string; title?: string }>;
+    terminals: Array<{
+      id: string;
+      name: string;
+      title?: string;
+      activity: TerminalActivity | null;
+    }>;
   }): void {
     this.emit({
       type: "terminals_changed",
@@ -300,16 +306,21 @@ export class TerminalSessionController {
     });
   }
 
-  private toTerminalInfo(terminal: Pick<TerminalSession, "id" | "name" | "getTitle">): {
+  private toTerminalInfo(
+    terminal: Pick<TerminalSession, "id" | "name" | "getTitle" | "getActivity">,
+  ): {
     id: string;
     name: string;
     title?: string;
+    activity: TerminalActivity | null;
   } {
     const title = terminal.getTitle();
+    const activity = terminal.getActivity();
     return {
       id: terminal.id,
       name: terminal.name,
       ...(title ? { title } : {}),
+      activity,
     };
   }
 
@@ -502,6 +513,7 @@ export class TerminalSessionController {
             name: session.name,
             cwd: session.cwd,
             ...(session.getTitle() ? { title: session.getTitle() } : {}),
+            activity: session.getActivity(),
           },
           error: null,
           requestId: msg.requestId,

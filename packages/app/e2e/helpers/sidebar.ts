@@ -13,6 +13,38 @@ export async function expectWorkspaceListed(page: Page, name: string): Promise<v
   ).toBeVisible({ timeout: 30_000 });
 }
 
+// The workspace row kebab and its menu items carry no web ARIA role, so the sidebar
+// suite addresses them by the stable test ids the app assigns per workspace — the same
+// convention the rename flow uses. The kebab only reveals on hover.
+export async function archiveWorktreeFromSidebar(page: Page, workspaceId: string): Promise<void> {
+  const serverId = getServerId();
+  const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.hover();
+
+  const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
+  await expect(kebab).toBeVisible({ timeout: 10_000 });
+  await kebab.click();
+
+  // A clean worktree archives with no prompt; if the host reports unsynced work the app
+  // raises a browser confirm. Accept it so the user-confirmed archive stays deterministic
+  // either way.
+  page.once("dialog", (dialog) => void dialog.accept());
+
+  const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
+  await expect(archiveItem).toBeVisible({ timeout: 10_000 });
+  await archiveItem.click();
+}
+
+export async function expectWorkspaceAbsentFromSidebar(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  await expect(
+    page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`),
+  ).toHaveCount(0, { timeout: 30_000 });
+}
+
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu" }).click();
 }

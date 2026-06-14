@@ -38,7 +38,7 @@ export async function seedLongMockAgentTimeline(
 }
 
 export async function openAgentTimeline(page: Page, agent: LongTimelineAgent): Promise<void> {
-  await page.goto(buildAgentRoute(agent.cwd, agent.agentId));
+  await page.goto(buildAgentRoute(agent.workspaceId, agent.agentId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },

@@ -3,7 +3,7 @@ import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
 import { shouldAutoOpenAgentTab } from "@/subagents/policies";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
-function normalizeWorkspaceId(value: string | null | undefined): string {
+function normalizeWorkspaceDirectory(value: string | null | undefined): string {
   return normalizeWorkspacePath(value) ?? "";
 }
 
@@ -19,7 +19,7 @@ export function deriveWorkspaceAgentVisibility(input: {
   workspaceDirectory: string | null | undefined;
 }): WorkspaceAgentVisibility {
   const { sessionAgents, agentDetails, workspaceDirectory } = input;
-  const normalizedWorkspaceDirectory = normalizeWorkspaceId(workspaceDirectory);
+  const normalizedWorkspaceDirectory = normalizeWorkspaceDirectory(workspaceDirectory);
   if ((!sessionAgents && !agentDetails) || !normalizedWorkspaceDirectory) {
     return {
       activeAgentIds: new Set<string>(),
@@ -32,7 +32,7 @@ export function deriveWorkspaceAgentVisibility(input: {
   const autoOpenAgentIds = new Set<string>();
   const knownAgentIds = new Set<string>();
   for (const agent of sessionAgents?.values() ?? []) {
-    if (normalizeWorkspaceId(agent.cwd) !== normalizedWorkspaceDirectory) {
+    if (normalizeWorkspaceDirectory(agent.cwd) !== normalizedWorkspaceDirectory) {
       continue;
     }
     knownAgentIds.add(agent.id);
@@ -44,7 +44,7 @@ export function deriveWorkspaceAgentVisibility(input: {
     }
   }
   for (const agent of agentDetails?.values() ?? []) {
-    if (normalizeWorkspaceId(agent.cwd) !== normalizedWorkspaceDirectory) {
+    if (normalizeWorkspaceDirectory(agent.cwd) !== normalizedWorkspaceDirectory) {
       continue;
     }
     knownAgentIds.add(agent.id);

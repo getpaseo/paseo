@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type pino from "pino";
 import type {
   ProjectRegistry,
@@ -7,7 +8,6 @@ import type {
   PersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { normalizeWorkspaceId } from "./workspace-registry-model.js";
 
 const DEFAULT_RECONCILE_INTERVAL_MS = 60_000;
 
@@ -220,7 +220,7 @@ export class WorkspaceReconciliationService {
       if (project.kind !== "git") {
         continue;
       }
-      const rootKey = normalizeWorkspaceId(project.rootPath);
+      const rootKey = resolve(project.rootPath);
       const group = projectsByRoot.get(rootKey) ?? [];
       group.push(project);
       projectsByRoot.set(rootKey, group);

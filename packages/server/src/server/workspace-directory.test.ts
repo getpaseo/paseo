@@ -4,6 +4,7 @@ import { createTestLogger } from "../test-utils/test-logger.js";
 import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "./messages.js";
 import { WorkspaceDirectory } from "./workspace-directory.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 
 const NOW = "2026-03-01T12:00:00.000Z";
 
@@ -44,11 +45,13 @@ class WorkspaceStatus {
   private readonly workspaces = [this.workspace];
 
   private readonly agents: AgentSnapshotPayload[] = [];
+  private readonly terminals: Array<{ cwd: string; activity: TerminalActivity | null }> = [];
   private readonly directory = new WorkspaceDirectory({
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
     workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
+    listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
       id: workspace.workspaceId,
@@ -112,6 +115,46 @@ class WorkspaceStatus {
       requestId: "workspace-statuses",
     });
     return Object.fromEntries(entries.entries.map((entry) => [entry.id, entry.status]));
+  }
+
+  hasWorkingTerminal(changedAt: number): void {
+    this.terminals.push({
+      cwd: this.workspace.cwd,
+      activity: { state: "working", changedAt },
+    });
+  }
+
+  hasWorkingTerminalInSubdirectory(changedAt: number): void {
+    this.terminals.push({
+      cwd: `${this.workspace.cwd}/packages/app`,
+      activity: { state: "working", changedAt },
+    });
+  }
+
+  hasIdleTerminal(changedAt: number): void {
+    this.terminals.push({
+      cwd: this.workspace.cwd,
+      activity: { state: "idle", changedAt },
+    });
+  }
+
+  hasUnknownTerminal(): void {
+    this.terminals.push({
+      cwd: this.workspace.cwd,
+      activity: null,
+    });
+  }
+
+  async workspaceDescriptor(): Promise<WorkspaceDescriptorPayload> {
+    const entries = await this.directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "workspace-descriptor",
+    });
+    const entry = entries.entries[0];
+    if (!entry) {
+      throw new Error("No workspace descriptor found");
+    }
+    return entry;
   }
 }
 
@@ -197,5 +240,76 @@ describe("WorkspaceDirectory", () => {
       "workspace-1": "running",
       "workspace-worktree": "done",
     });
+  });
+
+  test("working terminal contributes running status, beating done", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasWorkingTerminal(changedAt);
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("working terminal in a subdirectory contributes to the parent workspace", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasWorkingTerminalInSubdirectory(changedAt);
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("idle terminal contributes nothing to workspace status", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasIdleTerminal(changedAt);
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
+  test("unknown terminal contributes nothing to workspace status", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasUnknownTerminal();
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
+  test("working terminal does not override a higher-priority needs_input agent", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasRootAgent({ id: "agent-needs-input", status: "idle", pendingPermissionCount: 1 });
+    workspace.hasWorkingTerminal(changedAt);
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("needs_input");
+  });
+
+  test("working terminal statusEnteredAt uses terminal changedAt", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date("2026-05-01T10:00:00.000Z").getTime();
+
+    workspace.hasWorkingTerminal(changedAt);
+
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("running");
+    expect(descriptor.statusEnteredAt).toBe("2026-05-01T10:00:00.000Z");
+  });
+
+  test("statusEnteredAt picks the newest between agent updatedAt and terminal changedAt", async () => {
+    const workspace = new WorkspaceStatus();
+    // The createAgent helper uses NOW for updatedAt; use a terminal timestamp
+    // that is newer to confirm it wins.
+    const terminalChangedAt = new Date("2027-01-01T00:00:00.000Z").getTime();
+
+    workspace.hasRootAgent({ id: "running-agent", status: "running" });
+    workspace.hasWorkingTerminal(terminalChangedAt);
+
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("running");
+    // terminal timestamp (2027) is newer than agent updatedAt (NOW = 2026-03-01)
+    expect(descriptor.statusEnteredAt).toBe("2027-01-01T00:00:00.000Z");
   });
 });

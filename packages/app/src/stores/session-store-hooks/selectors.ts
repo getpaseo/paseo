@@ -6,11 +6,9 @@ import {
 } from "@/projects/workspace-structure";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 import {
-  getWorkspaceExecutionAuthority,
-  resolveWorkspaceIdByExecutionDirectory,
+  resolveWorkspaceIdByDirectory,
   resolveWorkspaceMapKeyByIdentity,
-  type WorkspaceExecutionAuthorityResult,
-} from "@/utils/workspace-execution";
+} from "@/utils/workspace-identity";
 import type { WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
@@ -113,6 +111,14 @@ export function selectWorkspaceFields<T>(
   return workspace ? project(workspace) : null;
 }
 
+export function selectWorkspaceDirectory(
+  state: SessionsSnapshot,
+  serverId: string | null,
+  workspaceId: string | null,
+): string | null {
+  return selectWorkspace(state, serverId, workspaceId)?.workspaceDirectory || null;
+}
+
 export function selectWorkspaceExists(
   state: SessionsSnapshot,
   serverId: string | null,
@@ -126,20 +132,6 @@ export function selectHasHydratedWorkspaces(
   serverId: string | null,
 ): boolean {
   return serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false;
-}
-
-export function selectWorkspaceExecutionAuthority(
-  state: SessionsSnapshot,
-  serverId: string | null,
-  workspaceId: string | null,
-): WorkspaceExecutionAuthorityResult | null {
-  if (serverId === null || workspaceId === null) {
-    return null;
-  }
-  return getWorkspaceExecutionAuthority({
-    workspaces: state.sessions[serverId]?.workspaces,
-    workspaceId,
-  });
 }
 
 export function selectWorkspaceStructureProjects(
@@ -257,7 +249,7 @@ export function selectResolveWorkspaceIdByCwd(
     return null;
   }
   const workspaces = state.sessions[serverId]?.workspaces;
-  return resolveWorkspaceIdByExecutionDirectory({
+  return resolveWorkspaceIdByDirectory({
     workspaces: workspaces?.values(),
     workspaceDirectory: cwd,
   });

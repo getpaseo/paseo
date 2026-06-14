@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
-  getWorkspaceExecutionAuthority,
-  requireWorkspaceExecutionAuthority,
+  resolveWorkspaceIdByDirectory,
   resolveWorkspaceMapKeyByIdentity,
-  resolveWorkspaceIdByExecutionDirectory,
   resolveWorkspaceRouteId,
-} from "./workspace-execution";
+} from "./workspace-identity";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -40,7 +38,7 @@ describe("resolveWorkspaceRouteId", () => {
   });
 });
 
-describe("resolveWorkspaceIdByExecutionDirectory", () => {
+describe("resolveWorkspaceIdByDirectory", () => {
   it("matches workspace directories", () => {
     const workspaces = [
       createWorkspace({
@@ -51,7 +49,7 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
     ];
 
     expect(
-      resolveWorkspaceIdByExecutionDirectory({
+      resolveWorkspaceIdByDirectory({
         workspaces,
         workspaceDirectory: "/repo/.paseo/worktrees/feature",
       }),
@@ -68,7 +66,7 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
     ];
 
     expect(
-      resolveWorkspaceIdByExecutionDirectory({
+      resolveWorkspaceIdByDirectory({
         workspaces,
         workspaceDirectory: "/repo",
       }),
@@ -113,68 +111,5 @@ describe("resolveWorkspaceMapKeyByIdentity", () => {
         workspaceId: "C:/repo/feature",
       }),
     ).toBeNull();
-  });
-});
-
-describe("workspace execution authority", () => {
-  it("returns an explicit failure when workspace id is missing", () => {
-    expect(
-      getWorkspaceExecutionAuthority({
-        workspaces: new Map(),
-        workspaceId: null,
-      }),
-    ).toEqual({
-      ok: false,
-      reason: "workspace_id_missing",
-      message: "Workspace id is required.",
-    });
-  });
-
-  it("returns an explicit failure when workspace directory is missing", () => {
-    const workspaces = new Map<string, WorkspaceDescriptor>([
-      [
-        "workspace-1",
-        createWorkspace({
-          id: "workspace-1",
-          workspaceDirectory: "   ",
-          projectRootPath: "/repo",
-        }),
-      ],
-    ]);
-
-    expect(
-      getWorkspaceExecutionAuthority({
-        workspaces,
-        workspaceId: "workspace-1",
-      }),
-    ).toEqual({
-      ok: false,
-      reason: "workspace_directory_missing",
-      message: "Workspace directory is missing for workspace workspace-1",
-    });
-  });
-
-  it("never falls back to project root metadata", () => {
-    const workspaces = new Map<string, WorkspaceDescriptor>([
-      [
-        "workspace-1",
-        createWorkspace({
-          id: "workspace-1",
-          projectRootPath: "/repo",
-          workspaceDirectory: "/repo/.paseo/worktrees/feature",
-        }),
-      ],
-    ]);
-
-    expect(
-      requireWorkspaceExecutionAuthority({
-        workspaces,
-        workspaceId: "workspace-1",
-      }),
-    ).toEqual({
-      workspaceId: "workspace-1",
-      workspaceDirectory: "/repo/.paseo/worktrees/feature",
-      workspace: workspaces.get("workspace-1"),
-    });
   });
 });

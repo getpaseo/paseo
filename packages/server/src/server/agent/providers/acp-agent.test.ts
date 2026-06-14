@@ -31,12 +31,14 @@ import {
 import {
   COPILOT_ALLOW_ALL_MODE_ID,
   COPILOT_MODES,
+  CopilotACPAgentClient,
   beforeCopilotModeWriter,
   transformCopilotConfigOptions,
   transformCopilotModeId,
   transformCopilotSessionResponse,
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
+import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -1359,6 +1361,111 @@ describe("ACPAgentClient listModes", () => {
     });
 
     await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([]);
+  });
+});
+
+describe("ACPAgentClient listImportableSessions", () => {
+  function makeClient(args: { listSessions: ReturnType<typeof vi.fn>; supportsList?: boolean }) {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { listSessions: args.listSessions },
+          initialize: {
+            agentCapabilities:
+              args.supportsList === false ? {} : { sessionCapabilities: { list: {} } },
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    return new TestACPAgentClient({
+      provider: "kimi",
+      logger: createTestLogger(),
+      defaultCommand: ["kimi", "acp"],
+      defaultModes: [],
+    });
+  }
+
+  test("forwards the requested cwd to session/list so the agent filters by directory", async () => {
+    const listSessions = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          sessionId: "session-1",
+          cwd: "/Users/moonshot",
+          title: "细致查看一下本仓库内容",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const client = makeClient({ listSessions });
+    const result = await client.listImportableSessions({ cwd: "/Users/moonshot", limit: 20 });
+
+    expect(listSessions).toHaveBeenCalledWith({ cwd: "/Users/moonshot" });
+    expect(result).toEqual([
+      {
+        providerHandleId: "session-1",
+        cwd: "/Users/moonshot",
+        title: "细致查看一下本仓库内容",
+        firstPromptPreview: null,
+        lastPromptPreview: null,
+        lastActivityAt: new Date("2026-06-13T00:00:00.000Z"),
+      },
+    ]);
+  });
+
+  test("omits cwd from session/list when none is requested", async () => {
+    const listSessions = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const client = makeClient({ listSessions });
+
+    await client.listImportableSessions({ limit: 20 });
+
+    expect(listSessions).toHaveBeenCalledWith({});
+  });
+
+  test("forwards cwd alongside the pagination cursor across pages", async () => {
+    const listSessions = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [{ sessionId: "s1", cwd: "/Users/moonshot", title: null, updatedAt: null }],
+        nextCursor: "cursor-2",
+      })
+      .mockResolvedValueOnce({
+        sessions: [{ sessionId: "s2", cwd: "/Users/moonshot", title: null, updatedAt: null }],
+        nextCursor: null,
+      });
+
+    const client = makeClient({ listSessions });
+    await client.listImportableSessions({ cwd: "/Users/moonshot" });
+
+    expect(listSessions).toHaveBeenNthCalledWith(1, { cwd: "/Users/moonshot" });
+    expect(listSessions).toHaveBeenNthCalledWith(2, {
+      cursor: "cursor-2",
+      cwd: "/Users/moonshot",
+    });
+  });
+});
+
+describe("ACP providers advertise session listing", () => {
+  // The daemon's agent-manager only queries providers whose
+  // capabilities.supportsSessionListing is true. Without it, ACP providers
+  // (Kimi and other custom ACP agents, Copilot) are skipped and import shows
+  // nothing even though listImportableSessions is implemented.
+  test("generic ACP clients (e.g. Kimi) report supportsSessionListing", () => {
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["kimi", "acp"],
+    });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
+  });
+
+  test("Copilot ACP client reports supportsSessionListing", () => {
+    const client = new CopilotACPAgentClient({ logger: createTestLogger() });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
   });
 });
 

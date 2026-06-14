@@ -1327,7 +1327,7 @@ export const es: TranslationResources = {
       creatingAgent: "Agente creador",
     },
     file: {
-      executionDirectoryMissing: "No se encontró el directorio de ejecución deWorkspace.",
+      directoryMissing: "No se encontró el directorio de Workspace.",
       loading: "Cargando archivo...",
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",

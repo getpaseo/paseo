@@ -93,6 +93,7 @@ function createHarness(overrides?: {
     agentManager: {} as AutoArchiveArchiveOptions["agentManager"],
     agentStorage: {} as AutoArchiveArchiveOptions["agentStorage"],
     terminalManager: {} as AutoArchiveArchiveOptions["terminalManager"],
+    resolveWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
     archiveWorkspaceRecord: vi.fn(),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),

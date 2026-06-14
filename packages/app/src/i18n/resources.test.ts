@@ -230,9 +230,7 @@ describe("translation resources", () => {
     expect(en.workspace.browser.unavailable.title).toBe("Browser is desktop-only");
     expect(en.workspace.browser.controls.enterUrl).toBe("Enter URL");
     expect(en.workspace.terminal.hostDisconnected).toBe("Host is not connected");
-    expect(en.panels.file.executionDirectoryMissing).toBe(
-      "Workspace execution directory not found.",
-    );
+    expect(en.panels.file.directoryMissing).toBe("Workspace directory not found.");
   });
 
   it("includes workspace Git and review keys for the Batch 4B migration", () => {

@@ -14,6 +14,7 @@ export interface ArchiveTabAgent {
   id: string;
   title: string;
   cwd: string;
+  workspaceId: string;
 }
 
 function buildSeededStoragePayload() {
@@ -34,6 +35,10 @@ function buildSeededStoragePayload() {
  * idle agent from the same client it uses for everything else.
  */
 export interface IdleAgentSeedClient {
+  openProject(cwd: string): Promise<{
+    workspace: { id: string } | null;
+    error: string | null;
+  }>;
   createAgent(options: {
     provider: string;
     model: string;
@@ -52,6 +57,10 @@ export async function createIdleAgent(
   client: IdleAgentSeedClient,
   input: { cwd: string; title: string },
 ): Promise<ArchiveTabAgent> {
+  const opened = await client.openProject(input.cwd);
+  if (!opened.workspace) {
+    throw new Error(opened.error ?? `Failed to open project ${input.cwd}`);
+  }
   const created = await client.createAgent({
     provider: "opencode",
     model: "opencode/gpt-5-nano",
@@ -71,6 +80,7 @@ export async function createIdleAgent(
     id: created.id,
     title: input.title,
     cwd: input.cwd,
+    workspaceId: opened.workspace.id,
   };
 }
 
@@ -133,7 +143,7 @@ export async function openWorkspaceWithAgents(
 ): Promise<void> {
   const serverId = getServerId();
   for (const agent of agents) {
-    await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.cwd));
+    await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.workspaceId));
 
     // The workspace layout consumes `?open=agent:xxx`, returns null during the effect,
     // then replaces the URL with the clean workspace route after preparing the tab.
