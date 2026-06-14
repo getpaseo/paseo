@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-styles";
-import { darkTheme } from "./theme";
+import { DEFAULT_MONO_FONT_STACK, darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
   it("applies shrink-and-wrap constraints to long markdown text and links", () => {
@@ -92,5 +92,11 @@ describe("createMarkdownStyles", () => {
       fontSize: darkTheme.fontSize.code,
       lineHeight: Math.round(darkTheme.fontSize.code * 1.45),
     });
+  });
+
+  it("keeps Korean-capable fallbacks in the default mono stack", () => {
+    expect(DEFAULT_MONO_FONT_STACK).toContain("D2Coding");
+    expect(DEFAULT_MONO_FONT_STACK).toContain("Apple SD Gothic Neo");
+    expect(DEFAULT_MONO_FONT_STACK).toContain("Noto Sans CJK KR");
   });
 });

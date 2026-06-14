@@ -495,10 +495,13 @@ export const DEFAULT_UI_FONT_STACK: string = Platform.select({
   web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 });
 
+const KOREAN_MONO_FONT_FALLBACKS =
+  "'D2Coding', 'Nanum Gothic Coding', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK KR'";
+
 export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
   ios: "ui-monospace",
   default: "monospace",
-  web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  web: `SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', ${KOREAN_MONO_FONT_FALLBACKS}, monospace`,
 });
 
 // `fontSize`, `fontFamily`, and `lineHeight` are deliberately widened to plain

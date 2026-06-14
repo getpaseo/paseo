@@ -86,7 +86,12 @@ interface StubTerminal {
   resize?: (cols: number, rows: number) => void;
   focus: () => void;
   refresh?: (start: number, end: number) => void;
-  options?: { theme?: unknown; scrollback?: number; fontFamily?: string; fontSize?: number };
+  options?: {
+    theme?: unknown;
+    scrollback?: number;
+    fontFamily?: string;
+    fontSize?: number;
+  };
   rows?: number;
   cols?: number;
 }
@@ -258,7 +263,10 @@ describe("terminal-emulator-runtime", () => {
 
   it("reports input mode changes from terminal output and resets them on snapshots", () => {
     const { runtime, writeCallbacks } = createRuntimeWithTerminal();
-    const inputModeChanges: Array<{ kittyKeyboardFlags: number; win32InputMode: boolean }> = [];
+    const inputModeChanges: Array<{
+      kittyKeyboardFlags: number;
+      win32InputMode: boolean;
+    }> = [];
     runtime.setCallbacks({
       callbacks: {
         onInputModeChange: (state) => {
@@ -550,6 +558,25 @@ describe("terminal-emulator-runtime", () => {
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
 
+  it("keeps Korean-capable fallbacks in the default terminal font stack", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      options: { fontFamily: "before", fontSize: 13 },
+      rows: 12,
+      cols: 40,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+
+    runtime.setFont({ fontFamily: "   " });
+
+    expect(terminal.options?.fontFamily).toContain("D2Coding");
+    expect(terminal.options?.fontFamily).toContain("Apple SD Gothic Neo");
+    expect(terminal.options?.fontFamily).toContain("Noto Sans CJK KR");
+  });
+
   it("passively refits when the page becomes visible again", () => {
     const runtime = new TerminalEmulatorRuntime();
     const fitAndEmitResize = vi.fn();
@@ -565,7 +592,10 @@ describe("terminal-emulator-runtime", () => {
       }
     ).handleVisibilityRestore();
 
-    expect(fitAndEmitResize).toHaveBeenCalledWith({ force: true, shouldClaim: false });
+    expect(fitAndEmitResize).toHaveBeenCalledWith({
+      force: true,
+      shouldClaim: false,
+    });
   });
 
   it("does not refit while the page is still hidden", () => {
