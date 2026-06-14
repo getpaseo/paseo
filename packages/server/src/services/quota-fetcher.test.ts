@@ -117,6 +117,7 @@ describe("QuotaFetcherService", () => {
         child: () => ({ debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() }),
       } as never,
       claudeHome,
+      claudeKeychainReader: async () => null,
       codexHome,
       pollIntervalMs: 999_999,
     });

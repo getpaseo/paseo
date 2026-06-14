@@ -16,6 +16,7 @@ import type { ProviderQuotaMessage, ProviderQuotaWindow } from "../server/messag
 
 const execFileAsync = promisify(execFile);
 const CURSOR_SQLITE_TIMEOUT_MS = 2_000;
+const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -28,6 +29,7 @@ export interface QuotaFetcherServiceOptions {
   broadcast: (message: ProviderQuotaMessage) => void;
   logger: Logger;
   claudeHome?: string;
+  claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
   pollIntervalMs?: number;
 }
@@ -103,12 +105,11 @@ function buildClaudePlan(
 // authorization prompt the daemon cannot answer.
 async function readClaudeKeychainCredentials(): Promise<ClaudeCredentials | null> {
   try {
-    const { stdout } = await execFileAsync("security", [
-      "find-generic-password",
-      "-s",
-      CLAUDE_KEYCHAIN_SERVICE,
-      "-w",
-    ]);
+    const { stdout } = await execFileAsync(
+      "security",
+      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
+      { timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS },
+    );
     const raw = stdout.trim();
     if (!raw) return null;
     return JSON.parse(raw) as ClaudeCredentials;
@@ -122,9 +123,15 @@ export class ClaudeQuotaProvider implements QuotaProvider {
   readonly id = "claude";
 
   private readonly claudeHome: string;
+  private readonly readKeychainCredentials: () => Promise<ClaudeCredentials | null>;
 
-  constructor(_logger: Logger, claudeHome?: string) {
+  constructor(
+    _logger: Logger,
+    claudeHome?: string,
+    readKeychainCredentials = readClaudeKeychainCredentials,
+  ) {
     this.claudeHome = claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+    this.readKeychainCredentials = readKeychainCredentials;
   }
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["claude"]> {
@@ -188,7 +195,7 @@ export class ClaudeQuotaProvider implements QuotaProvider {
 
     // macOS keeps the credential in the login Keychain, not the file.
     if (process.platform === "darwin") {
-      const creds = await readClaudeKeychainCredentials();
+      const creds = await this.readKeychainCredentials();
       const oauth = creds?.claudeAiOauth;
       if (oauth?.accessToken) {
         return { oauth: { ...oauth, accessToken: oauth.accessToken }, filePath: null };
@@ -751,7 +758,7 @@ export class QuotaFetcherService {
     this.pollIntervalMs = options.pollIntervalMs ?? 15 * 60 * 1000;
 
     this.providers = [
-      new ClaudeQuotaProvider(this.logger, options.claudeHome),
+      new ClaudeQuotaProvider(this.logger, options.claudeHome, options.claudeKeychainReader),
       new CodexQuotaProvider(this.logger, options.codexHome),
       new CopilotQuotaProvider(this.logger),
       new CursorQuotaProvider(this.logger),
