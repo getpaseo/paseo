@@ -617,6 +617,7 @@ export interface SessionOptions {
     finalTimeoutMs?: number;
     stt?: Resolvable<SpeechToTextProvider | null>;
     sttLanguage?: string;
+    transcriptionPrompt?: string;
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
   serverId?: string;
@@ -1331,6 +1332,7 @@ export class Session {
       emit: (msg) => this.handleDictationManagerMessage(msg),
       stt: dictation?.stt ?? null,
       language: dictation?.sttLanguage,
+      transcriptionPrompt: dictation?.transcriptionPrompt,
       finalTimeoutMs: dictation?.finalTimeoutMs,
     });
   }
