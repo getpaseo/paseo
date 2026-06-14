@@ -239,7 +239,12 @@ describe("keyboard-shortcuts", () => {
     },
     {
       name: "matches Cmd+Shift+ArrowRight to focus pane right on macOS",
-      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true },
+      event: {
+        key: "ArrowRight",
+        code: "ArrowRight",
+        metaKey: true,
+        shiftKey: true,
+      },
       context: { isMac: true },
       action: "workspace.pane.focus.right",
     },
@@ -260,6 +265,18 @@ describe("keyboard-shortcuts", () => {
       event: { key: "W", code: "KeyW", metaKey: true, shiftKey: true },
       context: { isMac: true },
       action: "workspace.pane.close",
+    },
+    {
+      name: "matches Cmd+Alt+S to open scripts on macOS",
+      event: { key: "\u00df", code: "KeyS", metaKey: true, altKey: true },
+      context: { isMac: true },
+      action: "workspace.scripts.open",
+    },
+    {
+      name: "matches Ctrl+Alt+S to open scripts on non-mac",
+      event: { key: "s", code: "KeyS", ctrlKey: true, altKey: true },
+      context: { isMac: false },
+      action: "workspace.scripts.open",
     },
     {
       name: "matches Cmd+B sidebar toggle on macOS",
@@ -312,14 +329,24 @@ describe("keyboard-shortcuts", () => {
     },
     {
       name: "matches Alt+Shift+[ to previous tab on macOS when Option substitutes event.key",
-      event: { key: "\u201D", code: "BracketLeft", altKey: true, shiftKey: true },
+      event: {
+        key: "\u201D",
+        code: "BracketLeft",
+        altKey: true,
+        shiftKey: true,
+      },
       context: { isMac: true },
       action: "workspace.tab.navigate.relative",
       payload: { delta: -1 },
     },
     {
       name: "matches Alt+Shift+] to next tab on macOS when Option substitutes event.key",
-      event: { key: "\u2019", code: "BracketRight", altKey: true, shiftKey: true },
+      event: {
+        key: "\u2019",
+        code: "BracketRight",
+        altKey: true,
+        shiftKey: true,
+      },
       context: { isMac: true },
       action: "workspace.tab.navigate.relative",
       payload: { delta: 1 },
@@ -441,12 +468,22 @@ describe("keyboard-shortcuts", () => {
     },
     {
       name: "keeps Cmd+Shift+ArrowRight available for message input selection",
-      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true },
+      event: {
+        key: "ArrowRight",
+        code: "ArrowRight",
+        metaKey: true,
+        shiftKey: true,
+      },
       context: { isMac: true, focusScope: "message-input" },
     },
     {
       name: "keeps Cmd+Shift+ArrowLeft available for generic editable selection",
-      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, shiftKey: true },
+      event: {
+        key: "ArrowLeft",
+        code: "ArrowLeft",
+        metaKey: true,
+        shiftKey: true,
+      },
       context: { isMac: true, focusScope: "editable" },
     },
     {
@@ -552,6 +589,7 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "new-agent": ["mod", "shift", "O"],
         "workspace-tab-new": ["mod", "T"],
+        "workspace-scripts-open": ["mod", "alt", "S"],
         "workspace-jump-index": ["alt", "1-9"],
         "workspace-tab-jump-index": ["alt", "shift", "1-9"],
         "workspace-tab-close-current": ["alt", "shift", "W"],
@@ -565,6 +603,7 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "new-agent": ["mod", "shift", "O"],
         "workspace-tab-new": ["mod", "T"],
+        "workspace-scripts-open": ["mod", "alt", "S"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
         "workspace-tab-close-current": ["meta", "W"],
@@ -576,6 +615,7 @@ describe("keyboard-shortcut help sections", () => {
       name: "uses non-mac desktop defaults for tab jump and close tab",
       context: { isMac: false, isDesktop: true },
       expectedKeys: {
+        "workspace-scripts-open": ["mod", "alt", "S"],
         "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
       },
@@ -599,7 +639,10 @@ describe("keyboard-shortcut help sections", () => {
   });
 
   it("returns stable i18n keys for section titles and help rows", () => {
-    const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
+    const sections = buildKeyboardShortcutHelpSections({
+      isMac: true,
+      isDesktop: true,
+    });
     const projects = sections.find((section) => section.id === "projects");
     const panels = sections.find((section) => section.id === "panels");
     const openProject = findRow(sections, "new-agent");
@@ -613,15 +656,24 @@ describe("keyboard-shortcut help sections", () => {
   });
 
   it("does not expose Enter send behavior as rebindable shortcut rows", () => {
-    const sections = buildKeyboardShortcutHelpSections({ isMac: true, isDesktop: true });
+    const sections = buildKeyboardShortcutHelpSections({
+      isMac: true,
+      isDesktop: true,
+    });
 
     expect(findRow(sections, "message-input-send")).toBeNull();
     expect(findRow(sections, "message-input-queue")).toBeNull();
     expect(
-      getBindingIdForAction("message-input-send", { isMac: true, isDesktop: true }),
+      getBindingIdForAction("message-input-send", {
+        isMac: true,
+        isDesktop: true,
+      }),
     ).toBeNull();
     expect(
-      getBindingIdForAction("message-input-queue", { isMac: true, isDesktop: true }),
+      getBindingIdForAction("message-input-queue", {
+        isMac: true,
+        isDesktop: true,
+      }),
     ).toBeNull();
   });
 });

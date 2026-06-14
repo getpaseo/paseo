@@ -19,9 +19,10 @@ import * as Clipboard from "expo-clipboard";
 import { SvgXml } from "react-native-svg";
 import {
   ChevronDown,
-  ChevronRight,
   Copy,
   Download,
+  Folder,
+  FolderOpen,
   MoreVertical,
   RotateCw,
 } from "lucide-react-native";
@@ -140,10 +141,7 @@ function TreeRowItem({
     onDownloadEntry(entry);
   }, [onDownloadEntry, entry]);
 
-  const chevronStyle = useMemo(
-    () => [styles.chevron, isExpanded && styles.chevronExpanded],
-    [isExpanded],
-  );
+  const DirectoryIcon = isExpanded ? FolderOpen : Folder;
 
   const copyLeading = useMemo(
     () => <Copy size={14} color={theme.colors.foregroundMuted} />,
@@ -163,10 +161,13 @@ function TreeRowItem({
             if (!isDirectory) {
               return <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />;
             }
-            if (loading) return <ActivityIndicator size="small" />;
             return (
-              <View style={chevronStyle}>
-                <ChevronRight size={16} color={theme.colors.foregroundMuted} />
+              <View style={styles.entryIcon}>
+                {loading ? (
+                  <ActivityIndicator size="small" />
+                ) : (
+                  <DirectoryIcon size={16} color={theme.colors.foregroundMuted} />
+                )}
               </View>
             );
           })()}
@@ -739,7 +740,13 @@ function resolveTreeRows({
   if (!directories.get(".")) {
     return [];
   }
-  return buildTreeRows({ directories, expandedPaths, sortOption, path: ".", depth: 0 });
+  return buildTreeRows({
+    directories,
+    expandedPaths,
+    sortOption,
+    path: ".",
+    depth: 0,
+  });
 }
 
 type StartDownloadFn = ReturnType<typeof useDownloadStore.getState>["startDownload"];
@@ -1087,17 +1094,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     minWidth: 0,
   },
-  chevron: {
-    width: 16,
-    height: 16,
+  entryIcon: {
+    minWidth: 16,
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
-  },
-  chevronExpanded: {
-    transform: [{ rotate: "90deg" }],
-  },
-  entryIcon: {
     flexShrink: 0,
   },
   entryName: {

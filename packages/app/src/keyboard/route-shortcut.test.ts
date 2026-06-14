@@ -32,6 +32,7 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ["worktree.archive", { id: "worktree.archive", scope: "sidebar" }],
     ["worktree.new", { id: "worktree.new", scope: "sidebar" }],
     ["workspace.terminal.new", { id: "workspace.terminal.new", scope: "workspace" }],
+    ["workspace.scripts.open", { id: "workspace.scripts.open", scope: "workspace" }],
     ["workspace.tab.close.current", { id: "workspace.tab.close-current", scope: "workspace" }],
     ["sidebar.toggle.right", { id: "sidebar.toggle.right", scope: "sidebar" }],
     ["workspace.pane.split.right", { id: "workspace.pane.split.right", scope: "workspace" }],
@@ -62,7 +63,11 @@ describe("routeKeyboardShortcut — workspace.tab.navigate", () => {
       ),
     ).toEqual<ShortcutAction>({
       kind: "dispatch",
-      action: { id: "workspace.tab.navigate-index", scope: "workspace", index: 3 },
+      action: {
+        id: "workspace.tab.navigate-index",
+        scope: "workspace",
+        index: 3,
+      },
     });
   });
 
@@ -80,7 +85,11 @@ describe("routeKeyboardShortcut — workspace.tab.navigate", () => {
       ),
     ).toEqual<ShortcutAction>({
       kind: "dispatch",
-      action: { id: "workspace.tab.navigate-relative", scope: "workspace", delta: -1 },
+      action: {
+        id: "workspace.tab.navigate-relative",
+        scope: "workspace",
+        delta: -1,
+      },
     });
   });
 
@@ -164,7 +173,10 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
         makeCtx({
           pathname: "/h/srv/workspace/ui-expose-archive-worktrees-on-merge",
           sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
-          navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-new" },
+          navigationActiveWorkspace: {
+            serverId: "srv",
+            workspaceId: "running-new",
+          },
         }),
       ),
     ).toEqual<ShortcutAction>({
@@ -181,7 +193,10 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
         makeCtx({
           pathname: "/h/srv/workspace/ui-expose-archive-worktrees-on-merge",
           sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
-          navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-new" },
+          navigationActiveWorkspace: {
+            serverId: "srv",
+            workspaceId: "running-new",
+          },
         }),
       ),
     ).toEqual<ShortcutAction>({
@@ -198,7 +213,10 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
         makeCtx({
           pathname: "/h/srv/workspace/running-old",
           sidebarShortcutTargets: STATUS_VISUAL_TARGETS,
-          navigationActiveWorkspace: { serverId: "srv", workspaceId: "running-old" },
+          navigationActiveWorkspace: {
+            serverId: "srv",
+            workspaceId: "running-old",
+          },
         }),
       ),
     ).toEqual<ShortcutAction>({
@@ -212,7 +230,10 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
     expect(
       routeKeyboardShortcut(
         { action: "workspace.navigate.relative", payload: { delta: -1 } },
-        makeCtx({ pathname: "/h/srv/workspace/ws-3", navigationActiveWorkspace: null }),
+        makeCtx({
+          pathname: "/h/srv/workspace/ws-3",
+          navigationActiveWorkspace: null,
+        }),
       ),
     ).toEqual<ShortcutAction>({
       kind: "navigate-workspace",
@@ -225,7 +246,9 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
     expect(
       routeKeyboardShortcut(
         { action: "workspace.navigate.relative", payload: { delta: 1 } },
-        makeCtx({ navigationActiveWorkspace: { serverId: "srv", workspaceId: "ws-5" } }),
+        makeCtx({
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "ws-5" },
+        }),
       ),
     ).toEqual<ShortcutAction>({
       kind: "navigate-workspace",
@@ -353,7 +376,10 @@ describe("routeKeyboardShortcut — toggle dialogs", () => {
         { action: "command-center.toggle", payload: null },
         makeCtx({ commandCenterOpen: false }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "command-center-toggle", nextOpen: true });
+    ).toEqual<ShortcutAction>({
+      kind: "command-center-toggle",
+      nextOpen: true,
+    });
   });
 
   it("closes the command center when open", () => {
@@ -362,7 +388,10 @@ describe("routeKeyboardShortcut — toggle dialogs", () => {
         { action: "command-center.toggle", payload: null },
         makeCtx({ commandCenterOpen: true }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "command-center-toggle", nextOpen: false });
+    ).toEqual<ShortcutAction>({
+      kind: "command-center-toggle",
+      nextOpen: false,
+    });
   });
 
   it("toggles the shortcuts dialog", () => {
@@ -371,14 +400,20 @@ describe("routeKeyboardShortcut — toggle dialogs", () => {
         { action: "shortcuts.dialog.toggle", payload: null },
         makeCtx({ shortcutsDialogOpen: false }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "shortcuts-dialog-toggle", nextOpen: true });
+    ).toEqual<ShortcutAction>({
+      kind: "shortcuts-dialog-toggle",
+      nextOpen: true,
+    });
 
     expect(
       routeKeyboardShortcut(
         { action: "shortcuts.dialog.toggle", payload: null },
         makeCtx({ shortcutsDialogOpen: true }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "shortcuts-dialog-toggle", nextOpen: false });
+    ).toEqual<ShortcutAction>({
+      kind: "shortcuts-dialog-toggle",
+      nextOpen: false,
+    });
   });
 });
 

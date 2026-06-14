@@ -137,6 +137,7 @@ export function DraggableList<T>({
   scrollEnabled = true,
   extraData: _extraData,
   useDragHandle = false,
+  webDragHandleActivation = "hold",
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
   nestable: _nestable = false,
@@ -155,6 +156,7 @@ export function DraggableList<T>({
   const pointerActivationConstraint = getPointerActivationConstraint(
     useDragHandle,
     POINTER_ACTIVATION_CONFIG,
+    webDragHandleActivation,
   );
 
   const sensors = useSensors(

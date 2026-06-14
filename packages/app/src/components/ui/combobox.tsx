@@ -219,10 +219,13 @@ export function SearchInput({
   );
 }
 
+type ComboboxItemTone = "success";
+
 export interface ComboboxItemProps {
   label: string;
   description?: string;
   kind?: "directory" | "file";
+  tone?: ComboboxItemTone;
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
   selected?: boolean;
@@ -234,10 +237,37 @@ export interface ComboboxItemProps {
   testID?: string;
 }
 
+function getComboboxItemHoveredStyle(input: {
+  tone: ComboboxItemTone | undefined;
+  elevated: boolean | undefined;
+}) {
+  if (input.tone === "success") {
+    return styles.comboboxItemSuccessHovered;
+  }
+  if (input.elevated) {
+    return styles.comboboxItemHoveredElevated;
+  }
+  return styles.comboboxItemHovered;
+}
+
+function getComboboxItemPressedStyle(input: {
+  tone: ComboboxItemTone | undefined;
+  elevated: boolean | undefined;
+}) {
+  if (input.tone === "success") {
+    return styles.comboboxItemSuccessPressed;
+  }
+  if (input.elevated) {
+    return styles.comboboxItemPressedElevated;
+  }
+  return styles.comboboxItemPressed;
+}
+
 export function ComboboxItem({
   label,
   description,
   kind,
+  tone,
   leadingSlot,
   trailingSlot,
   selected,
@@ -269,12 +299,13 @@ export function ComboboxItem({
   const itemPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.comboboxItem,
-      hovered && (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
-      pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
-      active && styles.comboboxItemActive,
+      tone === "success" && styles.comboboxItemSuccess,
+      hovered && getComboboxItemHoveredStyle({ tone, elevated }),
+      pressed && getComboboxItemPressedStyle({ tone, elevated }),
+      active && (tone === "success" ? styles.comboboxItemSuccessActive : styles.comboboxItemActive),
       disabled && styles.comboboxItemDisabled,
     ],
-    [elevated, active, disabled],
+    [elevated, active, disabled, tone],
   );
 
   const itemContentStyle = useMemo(
@@ -710,7 +741,12 @@ function useAnchorMeasure(
     const measure = () => {
       referenceEl.measureInWindow((x, y, width) => {
         applyMeasuredAnchor(
-          { setReferenceLeft, setReferenceTop, setReferenceWidth, setReferenceAtOrigin },
+          {
+            setReferenceLeft,
+            setReferenceTop,
+            setReferenceWidth,
+            setReferenceAtOrigin,
+          },
           x,
           y,
           width,
@@ -1275,9 +1311,10 @@ export function Combobox({
   const isDesktopAboveSearch = resolveIsDesktopAboveSearch(isMobile, effectiveOptionsPosition);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const snapPoints = useMemo(() => ["60%", "90%"], []);
-  const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(
-    null,
-  );
+  const [availableSize, setAvailableSize] = useState<{
+    width?: number;
+    height?: number;
+  } | null>(null);
   const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
   const [referenceLeft, setReferenceLeft] = useState<number | null>(null);
   const [referenceTop, setReferenceTop] = useState<number | null>(null);
@@ -1641,6 +1678,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   comboboxItemActive: {
     backgroundColor: theme.colors.surface1,
+  },
+  comboboxItemSuccess: {
+    backgroundColor: "rgba(46, 160, 67, 0.18)",
+  },
+  comboboxItemSuccessHovered: {
+    backgroundColor: "rgba(46, 160, 67, 0.24)",
+  },
+  comboboxItemSuccessPressed: {
+    backgroundColor: "rgba(46, 160, 67, 0.28)",
+  },
+  comboboxItemSuccessActive: {
+    backgroundColor: "rgba(46, 160, 67, 0.24)",
   },
   comboboxItemDisabled: {
     opacity: 0.55,

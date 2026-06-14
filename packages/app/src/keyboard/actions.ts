@@ -37,6 +37,7 @@ export type KeyboardActionId =
   | "sidebar.toggle.left"
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
+  | "workspace.scripts.open"
   | "settings.toggle"
   | "command-center.toggle"
   | "shortcuts.dialog.toggle"

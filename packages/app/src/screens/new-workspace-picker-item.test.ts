@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { GitHubSearchItem } from "@getpaseo/protocol/messages";
-import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
+import {
+  pickerItemToCheckoutRequest,
+  resolveNewWorkspaceCheckoutRequest,
+  type PickerItem,
+} from "./new-workspace-picker-item";
 
 const prItem: GitHubSearchItem = {
   kind: "pr",
@@ -17,6 +21,10 @@ const prItem: GitHubSearchItem = {
 describe("pickerItemToCheckoutRequest", () => {
   it("returns undefined for no selection (null)", () => {
     expect(pickerItemToCheckoutRequest(null)).toBeUndefined();
+  });
+
+  it("returns undefined for the new branch row", () => {
+    expect(pickerItemToCheckoutRequest({ kind: "new-branch" })).toBeUndefined();
   });
 
   it("maps a branch row to branch-off with the branch name", () => {
@@ -54,6 +62,70 @@ describe("pickerItemToCheckoutRequest", () => {
       action: "checkout",
       refName: "orphan",
       githubPrNumber: 7,
+    });
+  });
+});
+
+describe("resolveNewWorkspaceCheckoutRequest", () => {
+  it("branches off the current branch when no picker item is selected", () => {
+    expect(
+      resolveNewWorkspaceCheckoutRequest({
+        selectedItem: null,
+        currentBranch: "main",
+      }),
+    ).toEqual({
+      checkoutRequest: {
+        action: "branch-off",
+        refName: "main",
+      },
+    });
+  });
+
+  it("uses a new branch slug as the requested worktree and branch name", () => {
+    expect(
+      resolveNewWorkspaceCheckoutRequest({
+        selectedItem: { kind: "branch", name: "develop" },
+        currentBranch: "main",
+        newBranchSlug: "feature-korea",
+      }),
+    ).toEqual({
+      worktreeSlug: "feature-korea",
+      checkoutRequest: {
+        action: "branch-off",
+        refName: "develop",
+      },
+    });
+  });
+
+  it("does not check out a PR when a new branch slug is provided", () => {
+    expect(
+      resolveNewWorkspaceCheckoutRequest({
+        selectedItem: { kind: "github-pr", item: prItem },
+        currentBranch: "main",
+        newBranchSlug: "from-main",
+      }),
+    ).toEqual({
+      worktreeSlug: "from-main",
+      checkoutRequest: {
+        action: "branch-off",
+        refName: "main",
+      },
+    });
+  });
+
+  it("uses the current branch when creating a new branch from the new branch row", () => {
+    expect(
+      resolveNewWorkspaceCheckoutRequest({
+        selectedItem: { kind: "new-branch" },
+        currentBranch: "main",
+        newBranchSlug: "feature-korea",
+      }),
+    ).toEqual({
+      worktreeSlug: "feature-korea",
+      checkoutRequest: {
+        action: "branch-off",
+        refName: "main",
+      },
     });
   });
 });

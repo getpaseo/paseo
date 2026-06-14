@@ -1,6 +1,7 @@
 import type { ReactElement, MutableRefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { GestureType } from "react-native-gesture-handler";
+import type { PointerActivationMode } from "./drag-reorder";
 
 export interface DraggableListDragHandleProps {
   /**
@@ -42,6 +43,11 @@ export interface DraggableListProps<T> {
    * passed to `renderItem` (prevents nested lists from fighting).
    */
   useDragHandle?: boolean;
+  /**
+   * Web-only: activation behavior for handle-based drags. Defaults to "hold"
+   * to avoid accidental nested-list drags.
+   */
+  webDragHandleActivation?: PointerActivationMode;
   refreshing?: boolean;
   onRefresh?: () => void;
   /** Fill remaining space when content is smaller than container */

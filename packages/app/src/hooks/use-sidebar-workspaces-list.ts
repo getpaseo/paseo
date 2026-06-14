@@ -10,10 +10,14 @@ import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
 import { useHostProjects } from "@/projects/host-projects";
 import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import {
+  buildSidebarWorkspaceOrderScopeKey,
+  useSidebarOrderStore,
+} from "@/stores/sidebar-order-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
   buildSidebarProjectsFromHostProjects,
+  applyStoredSidebarOrdering,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
@@ -22,6 +26,7 @@ import {
 
 export {
   appendMissingOrderKeys,
+  applyStoredSidebarOrdering,
   applyStoredOrdering,
   buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
@@ -77,7 +82,10 @@ function deriveEffectiveWorkspaceStatus(input: {
   agents?: Map<string, Agent>;
 }): EffectiveWorkspaceStatus {
   if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+    return {
+      status: input.workspace.status,
+      enteredAt: input.workspace.statusEnteredAt,
+    };
   }
 
   const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
@@ -97,7 +105,10 @@ function deriveEffectiveWorkspaceStatus(input: {
     return rootAgentActivity;
   }
 
-  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+  return {
+    status: input.workspace.status,
+    enteredAt: input.workspace.statusEnteredAt,
+  };
 }
 
 function getPendingInitialAgentCreateStartedAt(input: {
@@ -201,6 +212,9 @@ export function useSidebarWorkspacesList(options?: {
   const persistedProjectOrder = useSidebarOrderStore((state) =>
     isActive && serverId ? (state.projectOrderByServerId[serverId] ?? EMPTY_ORDER) : EMPTY_ORDER,
   );
+  const persistedWorkspaceOrders = useSidebarOrderStore((state) =>
+    isActive && serverId ? state.workspaceOrderByServerAndProject : null,
+  );
   const hasHydratedWorkspaces = useSessionStore((state) =>
     isActive && serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
   );
@@ -229,10 +243,18 @@ export function useSidebarWorkspacesList(options?: {
     if (!serverId || hostProjects.length === 0) {
       return EMPTY_PROJECTS;
     }
-    return buildSidebarProjectsFromHostProjects({
+    const baselineProjects = buildSidebarProjectsFromHostProjects({
       projects: hostProjects,
     });
-  }, [hostProjects, serverId]);
+    return applyStoredSidebarOrdering({
+      projects: baselineProjects,
+      persistedProjectOrder,
+      getWorkspaceOrder: (projectKey) => {
+        const scopeKey = buildSidebarWorkspaceOrderScopeKey(serverId, projectKey);
+        return persistedWorkspaceOrders?.[scopeKey] ?? EMPTY_ORDER;
+      },
+    });
+  }, [hostProjects, persistedProjectOrder, persistedWorkspaceOrders, serverId]);
 
   useEffect(() => {
     if (!serverId) {

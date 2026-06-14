@@ -33,6 +33,8 @@ interface WorkspaceScriptsButtonProps {
   onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
   presentation?: "split" | "ghost";
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface ScriptActionButtonProps {
@@ -194,7 +196,10 @@ function HostLinkRow({ label, url, scriptName, onOpenInBrowserTab }: HostLinkPro
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={t("workspace.scripts.accessibility.openAt", { scriptName, label })}
+      accessibilityLabel={t("workspace.scripts.accessibility.openAt", {
+        scriptName,
+        label,
+      })}
       disabled={disabled}
       hitSlop={2}
       onPress={handlePress}
@@ -292,7 +297,11 @@ function ScriptRow({
     }
   }
 
-  const iconColorMapping = resolveScriptIconColorMapping({ script, isService, isRunning });
+  const iconColorMapping = resolveScriptIconColorMapping({
+    script,
+    isService,
+    isRunning,
+  });
   const ScriptIcon = isService ? ThemedGlobe : ThemedSquareTerminal;
   const showExitBadge = !isRunning && exitCode !== null;
 
@@ -381,6 +390,8 @@ export function WorkspaceScriptsButton({
   onOpenUrlInBrowserTab,
   hideLabels,
   presentation = "split",
+  open: isOpen,
+  onOpenChange,
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { t } = useTranslation();
   const toast = useToast();
@@ -417,9 +428,17 @@ export function WorkspaceScriptsButton({
   });
 
   const triggerStyle = useCallback(
-    ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
+    ({
+      hovered,
+      pressed,
+      open: triggerOpen,
+    }: {
+      hovered: boolean;
+      pressed: boolean;
+      open: boolean;
+    }) => [
       presentation === "ghost" ? styles.ghostButton : styles.splitButtonPrimary,
-      (hovered || pressed || open) &&
+      (hovered || pressed || triggerOpen) &&
         (presentation === "ghost" ? styles.ghostButtonHovered : styles.splitButtonPrimaryHovered),
     ],
     [presentation],
@@ -443,7 +462,7 @@ export function WorkspaceScriptsButton({
   return (
     <View style={styles.row}>
       <View style={presentation === "ghost" ? styles.ghostButtonFrame : styles.splitButton}>
-        <DropdownMenu>
+        <DropdownMenu open={isOpen} onOpenChange={onOpenChange}>
           <DropdownMenuTrigger
             testID="workspace-scripts-button"
             style={triggerStyle}

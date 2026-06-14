@@ -25,6 +25,7 @@ export type KeyboardActionId =
   | "workspace.pane.move-tab.down"
   | "workspace.pane.close"
   | "workspace.terminal.new"
+  | "workspace.scripts.open"
   | "sidebar.toggle.right"
   | "worktree.new"
   | "worktree.archive";
@@ -40,8 +41,16 @@ export type KeyboardActionDefinition =
   | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
   | { id: "workspace.tab.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
-  | { id: "workspace.tab.navigate-index"; scope: KeyboardActionScope; index: number }
-  | { id: "workspace.tab.navigate-relative"; scope: KeyboardActionScope; delta: 1 | -1 }
+  | {
+      id: "workspace.tab.navigate-index";
+      scope: KeyboardActionScope;
+      index: number;
+    }
+  | {
+      id: "workspace.tab.navigate-relative";
+      scope: KeyboardActionScope;
+      delta: 1 | -1;
+    }
   | { id: "workspace.pane.split.right"; scope: KeyboardActionScope }
   | { id: "workspace.pane.split.down"; scope: KeyboardActionScope }
   | { id: "workspace.pane.focus.left"; scope: KeyboardActionScope }
@@ -54,6 +63,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.pane.move-tab.down"; scope: KeyboardActionScope }
   | { id: "workspace.pane.close"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
+  | { id: "workspace.scripts.open"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "worktree.archive"; scope: KeyboardActionScope };

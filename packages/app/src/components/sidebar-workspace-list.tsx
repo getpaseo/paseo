@@ -196,7 +196,9 @@ function getWorktreeArchiveWarningLabels(
     cancel: t("workspace.git.actions.archiveWarning.cancel"),
     uncommittedChanges: t("workspace.git.actions.archiveWarning.uncommittedChanges"),
     uncommittedChangesWithDiff: (diffStat) =>
-      t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", { diffStat }),
+      t("workspace.git.actions.archiveWarning.uncommittedChangesWithDiff", {
+        diffStat,
+      }),
     addedLine: (count) =>
       t(
         count === 1
@@ -552,7 +554,7 @@ function ProjectRowTrailingActions({
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
-  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint || isProjectActive;
   return (
     <View style={styles.projectTrailingActions}>
       {canCreateWorktree ? (
@@ -1622,7 +1624,9 @@ function WorkspaceRowWithMenu({
 
     const confirmed = await confirmDialog({
       title: t("sidebar.workspace.confirmations.hideTitle"),
-      message: t("sidebar.workspace.confirmations.hideMessage", { workspaceName: workspace.name }),
+      message: t("sidebar.workspace.confirmations.hideMessage", {
+        workspaceName: workspace.name,
+      }),
       confirmLabel: t("sidebar.workspace.confirmations.hideConfirm"),
       cancelLabel: t("sidebar.workspace.confirmations.cancel"),
       destructive: true,
@@ -2305,7 +2309,9 @@ function ProjectBlock({
     void (async () => {
       const confirmed = await confirmDialog({
         title: t("sidebar.project.confirmations.removeTitle"),
-        message: t("sidebar.project.confirmations.removeMessage", { projectName: displayName }),
+        message: t("sidebar.project.confirmations.removeMessage", {
+          projectName: displayName,
+        }),
         confirmLabel: t("sidebar.project.confirmations.removeConfirm"),
         cancelLabel: t("sidebar.project.confirmations.cancel"),
         destructive: true,
@@ -2788,6 +2794,7 @@ function ProjectModeList({
           extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
           scrollEnabled={false}
           useDragHandle
+          webDragHandleActivation="distance"
           nestable={platformIsNative}
           simultaneousGestureRef={parentGestureRef}
           containerStyle={styles.projectListContainer}
