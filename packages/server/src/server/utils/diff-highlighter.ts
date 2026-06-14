@@ -24,6 +24,8 @@ export interface ParsedDiffFile {
   deletions: number;
   hunks: DiffHunk[];
   status?: "ok" | "too_large" | "binary";
+  isStaged?: boolean;
+  isUnstaged?: boolean;
 }
 
 interface HighlightDiffWithFileContentOptions {

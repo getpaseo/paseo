@@ -136,7 +136,9 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
+    metadataGeneration: MutableMetadataGenerationConfigSchema.default({
+      providers: [],
+    }),
     autoArchiveAfterMerge: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
@@ -1431,6 +1433,24 @@ export const CheckoutRefreshRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const CheckoutFileMutationRequestBaseSchema = z.object({
+  cwd: z.string(),
+  path: z.string(),
+  requestId: z.string(),
+});
+
+export const CheckoutFileStageRequestSchema = CheckoutFileMutationRequestBaseSchema.extend({
+  type: z.literal("checkout.file.stage.request"),
+});
+
+export const CheckoutFileUnstageRequestSchema = CheckoutFileMutationRequestBaseSchema.extend({
+  type: z.literal("checkout.file.unstage.request"),
+});
+
+export const CheckoutFileDiscardRequestSchema = CheckoutFileMutationRequestBaseSchema.extend({
+  type: z.literal("checkout.file.discard.request"),
+});
+
 export const CheckoutPrCreateRequestSchema = z.object({
   type: z.literal("checkout_pr_create_request"),
   cwd: z.string(),
@@ -1672,6 +1692,8 @@ const ParsedDiffFileSchema = z.object({
   deletions: z.number(),
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
+  isStaged: z.boolean().optional(),
+  isUnstaged: z.boolean().optional(),
 });
 
 const FileExplorerEntrySchema = z.object({
@@ -1933,6 +1955,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPullRequestSchema,
   CheckoutPushRequestSchema,
   CheckoutRefreshRequestSchema,
+  CheckoutFileStageRequestSchema,
+  CheckoutFileUnstageRequestSchema,
+  CheckoutFileDiscardRequestSchema,
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
@@ -2174,6 +2199,8 @@ export const ServerInfoStatusPayloadSchema = z
         rewind: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
+        // COMPAT(checkoutFileMutations): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        checkoutFileMutations: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3177,6 +3204,29 @@ export const CheckoutRefreshResponseSchema = z.object({
   }),
 });
 
+const CheckoutFileMutationPayloadSchema = z.object({
+  cwd: z.string(),
+  path: z.string(),
+  success: z.boolean(),
+  error: CheckoutErrorSchema.nullable(),
+  requestId: z.string(),
+});
+
+export const CheckoutFileStageResponseSchema = z.object({
+  type: z.literal("checkout.file.stage.response"),
+  payload: CheckoutFileMutationPayloadSchema,
+});
+
+export const CheckoutFileUnstageResponseSchema = z.object({
+  type: z.literal("checkout.file.unstage.response"),
+  payload: CheckoutFileMutationPayloadSchema,
+});
+
+export const CheckoutFileDiscardResponseSchema = z.object({
+  type: z.literal("checkout.file.discard.response"),
+  payload: CheckoutFileMutationPayloadSchema,
+});
+
 export const CheckoutPrCreateResponseSchema = z.object({
   type: z.literal("checkout_pr_create_response"),
   payload: z.object({
@@ -3872,6 +3922,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPullResponseSchema,
   CheckoutPushResponseSchema,
   CheckoutRefreshResponseSchema,
+  CheckoutFileStageResponseSchema,
+  CheckoutFileUnstageResponseSchema,
+  CheckoutFileDiscardResponseSchema,
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
@@ -4137,6 +4190,12 @@ export type CheckoutPushRequest = z.infer<typeof CheckoutPushRequestSchema>;
 export type CheckoutPushResponse = z.infer<typeof CheckoutPushResponseSchema>;
 export type CheckoutRefreshRequest = z.infer<typeof CheckoutRefreshRequestSchema>;
 export type CheckoutRefreshResponse = z.infer<typeof CheckoutRefreshResponseSchema>;
+export type CheckoutFileStageRequest = z.infer<typeof CheckoutFileStageRequestSchema>;
+export type CheckoutFileStageResponse = z.infer<typeof CheckoutFileStageResponseSchema>;
+export type CheckoutFileUnstageRequest = z.infer<typeof CheckoutFileUnstageRequestSchema>;
+export type CheckoutFileUnstageResponse = z.infer<typeof CheckoutFileUnstageResponseSchema>;
+export type CheckoutFileDiscardRequest = z.infer<typeof CheckoutFileDiscardRequestSchema>;
+export type CheckoutFileDiscardResponse = z.infer<typeof CheckoutFileDiscardResponseSchema>;
 export type CheckoutPrCreateRequest = z.infer<typeof CheckoutPrCreateRequestSchema>;
 export type CheckoutPrCreateResponse = z.infer<typeof CheckoutPrCreateResponseSchema>;
 export type CheckoutPrMergeRequest = z.infer<typeof CheckoutPrMergeRequestSchema>;

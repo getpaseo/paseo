@@ -201,6 +201,9 @@ import {
   pushCurrentBranch,
   createPullRequest,
   renameCurrentBranch,
+  discardCheckoutFile,
+  stageCheckoutFile,
+  unstageCheckoutFile,
 } from "../utils/checkout-git.js";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import { getProjectIcon } from "../utils/project-icon.js";
@@ -319,6 +322,9 @@ type GitMutationRefreshReason =
   | "switch-branch"
   | "rename-branch"
   | "create-branch"
+  | "stage-file"
+  | "unstage-file"
+  | "discard-file"
   | "stash-push"
   | "stash-pop"
   | "create-worktree";
@@ -1055,7 +1061,9 @@ export class Session {
   }
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
-    await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
+    await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
+      skipReconcile: true,
+    });
   }
 
   async archiveWorkspaceRecordForExternalMutation(workspaceId: string): Promise<void> {
@@ -1170,7 +1178,11 @@ export class Session {
       blocks.push({ type: "text", text: normalized });
     }
     for (const image of images ?? []) {
-      blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
+      blocks.push({
+        type: "image",
+        data: image.data,
+        mimeType: image.mimeType,
+      });
     }
     for (const attachment of attachments ?? []) {
       blocks.push(attachment);
@@ -1258,7 +1270,11 @@ export class Session {
       const transport = new StreamableHTTPClientTransport(
         new URL(this.mcpBaseUrl),
         authToken
-          ? { requestInit: { headers: { Authorization: `Bearer ${authToken}` } } }
+          ? {
+              requestInit: {
+                headers: { Authorization: `Bearer ${authToken}` },
+              },
+            }
           : undefined,
       );
 
@@ -1929,7 +1945,10 @@ export class Session {
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
-          payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
+          payload: {
+            requestId: msg.requestId,
+            config: this.daemonConfigStore.get(),
+          },
         });
         return undefined;
       case "daemon.get_status.request":
@@ -1978,7 +1997,11 @@ export class Session {
 
     if (result.config === null) {
       this.sessionLogger.debug(
-        { repoRoot, requestId: msg.requestId, outcome: "missing_project_config" },
+        {
+          repoRoot,
+          requestId: msg.requestId,
+          outcome: "missing_project_config",
+        },
         "Project config missing",
       );
     }
@@ -2105,6 +2128,12 @@ export class Session {
         return this.handleCheckoutPushRequest(msg);
       case "checkout.refresh.request":
         return this.handleCheckoutRefreshRequest(msg);
+      case "checkout.file.stage.request":
+        return this.handleCheckoutFileStageRequest(msg);
+      case "checkout.file.unstage.request":
+        return this.handleCheckoutFileUnstageRequest(msg);
+      case "checkout.file.discard.request":
+        return this.handleCheckoutFileDiscardRequest(msg);
       case "checkout_pr_create_request":
         return this.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
@@ -2452,7 +2481,11 @@ export class Session {
         agents.push(result.value);
       } else {
         this.sessionLogger.warn(
-          { err: result.reason, agentId: msg.agentIds[i], requestId: msg.requestId },
+          {
+            err: result.reason,
+            agentId: msg.agentIds[i],
+            requestId: msg.requestId,
+          },
           "Failed to archive agent during close_items batch",
         );
       }
@@ -2712,7 +2745,11 @@ export class Session {
     const startedAt = Date.now();
     try {
       this.sessionLogger.info(
-        { enabled, requestedAgentId: agentId ?? null, requestId: requestId ?? null },
+        {
+          enabled,
+          requestedAgentId: agentId ?? null,
+          requestId: requestId ?? null,
+        },
         "set_voice_mode started",
       );
       if (enabled) {
@@ -2871,7 +2908,11 @@ export class Session {
       );
       const refreshed = await this.agentManager.reloadAgentSession(agentId, refreshOverrides);
       this.sessionLogger.info(
-        { agentId, refreshedAgentId: refreshed.id, elapsedMs: Date.now() - startedAt },
+        {
+          agentId,
+          refreshedAgentId: refreshed.id,
+          elapsedMs: Date.now() - startedAt,
+        },
         "enableVoiceModeForAgent.reloadAgentSession.done",
       );
       return refreshed.id;
@@ -3798,7 +3839,11 @@ export class Session {
       });
     } catch (error) {
       this.sessionLogger.error(
-        { err: error, provider: msg.draftConfig.provider, draftConfig: msg.draftConfig },
+        {
+          err: error,
+          provider: msg.draftConfig.provider,
+          draftConfig: msg.draftConfig,
+        },
         `Failed to list features for ${msg.draftConfig.provider}`,
       );
       this.emit({
@@ -4199,7 +4244,9 @@ export class Session {
       cwd,
       resolution,
     });
-    await this.notifyGitMutation(cwd, "switch-branch", { invalidateGithub: true });
+    await this.notifyGitMutation(cwd, "switch-branch", {
+      invalidateGithub: true,
+    });
     return result;
   }
 
@@ -5086,7 +5133,9 @@ export class Session {
 
     try {
       const result = await renameCurrentBranch(cwd, branch);
-      await this.notifyGitMutation(cwd, "rename-branch", { invalidateGithub: true });
+      await this.notifyGitMutation(cwd, "rename-branch", {
+        invalidateGithub: true,
+      });
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.handleWorkspaceGitBranchSnapshot(cwd, result.currentBranch);
 
@@ -5145,7 +5194,12 @@ export class Session {
     } catch (error) {
       this.emit({
         type: "stash_save_response",
-        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+        payload: {
+          cwd,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
       });
     }
   }
@@ -5167,7 +5221,12 @@ export class Session {
     } catch (error) {
       this.emit({
         type: "stash_pop_response",
-        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+        payload: {
+          cwd,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
       });
     }
   }
@@ -5178,7 +5237,9 @@ export class Session {
     const { cwd, requestId } = msg;
     const paseoOnly = msg.paseoOnly !== false;
     try {
-      const entries = await this.workspaceGitService.listStashes(cwd, { paseoOnly });
+      const entries = await this.workspaceGitService.listStashes(cwd, {
+        paseoOnly,
+      });
 
       this.emit({
         type: "stash_list_response",
@@ -5269,7 +5330,9 @@ export class Session {
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
       );
       await Promise.all([
-        this.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateGithub: true }),
+        this.notifyGitMutation(mutatedCwd, "merge-to-base", {
+          invalidateGithub: true,
+        }),
         ...(mutatedCwd !== cwd ? [this.notifyGitMutation(cwd, "merge-to-base")] : []),
       ]);
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
@@ -5313,7 +5376,9 @@ export class Session {
         baseRef: msg.baseRef,
         requireCleanTarget: msg.requireCleanTarget ?? true,
       });
-      await this.notifyGitMutation(cwd, "merge-from-base", { invalidateGithub: true });
+      await this.notifyGitMutation(cwd, "merge-from-base", {
+        invalidateGithub: true,
+      });
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
 
       this.emit({
@@ -5435,6 +5500,105 @@ export class Session {
     }
   }
 
+  private async handleCheckoutFileStageRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.file.stage.request" }>,
+  ): Promise<void> {
+    const { cwd, path, requestId } = msg;
+
+    try {
+      await stageCheckoutFile(cwd, path);
+      await this.notifyGitMutation(cwd, "stage-file");
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "checkout.file.stage.response",
+        payload: {
+          cwd,
+          path,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.file.stage.response",
+        payload: {
+          cwd,
+          path,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutFileUnstageRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.file.unstage.request" }>,
+  ): Promise<void> {
+    const { cwd, path, requestId } = msg;
+
+    try {
+      await unstageCheckoutFile(cwd, path);
+      await this.notifyGitMutation(cwd, "unstage-file");
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "checkout.file.unstage.response",
+        payload: {
+          cwd,
+          path,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.file.unstage.response",
+        payload: {
+          cwd,
+          path,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutFileDiscardRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.file.discard.request" }>,
+  ): Promise<void> {
+    const { cwd, path, requestId } = msg;
+
+    try {
+      await discardCheckoutFile(cwd, path);
+      await this.notifyGitMutation(cwd, "discard-file");
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.emit({
+        type: "checkout.file.discard.response",
+        payload: {
+          cwd,
+          path,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.file.discard.response",
+        payload: {
+          cwd,
+          path,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
   private async handleCheckoutPrCreateRequest(
     msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>,
   ): Promise<void> {
@@ -5459,7 +5623,9 @@ export class Session {
         },
         this.github,
       );
-      await this.notifyGitMutation(cwd, "create-pr", { invalidateGithub: true });
+      await this.notifyGitMutation(cwd, "create-pr", {
+        invalidateGithub: true,
+      });
 
       this.emit({
         type: "checkout_pr_create_response",
@@ -6434,7 +6600,10 @@ export class Session {
     }
 
     const checkout = checkoutLiteFromGitSnapshot(workspace.cwd, snapshot.git);
-    const displayName = deriveWorkspaceDisplayName({ cwd: workspace.cwd, checkout });
+    const displayName = deriveWorkspaceDisplayName({
+      cwd: workspace.cwd,
+      checkout,
+    });
 
     return {
       ...base,
@@ -6556,7 +6725,11 @@ export class Session {
   private flushBootstrappedWorkspaceUpdates(options?: {
     snapshotByWorkspaceId?: Map<
       string,
-      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
+      {
+        status: string;
+        statusEnteredAt: string | null;
+        activityAtMs: number | null;
+      }
     >;
   }): void {
     const subscription = this.workspaceUpdatesSubscription;
@@ -6670,7 +6843,10 @@ export class Session {
     cwd: string;
   }): Promise<PersistedWorkspaceRecord> {
     const checkout = await this.workspaceGitService.getCheckout(input.cwd);
-    const membership = classifyDirectoryForProjectMembership({ cwd: input.cwd, checkout });
+    const membership = classifyDirectoryForProjectMembership({
+      cwd: input.cwd,
+      checkout,
+    });
     const timestamp = new Date().toISOString();
     const projectRecord = await this.resolveProjectRecordForPlacement({
       membership,
@@ -6748,7 +6924,11 @@ export class Session {
     const timestamp = new Date().toISOString();
     let unarchivedWorkspace = workspace;
     if (workspace.archivedAt) {
-      unarchivedWorkspace = { ...workspace, archivedAt: null, updatedAt: timestamp };
+      unarchivedWorkspace = {
+        ...workspace,
+        archivedAt: null,
+        updatedAt: timestamp,
+      };
       await this.workspaceRegistry.upsert(unarchivedWorkspace);
     }
     if (project?.archivedAt) {
@@ -6781,7 +6961,11 @@ export class Session {
       this.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
     ]).catch((error) => {
       this.sessionLogger.warn(
-        { err: error, cwd: input.cwd, worktreePath: result.worktree.worktreePath },
+        {
+          err: error,
+          cwd: input.cwd,
+          worktreePath: result.worktree.worktreePath,
+        },
         "Failed to warm git snapshots after creating worktree",
       );
     });
@@ -7064,7 +7248,9 @@ export class Session {
           requestId: request.requestId,
           entries: result.entries,
           ...(result.filteredAlreadyImportedCount > 0
-            ? { filteredAlreadyImportedCount: result.filteredAlreadyImportedCount }
+            ? {
+                filteredAlreadyImportedCount: result.filteredAlreadyImportedCount,
+              }
             : {}),
         },
       });
@@ -7172,12 +7358,20 @@ export class Session {
   private buildBootstrapSnapshot(entries: FetchWorkspacesResponseEntry[]): {
     snapshotByWorkspaceId: Map<
       string,
-      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
+      {
+        status: string;
+        statusEnteredAt: string | null;
+        activityAtMs: number | null;
+      }
     >;
   } {
     const snapshotByWorkspaceId = new Map<
       string,
-      { status: string; statusEnteredAt: string | null; activityAtMs: number | null }
+      {
+        status: string;
+        statusEnteredAt: string | null;
+        activityAtMs: number | null;
+      }
     >();
     for (const entry of entries) {
       const parsedActivity = entry.activityAt ? Date.parse(entry.activityAt) : null;
@@ -7678,7 +7872,12 @@ export class Session {
     if (!resolved.ok) {
       this.emit({
         type: "fetch_agent_response",
-        payload: { requestId, agent: null, project: null, error: resolved.error },
+        payload: {
+          requestId,
+          agent: null,
+          project: null,
+          error: resolved.error,
+        },
       });
       return;
     }
@@ -7727,7 +7926,10 @@ export class Session {
   private selectCanonicalTimelineProjection(input: {
     timeline: AgentTimelineFetchResult;
   }): AgentTimelineProjectionSelection {
-    const entries = projectTimelineRows({ rows: input.timeline.rows, mode: "canonical" });
+    const entries = projectTimelineRows({
+      rows: input.timeline.rows,
+      mode: "canonical",
+    });
     return {
       timeline: input.timeline,
       entries,
@@ -7748,7 +7950,10 @@ export class Session {
     const timeline = this.shouldUseFullTimelineForProjectedPage({
       timeline: input.controlTimeline,
     })
-      ? this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 })
+      ? this.agentManager.fetchTimeline(input.agentId, {
+          direction: "tail",
+          limit: 0,
+        })
       : input.controlTimeline;
     const page = selectProjectedTimelinePage({
       rows: timeline.rows,
@@ -7777,7 +7982,9 @@ export class Session {
     pageLimit: number;
   }): AgentTimelineProjectionSelection {
     if (input.projection === "canonical") {
-      return this.selectCanonicalTimelineProjection({ timeline: input.controlTimeline });
+      return this.selectCanonicalTimelineProjection({
+        timeline: input.controlTimeline,
+      });
     }
 
     return this.selectProjectedTimelineProjection(input);
@@ -7820,11 +8027,17 @@ export class Session {
       });
       const startCursor =
         selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
+          ? {
+              epoch: selectedTimeline.timeline.epoch,
+              seq: selectedTimeline.startSeq,
+            }
           : null;
       const endCursor =
         selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
+          ? {
+              epoch: selectedTimeline.timeline.epoch,
+              seq: selectedTimeline.endSeq,
+            }
           : null;
 
       this.emit({
@@ -8075,7 +8288,13 @@ export class Session {
 
       this.emit({
         type: "wait_for_finish_response",
-        payload: { requestId, status, final, error, lastMessage: result.lastMessage },
+        payload: {
+          requestId,
+          status,
+          final,
+          error,
+          lastMessage: result.lastMessage,
+        },
       });
     } catch (error) {
       const isAbort =
@@ -8100,11 +8319,19 @@ export class Session {
 
       const final = await this.getAgentPayloadById(agentId);
       if (!final) {
-        throw new Error(`Agent ${agentId} disappeared while waiting`, { cause: error });
+        throw new Error(`Agent ${agentId} disappeared while waiting`, {
+          cause: error,
+        });
       }
       this.emit({
         type: "wait_for_finish_response",
-        payload: { requestId, status: "timeout", final, error: null, lastMessage: null },
+        payload: {
+          requestId,
+          status: "timeout",
+          final,
+          error: null,
+          lastMessage: null,
+        },
       });
     } finally {
       if (timeoutHandle) {
@@ -8238,8 +8465,13 @@ export class Session {
       );
     } else {
       this.sessionLogger.debug(
-        { audioBytes: finalized.audio.length, chunks: bufferedState?.chunks.length ?? 0 },
-        `Complete audio segment (${finalized.audio.length} bytes, ${bufferedState?.chunks.length ?? 0} chunk(s))`,
+        {
+          audioBytes: finalized.audio.length,
+          chunks: bufferedState?.chunks.length ?? 0,
+        },
+        `Complete audio segment (${finalized.audio.length} bytes, ${
+          bufferedState?.chunks.length ?? 0
+        } chunk(s))`,
       );
     }
 
@@ -8277,7 +8509,10 @@ export class Session {
   private async processCompletedAudio(audio: Buffer, format: string): Promise<void> {
     if (this.processingPhase === "transcribing") {
       this.sessionLogger.debug(
-        { phase: this.processingPhase, segmentCount: this.pendingAudioSegments.length + 1 },
+        {
+          phase: this.processingPhase,
+          segmentCount: this.pendingAudioSegments.length + 1,
+        },
         `Buffering audio segment (phase: ${this.processingPhase})`,
       );
       this.pendingAudioSegments.push({
@@ -8599,7 +8834,10 @@ export class Session {
 
     if (this.audioBuffer) {
       this.sessionLogger.debug(
-        { chunks: this.audioBuffer.chunks.length, pcmBytes: this.audioBuffer.totalPCMBytes },
+        {
+          chunks: this.audioBuffer.chunks.length,
+          pcmBytes: this.audioBuffer.totalPCMBytes,
+        },
         `Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s)${
           this.audioBuffer.isPCM ? `, ${this.audioBuffer.totalPCMBytes} PCM bytes` : ""
         })`,
