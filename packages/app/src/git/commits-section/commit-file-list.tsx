@@ -109,8 +109,7 @@ interface CommitFileListProps {
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
-  openFilePath: string | null;
-  onFilePress: FilePressHandler;
+  onFilePress?: FilePressHandler;
 }
 
 /**
@@ -118,8 +117,11 @@ interface CommitFileListProps {
  * `fileView` preference: a flat list, or a collapsible directory tree that
  * reuses the same `DirectoryRow` and diff-tree utilities as the Changes panel.
  *
- * The inline diff (`openFilePath`) is owned by the parent `CommitRow` so it
- * survives across both modes; this component only owns directory collapse state.
+ * The inline diff (`openFilePath`) is ephemeral state owned here: CommitFileList
+ * is mounted only while its commit is expanded (CommitRow conditionally renders
+ * it), so collapsing unmounts it and the open file resets naturally on
+ * re-expand — no reset effect needed. `onFilePress` is forwarded to upstream
+ * listeners in addition to driving the inline toggle.
  */
 export const CommitFileList = memo(function CommitFileList({
   commit,
@@ -127,9 +129,21 @@ export const CommitFileList = memo(function CommitFileList({
   serverId,
   workspaceId,
   cwd,
-  openFilePath,
   onFilePress,
 }: CommitFileListProps) {
+  const [openFilePath, setOpenFilePath] = useState<string | null>(null);
+
+  // Stable across renders: toggles the inline diff for the pressed file and
+  // forwards the press to any external listener. Keeping it stable preserves
+  // CommitFileRow memoization (only the toggled rows re-render).
+  const handleFilePress = useCallback<FilePressHandler>(
+    (pressedCommit, file) => {
+      setOpenFilePath((prev) => (prev === file.path ? null : file.path));
+      onFilePress?.(pressedCommit, file);
+    },
+    [onFilePress],
+  );
+
   if (fileView === "tree") {
     return (
       <CommitFileTree
@@ -138,7 +152,7 @@ export const CommitFileList = memo(function CommitFileList({
         workspaceId={workspaceId}
         cwd={cwd}
         openFilePath={openFilePath}
-        onFilePress={onFilePress}
+        onFilePress={handleFilePress}
       />
     );
   }
@@ -153,7 +167,7 @@ export const CommitFileList = memo(function CommitFileList({
             label={file.path}
             depth={0}
             isOpen={openFilePath === file.path}
-            onFilePress={onFilePress}
+            onFilePress={handleFilePress}
           />
           {openFilePath === file.path ? (
             <CommitFileDiffView

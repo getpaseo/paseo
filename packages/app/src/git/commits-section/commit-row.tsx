@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { CheckoutCommit } from "@getpaseo/protocol/messages";
@@ -27,16 +27,6 @@ export const CommitRow = memo(function CommitRow({
   onToggle,
   onFilePress,
 }: CommitRowProps) {
-  const [openFilePath, setOpenFilePath] = useState<string | null>(null);
-
-  // Reset the inline diff when the commit collapses so re-expanding doesn't
-  // auto-reopen the previously selected file.
-  useEffect(() => {
-    if (!expanded) {
-      setOpenFilePath(null);
-    }
-  }, [expanded]);
-
   const chevronStyle = useMemo(
     () => [styles.chevron, expanded && styles.chevronExpanded],
     [expanded],
@@ -45,17 +35,6 @@ export const CommitRow = memo(function CommitRow({
   const handleToggle = useCallback(() => {
     onToggle(commit.sha);
   }, [commit.sha, onToggle]);
-
-  // Stable across renders: toggles the inline diff for the pressed file and
-  // forwards the press to any external listener. Keeping it stable preserves
-  // CommitFileRow memoization (only the toggled rows re-render).
-  const handleFilePress = useCallback<FilePressHandler>(
-    (pressedCommit, file) => {
-      setOpenFilePath((prev) => (prev === file.path ? null : file.path));
-      onFilePress?.(pressedCommit, file);
-    },
-    [onFilePress],
-  );
 
   return (
     <View>
@@ -84,8 +63,7 @@ export const CommitRow = memo(function CommitRow({
           serverId={serverId}
           workspaceId={workspaceId}
           cwd={cwd}
-          openFilePath={openFilePath}
-          onFilePress={handleFilePress}
+          onFilePress={onFilePress}
         />
       ) : null}
     </View>
