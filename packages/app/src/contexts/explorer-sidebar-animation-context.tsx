@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { useWindowDimensions } from "react-native";
@@ -20,12 +21,17 @@ import {
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
+// Keeps the overlay displayed long enough for the close animation to finish
+// before React hides it.
+const OVERLAY_CLOSE_GRACE_MS = 300;
 interface ExplorerSidebarAnimationContextValue {
   translateX: SharedValue<number>;
   backdropOpacity: SharedValue<number>;
   windowWidth: number;
   animateToOpen: () => void;
   animateToClose: () => void;
+  overlayVisible: boolean;
+  setOverlayPeek: (peek: boolean) => void;
   isGesturing: SharedValue<boolean>;
   gestureAnimatingRef: React.MutableRefObject<boolean>;
   openGestureRef: React.MutableRefObject<GestureType | undefined>;
@@ -53,6 +59,22 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
   const gestureAnimatingRef = useRef(false);
   const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
+
+  // React owns whether the overlay is displayed at all; the worklet owns its
+  // motion. See the matching block in sidebar-animation-context.tsx for why
+  // (Fabric re-applies stale animated props over committed props,
+  // reanimated#9635).
+  const [overlayPeek, setOverlayPeek] = useState(false);
+  const overlayTarget = isOpen || overlayPeek;
+  const [overlayVisible, setOverlayVisible] = useState(overlayTarget);
+  useEffect(() => {
+    if (overlayTarget) {
+      setOverlayVisible(true);
+      return;
+    }
+    const timer = setTimeout(() => setOverlayVisible(false), OVERLAY_CLOSE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [overlayTarget]);
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
@@ -204,12 +226,22 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       windowWidth,
       animateToOpen,
       animateToClose,
+      overlayVisible,
+      setOverlayPeek,
       isGesturing,
       gestureAnimatingRef,
       openGestureRef,
       closeGestureRef,
     }),
-    [translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing],
+    [
+      translateX,
+      backdropOpacity,
+      windowWidth,
+      animateToOpen,
+      animateToClose,
+      overlayVisible,
+      isGesturing,
+    ],
   );
 
   return (

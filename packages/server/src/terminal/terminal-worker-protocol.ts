@@ -6,6 +6,7 @@ import type {
   TerminalStateSnapshotOptions,
 } from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 
 export interface WorkerTerminalInfo {
@@ -13,6 +14,7 @@ export interface WorkerTerminalInfo {
   name: string;
   cwd: string;
   title?: string;
+  activity: TerminalActivity | null;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -23,6 +25,8 @@ export interface WorkerCreateTerminalOptions {
   env?: Record<string, string>;
   command?: string;
   args?: string[];
+  activityToken?: string;
+  activityUrl?: string | null;
 }
 
 export interface WorkerKillAndWaitOptions {
@@ -48,6 +52,12 @@ export type TerminalWorkerRequest =
       env: Record<string, string>;
     }
   | {
+      type: "setActivity";
+      requestId: string;
+      terminalId: string;
+      state: TerminalActivityState;
+    }
+  | {
       type: "killTerminal";
       requestId: string;
       terminalId: string;
@@ -71,10 +81,6 @@ export type TerminalWorkerRequest =
       start?: number;
       end?: number;
       stripAnsi?: boolean;
-    }
-  | {
-      type: "listDirectories";
-      requestId: string;
     }
   | {
       type: "killAll";
@@ -138,9 +144,17 @@ export type TerminalWorkerEvent =
       type: "terminalsChanged";
       cwd: string;
       terminals: WorkerTerminalInfo[];
+    }
+  | {
+      type: "terminalActivityChange";
+      terminalId: string;
+      activity: TerminalActivity | null;
+      previous: TerminalActivity | null;
     };
 
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
+// The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so
+// the parent can cache the input-mode preamble instead of re-deriving it.
 export type TerminalWorkerStateResult = TerminalStateSnapshot | null;

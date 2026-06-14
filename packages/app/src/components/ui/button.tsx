@@ -94,10 +94,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   textDefault: {
-    color: theme.colors.palette.white,
+    color: theme.colors.accentForeground,
   },
   textDestructive: {
-    color: theme.colors.palette.white,
+    color: theme.colors.destructiveForeground,
   },
   textGhost: {
     color: theme.colors.foregroundMuted,

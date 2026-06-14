@@ -495,6 +495,66 @@ describe("workspace git watch targets", () => {
     await session.cleanup();
   });
 
+  test("archiving a workspace clears its script runtime entries by opaque workspace id", async () => {
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId: "ws-10",
+      scriptName: "app",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-app",
+      exitCode: null,
+    });
+
+    const { session, projects, workspaces } = createSessionForWorkspaceGitWatchTests({
+      scriptRuntimeStore: runtimeStore,
+    });
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-10",
+      cwd: "/tmp/repo",
+      name: "main",
+    });
+
+    await asInternals<{ archiveWorkspaceRecord: (workspaceId: string) => Promise<void> }>(
+      session,
+    ).archiveWorkspaceRecord("ws-10");
+
+    expect(runtimeStore.listForWorkspace("ws-10")).toEqual([]);
+
+    await session.cleanup();
+  });
+
+  test("archiving a workspace releases its git watch subscription for the directory", async () => {
+    const { session, projects, workspaces, subscriptions } =
+      createSessionForWorkspaceGitWatchTests();
+    const sessionAny = asInternals<
+      SessionInternals & { archiveWorkspaceRecord: (workspaceId: string) => Promise<void> }
+    >(session);
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-10",
+      cwd: REPO_CWD,
+      name: "main",
+    });
+
+    sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true, workspaceId: "ws-10" });
+    expect(subscriptions).toHaveLength(1);
+
+    await sessionAny.archiveWorkspaceRecord("ws-10");
+
+    // Re-observing the directory establishes a fresh subscription only if archive
+    // tore down the prior one, which is keyed by cwd — not the opaque workspace id.
+    sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true, workspaceId: "ws-10" });
+    expect(subscriptions).toHaveLength(2);
+
+    await session.cleanup();
+  });
+
   test("embeds PR status in checkout_status_update for GitHub-inclusive snapshot pushes", async () => {
     const { session, emitted, projects, workspaces, subscriptions } =
       createSessionForWorkspaceGitWatchTests();

@@ -2,10 +2,26 @@ import { useState, useRef, useEffect } from "react";
 import type { ImageAttachment } from "@/composer/types";
 import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
+import {
+  getRasterImageMimeTypeFromPath,
+  isRasterImageFile,
+  isRasterImagePath,
+} from "@/attachments/file-types";
 import { isWeb } from "@/constants/platform";
+
+export interface DroppedFileItem {
+  kind: "web-file";
+  file: File;
+}
+export interface DroppedPathItem {
+  kind: "desktop-path";
+  path: string;
+}
+export type DroppedItem = DroppedFileItem | DroppedPathItem;
 
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
+  onGenericFilesDropped?: (items: DroppedItem[]) => void;
   disabled?: boolean;
 }
 
@@ -15,20 +31,6 @@ interface UseFileDropZoneReturn {
 }
 
 const IS_WEB = isWeb;
-const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
-  ".svg": "image/svg+xml",
-  ".heic": "image/heic",
-  ".heif": "image/heif",
-  ".avif": "image/avif",
-  ".tif": "image/tiff",
-  ".tiff": "image/tiff",
-};
 
 type DesktopDragDropPayload =
   | {
@@ -50,26 +52,8 @@ interface DesktopDragDropEvent {
   payload: DesktopDragDropPayload;
 }
 
-function isImageFile(file: File): boolean {
-  return file.type.startsWith("image/");
-}
-
-function getFileExtension(path: string): string {
-  const normalizedPath = path.split("#", 1)[0]?.split("?", 1)[0] ?? path;
-  const extensionIndex = normalizedPath.lastIndexOf(".");
-  if (extensionIndex < 0) {
-    return "";
-  }
-  return normalizedPath.slice(extensionIndex).toLowerCase();
-}
-
-function isImagePath(path: string): boolean {
-  return getFileExtension(path) in IMAGE_MIME_BY_EXTENSION;
-}
-
 async function filePathToImageAttachment(path: string): Promise<ImageAttachment> {
-  const extension = getFileExtension(path);
-  const mimeType = IMAGE_MIME_BY_EXTENSION[extension] ?? "image/jpeg";
+  const mimeType = getRasterImageMimeTypeFromPath(path) ?? "image/jpeg";
   return await persistAttachmentFromFileUri({ uri: path, mimeType });
 }
 
@@ -83,17 +67,23 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
 
 export function useFileDropZone({
   onFilesDropped,
+  onGenericFilesDropped,
   disabled = false,
 }: UseFileDropZoneOptions): UseFileDropZoneReturn {
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLElement | null>(null);
   const dragCounterRef = useRef(0);
   const onFilesDroppedRef = useRef(onFilesDropped);
+  const onGenericFilesDroppedRef = useRef(onGenericFilesDropped);
 
-  // Keep callback ref up to date
+  // Keep callback refs up to date
   useEffect(() => {
     onFilesDroppedRef.current = onFilesDropped;
   }, [onFilesDropped]);
+
+  useEffect(() => {
+    onGenericFilesDroppedRef.current = onGenericFilesDropped;
+  }, [onGenericFilesDropped]);
 
   // Reset drag state when disabled changes
   useEffect(() => {
@@ -156,7 +146,16 @@ export function useFileDropZone({
 
           if (disabled) return;
 
-          const imagePaths = payload.paths.filter(isImagePath);
+          const items: DroppedPathItem[] = payload.paths.map((path) => ({
+            kind: "desktop-path",
+            path,
+          }));
+
+          if (onGenericFilesDroppedRef.current && items.length > 0) {
+            onGenericFilesDroppedRef.current(items);
+          }
+
+          const imagePaths = payload.paths.filter(isRasterImagePath);
           if (imagePaths.length === 0) {
             return;
           }
@@ -238,7 +237,16 @@ export function useFileDropZone({
         if (disabled) return;
 
         const files = Array.from(e.dataTransfer?.files ?? []);
-        const imageFiles = files.filter(isImageFile);
+        const genericItems: DroppedItem[] = files.map((file) => ({
+          kind: "web-file",
+          file,
+        }));
+
+        if (onGenericFilesDroppedRef.current && genericItems.length > 0) {
+          onGenericFilesDroppedRef.current(genericItems);
+        }
+
+        const imageFiles = files.filter(isRasterImageFile);
 
         if (imageFiles.length === 0) return;
 

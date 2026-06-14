@@ -34,7 +34,7 @@ test("creates a worktree and registers it in the source workspace project withou
     displayName: "acme/repo",
   });
   const sourceWorkspace = createPersistedWorkspaceRecordForTest({
-    workspaceId: repoDir,
+    workspaceId: "ws-main-checkout",
     projectId: sourceProject.projectId,
     cwd: repoDir,
     kind: "local_checkout",
@@ -57,6 +57,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.created).toBe(true);
   expect(result.workspace.cwd).toBe(result.worktree.worktreePath);
   expect(result.workspace.kind).toBe("worktree");
+  expect(result.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
@@ -76,7 +77,7 @@ test("registers a new worktree in the existing root project after the main check
     displayName: "acme/repo",
   });
   const existingWorktree = createPersistedWorkspaceRecordForTest({
-    workspaceId: path.join(tempDir, "existing-worktree"),
+    workspaceId: "ws-existing-worktree",
     projectId: sourceProject.projectId,
     cwd: path.join(tempDir, "existing-worktree"),
     kind: "worktree",

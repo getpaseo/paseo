@@ -25,6 +25,16 @@ describe("runCli", () => {
     ).toEqual(["node", "paseo", "daemon", "set-password"]);
   });
 
+  it("preserves the hooks command argv", () => {
+    expect(
+      createCliParseArgv({
+        argv: ["hooks", "claude", "UserPromptSubmit"],
+        cwd: process.cwd(),
+        nodeArgv: ["node", "paseo"],
+      }),
+    ).toEqual(["node", "paseo", "hooks", "claude", "UserPromptSubmit"]);
+  });
+
   it("classifies existing unknown directories as open-project invocations", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-cli-run-"));
     const project = path.join(root, "project");

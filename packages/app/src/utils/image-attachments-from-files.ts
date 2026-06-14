@@ -1,5 +1,6 @@
 import type { AttachmentMetadata } from "@/attachments/types";
 import { persistAttachmentFromBlob } from "@/attachments/service";
+import { isRasterImageMimeType } from "@/attachments/file-types";
 
 export interface ClipboardItemLike {
   kind?: string;
@@ -25,7 +26,7 @@ export function collectImageFilesFromClipboardData(
     if (item?.kind !== "file") {
       continue;
     }
-    if (!item.type?.startsWith("image/")) {
+    if (!isRasterImageMimeType(item.type)) {
       continue;
     }
     const file = item.getAsFile?.();

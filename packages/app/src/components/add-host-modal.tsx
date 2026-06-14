@@ -319,8 +319,8 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   }, []);
 
   const connectIcon = useMemo(
-    () => <Link2 size={16} color={theme.colors.palette.white} />,
-    [theme.colors.palette.white],
+    () => <Link2 size={16} color={theme.colors.accentForeground} />,
+    [theme.colors.accentForeground],
   );
   const hostFieldStyle = useMemo(() => [styles.field, styles.hostField], []);
   const portFieldStyle = useMemo(() => [styles.field, styles.portField], []);

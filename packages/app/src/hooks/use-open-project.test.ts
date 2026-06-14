@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { openProjectDirectly } from "@/hooks/open-project";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 
@@ -91,11 +91,11 @@ describe("openProjectDirectly", () => {
       projectPath: PROJECT_PATH,
       isConnected: true,
       client: {
-        openProject: vi.fn(async () => ({
+        openProject: async () => ({
           requestId: "request-1",
           error: null,
           workspace: workspacePayload,
-        })),
+        }),
       },
       mergeWorkspaces: session.mergeWorkspaces,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
@@ -103,7 +103,7 @@ describe("openProjectDirectly", () => {
       navigateToWorkspace: navigator.navigateToWorkspace,
     });
 
-    expect(result).toBe(true);
+    expect(result).toEqual({ ok: true });
     expect(session.merges).toHaveLength(1);
     expect(session.merges[0]?.serverId).toBe(SERVER_ID);
     expect(session.merges[0]?.workspaces[0]).toMatchObject({
@@ -127,11 +127,12 @@ describe("openProjectDirectly", () => {
       projectPath: PROJECT_PATH,
       isConnected: true,
       client: {
-        openProject: vi.fn(async () => ({
+        openProject: async () => ({
           requestId: "request-2",
-          error: "Failed to open project",
+          error: "Directory not found: /repo/project",
+          errorCode: "directory_not_found" as const,
           workspace: null,
-        })),
+        }),
       },
       mergeWorkspaces: session.mergeWorkspaces,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
@@ -139,7 +140,11 @@ describe("openProjectDirectly", () => {
       navigateToWorkspace: navigator.navigateToWorkspace,
     });
 
-    expect(result).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      errorCode: "directory_not_found",
+      error: "Directory not found: /repo/project",
+    });
     expect(session.merges).toEqual([]);
     expect(session.hydrated).toEqual([]);
     expect(layout.openedTabs).toEqual([]);

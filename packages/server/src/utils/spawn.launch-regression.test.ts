@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { findExecutable } from "./executable.js";
+import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "./spawn.js";
 import { isPlatform } from "../test-utils/platform.js";
 

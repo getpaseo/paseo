@@ -317,6 +317,10 @@ function GeneralSection({
   const activeLocale = getActiveLocale(i18n.language);
   const iconColor = theme.colors.foregroundMuted;
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
+  const sendBehaviorDescriptionKey =
+    settings.sendBehavior === "interrupt"
+      ? "settings.general.defaultSend.descriptions.interrupt"
+      : "settings.general.defaultSend.descriptions.queue";
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
   );
@@ -358,9 +362,7 @@ function GeneralSection({
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{t("settings.general.defaultSend.label")}</Text>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.general.defaultSend.description")}
-            </Text>
+            <Text style={settingsStyles.rowHint}>{t(sendBehaviorDescriptionKey)}</Text>
           </View>
           <SegmentedControl
             size="sm"

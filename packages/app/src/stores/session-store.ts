@@ -28,8 +28,11 @@ import type {
   WorkspaceDescriptorPayload,
   ProviderQuotaMessage,
 } from "@getpaseo/protocol/messages";
-import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
+import {
+  normalizeWorkspaceOpaqueId,
+  normalizeWorkspacePath,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -150,7 +153,10 @@ export function normalizeWorkspaceDescriptor(
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectRootPath: payload.projectRootPath,
-    workspaceDirectory: payload.workspaceDirectory,
+    // Canonicalize the workspace directory once, at the store boundary, so every
+    // consumer can read workspace.workspaceDirectory directly. Empty means "no
+    // usable directory" (older daemons may omit it; the wire field is optional).
+    workspaceDirectory: normalizeWorkspacePath(payload.workspaceDirectory) ?? "",
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,
@@ -277,6 +283,7 @@ export interface SessionState {
 
   // Focus
   focusedAgentId: string | null;
+  focusedTerminalId: string | null;
 
   // Messages
   messages: MessageEntry[];
@@ -337,6 +344,7 @@ interface SessionStoreActions {
 
   // Focus
   setFocusedAgentId: (serverId: string, agentId: string | null) => void;
+  setFocusedTerminalId: (serverId: string, terminalId: string | null) => void;
 
   // Messages
   setMessages: (
@@ -479,6 +487,7 @@ function createInitialSessionState(serverId: string, client: DaemonClient): Sess
     hasHydratedWorkspaces: false,
     isPlayingAudio: false,
     focusedAgentId: null,
+    focusedTerminalId: null,
     messages: [],
     currentAssistantMessage: "",
     agentStreamTail: new Map(),
@@ -718,6 +727,25 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 focusedAgentId: agentId,
+              },
+            },
+          };
+        });
+      },
+
+      setFocusedTerminalId: (serverId, terminalId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.focusedTerminalId === terminalId) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: {
+                ...session,
+                focusedTerminalId: terminalId,
               },
             },
           };

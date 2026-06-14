@@ -97,6 +97,7 @@ export function ExplorerSidebar({
     windowWidth,
     animateToOpen,
     animateToClose,
+    overlayVisible,
     isGesturing,
     gestureAnimatingRef,
     closeGestureRef,
@@ -265,7 +266,6 @@ export function ExplorerSidebar({
 
   const backdropAnimatedStyle = useAnimatedStyle(() => ({
     opacity: backdropOpacity.value,
-    pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
@@ -273,8 +273,15 @@ export function ExplorerSidebar({
   }));
 
   const backdropCombinedStyle = useMemo(
-    () => [explorerStaticStyles.backdrop, backdropAnimatedStyle],
-    [backdropAnimatedStyle],
+    () => [
+      explorerStaticStyles.backdrop,
+      backdropAnimatedStyle,
+      // pointerEvents is React-owned, not worklet-owned: Reanimated never
+      // touches it, so a stale animated-prop revert can't wedge an invisible
+      // tap-eating backdrop.
+      { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
+    ],
+    [backdropAnimatedStyle, isOpen],
   );
   const mobileSidebarStyle = useMemo(
     () => [
@@ -294,6 +301,16 @@ export function ExplorerSidebar({
       sidebarAnimatedStyle,
       mobileKeyboardInsetStyle,
     ],
+  );
+  // display is React-owned on the plain wrapper View (no animated styles), so
+  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
+  // reverts the panel transform to after a heavy commit (reanimated#9635).
+  const overlayStyle = useMemo(
+    () => [
+      StyleSheet.absoluteFillObject,
+      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
+    ],
+    [overlayVisible],
   );
   const desktopSidebarStyle = useMemo(
     () => [explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }],
@@ -315,7 +332,7 @@ export function ExplorerSidebar({
 
   if (isMobile) {
     return (
-      <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+      <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
         <Animated.View style={backdropCombinedStyle} />
 

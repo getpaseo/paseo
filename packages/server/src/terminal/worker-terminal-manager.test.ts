@@ -1,16 +1,24 @@
 import { afterEach, expect, it } from "vitest";
+import { isPlatform } from "../test-utils/platform.js";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
-import type { TerminalManager } from "./terminal-manager.js";
-import type { TerminalSession } from "./terminal.js";
+import type { TerminalActivityTransitionEvent, TerminalManager } from "./terminal-manager.js";
+import {
+  resolvePaseoCliBinDir,
+  resolvePaseoCliExecutablePath,
+  type TerminalSession,
+} from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type {
   TerminalWorkerRequest,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
+
+type TerminalRow = TerminalState["grid"][number];
 
 function nodeTerminalCommand(script: string): { command: string; args: string[] } {
   return {
@@ -38,15 +46,30 @@ function getVisibleText(session: TerminalSession): string {
   return getVisibleTextFromState(session.getState());
 }
 
+function rowToText(row: TerminalRow): string {
+  return row
+    .map((cell) => cell.char)
+    .join("")
+    .trimEnd();
+}
+
 function getVisibleTextFromState(state: TerminalState): string {
-  return state.grid
-    .map((row) =>
-      row
-        .map((cell) => cell.char)
-        .join("")
-        .trimEnd(),
-    )
-    .join("\n");
+  return state.grid.map(rowToText).join("\n");
+}
+
+function getRenderedTextFromState(state: TerminalState): string {
+  return [...state.scrollback, ...state.grid].map(rowToText).join("\n");
+}
+
+function readRenderedTokenIndexesFromState(state: TerminalState): number[] {
+  const indexes: number[] = [];
+  for (const match of getRenderedTextFromState(state).matchAll(/\[(\d+)\]/g)) {
+    const value = match[1];
+    if (value !== undefined) {
+      indexes.push(Number(value));
+    }
+  }
+  return indexes;
 }
 
 function createTerminalState(): TerminalState {
@@ -176,6 +199,69 @@ it("creates a terminal through the worker and streams output", async () => {
   expect(snapshots).toBe(snapshotsBeforeOutput);
 });
 
+it("delivers rapid small writes complete and in order through worker coalescing", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
+  temporaryDirs.push(cwd);
+  const burstGatePath = join(cwd, "burst-ready");
+  manager = createWorkerTerminalManager();
+  // The file gate starts the burst after this test subscribes without depending
+  // on platform-specific PTY input echo/canonical-mode behavior.
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd,
+      env: { PASEO_TERMINAL_BURST_GATE: burstGatePath },
+      ...nodeTerminalCommand(`
+      const fs = require("node:fs");
+      const gatePath = process.env.PASEO_TERMINAL_BURST_GATE;
+      const gate = setInterval(() => {
+        if (!gatePath || !fs.existsSync(gatePath)) {
+          return;
+        }
+        clearInterval(gate);
+        for (let i = 0; i < 500; i++) {
+          process.stdout.write("[" + i + "]\\n");
+        }
+      }, 10);
+      setInterval(() => {}, 1000);
+    `),
+    }),
+  );
+
+  const events: Array<{ type: string; data?: string }> = [];
+  session.subscribe((message) => {
+    if (message.type === "output") {
+      events.push({ type: "output", data: message.data });
+    } else if (message.type === "snapshot" || message.type === "snapshotReady") {
+      events.push({ type: message.type });
+    }
+  });
+
+  // Let the snapshot subscription settle, then trigger the burst.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  writeFileSync(burstGatePath, "go");
+
+  const expected = Array.from({ length: 500 }, (_, index) => index);
+  let received: number[] = [];
+  await waitForCondition(async () => {
+    const snapshot = await manager!.getTerminalState(session.id);
+    received = snapshot ? readRenderedTokenIndexesFromState(snapshot.state) : [];
+    return expected.every((value, index) => received[index] === value);
+  }, 10000);
+
+  expect(received).toEqual(expected);
+
+  await waitForCondition(() => events.some((event) => event.type === "output"), 10000);
+
+  // No snapshot may land after output it should have preceded: every snapshot
+  // event must come before the first output event.
+  const firstOutputIndex = events.findIndex((event) => event.type === "output");
+  expect(firstOutputIndex).toBeGreaterThanOrEqual(0);
+  const snapshotAfterOutput = events
+    .slice(firstOutputIndex + 1)
+    .find((event) => event.type === "snapshot" || event.type === "snapshotReady");
+  expect(snapshotAfterOutput).toBeUndefined();
+});
+
 it("pulls fresh terminal state from the worker authority", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-state-"));
   temporaryDirs.push(cwd);
@@ -199,6 +285,37 @@ it("pulls fresh terminal state from the worker authority", async () => {
 
   expect(visibleText).toContain("worker-state-ready");
 });
+
+// Windows ConPTY normalizes away the kitty keyboard escape the child writes, so it
+// never reaches the worker's input-mode tracker and the preamble stays empty. The
+// preamble-caching contract is verified on Linux/macOS; the daemon's input-mode
+// handling runs identically on every platform once the escape is observed.
+it.skipIf(isPlatform("win32"))(
+  "caches the input-mode replay preamble from the worker after getTerminalState",
+  async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
+    temporaryDirs.push(cwd);
+    manager = createWorkerTerminalManager();
+    // \x1b[>1u pushes kitty keyboard flag 1, which the worker's input-mode
+    // tracker records and reflects in its replay preamble (\x1b[=1;1u).
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd,
+        ...nodeTerminalCommand(`
+      process.stdout.write("\\u001b[>1u");
+      setInterval(() => {}, 1000);
+    `),
+      }),
+    );
+
+    await waitForCondition(async () => {
+      const snapshot = await manager!.getTerminalState(session.id);
+      return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
+    }, 10000);
+
+    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
+  },
+);
 
 it("refreshes cached terminal title after worker title changes", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
@@ -263,7 +380,12 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
 
   worker.emitWorkerMessage({
     type: "terminalCreated",
-    terminal: { id: "terminal-1", name: "Terminal", cwd: "/tmp" },
+    terminal: {
+      id: "terminal-1",
+      name: "Terminal",
+      cwd: "/tmp",
+      activity: { state: "idle", changedAt: 0 },
+    },
     state: createTerminalState(),
   });
   const session = manager.getTerminal("terminal-1");
@@ -313,6 +435,57 @@ it("keeps registered cwd env inheritance behind the worker manager interface", a
   expect(readFileSync(markerPath, "utf8")).toBe("worker-env");
 });
 
+it("injects parent-minted terminal activity env through the worker", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-activity-env-"));
+  temporaryDirs.push(cwd);
+  const envPath = join(cwd, "activity-env.json");
+  const activityUrl = "http://127.0.0.1:12345/api/terminal-activity";
+  manager = createWorkerTerminalManager({
+    getTerminalActivityUrl: () => activityUrl,
+  });
+
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd,
+      ...nodeTerminalCommand(`
+        require("node:fs").writeFileSync(
+          ${JSON.stringify(envPath)},
+          JSON.stringify({
+            terminalId: process.env.PASEO_TERMINAL_ID,
+            token: process.env.PASEO_ACTIVITY_TOKEN,
+            url: process.env.PASEO_TERMINAL_ACTIVITY_URL,
+            hookCli: process.env.PASEO_HOOK_CLI,
+            path: process.env.PATH ?? process.env.Path,
+          }),
+        );
+        setInterval(() => {}, 1000);
+      `),
+    }),
+  );
+
+  await waitForCondition(() => existsSync(envPath), 10000);
+
+  const env = JSON.parse(readFileSync(envPath, "utf8")) as {
+    terminalId?: string;
+    token?: string;
+    url?: string;
+    hookCli?: string;
+    path?: string;
+  };
+  const paseoCliBinDir = resolvePaseoCliBinDir();
+  const paseoCliPath = resolvePaseoCliExecutablePath();
+  expect(paseoCliBinDir).not.toBeNull();
+  expect(paseoCliPath).not.toBeNull();
+  expect(env.terminalId).toBe(session.id);
+  expect(env.token).toEqual(expect.any(String));
+  expect(env.token).not.toBe("");
+  expect(env.url).toBe(activityUrl);
+  expect(env.hookCli).toBe(paseoCliPath);
+  expect(manager.validateTerminalActivityToken(session.id, env.token ?? "")).toBe("valid");
+  await expect(manager.setTerminalActivity(session.id, "attention")).resolves.toBe(true);
+  expect(env.path?.split(delimiter)[0]).toBe(paseoCliBinDir);
+});
+
 it("starts the default shell through the worker and accepts quoted commands", async () => {
   manager = createWorkerTerminalManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-shell-"));
@@ -348,6 +521,133 @@ it("lists subdirectory terminals when querying the workspace root", async () => 
   const rootTerminals = await manager.getTerminals(rootCwd);
 
   expect(rootTerminals.map((terminal) => terminal.id)).toEqual([created.id]);
+});
+
+it("surfaces worker activity changes via getActivity, onActivityChange, and terminalsChanged", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: { state: "idle", changedAt: 0 },
+    },
+    state: createTerminalState(),
+  });
+
+  const session = manager.getTerminal("terminal-a");
+  expect(session).toBeDefined();
+  expect(session!.getActivity()).toEqual({ state: "idle", changedAt: 0 });
+
+  const activityChanges: Array<{
+    activity: TerminalActivity | null;
+    previous: TerminalActivity | null;
+  }> = [];
+  const activityTransitions: TerminalActivityTransitionEvent[] = [];
+  const terminalsChangedCwds: string[] = [];
+  session!.onActivityChange((transition) => {
+    activityChanges.push(transition);
+  });
+  manager.subscribeTerminalActivity((event) => {
+    activityTransitions.push(event);
+  });
+  manager.subscribeTerminalsChanged((event) => {
+    terminalsChangedCwds.push(event.cwd);
+  });
+
+  const workingActivity = { state: "working" as const, changedAt: 1000 };
+  const idleActivity = { state: "idle" as const, changedAt: 0 };
+  worker.emitWorkerMessage({
+    type: "terminalActivityChange",
+    terminalId: "terminal-a",
+    activity: workingActivity,
+    previous: idleActivity,
+  });
+
+  expect(session!.getActivity()).toEqual(workingActivity);
+  expect(activityChanges).toEqual([{ activity: workingActivity, previous: idleActivity }]);
+  expect(activityTransitions).toEqual([
+    {
+      terminalId: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: workingActivity,
+      previous: idleActivity,
+    },
+  ]);
+  expect(terminalsChangedCwds).toContain("/workspace");
+});
+
+it("sets terminal activity through a worker request", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: null,
+    },
+    state: createTerminalState(),
+  });
+
+  const result = manager.setTerminalActivity("terminal-a", "attention");
+  const request = worker.sentMessages.find((message) => message.type === "setActivity");
+  expect(request).toMatchObject({
+    type: "setActivity",
+    terminalId: "terminal-a",
+    state: "attention",
+  });
+  if (!request) {
+    throw new Error("setActivity request not sent");
+  }
+  worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+
+  await expect(result).resolves.toBe(true);
+});
+
+it("clears terminal attention through a worker activity update", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Shell",
+      cwd: "/workspace",
+      activity: { state: "attention", changedAt: 1000 },
+    },
+    state: createTerminalState(),
+  });
+
+  const result = manager.clearTerminalAttention("terminal-a");
+  const request = worker.sentMessages.find(
+    (message) => message.type === "setActivity" && message.state === "idle",
+  );
+  expect(request).toMatchObject({
+    type: "setActivity",
+    terminalId: "terminal-a",
+    state: "idle",
+  });
+  if (!request) {
+    throw new Error("attention clear request not sent");
+  }
+  worker.emitWorkerMessage({ type: "response", requestId: request.requestId, ok: true });
+
+  await expect(result).resolves.toBe(true);
 });
 
 it("removes worker terminals after killAndWait", async () => {

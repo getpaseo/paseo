@@ -38,11 +38,12 @@ interface UseWorkspaceTerminalsInput {
   workspaceDirectory: string | null;
   workspaceScripts: WorkspaceDescriptor["scripts"];
   hasHydratedWorkspaces: boolean;
-  isMissingWorkspaceExecutionAuthority: boolean;
+  isMissingWorkspaceDirectory: boolean;
   onTerminalCreated: (input: { terminalId: string; paneId?: string }) => void;
   onScriptTerminalSelected: (terminalId: string) => void;
   onWorkspacePathUnavailable: () => void;
   onTerminalCreateQueued: () => void;
+  onTerminalCreateFailed: (reason: string) => void;
 }
 
 export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
@@ -55,11 +56,12 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     workspaceDirectory,
     workspaceScripts,
     hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     onTerminalCreated,
     onScriptTerminalSelected,
     onWorkspacePathUnavailable,
     onTerminalCreateQueued,
+    onTerminalCreateFailed,
   } = input;
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -119,11 +121,19 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       if (!client || !workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      if (_input?.profile) {
-        const { name, command, args } = _input.profile;
-        return await client.createTerminal(workspaceDirectory, name, undefined, { command, args });
+      const payload = _input?.profile
+        ? await client.createTerminal(workspaceDirectory, _input.profile.name, undefined, {
+            command: _input.profile.command,
+            args: _input.profile.args,
+          })
+        : await client.createTerminal(workspaceDirectory);
+      // The daemon reports a failed spawn (e.g. a profile command that isn't
+      // installed) via payload.error with a null terminal. Surface it instead
+      // of silently treating the create as a no-op success.
+      if (!payload.terminal && payload.error) {
+        throw new Error(payload.error);
       }
-      return await client.createTerminal(workspaceDirectory);
+      return payload;
     },
     onSuccess: (payload, createInput) => {
       const createdTerminal = payload.terminal;
@@ -144,6 +154,9 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
           paneId: createInput?.paneId,
         });
       }
+    },
+    onError: (error: unknown) => {
+      onTerminalCreateFailed(error instanceof Error ? error.message : String(error));
     },
   });
   const killMutation = useMutation({
@@ -196,7 +209,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       return;
     }
 
-    if (hasHydratedWorkspaces && isMissingWorkspaceExecutionAuthority) {
+    if (hasHydratedWorkspaces && isMissingWorkspaceDirectory) {
       setPendingCreateInput(null);
       onWorkspacePathUnavailable();
     }
@@ -204,7 +217,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     canCreateNow,
     createMutation,
     hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     onWorkspacePathUnavailable,
     pendingCreateInput,
   ]);
@@ -220,7 +233,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
         return;
       }
 
-      if (hasHydratedWorkspaces && isMissingWorkspaceExecutionAuthority) {
+      if (hasHydratedWorkspaces && isMissingWorkspaceDirectory) {
         onWorkspacePathUnavailable();
         return;
       }
@@ -232,7 +245,7 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
       canCreateNow,
       createMutation,
       hasHydratedWorkspaces,
-      isMissingWorkspaceExecutionAuthority,
+      isMissingWorkspaceDirectory,
       onTerminalCreateQueued,
       onWorkspacePathUnavailable,
       pendingCreateInput,

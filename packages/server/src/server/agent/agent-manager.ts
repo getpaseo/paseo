@@ -849,7 +849,6 @@ export class AgentManager {
     agentId?: string,
     options?: {
       labels?: Record<string, string>;
-      workspaceId?: string;
       initialPrompt?: string;
       env?: Record<string, string>;
       persistSession?: boolean;
@@ -867,7 +866,6 @@ export class AgentManager {
     const session = await client.createSession(launchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
-      workspaceId: options?.workspaceId,
       initialTitle: options?.initialTitle,
     });
   }
@@ -2321,7 +2319,6 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     options?: {
-      workspaceId?: string;
       createdAt?: Date;
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
@@ -2369,7 +2366,6 @@ export class AgentManager {
     this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
     await this.refreshRuntimeInfo(managed, { emit: !options?.publishWhenReady });
     await this.persistSnapshot(managed, {
-      workspaceId: options?.workspaceId,
       title: initialPersistedTitle,
     });
     if (!options?.publishWhenReady) {
@@ -2378,7 +2374,7 @@ export class AgentManager {
 
     await this.refreshSessionState(managed, { emit: !options?.publishWhenReady });
     managed.lifecycle = "idle";
-    await this.persistSnapshot(managed, { workspaceId: options?.workspaceId });
+    await this.persistSnapshot(managed);
     this.emitState(managed, { persist: false });
     this.subscribeToSession(managed);
     return { ...managed };
@@ -2639,17 +2635,13 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { workspaceId?: string; title?: string | null; internal?: boolean },
+    options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     if (!this.registry) {
       return;
     }
     // Don't persist internal agents - they're ephemeral system tasks
     if (agent.internal) {
-      return;
-    }
-    if (options?.workspaceId !== undefined) {
-      await this.registry.applySnapshot(agent, options.workspaceId, options);
       return;
     }
     await this.registry.applySnapshot(agent, options);

@@ -15,7 +15,6 @@ export async function subscribeToEvents(
   await client.connect();
 
   await client.workspaces.list({
-    filter: { idPrefix: workspaceId },
     subscribe: { subscriptionId: `workspace-${workspaceId}` },
   });
 

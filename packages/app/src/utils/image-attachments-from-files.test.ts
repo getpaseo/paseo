@@ -95,6 +95,24 @@ describe("collectImageFilesFromClipboardData", () => {
     expect(files).toEqual([imagePng]);
   });
 
+  it("ignores SVG clipboard files", () => {
+    const svgFile = new File(["<svg />"], "logo.svg", {
+      type: "image/svg+xml",
+    });
+
+    const files = collectImageFilesFromClipboardData({
+      items: [
+        createClipboardItem({
+          kind: "file",
+          type: "image/svg+xml",
+          file: svgFile,
+        }),
+      ],
+    });
+
+    expect(files).toEqual([]);
+  });
+
   it("returns an empty array when clipboard data is missing", () => {
     expect(collectImageFilesFromClipboardData(undefined)).toEqual([]);
   });

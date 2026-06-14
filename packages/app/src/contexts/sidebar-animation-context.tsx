@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { Keyboard, useWindowDimensions } from "react-native";
@@ -31,6 +32,9 @@ import {
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
+// Keeps the overlay displayed long enough for the close animation to finish
+// before React hides it.
+const OVERLAY_CLOSE_GRACE_MS = 300;
 export const MOBILE_VISUAL_PANEL_AGENT = 0;
 export const MOBILE_VISUAL_PANEL_AGENT_LIST = 1;
 export const MOBILE_VISUAL_PANEL_FILE_EXPLORER = 2;
@@ -43,6 +47,8 @@ interface SidebarAnimationContextValue {
   animateToClose: () => void;
   startMobilePanelTransition: (mobileView: "agent" | "agent-list" | "file-explorer") => void;
   settleMobilePanel: (mobileView: "agent" | "agent-list" | "file-explorer") => void;
+  overlayVisible: boolean;
+  setOverlayPeek: (peek: boolean) => void;
   isGesturing: SharedValue<boolean>;
   mobileVisualPanel: SharedValue<number>;
   mobilePanelState: SharedValue<number>;
@@ -92,6 +98,28 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const gestureAnimatingRef = useRef(false);
   const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
+
+  // React owns whether the overlay is displayed at all; the worklet owns its
+  // motion. On Fabric, Reanimated re-applies its own (possibly stale) animated
+  // props over React's committed props on every commit, so a settled-closed
+  // overlay can ghost back on screen after a heavy commit (reanimated#9635) —
+  // no committed transform/opacity value can prevent that. display lives on
+  // the plain wrapper View that Reanimated never touches, so React's value is
+  // authoritative: a hidden overlay stays hidden no matter what the animated
+  // props revert to. overlayPeek shows the overlay during an open gesture
+  // before the store flips; the close grace keeps it displayed while the
+  // close animation plays.
+  const [overlayPeek, setOverlayPeek] = useState(false);
+  const overlayTarget = isOpen || overlayPeek;
+  const [overlayVisible, setOverlayVisible] = useState(overlayTarget);
+  useEffect(() => {
+    if (overlayTarget) {
+      setOverlayVisible(true);
+      return;
+    }
+    const timer = setTimeout(() => setOverlayVisible(false), OVERLAY_CLOSE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [overlayTarget]);
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
@@ -319,6 +347,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       animateToClose,
       startMobilePanelTransition,
       settleMobilePanel,
+      overlayVisible,
+      setOverlayPeek,
       isGesturing,
       mobileVisualPanel,
       mobilePanelState,
@@ -334,6 +364,7 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       animateToClose,
       startMobilePanelTransition,
       settleMobilePanel,
+      overlayVisible,
       isGesturing,
       mobileVisualPanel,
       mobilePanelState,

@@ -101,11 +101,10 @@ import {
 import {
   buildReviewDraftScopeKey,
   buildReviewDraftKey,
-  useActiveReviewDraftMode,
   useReviewAttachmentSnapshot,
-  useSetActiveReviewDraftMode,
+  useResolvedDiffMode,
+  useSetDiffModeOverride,
   type ReviewDraftComment,
-  type ReviewDraftMode,
   getInlineReviewThreadState,
   getSplitInlineReviewThreadState,
   InlineReviewGutterCell,
@@ -1593,7 +1592,6 @@ export function GitDiffPane({
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
   const canUseSplitLayout = isWeb && !isMobile;
-  const [diffModeOverride, setDiffModeOverride] = useState<ReviewDraftMode | null>(null);
   const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
     useChangesPreferences();
   const wrapLines = changesPreferences.wrapLines;
@@ -1613,9 +1611,6 @@ export function GitDiffPane({
   const handleToggleHideWhitespace = useCallback(() => {
     void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
   }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
-
-  // handleSelectUncommitted/handleSelectBase are defined later, after reviewDraftScopeKey
-  // and setActiveReviewMode are available, so they can record the active review mode.
 
   const handleLayoutUnified = useCallback(() => {
     handleLayoutChange("unified");
@@ -1691,8 +1686,6 @@ export function GitDiffPane({
   const statusState = deriveStatusState({ status, isStatusLoading, isStatusError, statusError });
   const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges } = statusState;
 
-  // Auto-select diff mode based on state: uncommitted when dirty, base when clean
-  const autoDiffMode: ReviewDraftMode = hasUncommittedChanges ? "uncommitted" : "base";
   const reviewDraftScopeKey = useMemo(
     () =>
       buildReviewDraftScopeKey({
@@ -1704,8 +1697,11 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, serverId, workspaceId],
   );
-  const activeReviewMode = useActiveReviewDraftMode({ scopeKey: reviewDraftScopeKey });
-  const diffMode = diffModeOverride ?? activeReviewMode ?? autoDiffMode;
+  const diffMode = useResolvedDiffMode({
+    scopeKey: reviewDraftScopeKey,
+    hasUncommittedChanges,
+  });
+  const setDiffModeOverride = useSetDiffModeOverride();
 
   const {
     files,
@@ -1731,17 +1727,20 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, diffMode, serverId, workspaceId],
   );
-  const setActiveReviewMode = useSetActiveReviewDraftMode();
 
   const handleSelectUncommitted = useCallback(() => {
-    setDiffModeOverride("uncommitted");
-    setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "uncommitted" });
-  }, [reviewDraftScopeKey, setActiveReviewMode]);
+    setDiffModeOverride({
+      scopeKey: reviewDraftScopeKey,
+      override: { serverId, cwd, mode: "uncommitted", isDirtyAtSelection: hasUncommittedChanges },
+    });
+  }, [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride]);
 
   const handleSelectBase = useCallback(() => {
-    setDiffModeOverride("base");
-    setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "base" });
-  }, [reviewDraftScopeKey, setActiveReviewMode]);
+    setDiffModeOverride({
+      scopeKey: reviewDraftScopeKey,
+      override: { serverId, cwd, mode: "base", isDirtyAtSelection: hasUncommittedChanges },
+    });
+  }, [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride]);
 
   const reviewActions = useInlineReviewController({
     reviewDraftKey,
@@ -1993,11 +1992,6 @@ export function GitDiffPane({
       );
     }
   }, [allExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
-
-  // Clear diff mode override when auto mode changes (e.g., after commit)
-  useEffect(() => {
-    setDiffModeOverride(null);
-  }, [autoDiffMode]);
 
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {

@@ -5,6 +5,7 @@ import {
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
   resolveDefaultTerminalShell,
+  resolveTerminalSpawnCommand,
   humanizeProcessTitle,
   normalizeProcessTitle,
   resolveZshShellIntegrationDir,
@@ -203,6 +204,50 @@ describe("createTerminal", () => {
     ).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   });
 
+  it("passes profile commands through untouched on non-Windows", async () => {
+    const resolveExecutable = vi.fn(async () => "/usr/local/bin/claude");
+    const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
+      platform: "linux",
+      resolveExecutable,
+    });
+
+    expect(resolved).toEqual({ command: "claude", args: ["--foo"] });
+    // Non-Windows must not pay the executable-resolution cost.
+    expect(resolveExecutable).not.toHaveBeenCalled();
+  });
+
+  it("keeps the original command when it cannot be resolved on Windows", async () => {
+    const resolved = await resolveTerminalSpawnCommand("claude", [], {
+      platform: "win32",
+      resolveExecutable: async () => null,
+    });
+
+    // Falls back to the bare command so the terminal surfaces the error itself.
+    expect(resolved).toEqual({ command: "claude", args: [] });
+  });
+
+  it("routes resolved .cmd shims through cmd.exe on Windows", async () => {
+    const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
+      platform: "win32",
+      env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+      resolveExecutable: async () => "C:\\npm\\claude.cmd",
+    });
+
+    expect(resolved).toEqual({
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/c", "C:\\npm\\claude.cmd", "--foo"],
+    });
+  });
+
+  it("uses the resolved .exe path directly on Windows", async () => {
+    const resolved = await resolveTerminalSpawnCommand("claude", ["--foo"], {
+      platform: "win32",
+      resolveExecutable: async () => "C:\\tools\\claude.exe",
+    });
+
+    expect(resolved).toEqual({ command: "C:\\tools\\claude.exe", args: ["--foo"] });
+  });
+
   it("creates a terminal session with an id, name, and cwd", async () => {
     const session = trackSession(
       await createTerminal({
@@ -333,6 +378,50 @@ describe("createTerminal", () => {
     // lastOutputLines may be empty if the process exits before xterm processes the data write
     expect(Array.isArray(exitInfo.lastOutputLines)).toBe(true);
     expect(session.getExitInfo()).toEqual(exitInfo);
+  });
+
+  it("retains the final lines after output far exceeds the recent-output char cap", async () => {
+    // Emit many small chunks whose total length is well past the 16000-char
+    // recent-output cap, so the chunk-trimming path runs repeatedly. The final
+    // distinctive lines must survive in the exit summary. The process is kept
+    // alive (no self-exit) so we can wait until the last chunk has actually been
+    // parsed by the headless terminal before killing — otherwise the exit
+    // summary races the async xterm parse and reads a stale buffer.
+    const session = trackSession(
+      await createTerminal({
+        cwd: realpathSync(tmpdir()),
+        command: process.execPath,
+        args: [
+          "-e",
+          "for (let i = 0; i < 3000; i++) { process.stdout.write(`line-${i}\\n`); } setInterval(() => {}, 1000);",
+        ],
+      }),
+    );
+
+    // Poll the parsed buffer until the final line lands, so the exit summary
+    // (which reads the headless buffer) can't race the async xterm parse.
+    const finalLineParsed = (): boolean => {
+      const state = session.getState();
+      const rowText = (row: { char: string }[]): string => row.map((cell) => cell.char).join("");
+      return [...state.scrollback, ...state.grid].some((row) => rowText(row).includes("line-2999"));
+    };
+    const deadline = Date.now() + 10000;
+    while (!finalLineParsed()) {
+      if (Date.now() > deadline) {
+        throw new Error("Timed out waiting for the final line to be parsed");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    const exitInfo = await new Promise<NonNullable<ReturnType<TerminalSession["getExitInfo"]>>>(
+      (resolve) => {
+        session.onExit((info) => resolve(info));
+        session.kill();
+      },
+    );
+
+    expect(exitInfo.lastOutputLines.length).toBeGreaterThan(0);
+    expect(exitInfo.lastOutputLines[exitInfo.lastOutputLines.length - 1]).toBe("line-2999");
   });
 });
 

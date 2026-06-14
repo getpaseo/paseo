@@ -242,6 +242,14 @@ describe("splitHtmlishMarkdown", () => {
     expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
   });
 
+  it("keeps details inside inline code on native runtimes without copied array sorting", () => {
+    const source = "Use `<details><summary>Example</summary>Body</details>` as an example.";
+
+    expect(withoutArrayToSorted(() => splitHtmlishMarkdown(source))).toEqual([
+      { kind: "markdown", text: source },
+    ]);
+  });
+
   it("keeps details inside inline code as literal markdown", () => {
     const source = "Use `<details><summary>Example</summary>Body</details>` as an example.";
 
@@ -310,3 +318,15 @@ describe("splitHtmlishMarkdown", () => {
     ]);
   });
 });
+
+function withoutArrayToSorted<T>(callback: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+  Reflect.deleteProperty(Array.prototype, "toSorted");
+  try {
+    return callback();
+  } finally {
+    if (descriptor) {
+      Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
+    }
+  }
+}

@@ -474,8 +474,13 @@ function TabHandleContent({
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
 }) {
+  const tabHandleDataSet = useMemo(
+    () => ({ statusBucket: presentation.statusBucket ?? "none" }),
+    [presentation.statusBucket],
+  );
+
   return (
-    <View style={styles.tabHandle}>
+    <View style={styles.tabHandle} dataSet={tabHandleDataSet}>
       <View style={styles.tabIcon}>
         <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
       </View>

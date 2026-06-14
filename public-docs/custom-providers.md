@@ -2,7 +2,8 @@
 title: Custom providers
 description: Configure custom providers, alternative endpoints, profiles, custom binaries, and ACP agents in ~/.paseo/config.json.
 nav: Custom providers
-order: 7
+order: 22
+category: Providers
 ---
 
 # Custom providers

@@ -1,5 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { CheckoutPrStatusResponse } from "@getpaseo/protocol/messages";
@@ -81,23 +80,8 @@ export function useCheckoutPrStatusQuery({
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-
-  useEffect(() => {
-    if (!client || !isConnected || !cwd) {
-      return;
-    }
-
-    return client.on("checkout_status_update", (message) => {
-      const prStatus = message.payload.prStatus;
-      if (!prStatus || prStatus.cwd !== cwd) {
-        return;
-      }
-      queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), prStatus);
-    });
-  }, [client, isConnected, cwd, queryClient, serverId]);
 
   const query = useQuery({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),
@@ -109,7 +93,9 @@ export function useCheckoutPrStatusQuery({
     },
     enabled: !!client && isConnected && !!cwd && enabled,
     staleTime: Infinity,
-    refetchOnMount: false,
+    // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
+    // useCheckoutStatusQuery for the rationale.
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });
@@ -131,23 +117,8 @@ export function useWorkspacePrHint({
   enabled = true,
 }: UseCheckoutPrStatusQueryOptions): PrHint | null {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-
-  useEffect(() => {
-    if (!client || !isConnected || !cwd) {
-      return;
-    }
-
-    return client.on("checkout_status_update", (message) => {
-      const prStatus = message.payload.prStatus;
-      if (!prStatus || prStatus.cwd !== cwd) {
-        return;
-      }
-      queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), prStatus);
-    });
-  }, [client, isConnected, cwd, queryClient, serverId]);
 
   const query = useQuery<CheckoutPrStatusPayload, Error, PrHint | null>({
     queryKey: checkoutPrStatusQueryKey(serverId, cwd),
@@ -159,7 +130,9 @@ export function useWorkspacePrHint({
     },
     enabled: !!client && isConnected && !!cwd && enabled,
     staleTime: Infinity,
-    refetchOnMount: false,
+    // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
+    // useCheckoutStatusQuery for the rationale.
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     select: selectWorkspacePrHint,

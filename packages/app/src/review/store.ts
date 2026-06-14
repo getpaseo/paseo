@@ -8,22 +8,31 @@ import {
   addCommentToState,
   clearReviewInState,
   deleteCommentFromState,
+  type DiffModeOverride,
+  expireStaleDiffModeOverridesInState,
   normalizePersistedState,
+  resolveDiffMode,
   type ReviewDraftComment,
   type ReviewDraftMode,
   type ReviewDraftSide,
   type ReviewDraftStoreState,
   serializeReviewDraftState,
-  setActiveModeInState,
+  setDiffModeOverrideInState,
   updateCommentInState,
 } from "@/review/state";
 import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
-export type { ReviewDraftComment, ReviewDraftMode, ReviewDraftSide } from "@/review/state";
+export type {
+  DiffModeOverride,
+  ReviewDraftComment,
+  ReviewDraftMode,
+  ReviewDraftSide,
+} from "@/review/state";
 
-const STORE_VERSION = 1;
+// v2 dropped persisted activeModesByScope (diff mode overrides are in-memory only).
+const STORE_VERSION = 2;
 const CONTEXT_RADIUS = 3;
 const EMPTY_REVIEW_DRAFT_COMMENTS: ReviewDraftComment[] = [];
 
@@ -55,7 +64,7 @@ export type ReviewDraftCommentInput = Omit<ReviewDraftComment, "id" | "createdAt
   Partial<Pick<ReviewDraftComment, "id" | "createdAt" | "updatedAt">>;
 
 interface ReviewDraftStoreActions {
-  setActiveMode: (input: { scopeKey: string; mode: ReviewDraftMode }) => void;
+  setDiffModeOverride: (input: { scopeKey: string; override: DiffModeOverride }) => void;
   addComment: (input: { key: string; comment: ReviewDraftCommentInput }) => ReviewDraftComment;
   updateComment: (input: {
     key: string;
@@ -87,6 +96,7 @@ function normalizeBaseRef(baseRef: string | null | undefined): string {
 
 function buildReviewDraftScopeParts(input: BuildReviewDraftScopeKeyInput): string[] {
   const workspaceId = input.workspaceId?.trim();
+  // workspaceId is opaque; do not parse this key back into a path.
   const workspacePart = workspaceId
     ? `workspace=${encodeKeyPart(workspaceId)}`
     : `cwd=${encodeKeyPart(normalizeCwd(input.cwd))}`;
@@ -129,9 +139,9 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
   persist(
     (set) => ({
       drafts: {},
-      activeModesByScope: {},
-      setActiveMode: (input) => {
-        set((state) => setActiveModeInState(state, input));
+      diffModeOverrides: {},
+      setDiffModeOverride: (input) => {
+        set((state) => setDiffModeOverrideInState(state, input));
       },
       addComment: ({ key, comment }) => {
         const nextComment = createDraftComment(comment);
@@ -271,8 +281,18 @@ export function useReviewDraftComments(key: string): ReviewDraftComment[] {
   return useReviewDraftStore((state) => state.drafts[key] ?? EMPTY_REVIEW_DRAFT_COMMENTS);
 }
 
-export function useSetActiveReviewDraftMode(): ReviewDraftStoreActions["setActiveMode"] {
-  return useReviewDraftStore((state) => state.setActiveMode);
+export function useSetDiffModeOverride(): ReviewDraftStoreActions["setDiffModeOverride"] {
+  return useReviewDraftStore((state) => state.setDiffModeOverride);
+}
+
+// Non-React entry point: called from the checkout-status data boundary, where dirty-state
+// changes enter the app regardless of which screens are mounted.
+export function expireStaleDiffModeOverrides(input: {
+  serverId: string;
+  cwd: string;
+  isDirty: boolean;
+}): void {
+  useReviewDraftStore.setState((state) => expireStaleDiffModeOverridesInState(state, input));
 }
 
 export function useClearReviewDraft(): ReviewDraftStoreActions["clearReview"] {
@@ -291,7 +311,7 @@ export function getReviewDraftComments(key: string): ReviewDraftComment[] | unde
 }
 
 export function resetReviewDraftStore(): void {
-  useReviewDraftStore.setState({ drafts: {}, activeModesByScope: {} });
+  useReviewDraftStore.setState({ drafts: {}, diffModeOverrides: {} });
 }
 
 export function useReviewDraftCommentsForAttachment(input: {
@@ -309,8 +329,16 @@ export function useReviewCommentCount(key: string): number {
   return useReviewDraftStore((state) => state.drafts[key]?.length ?? 0);
 }
 
-export function useActiveReviewDraftMode(input: { scopeKey: string }): ReviewDraftMode | null {
-  return useReviewDraftStore((state) => state.activeModesByScope[input.scopeKey] ?? null);
+export function useResolvedDiffMode(input: {
+  scopeKey: string;
+  hasUncommittedChanges: boolean;
+}): ReviewDraftMode {
+  return useReviewDraftStore((state) =>
+    resolveDiffMode({
+      override: state.diffModeOverrides[input.scopeKey],
+      hasUncommittedChanges: input.hasUncommittedChanges,
+    }),
+  );
 }
 
 export function useReviewAttachmentSnapshot(input: {

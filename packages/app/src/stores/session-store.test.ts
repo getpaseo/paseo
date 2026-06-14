@@ -99,6 +99,44 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.scripts).not.toBe(scripts);
   });
 
+  it("canonicalizes the workspace directory and treats a blank one as empty", () => {
+    const canonical = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo/app/",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    expect(canonical.workspaceDirectory).toBe("/repo/app");
+
+    const blank = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "   ",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    expect(blank.workspaceDirectory).toBe("");
+  });
+
   it("defaults missing scripts to an empty array", () => {
     const payload = {
       id: "1",

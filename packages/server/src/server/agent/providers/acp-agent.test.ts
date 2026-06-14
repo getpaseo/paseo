@@ -1,4 +1,4 @@
-import { type ChildProcess } from "node:child_process";
+import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -28,15 +28,18 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
+import * as treeKillModule from "../../../utils/tree-kill.js";
 import {
   COPILOT_ALLOW_ALL_MODE_ID,
   COPILOT_MODES,
+  CopilotACPAgentClient,
   beforeCopilotModeWriter,
   transformCopilotConfigOptions,
   transformCopilotModeId,
   transformCopilotSessionResponse,
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
+import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -140,6 +143,35 @@ function createTerminalChildStub(): ChildProcess {
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
   child.kill = vi.fn(() => true) as ChildProcess["kill"];
   return child;
+}
+
+function createProbeChildStub(order: string[]): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+  child.stdin = {
+    destroy: vi.fn(() => {
+      order.push("stdin.destroy");
+    }),
+  } as ChildProcessWithoutNullStreams["stdin"];
+  child.stdout = {
+    destroy: vi.fn(() => {
+      order.push("stdout.destroy");
+    }),
+  } as ChildProcessWithoutNullStreams["stdout"];
+  child.stderr = {
+    destroy: vi.fn(() => {
+      order.push("stderr.destroy");
+    }),
+  } as ChildProcessWithoutNullStreams["stderr"];
+  child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+  return child;
+}
+
+function createDeferredTermination(): { promise: Promise<"terminated">; resolve: () => void } {
+  let resolveTermination: () => void = () => {};
+  const promise = new Promise<"terminated">((resolve) => {
+    resolveTermination = () => resolve("terminated");
+  });
+  return { promise, resolve: resolveTermination };
 }
 
 function selectConfigOption(
@@ -1362,6 +1394,111 @@ describe("ACPAgentClient listModes", () => {
   });
 });
 
+describe("ACPAgentClient listImportableSessions", () => {
+  function makeClient(args: { listSessions: ReturnType<typeof vi.fn>; supportsList?: boolean }) {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { listSessions: args.listSessions },
+          initialize: {
+            agentCapabilities:
+              args.supportsList === false ? {} : { sessionCapabilities: { list: {} } },
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    return new TestACPAgentClient({
+      provider: "kimi",
+      logger: createTestLogger(),
+      defaultCommand: ["kimi", "acp"],
+      defaultModes: [],
+    });
+  }
+
+  test("forwards the requested cwd to session/list so the agent filters by directory", async () => {
+    const listSessions = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          sessionId: "session-1",
+          cwd: "/Users/moonshot",
+          title: "细致查看一下本仓库内容",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const client = makeClient({ listSessions });
+    const result = await client.listImportableSessions({ cwd: "/Users/moonshot", limit: 20 });
+
+    expect(listSessions).toHaveBeenCalledWith({ cwd: "/Users/moonshot" });
+    expect(result).toEqual([
+      {
+        providerHandleId: "session-1",
+        cwd: "/Users/moonshot",
+        title: "细致查看一下本仓库内容",
+        firstPromptPreview: null,
+        lastPromptPreview: null,
+        lastActivityAt: new Date("2026-06-13T00:00:00.000Z"),
+      },
+    ]);
+  });
+
+  test("omits cwd from session/list when none is requested", async () => {
+    const listSessions = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const client = makeClient({ listSessions });
+
+    await client.listImportableSessions({ limit: 20 });
+
+    expect(listSessions).toHaveBeenCalledWith({});
+  });
+
+  test("forwards cwd alongside the pagination cursor across pages", async () => {
+    const listSessions = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [{ sessionId: "s1", cwd: "/Users/moonshot", title: null, updatedAt: null }],
+        nextCursor: "cursor-2",
+      })
+      .mockResolvedValueOnce({
+        sessions: [{ sessionId: "s2", cwd: "/Users/moonshot", title: null, updatedAt: null }],
+        nextCursor: null,
+      });
+
+    const client = makeClient({ listSessions });
+    await client.listImportableSessions({ cwd: "/Users/moonshot" });
+
+    expect(listSessions).toHaveBeenNthCalledWith(1, { cwd: "/Users/moonshot" });
+    expect(listSessions).toHaveBeenNthCalledWith(2, {
+      cursor: "cursor-2",
+      cwd: "/Users/moonshot",
+    });
+  });
+});
+
+describe("ACP providers advertise session listing", () => {
+  // The daemon's agent-manager only queries providers whose
+  // capabilities.supportsSessionListing is true. Without it, ACP providers
+  // (Kimi and other custom ACP agents, Copilot) are skipped and import shows
+  // nothing even though listImportableSessions is implemented.
+  test("generic ACP clients (e.g. Kimi) report supportsSessionListing", () => {
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["kimi", "acp"],
+    });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
+  });
+
+  test("Copilot ACP client reports supportsSessionListing", () => {
+    const client = new CopilotACPAgentClient({ logger: createTestLogger() });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
+  });
+});
+
 describe("transformPiModels", () => {
   test("keeps slash-free labels unchanged", () => {
     expect(
@@ -1865,5 +2002,193 @@ describe("ACPAgentSession", () => {
     await expect(turnFailed).resolves.toMatchObject({
       error: expect.not.stringContaining("[object Object]"),
     });
+  });
+});
+
+interface ACPCloseInternals {
+  child: ChildProcess | null;
+  closed: boolean;
+  connection: unknown;
+  sessionId: string | null;
+  terminalEntries: Map<string, { child: ChildProcess; exit: unknown }>;
+  subscribers: Map<unknown, unknown>;
+  activeForegroundTurnId: string | null;
+}
+
+describe("ACPAgentSession close() tree-kill", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("close() uses terminateWithTreeKill for the main child process", async () => {
+    const terminateWithTreeKill = vi
+      .spyOn(treeKillModule, "terminateWithTreeKill")
+      .mockResolvedValue("terminated");
+    const session = createSession();
+    const internals = asInternals<ACPCloseInternals>(session);
+
+    const child = createTerminalChildStub();
+    internals.child = child;
+    internals.connection = null;
+    internals.sessionId = null;
+
+    await session.close();
+
+    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() uses terminateWithTreeKill for terminal child processes", async () => {
+    const terminateWithTreeKill = vi
+      .spyOn(treeKillModule, "terminateWithTreeKill")
+      .mockResolvedValue("terminated");
+    const session = createSession();
+    const internals = asInternals<ACPCloseInternals>(session);
+
+    const terminalChild = createTerminalChildStub();
+    internals.terminalEntries = new Map([["terminal-1", { child: terminalChild, exit: null }]]);
+    internals.child = null;
+    internals.connection = null;
+    internals.sessionId = null;
+
+    await session.close();
+
+    expect(terminateWithTreeKill).toHaveBeenCalledWith(terminalChild, {
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    expect(terminalChild.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() terminates terminal child processes in parallel", async () => {
+    const resolvers: Array<() => void> = [];
+    const terminateWithTreeKill = vi
+      .spyOn(treeKillModule, "terminateWithTreeKill")
+      .mockImplementation(() => {
+        const termination = createDeferredTermination();
+        resolvers.push(termination.resolve);
+        return termination.promise;
+      });
+    const session = createSession();
+    const internals = asInternals<ACPCloseInternals>(session);
+
+    const firstTerminalChild = createTerminalChildStub();
+    const secondTerminalChild = createTerminalChildStub();
+    internals.terminalEntries = new Map([
+      ["terminal-1", { child: firstTerminalChild, exit: null }],
+      ["terminal-2", { child: secondTerminalChild, exit: null }],
+    ]);
+    internals.child = null;
+    internals.connection = null;
+    internals.sessionId = null;
+
+    const close = session.close();
+    await Promise.resolve();
+
+    expect(terminateWithTreeKill).toHaveBeenCalledTimes(2);
+
+    for (const resolve of resolvers) {
+      resolve();
+    }
+    await close;
+  });
+
+  test("killTerminal uses terminateWithTreeKill instead of direct SIGTERM", async () => {
+    const terminateWithTreeKill = vi
+      .spyOn(treeKillModule, "terminateWithTreeKill")
+      .mockResolvedValue("terminated");
+    const session = createSession();
+    const internals = asInternals<ACPCloseInternals>(session);
+
+    const child = createTerminalChildStub();
+    internals.terminalEntries = new Map([["terminal-1", { child, exit: null }]]);
+
+    await session.killTerminal({ sessionId: "session-1", terminalId: "terminal-1" });
+
+    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("releaseTerminal uses terminateWithTreeKill before removing a running terminal", async () => {
+    const terminateWithTreeKill = vi
+      .spyOn(treeKillModule, "terminateWithTreeKill")
+      .mockResolvedValue("terminated");
+    const child = createTerminalChildStub();
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const session = createSession();
+
+    const terminal = await session.createTerminal({
+      sessionId: "session-1",
+      command: "sleep",
+      args: ["60"],
+    });
+
+    await session.releaseTerminal({
+      sessionId: "session-1",
+      terminalId: terminal.terminalId,
+    });
+
+    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    expect(child.kill).not.toHaveBeenCalled();
+    await expect(
+      session.terminalOutput({ sessionId: "session-1", terminalId: terminal.terminalId }),
+    ).rejects.toThrow(`Unknown terminal '${terminal.terminalId}'`);
+  });
+});
+
+describe("ACPAgentClient probe cleanup", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("signals the probe process tree before destroying stdio", async () => {
+    const order: string[] = [];
+    const terminateWithTreeKill = vi
+      .spyOn(treeKillModule, "terminateWithTreeKill")
+      .mockImplementation(async () => {
+        order.push("tree-kill");
+        return "terminated";
+      });
+    const child = createProbeChildStub(order);
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              modes: null,
+              models: null,
+              configOptions: [],
+            }),
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+    });
+
+    await client.listModels({ cwd: "/tmp/acp-models", force: false });
+
+    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    expect(order).toEqual(["tree-kill", "stdin.destroy", "stdout.destroy", "stderr.destroy"]);
   });
 });

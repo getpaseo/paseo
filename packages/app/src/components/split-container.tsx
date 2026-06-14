@@ -1,5 +1,6 @@
 import {
   Fragment,
+  createContext,
   memo,
   useCallback,
   useEffect,
@@ -72,6 +73,10 @@ import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
 import { RenderProfile } from "@/utils/render-profiler";
 import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { isNative } from "@/constants/platform";
+
+// true = this tab slot is the active (visible) tab; false = mounted but hidden.
+// Defaults to true so consumers outside a slot (e.g. web preview) are unaffected.
+export const MountedTabActiveContext = createContext<boolean>(true);
 
 interface SplitContainerProps {
   layout: WorkspaceLayout;
@@ -219,14 +224,16 @@ const MountedTabSlot = memo(function MountedTabSlot({
 
   return (
     <RenderProfile id={`DesktopMountedTabSlot:${tabDescriptor.kind}:${tabDescriptor.tabId}`}>
-      <View style={wrapperStyle}>
-        <WorkspacePaneContent
-          content={content}
-          isWorkspaceFocused={isWorkspaceFocused}
-          isPaneFocused={isPaneFocused}
-          onFocusPane={handleFocusPane}
-        />
-      </View>
+      <MountedTabActiveContext value={isVisible}>
+        <View style={wrapperStyle}>
+          <WorkspacePaneContent
+            content={content}
+            isWorkspaceFocused={isWorkspaceFocused}
+            isPaneFocused={isPaneFocused}
+            onFocusPane={handleFocusPane}
+          />
+        </View>
+      </MountedTabActiveContext>
     </RenderProfile>
   );
 });

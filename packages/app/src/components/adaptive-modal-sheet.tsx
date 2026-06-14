@@ -453,6 +453,7 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   /** When provided, wraps the card content in a FileDropZone. */
   onFilesDropped?: (files: ImageAttachment[]) => void;
+  onGenericFilesDropped?: (items: import("@/hooks/use-file-drop-zone").DroppedItem[]) => void;
   scrollable?: boolean;
   presentation?: "push" | "replace";
 }
@@ -467,6 +468,7 @@ export function AdaptiveModalSheet({
   testID,
   desktopMaxWidth,
   onFilesDropped,
+  onGenericFilesDropped,
   scrollable = true,
   presentation,
 }: AdaptiveModalSheetProps) {
@@ -602,7 +604,12 @@ export function AdaptiveModalSheet({
       />
       <View style={desktopCardStyle}>
         {onFilesDropped ? (
-          <FileDropZone onFilesDropped={onFilesDropped}>{cardInner}</FileDropZone>
+          <FileDropZone
+            onFilesDropped={onFilesDropped}
+            onGenericFilesDropped={onGenericFilesDropped}
+          >
+            {cardInner}
+          </FileDropZone>
         ) : (
           cardInner
         )}
