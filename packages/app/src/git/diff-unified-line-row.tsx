@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
@@ -162,7 +162,7 @@ export function DiffGutterCell({
   );
 }
 
-export function DiffUnifiedLineRow({
+export const DiffUnifiedLineRow = memo(function DiffUnifiedLineRow({
   line,
   lineNumber,
   gutterWidth,
@@ -230,7 +230,7 @@ export function DiffUnifiedLineRow({
       )}
     </LongPressableLine>
   );
-}
+});
 
 export const styles = StyleSheet.create((theme) => ({
   gutterCell: {
