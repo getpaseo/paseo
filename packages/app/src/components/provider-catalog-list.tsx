@@ -1,10 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { SvgXml } from "react-native-svg";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { ExternalLink, PackagePlus, Search } from "lucide-react-native";
-import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import {
   useAcpProviderCatalog,
@@ -122,6 +121,7 @@ export function ProviderCatalogList({
   onInstall,
 }: ProviderCatalogListProps) {
   const { t } = useTranslation();
+  const { theme } = useUnistyles();
   const { entries: catalogEntries } = useAcpProviderCatalog();
   const { entries: providerEntries } = useProvidersSnapshot(serverId);
   const [search, setSearch] = useState("");
@@ -145,12 +145,13 @@ export function ProviderCatalogList({
         <View style={styles.searchIcon}>
           <ThemedSearch size={SEARCH_ICON_SIZE} uniProps={foregroundMutedColorMapping} />
         </View>
-        <AdaptiveTextInput
+        <TextInput
           testID="provider-catalog-search"
           value={search}
           onChangeText={setSearch}
           accessibilityLabel={t("providerCatalog.search")}
           placeholder={t("providerCatalog.search")}
+          placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.searchInput}
           autoCapitalize="none"
           autoCorrect={false}
