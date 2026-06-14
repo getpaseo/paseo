@@ -1657,8 +1657,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
       if (!shouldHandleWebKeyPress) return;
       // On macOS, compositionend fires before keydown so isComposing is already
-      // false when Enter is pressed. Check the native ref as a fallback.
-      if (isNativeComposingRef.current) return;
+      // false when Enter is pressed. Check the native ref as a fallback, but
+      // only for Enter — the deferred window is one tick so non-Enter keys
+      // should not be affected.
+      if (event.nativeEvent.key === "Enter" && isNativeComposingRef.current) return;
       handleDesktopKeyPressImpl(event, {
         onKeyPressCallback,
         submitOnEnter: shouldSubmitOnEnter,

@@ -39,7 +39,10 @@ export function useNativeImeComposingRef(
       el.removeEventListener("compositionstart", onStart);
       el.removeEventListener("compositionend", onEnd);
     };
-  });
+    // Empty deps: the element ref is stable after mount (set by useLayoutEffect
+    // before this useEffect runs), so we only need to attach listeners once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return isComposingRef;
 }
