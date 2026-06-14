@@ -761,6 +761,7 @@ export const ru: TranslationResources = {
           fileDiffError: "Не удалось загрузить различия файла",
           loading: "Загрузка коммитов…",
           loadError: "Не удалось загрузить коммиты",
+          resizeHandle: "Изменить размер раздела коммитов",
         },
       },
       openInEditor: {

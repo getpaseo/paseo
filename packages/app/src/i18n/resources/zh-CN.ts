@@ -737,6 +737,7 @@ export const zhCN: TranslationResources = {
           fileDiffError: "加载文件差异失败",
           loading: "正在加载提交…",
           loadError: "加载提交失败",
+          resizeHandle: "调整提交区域大小",
         },
       },
       openInEditor: {

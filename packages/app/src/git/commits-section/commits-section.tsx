@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -45,10 +45,26 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
   // Live drag height (null while idle = use the persisted preference).
   const [draftHeight, setDraftHeight] = useState<number | null>(null);
   const draftHeightRef = useRef<number | null>(null);
+  // Tears down an in-flight drag (listeners + pointer capture + cursor) if the
+  // component unmounts mid-drag, preventing stale setState on a dead component.
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   const persistedHeight = preferences.commitsSectionHeight;
   const effectiveHeight = draftHeight ?? persistedHeight;
   const showResizableLayout = resizable && !collapsed;
+
+  // Snapshot the current height in a ref so handleResizeStart can read the
+  // start value at pointerdown without depending on effectiveHeight (which
+  // changes every drag frame and would recreate the callback each frame).
+  const effectiveHeightRef = useRef(effectiveHeight);
+  effectiveHeightRef.current = effectiveHeight;
+
+  useEffect(
+    () => () => {
+      cleanupRef.current?.();
+    },
+    [],
+  );
 
   const handleToggleSection = useCallback(() => {
     void updatePreferences({ commitsCollapsed: !collapsed });
@@ -84,7 +100,7 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
 
       const pointerId = event.nativeEvent.pointerId;
       const startY = event.nativeEvent.clientY;
-      const startHeight = clampCommitsSectionHeight(effectiveHeight, bounds);
+      const startHeight = clampCommitsSectionHeight(effectiveHeightRef.current, bounds);
 
       setDraftHeight(startHeight);
       draftHeightRef.current = startHeight;
@@ -105,6 +121,7 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
       }
 
       function cleanup() {
+        cleanupRef.current = null;
         document.body.style.cursor = previousCursor;
         if (handleElement?.hasPointerCapture?.(pointerId)) {
           handleElement.releasePointerCapture(pointerId);
@@ -127,11 +144,12 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
         cleanup();
       }
 
+      cleanupRef.current = cleanup;
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerUp);
     },
-    [effectiveHeight, updatePreferences],
+    [updatePreferences],
   );
 
   const headerChevronStyle = useMemo(
@@ -235,6 +253,7 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
         <View
           role="separator"
           aria-orientation="horizontal"
+          aria-label={t("workspace.git.diff.commits.resizeHandle")}
           testID="commits-section-resize-handle"
           style={RESIZE_HANDLE_STYLE}
           onPointerDown={handleResizeStart}
