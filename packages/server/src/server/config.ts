@@ -316,6 +316,12 @@ function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedCon
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
 
+function resolveDictationTranscriptionPrompt(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): string {
+  return persisted.features?.dictation?.transcriptionPrompt ?? "";
+}
+
 function resolveStaticLoadConfigSettings(
   env: NodeJS.ProcessEnv,
   cli: CliConfigOverrides | undefined,
@@ -327,6 +333,7 @@ function resolveStaticLoadConfigSettings(
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
+    dictationTranscriptionPrompt: resolveDictationTranscriptionPrompt(persisted),
     terminalProfiles: persisted.daemon?.terminalProfiles,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
@@ -353,6 +360,7 @@ export function loadConfig(
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
     appendSystemPrompt,
+    dictationTranscriptionPrompt,
     terminalProfiles,
     hostnames,
     appBaseUrl,
@@ -387,6 +395,7 @@ export function loadConfig(
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
     appendSystemPrompt,
+    dictationTranscriptionPrompt,
     terminalProfiles,
     mcpDebug: env.MCP_DEBUG === "1",
     isDev: resolvePaseoNodeEnv(env) === "development",
