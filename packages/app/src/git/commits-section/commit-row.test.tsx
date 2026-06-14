@@ -139,13 +139,14 @@ describe("CommitRow", () => {
   });
 
   function renderRow(
-    props: Omit<React.ComponentProps<typeof CommitRow>, "serverId" | "cwd"> & {
+    props: Omit<React.ComponentProps<typeof CommitRow>, "serverId" | "cwd" | "fileView"> & {
       serverId?: string;
       cwd?: string;
+      fileView?: "list" | "tree";
     },
   ): void {
     act(() => {
-      root?.render(<CommitRow serverId="server-1" cwd="/tmp/repo" {...props} />);
+      root?.render(<CommitRow serverId="server-1" cwd="/tmp/repo" fileView="list" {...props} />);
     });
   }
 
@@ -240,5 +241,50 @@ describe("CommitRow", () => {
     });
 
     expect(container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]')).toBeNull();
+  });
+
+  it("renders files flat in list mode", () => {
+    const commit = makeCommit({
+      files: [{ path: "src/git/foo.ts", additions: 1, deletions: 0, status: "modified" }],
+    });
+    renderRow({ commit, expanded: true, onToggle: vi.fn(), fileView: "list" });
+
+    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).not.toBeNull();
+    expect(container?.querySelector('[data-testid="commit-file-dir-src"]')).toBeNull();
+    expect(container?.querySelector('[data-testid="commit-file-dir-src/git"]')).toBeNull();
+  });
+
+  it("renders a nested file under directory rows in tree mode", () => {
+    const commit = makeCommit({
+      files: [{ path: "src/git/foo.ts", additions: 1, deletions: 0, status: "modified" }],
+    });
+    renderRow({ commit, expanded: true, onToggle: vi.fn(), fileView: "tree" });
+
+    expect(container?.querySelector('[data-testid="commit-file-dir-src"]')).not.toBeNull();
+    expect(container?.querySelector('[data-testid="commit-file-dir-src/git"]')).not.toBeNull();
+    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).not.toBeNull();
+    // The file row shows only the basename in tree mode.
+    expect(container?.textContent).toContain("foo.ts");
+  });
+
+  it("collapsing a directory hides its files in tree mode", () => {
+    const commit = makeCommit({
+      files: [{ path: "src/git/foo.ts", additions: 1, deletions: 0, status: "modified" }],
+    });
+    renderRow({ commit, expanded: true, onToggle: vi.fn(), fileView: "tree" });
+
+    const dirRow = container?.querySelector(
+      '[data-testid="commit-file-dir-src/git"]',
+    ) as HTMLElement | null;
+    expect(dirRow).not.toBeNull();
+    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).not.toBeNull();
+
+    act(() => {
+      dirRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).toBeNull();
+    // The collapsed directory row itself stays visible.
+    expect(container?.querySelector('[data-testid="commit-file-dir-src/git"]')).not.toBeNull();
   });
 });

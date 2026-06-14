@@ -22,6 +22,10 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
   });
   const { preferences, updatePreferences } = useChangesPreferences();
   const collapsed = preferences.commitsCollapsed;
+  // Reuse the global Changes list/tree preference (toggled by the Changes panel
+  // toolbar) so an expanded commit's file list mirrors that view; no separate
+  // toggle lives here.
+  const fileView = preferences.fileView;
   const [expandedShas, setExpandedShas] = useState<ReadonlySet<string>>(() => new Set());
 
   const handleToggleSection = useCallback(() => {
@@ -107,6 +111,7 @@ export function CommitsSection({ serverId, cwd, onFilePress }: CommitsSectionPro
               expanded={expandedShas.has(commit.sha)}
               serverId={serverId}
               cwd={cwd}
+              fileView={fileView}
               onToggle={handleToggleCommit}
               onFilePress={onFilePress}
             />
