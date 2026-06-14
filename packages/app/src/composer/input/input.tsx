@@ -57,7 +57,7 @@ import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
-import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { isImeComposingKeyboardEvent, useNativeImeComposingRef } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerHeightMirror } from "./height-mirror";
@@ -1596,6 +1596,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [getWebTextArea]);
 
+    const isNativeComposingRef = useNativeImeComposingRef(() => webTextareaRef.current);
+
     const inputScrollbar = useWebElementScrollbar(webTextareaRef, {
       enabled: isWeb,
     });
@@ -1654,6 +1656,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     function handleDesktopKeyPress(event: WebTextInputKeyPressEvent) {
       if (!shouldHandleWebKeyPress) return;
+      // On macOS, compositionend fires before keydown so isComposing is already
+      // false when Enter is pressed. Check the native ref as a fallback.
+      if (isNativeComposingRef.current) return;
       handleDesktopKeyPressImpl(event, {
         onKeyPressCallback,
         submitOnEnter: shouldSubmitOnEnter,
