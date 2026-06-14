@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import * as executableUtils from "../../../../utils/executable.js";
+import * as executableUtils from "../../../../executable-resolution/executable-resolution.js";
 import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,

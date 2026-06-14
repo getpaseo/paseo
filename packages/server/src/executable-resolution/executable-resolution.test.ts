@@ -1,15 +1,14 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import {
-  enumerateWindowsKnownInstallCandidates,
   executableExists,
   findExecutable,
   quoteWindowsArgument,
   quoteWindowsCommand,
-} from "./executable.js";
+} from "./executable-resolution.js";
 import { isPlatform } from "../test-utils/platform.js";
 
 const originalEnv = {
@@ -101,6 +100,36 @@ describe("findExecutable", () => {
 
       expectWindowsPathsEqual(await findExecutable("foo"), cmd);
     });
+
+    test("finds a .cmd for an extensionless absolute path", async () => {
+      const dir = makeTempDir();
+      const command = path.join(dir, "codex");
+      const cmd = writeExecutable(`${command}.cmd`, "@echo off\r\necho 0.1\r\n");
+
+      expectWindowsPathsEqual(await findExecutable(command), cmd);
+    });
+
+    test("finds a winget portable executable outside PATH", async () => {
+      const originalLocalAppData = process.env.LOCALAPPDATA;
+      const localAppData = makeTempDir();
+      const packageDir = path.join(
+        localAppData,
+        "Microsoft",
+        "WinGet",
+        "Packages",
+        "Anthropic.ClaudeCode_abc",
+      );
+      mkdirSync(packageDir, { recursive: true });
+      const claude = path.join(packageDir, "claude.exe");
+      copyFileSync(process.execPath, claude);
+      process.env.LOCALAPPDATA = localAppData;
+      process.env.PATH = makeTempDir();
+      try {
+        expectWindowsPathsEqual(await findExecutable("claude"), claude);
+      } finally {
+        process.env.LOCALAPPDATA = originalLocalAppData;
+      }
+    });
   });
 
   test("returns an invokable absolute path", async () => {
@@ -119,47 +148,6 @@ describe("findExecutable", () => {
     prependPath(dir);
 
     await expect(findExecutable("paseo-definitely-missing-command")).resolves.toBeNull();
-  });
-});
-
-describe("enumerateWindowsKnownInstallCandidates", () => {
-  test("returns nothing on non-Windows platforms", () => {
-    expect(
-      enumerateWindowsKnownInstallCandidates("claude", {
-        platform: "darwin",
-        localAppData: "/Users/me/AppData/Local",
-      }),
-    ).toEqual([]);
-  });
-
-  test("returns nothing when LOCALAPPDATA is unavailable", () => {
-    expect(
-      enumerateWindowsKnownInstallCandidates("claude", { platform: "win32", localAppData: "" }),
-    ).toEqual([]);
-  });
-
-  test("scans winget package dirs for a portable executable not on PATH", () => {
-    const localAppData = makeTempDir();
-    const packages = path.join(localAppData, "Microsoft", "WinGet", "Packages");
-    // A portable package drops the exe at its root (like Anthropic.ClaudeCode).
-    mkdirSync(path.join(packages, "Anthropic.ClaudeCode_abc"), { recursive: true });
-    mkdirSync(path.join(packages, "Some.Other_xyz"), { recursive: true });
-
-    const candidates = enumerateWindowsKnownInstallCandidates("claude", {
-      platform: "win32",
-      localAppData,
-    });
-
-    // Each package dir is probed at its root, where portable packages drop the exe.
-    expect(candidates).toContain(path.join(packages, "Anthropic.ClaudeCode_abc", "claude.exe"));
-    expect(candidates).toContain(path.join(packages, "Some.Other_xyz", "claude.exe"));
-  });
-
-  test("returns nothing when the winget Packages dir is absent", () => {
-    const localAppData = makeTempDir();
-    expect(
-      enumerateWindowsKnownInstallCandidates("claude", { platform: "win32", localAppData }),
-    ).toEqual([]);
   });
 });
 

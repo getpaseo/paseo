@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
-import { existsSync, readdirSync } from "node:fs";
-import { extname, join } from "node:path";
-import { execCommand } from "./spawn.js";
-import { isWindowsCommandScript } from "./windows-command.js";
+import { existsSync } from "node:fs";
+import { execCommand } from "../utils/spawn.js";
+import { isWindowsCommandScript } from "../utils/windows-command.js";
+import { windowsExecutableResolution } from "./windows.js";
 
-export { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
+export { quoteWindowsArgument, quoteWindowsCommand } from "../utils/windows-command.js";
 
 type Which = (command: string, options: { all: true }) => Promise<string[]>;
 
@@ -21,50 +21,6 @@ async function enumerateCandidates(name: string): Promise<string[]> {
     return enumerateCandidatesViaSystemWhich(name);
   }
   return enumerateCandidatesViaLibrary(name);
-}
-
-export interface WindowsKnownInstallOptions {
-  platform?: NodeJS.Platform;
-  localAppData?: string;
-}
-
-/**
- * Find an executable installed by `winget` outside of PATH.
- *
- * winget "portable" packages (like Claude Code) extract their executable into
- * `%LOCALAPPDATA%\Microsoft\WinGet\Packages\<PackageId>\` but do NOT add that
- * directory to PATH or create a Links shim, so PATH-based lookup can't find
- * them. Rather than hardcode each tool's package id, scan every winget package
- * directory for a matching `<name>.exe`. This keeps a single generic fallback
- * that any provider's command resolution benefits from — no per-tool probe.
- */
-export function enumerateWindowsKnownInstallCandidates(
-  name: string,
-  options: WindowsKnownInstallOptions = {},
-): string[] {
-  const platform = options.platform ?? process.platform;
-  if (platform !== "win32") {
-    return [];
-  }
-  const localAppData = options.localAppData ?? process.env.LOCALAPPDATA;
-  if (!localAppData) {
-    return [];
-  }
-
-  const wingetPackages = join(localAppData, "Microsoft", "WinGet", "Packages");
-  let packageDirs: string[];
-  try {
-    packageDirs = readdirSync(wingetPackages, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
-
-  // winget "portable" packages (e.g. Anthropic.ClaudeCode) drop their
-  // executable at the package root, so probe `<packageDir>/<name>.exe`.
-  const exeName = `${name}.exe`;
-  return packageDirs.map((packageDir) => join(wingetPackages, packageDir, exeName));
 }
 
 async function enumerateCandidatesViaSystemWhich(name: string): Promise<string[]> {
@@ -146,14 +102,10 @@ export function executableExists(
   executablePath: string,
   exists: typeof existsSync = existsSync,
 ): string | null {
-  if (exists(executablePath)) return executablePath;
-  if (process.platform === "win32" && !extname(executablePath)) {
-    for (const ext of [".exe", ".cmd"]) {
-      const candidate = executablePath + ext;
-      if (exists(candidate)) return candidate;
-    }
+  if (process.platform === "win32") {
+    return windowsExecutableResolution.exists(executablePath, { exists });
   }
-  return null;
+  return exists(executablePath) ? executablePath : null;
 }
 
 export async function findExecutable(
@@ -165,6 +117,15 @@ export async function findExecutable(
     return null;
   }
 
+  if (process.platform === "win32") {
+    return windowsExecutableResolution.find(trimmed, {
+      enumeratePathCandidates: enumerateCandidates,
+      probeExecutable,
+      exists: existsSync,
+      probeTimeoutMs,
+    });
+  }
+
   if (hasPathSeparator(trimmed)) {
     return (await probeExecutable(trimmed, probeTimeoutMs)) ? trimmed : null;
   }
@@ -172,15 +133,6 @@ export async function findExecutable(
   const candidates = await enumerateCandidates(trimmed);
   for (const candidate of candidates) {
     if (await probeExecutable(candidate, probeTimeoutMs)) {
-      return candidate;
-    }
-  }
-
-  // PATH didn't resolve it. Fall back to well-known Windows install locations
-  // (e.g. winget portable packages) that don't register themselves on PATH.
-  // Only the existing executables are probed, so the cost is bounded.
-  for (const candidate of enumerateWindowsKnownInstallCandidates(trimmed)) {
-    if (existsSync(candidate) && (await probeExecutable(candidate, probeTimeoutMs))) {
       return candidate;
     }
   }

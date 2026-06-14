@@ -44,7 +44,7 @@ const mockState = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../utils/executable.js", () => ({
+vi.mock("../../executable-resolution/executable-resolution.js", () => ({
   isCommandAvailable: mockState.isCommandAvailable,
 }));
 
@@ -90,7 +90,8 @@ vi.mock("./providers/claude/agent.js", () => ({
           ? Reflect.get(this.runtimeSettings, "command")
           : undefined;
       if (command?.mode === "replace") {
-        const { isCommandAvailable } = await import("../../utils/executable.js");
+        const { isCommandAvailable } =
+          await import("../../executable-resolution/executable-resolution.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
       }
       return true;
@@ -138,7 +139,8 @@ vi.mock("./providers/codex-app-server-agent.js", () => ({
           ? Reflect.get(this.runtimeSettings, "command")
           : undefined;
       if (command?.mode === "replace") {
-        const { isCommandAvailable } = await import("../../utils/executable.js");
+        const { isCommandAvailable } =
+          await import("../../executable-resolution/executable-resolution.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
       }
       return true;
@@ -188,7 +190,8 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
           ? Reflect.get(this.runtimeSettings, "command")
           : undefined;
       if (command?.mode === "replace") {
-        const { isCommandAvailable } = await import("../../utils/executable.js");
+        const { isCommandAvailable } =
+          await import("../../executable-resolution/executable-resolution.js");
         return await isCommandAvailable(command.argv?.[0] ?? "");
       }
       return true;
