@@ -37,6 +37,10 @@ export function addRunOptions(cmd: Command): Command {
     .option("--worktree <name>", "Create agent in a new git worktree")
     .option("--base <branch>", "Base branch for worktree (default: current branch)")
     .option(
+      "--workspace <id>",
+      "Run in an existing workspace (default: a new workspace is created per run; falls back to $PASEO_WORKSPACE_ID)",
+    )
+    .option(
       "--image <path>",
       "Attach image(s) to the initial prompt (can be used multiple times)",
       collectMultiple,
@@ -96,6 +100,7 @@ export interface AgentRunOptions extends CommandOptions {
   mode?: string;
   worktree?: string;
   base?: string;
+  workspace?: string;
   image?: string[];
   cwd?: string;
   env?: string[];
@@ -273,6 +278,14 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     } satisfies CommandError;
   }
 
+  if (options.worktree && options.workspace) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--worktree and --workspace cannot be combined",
+      details: "--workspace runs in an existing workspace; --worktree mints a new one",
+    } satisfies CommandError;
+  }
+
   if (outputSchema && options.detach) {
     throw {
       code: "INVALID_OPTIONS",
@@ -383,6 +396,61 @@ async function connectToDaemonOrThrow(
   }
 }
 
+// A workspace is the explicit home of a run: it owns the directory the agent
+// runs in. The CLI resolves one before creating any agent, so no run leans on
+// createAgent's legacy cwd->workspace fallback.
+interface RunWorkspace {
+  id: string;
+  cwd: string;
+}
+
+// Workspace policy for `paseo run`. Precedence:
+//   1. --workspace <id>            -> run in that existing workspace
+//   2. $PASEO_WORKSPACE_ID         -> exported by workspace terminals
+//   3. --worktree <name>           -> mint a new worktree-backed workspace
+//   4. bare run                    -> mint a new local-backed workspace for cwd
+// --worktree is rejected alongside --workspace (validateRunOptions); $PASEO_WORKSPACE_ID
+// is an ambient default, so an explicit --worktree takes it over.
+async function resolveRunWorkspace(
+  client: ConnectedDaemonClient,
+  options: AgentRunOptions,
+  cwd: string,
+): Promise<RunWorkspace> {
+  // An explicit --worktree mints its own workspace and overrides the ambient
+  // PASEO_WORKSPACE_ID; --workspace is rejected alongside --worktree upstream.
+  const explicit = options.worktree
+    ? undefined
+    : options.workspace?.trim() || process.env.PASEO_WORKSPACE_ID?.trim();
+  if (explicit) {
+    console.error(`Using workspace ${explicit}`);
+    return { id: explicit, cwd };
+  }
+
+  const result = options.worktree
+    ? await client.createWorkspace({
+        backing: "worktree",
+        cwd,
+        branch: options.worktree,
+        baseBranch: options.base,
+      })
+    : await client.createWorkspace({ backing: "local", cwd });
+
+  if (!result.workspace) {
+    throw {
+      code: "WORKSPACE_CREATE_FAILED",
+      message: result.error ?? "Failed to create workspace for this run",
+    } satisfies CommandError;
+  }
+
+  const branch = result.workspace.gitRuntime?.currentBranch;
+  const label = branch ? `${result.workspace.name} (${branch})` : result.workspace.name;
+  console.error(`Created workspace ${result.workspace.id} - ${label}`);
+  console.error(
+    "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace.",
+  );
+  return { id: result.workspace.id, cwd: result.workspace.workspaceDirectory ?? cwd };
+}
+
 export async function runRunCommand(
   prompt: string,
   options: AgentRunOptions,
@@ -415,17 +483,13 @@ export async function runRunCommand(
 
     const images = loadRunImages(options.image);
 
-    const git = options.worktree
-      ? {
-          createWorktree: true,
-          worktreeSlug: options.worktree,
-          baseBranch: options.base,
-        }
-      : undefined;
-
     const labels = parseRunLabels(options.label);
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
+
+    const workspace = await resolveRunWorkspace(client, options, cwd);
+    const workspaceId = workspace.id;
+    const runCwd = workspace.cwd;
 
     if (outputSchema) {
       let structuredAgent: AgentSnapshotPayload | null = null;
@@ -434,7 +498,8 @@ export async function runRunCommand(
         if (!structuredAgent) {
           structuredAgent = await client.createAgent({
             provider: resolvedProviderModel.provider,
-            cwd,
+            cwd: runCwd,
+            workspaceId,
             title: resolvedTitle,
             modeId: options.mode,
             model: resolvedProviderModel.model,
@@ -443,8 +508,6 @@ export async function runRunCommand(
             outputSchema,
             images,
             env: requestEnv,
-            git,
-            worktreeName: options.worktree,
             labels: Object.keys(labels).length > 0 ? labels : undefined,
           });
         } else {
@@ -505,7 +568,8 @@ export async function runRunCommand(
     // Create the agent
     const agent = await client.createAgent({
       provider: resolvedProviderModel.provider,
-      cwd,
+      cwd: runCwd,
+      workspaceId,
       title: resolvedTitle,
       modeId: options.mode,
       model: resolvedProviderModel.model,
@@ -513,8 +577,6 @@ export async function runRunCommand(
       initialPrompt: prompt,
       images,
       env: requestEnv,
-      git,
-      worktreeName: options.worktree,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
     });
 
