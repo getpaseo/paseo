@@ -1,4 +1,4 @@
-import { createTerminalManager } from "./terminal-manager.js";
+import { createInProcessTerminalManager } from "./terminal-manager.js";
 import { captureTerminalLines } from "./terminal-capture.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
 import type { TerminalSession, TerminalStateSnapshotOptions } from "./terminal.js";
@@ -9,7 +9,7 @@ import type {
   WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
-const manager = createTerminalManager();
+const manager = createInProcessTerminalManager();
 const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
 const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
 let ipcClosing = false;
@@ -146,6 +146,13 @@ manager.subscribeTerminalsChanged((event) => {
   });
 });
 
+async function createTerminalFromWorkerOptions(
+  options: Extract<TerminalWorkerRequest, { type: "createTerminal" }>["options"],
+): Promise<TerminalSession> {
+  const { baseEnv, ...terminalOptions } = options;
+  return manager.createTerminalWithBaseEnv(terminalOptions, baseEnv ? { baseEnv } : {});
+}
+
 async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
   switch (message.type) {
     case "getTerminals": {
@@ -160,7 +167,7 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "createTerminal": {
-      const session = await manager.createTerminal(message.options);
+      const session = await createTerminalFromWorkerOptions(message.options);
       watchTerminal(session);
       const initialSnapshot = session.getStateSnapshot();
       sendToParent({

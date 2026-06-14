@@ -1,27 +1,18 @@
 import { it, expect, afterEach } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
-import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
+import { waitForCondition } from "../test-utils/wait.js";
+import {
+  createInProcessTerminalManager,
+  createTerminalManager,
+  type InProcessTerminalManager,
+  type TerminalManager,
+} from "./terminal-manager.js";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 if (isPlatform("win32") && !process.env.ComSpec && !process.env.COMSPEC) {
   process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
-}
-
-async function waitForCondition(
-  predicate: () => boolean,
-  timeoutMs: number,
-  intervalMs = 25,
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (predicate()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 let manager: TerminalManager;
@@ -203,6 +194,55 @@ it("inherits registered env for subdirectories within the worktree", async () =>
 
   await waitForCondition(() => existsSync(markerPath), 10000);
   expect(readFileSync(markerPath, "utf8")).toBe("45679");
+});
+
+it("keeps cwd default env and terminal env overlays above base env", async () => {
+  const inProcessManager: InProcessTerminalManager = createInProcessTerminalManager();
+  manager = inProcessManager;
+  const cwd = mkdtempSync(join(tmpdir(), "terminal-manager-env-overlay-"));
+  temporaryDirs.push(cwd);
+  const markerPath = join(cwd, "overlay.txt");
+
+  inProcessManager.registerCwdEnv({
+    cwd,
+    env: {
+      PASEO_BASE_ONLY: "cwd-override",
+      PASEO_DEFAULT_ONLY: "cwd-default",
+      PASEO_TERMINAL_ONLY: "cwd-default",
+    },
+  });
+  await inProcessManager.createTerminalWithBaseEnv(
+    {
+      cwd,
+      command: process.execPath,
+      args: [
+        "-e",
+        `require('fs').writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({
+          baseOnly: process.env.PASEO_BASE_ONLY,
+          defaultOnly: process.env.PASEO_DEFAULT_ONLY,
+          terminalOnly: process.env.PASEO_TERMINAL_ONLY,
+        }))`,
+      ],
+      env: {
+        PASEO_TERMINAL_ONLY: "terminal-env",
+      },
+    },
+    {
+      baseEnv: {
+        PASEO_BASE_ONLY: "base-env",
+        PASEO_DEFAULT_ONLY: "base-env",
+        PASEO_TERMINAL_ONLY: "base-env",
+      },
+    },
+  );
+
+  await waitForCondition(() => existsSync(markerPath), 10000);
+
+  expect(JSON.parse(readFileSync(markerPath, "utf8"))).toEqual({
+    baseOnly: "cwd-override",
+    defaultOnly: "cwd-default",
+    terminalOnly: "terminal-env",
+  });
 });
 
 it("returns terminal by id", async () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { waitForCondition } from "../test-utils/wait.js";
 import {
   buildTerminalEnvironment,
   createTerminal,
@@ -16,6 +17,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -172,6 +174,49 @@ describe("createTerminal", () => {
     expect(humanizeProcessTitle("/bin/bash /tmp/dev.sh")).toBe("dev.sh");
   });
 
+  it("builds terminal env from an explicit base env", () => {
+    const env = buildTerminalEnvironment({
+      baseEnv: {
+        PASEO_BASE_MARKER: "daemon-env",
+        PASEO_NODE_ENV: "test",
+        SHARED_MARKER: "base-env",
+        OMITTED_MARKER: undefined,
+      },
+      shell: "/bin/sh",
+      env: {
+        SHARED_MARKER: "terminal-env",
+        TERMINAL_MARKER: "terminal-only",
+      },
+    });
+
+    expect(env.PASEO_BASE_MARKER).toBe("daemon-env");
+    expect(env.SHARED_MARKER).toBe("terminal-env");
+    expect(env.TERMINAL_MARKER).toBe("terminal-only");
+    expect(env.TERM).toBe("xterm-256color");
+    expect(env.TERM_PROGRAM).toBe("kitty");
+    expect(env).not.toHaveProperty("PASEO_NODE_ENV");
+    expect(env).not.toHaveProperty("OMITTED_MARKER");
+  });
+
+  it("falls back to process env when no explicit base env is provided", () => {
+    const previousMarker = process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST;
+    process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST = "process-env";
+    try {
+      const env = buildTerminalEnvironment({
+        shell: "/bin/sh",
+        env: {},
+      });
+
+      expect(env.PASEO_TERMINAL_BASE_FALLBACK_TEST).toBe("process-env");
+    } finally {
+      if (previousMarker === undefined) {
+        delete process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST;
+      } else {
+        process.env.PASEO_TERMINAL_BASE_FALLBACK_TEST = previousMarker;
+      }
+    }
+  });
+
   // macOS-only: node-pty ships the spawn-helper prebuild only for darwin.
   it.runIf(isPlatform("darwin"))("ensures darwin prebuild spawn-helper is executable", () => {
     const packageRoot = mkdtempSync(join(tmpdir(), "terminal-node-pty-helper-"));
@@ -241,6 +286,61 @@ describe("createTerminal", () => {
     );
 
     expect(session.id).toBeDefined();
+  });
+
+  it("resolves the default shell from baseEnv instead of the worker environment", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "terminal-default-shell-env-"));
+    temporaryDirs.push(dir);
+    const markerPath = join(dir, "marker.txt");
+    const preloadPath = join(dir, "base-shell-preload.cjs");
+    writeFileSync(
+      preloadPath,
+      "require('fs').writeFileSync(process.env.PASEO_DEFAULT_SHELL_MARKER, 'base-shell'); process.exit(0);\n",
+    );
+
+    const originalShell = process.env.SHELL;
+    const originalComSpec = process.env.ComSpec;
+    const originalCOMSPEC = process.env.COMSPEC;
+    try {
+      if (isPlatform("win32")) {
+        process.env.ComSpec = "C:\\paseo-worker-stale-shell\\missing.cmd";
+        delete process.env.COMSPEC;
+      } else {
+        process.env.SHELL = "/paseo-worker-stale-shell/missing";
+      }
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: dir,
+          baseEnv: {
+            ...process.env,
+            NODE_OPTIONS: "--require ./base-shell-preload.cjs",
+            PASEO_DEFAULT_SHELL_MARKER: markerPath,
+            ...(isPlatform("win32") ? { ComSpec: process.execPath } : { SHELL: process.execPath }),
+          },
+        }),
+      );
+
+      await waitForCondition(() => existsSync(markerPath), 5000);
+      expect(readFileSync(markerPath, "utf8")).toBe("base-shell");
+      expect(session.id).toBeDefined();
+    } finally {
+      if (originalShell === undefined) {
+        delete process.env.SHELL;
+      } else {
+        process.env.SHELL = originalShell;
+      }
+      if (originalComSpec === undefined) {
+        delete process.env.ComSpec;
+      } else {
+        process.env.ComSpec = originalComSpec;
+      }
+      if (originalCOMSPEC === undefined) {
+        delete process.env.COMSPEC;
+      } else {
+        process.env.COMSPEC = originalCOMSPEC;
+      }
+    }
   });
 
   it("uses default rows and cols", async () => {

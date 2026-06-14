@@ -12,6 +12,7 @@ import type {
 } from "./terminal.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import type {
+  CreateManagedTerminalOptions,
   TerminalListItem,
   TerminalManager,
   TerminalsChangedEvent,
@@ -541,8 +542,15 @@ export function createWorkerTerminalManager(
       return toSessions(result);
     },
 
-    async createTerminal(options: WorkerCreateTerminalOptions): Promise<TerminalSession> {
-      const result = (await sendRequest({ type: "createTerminal", options })) as {
+    async createTerminal(options: CreateManagedTerminalOptions): Promise<TerminalSession> {
+      const workerOptions: WorkerCreateTerminalOptions = {
+        ...options,
+        baseEnv: process.env,
+      };
+      const result = (await sendRequest({
+        type: "createTerminal",
+        options: workerOptions,
+      })) as {
         terminal: WorkerTerminalInfo;
         state: TerminalState;
       };

@@ -105,6 +105,7 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   shell?: string;
+  baseEnv?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   env?: Record<string, string>;
   rows?: number;
   cols?: number;
@@ -115,6 +116,7 @@ export interface CreateTerminalOptions {
 }
 
 interface BuildTerminalEnvironmentInput {
+  baseEnv?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   shell: string;
   env: Record<string, string>;
   zshShellIntegrationDir?: string;
@@ -192,7 +194,10 @@ export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
 }
 
 export function resolveDefaultTerminalShell(
-  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
+  options: {
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  } = {},
 ): string {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
@@ -241,18 +246,22 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
-  const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
-    TERM: "xterm-256color",
-    TERM_PROGRAM: "kitty",
-  });
+  const ptyEnv: Record<string, string> = createExternalProcessEnv(
+    input.baseEnv ?? process.env,
+    input.env,
+    {
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "kitty",
+    },
+  );
 
   if (basename(input.shell) !== "zsh") {
-    return baseEnv;
+    return ptyEnv;
   }
 
-  const originalZdotdir = baseEnv.ZDOTDIR ?? "";
+  const originalZdotdir = ptyEnv.ZDOTDIR ?? "";
   return {
-    ...baseEnv,
+    ...ptyEnv,
     PASEO_ZSH_ZDOTDIR: originalZdotdir,
     ZDOTDIR: prepareZshShellIntegrationRuntimeDir(input.zshShellIntegrationDir),
   };
@@ -588,6 +597,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const {
     cwd,
     shell,
+    baseEnv,
     env = {},
     rows = 24,
     cols = 80,
@@ -596,7 +606,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     command,
     args = [],
   } = options;
-  const resolvedShell = shell ?? resolveDefaultTerminalShell();
+  const resolvedShell = shell ?? resolveDefaultTerminalShell({ env: baseEnv });
 
   const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
@@ -643,7 +653,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     cols,
     rows,
     cwd,
-    env: buildTerminalEnvironment({ shell: spawnCommand, env }),
+    env: buildTerminalEnvironment({ baseEnv, shell: spawnCommand, env }),
   });
 
   function emitTitleChange(nextTitle: string | undefined): void {
