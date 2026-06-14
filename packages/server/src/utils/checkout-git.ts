@@ -143,6 +143,8 @@ interface CheckoutFileStageState {
   isUnstaged: boolean;
   isUntracked: boolean;
   isNewInIndex: boolean;
+  isRenameInIndex: boolean;
+  originalPath?: string;
 }
 
 interface CheckoutDiffRefs {
@@ -862,13 +864,17 @@ function parseCheckoutFileStageStates(output: string): Map<string, CheckoutFileS
       continue;
     }
     const isUntracked = indexStatus === "?" && worktreeStatus === "?";
+    const isRenameOrCopy = indexStatus === "R" || indexStatus === "C";
+    const originalPath = isRenameOrCopy ? entries[index + 1] : undefined;
     states.set(path, {
       isStaged: !isUntracked && indexStatus !== " ",
       isUnstaged: isUntracked || worktreeStatus !== " ",
       isUntracked,
       isNewInIndex: indexStatus === "A",
+      isRenameInIndex: indexStatus === "R",
+      ...(originalPath ? { originalPath } : {}),
     });
-    if (indexStatus === "R" || indexStatus === "C") {
+    if (isRenameOrCopy) {
       index += 1;
     }
   }
@@ -918,7 +924,7 @@ export async function unstageCheckoutFile(cwd: string, path: string): Promise<vo
 export async function discardCheckoutFile(cwd: string, path: string): Promise<void> {
   await requireGitRepo(cwd);
   const normalizedPath = normalizeCheckoutPathspec(path);
-  const state = (await getCheckoutFileStageStates(cwd, normalizedPath)).get(normalizedPath);
+  const state = (await getCheckoutFileStageStates(cwd)).get(normalizedPath);
   if (!state) {
     return;
   }
@@ -927,6 +933,25 @@ export async function discardCheckoutFile(cwd: string, path: string): Promise<vo
       cwd,
       timeout: 120_000,
     });
+    const postResetState = (await getCheckoutFileStageStates(cwd, normalizedPath)).get(
+      normalizedPath,
+    );
+    if (postResetState?.isUntracked === true) {
+      await runGitCommand(["clean", "-f", "--", normalizedPath], {
+        cwd,
+        timeout: 120_000,
+      });
+      if (state.isRenameInIndex && state.originalPath) {
+        await runGitCommand(
+          ["checkout", "HEAD", "--", normalizeCheckoutPathspec(state.originalPath)],
+          {
+            cwd,
+            timeout: 120_000,
+          },
+        );
+      }
+      return;
+    }
   }
   if (state.isUntracked || state.isNewInIndex) {
     await runGitCommand(["clean", "-f", "--", normalizedPath], {

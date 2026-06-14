@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import equal from "fast-deep-equal";
+import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -189,6 +190,7 @@ export function useSidebarWorkspaceEntry(
 
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
+const EMPTY_WORKSPACE_ORDER_BY_SCOPE: Record<string, string[]> = {};
 
 export interface SidebarWorkspacesListResult {
   projects: SidebarProjectEntry[];
@@ -212,8 +214,20 @@ export function useSidebarWorkspacesList(options?: {
   const persistedProjectOrder = useSidebarOrderStore((state) =>
     isActive && serverId ? (state.projectOrderByServerId[serverId] ?? EMPTY_ORDER) : EMPTY_ORDER,
   );
-  const persistedWorkspaceOrders = useSidebarOrderStore((state) =>
-    isActive && serverId ? state.workspaceOrderByServerAndProject : null,
+  const persistedWorkspaceOrders = useSidebarOrderStore(
+    useShallow((state) => {
+      if (!isActive || !serverId) {
+        return EMPTY_WORKSPACE_ORDER_BY_SCOPE;
+      }
+      const scopePrefix = `${serverId}::`;
+      const scopedOrders: Record<string, string[]> = {};
+      for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject)) {
+        if (scopeKey.startsWith(scopePrefix)) {
+          scopedOrders[scopeKey] = order;
+        }
+      }
+      return scopedOrders;
+    }),
   );
   const hasHydratedWorkspaces = useSessionStore((state) =>
     isActive && serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
@@ -251,7 +265,7 @@ export function useSidebarWorkspacesList(options?: {
       persistedProjectOrder,
       getWorkspaceOrder: (projectKey) => {
         const scopeKey = buildSidebarWorkspaceOrderScopeKey(serverId, projectKey);
-        return persistedWorkspaceOrders?.[scopeKey] ?? EMPTY_ORDER;
+        return persistedWorkspaceOrders[scopeKey] ?? EMPTY_ORDER;
       },
     });
   }, [hostProjects, persistedProjectOrder, persistedWorkspaceOrders, serverId]);

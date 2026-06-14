@@ -309,6 +309,21 @@ describe("checkout git utilities", () => {
     ).toBe("");
   });
 
+  it("discards a staged renamed checkout file completely", async () => {
+    execFileSync("git", ["mv", "file.txt", "renamed.txt"], { cwd: repoDir });
+
+    await discardCheckoutFile(repoDir, "renamed.txt");
+
+    expect(existsSync(join(repoDir, "renamed.txt"))).toBe(false);
+    expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("");
+  });
+
   it("annotates uncommitted structured diff files with staged and unstaged state", async () => {
     writeFileSync(join(repoDir, "file.txt"), "hello\nstaged\n");
     execFileSync("git", ["add", "file.txt"], { cwd: repoDir });
