@@ -1,5 +1,6 @@
 import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
+import { DEFAULT_DICTATION_TRANSCRIPTION_PROMPT } from "@getpaseo/protocol/dictation-prompt";
 import {
   createDictationDebugChunkWriter,
   maybePersistDictationDebugAudio,
@@ -131,6 +132,7 @@ export class DictationStreamManager {
   private readonly sessionId: string;
   private readonly resolveStt: () => SpeechToTextProvider | null;
   private readonly language: string;
+  private readonly transcriptionPrompt?: string;
   private readonly finalTimeoutMs: number;
   private readonly autoCommitSeconds: number;
   private readonly streams = new Map<string, DictationStreamState>();
@@ -141,6 +143,7 @@ export class DictationStreamManager {
     sessionId: string;
     stt: Resolvable<SpeechToTextProvider | null>;
     language?: string;
+    transcriptionPrompt?: string;
     finalTimeoutMs?: number;
     autoCommitSeconds?: number;
   }) {
@@ -149,6 +152,7 @@ export class DictationStreamManager {
     this.sessionId = params.sessionId;
     this.resolveStt = toResolver(params.stt);
     this.language = params.language ?? "en";
+    this.transcriptionPrompt = params.transcriptionPrompt;
     this.finalTimeoutMs = params.finalTimeoutMs ?? DEFAULT_DICTATION_FINAL_TIMEOUT_MS;
     this.autoCommitSeconds =
       params.autoCommitSeconds ??
@@ -173,7 +177,8 @@ export class DictationStreamManager {
 
     const transcriptionPrompt =
       process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ??
-      "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
+      this.transcriptionPrompt ??
+      DEFAULT_DICTATION_TRANSCRIPTION_PROMPT;
 
     let stt: ReturnType<SpeechToTextProvider["createSession"]>;
     try {

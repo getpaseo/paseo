@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import pino from "pino";
+import { DEFAULT_DICTATION_TRANSCRIPTION_PROMPT } from "@getpaseo/protocol/dictation-prompt";
 
 import { DictationStreamManager } from "./dictation-stream-manager.js";
 import { PersistedConfigSchema } from "../persisted-config.js";
@@ -54,11 +55,13 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
   public lastLanguage?: string;
+  public lastPrompt?: string;
   constructor(private readonly session: FakeRealtimeSession) {}
   createSession(
     params: Parameters<SpeechToTextProvider["createSession"]>[0],
   ): StreamingTranscriptionSession {
     this.lastLanguage = params.language;
+    this.lastPrompt = params.prompt;
     return this.session;
   }
 }
@@ -409,5 +412,54 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       process.env.PASEO_DICTATION_DEBUG = previousDebug;
       vi.useRealTimers();
     }
+  });
+});
+
+describe("DictationStreamManager (transcription prompt resolution)", () => {
+  const ENV_KEY = "PASEO_DICTATION_TRANSCRIPTION_PROMPT";
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV_KEY];
+    delete process.env[ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = savedEnv;
+    }
+  });
+
+  const startManager = async (transcriptionPrompt?: string) => {
+    const session = new FakeRealtimeSession();
+    const provider = new FakeSttProvider(session);
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: () => {},
+      sessionId: "s1",
+      stt: provider,
+      transcriptionPrompt,
+    });
+    await manager.handleStart("d1", "audio/pcm;rate=24000;bits=16");
+    manager.cleanupAll();
+    return provider;
+  };
+
+  it("uses the configured prompt when set", async () => {
+    const provider = await startManager("Custom dictation prompt.");
+    expect(provider.lastPrompt).toBe("Custom dictation prompt.");
+  });
+
+  it("falls back to the shared default when no prompt configured", async () => {
+    const provider = await startManager(undefined);
+    expect(provider.lastPrompt).toBe(DEFAULT_DICTATION_TRANSCRIPTION_PROMPT);
+  });
+
+  it("lets the env var override the configured prompt", async () => {
+    process.env[ENV_KEY] = "Env override prompt.";
+    const provider = await startManager("Custom dictation prompt.");
+    expect(provider.lastPrompt).toBe("Env override prompt.");
   });
 });
