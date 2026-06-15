@@ -802,21 +802,21 @@ function MobileSidebar({
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
         <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
           <View style={styles.sidebarContent} pointerEvents="auto">
-            <View style={styles.sidebarHeaderRow}>
+            <View style={styles.sidebarHeaderGroup}>
               <SidebarHeaderRow
                 icon={Plus}
                 label={labels.newWorkspace}
                 onPress={handleNewWorkspace}
                 testID="sidebar-global-new-workspace"
+                variant="compact"
               />
-            </View>
-            <View style={styles.sidebarHeaderRow}>
               <SidebarHeaderRow
                 icon={MessagesSquare}
                 label={labels.sessions}
                 onPress={handleViewMore}
                 isActive={isSessionsActive}
                 testID="sidebar-sessions"
+                variant="compact"
               />
             </View>
             <WorkspacesSectionHeader
@@ -983,21 +983,21 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={paddingTopSpacerStyle} /> : null}
-          <View style={styles.sidebarHeaderRow}>
+          <View style={styles.sidebarHeaderGroup}>
             <SidebarHeaderRow
               icon={Plus}
               label={labels.newWorkspace}
               onPress={handleNewWorkspaceNavigate}
               testID="sidebar-global-new-workspace"
+              variant="compact"
             />
-          </View>
-          <View style={styles.sidebarHeaderRow}>
             <SidebarHeaderRow
               icon={MessagesSquare}
               label={labels.sessions}
               onPress={handleViewMore}
               isActive={isSessionsActive}
               testID="sidebar-sessions"
+              variant="compact"
             />
           </View>
         </View>
@@ -1155,8 +1155,10 @@ const staticStyles = RNStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  sidebarHeaderRow: {
-    position: "relative",
+  sidebarHeaderGroup: {
+    paddingVertical: theme.spacing[1],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   workspacesSectionHeader: {
     flexDirection: "row",

@@ -123,6 +123,10 @@ interface NewWorkspaceProjectPickerState {
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_OPTION_PREFIX = "project:";
+const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
+// Height of a single picker-trigger badge. The Base-row spacer reserves exactly
+// this so toggling Isolation to Local hides the row without shifting the form.
+const BADGE_HEIGHT = 28;
 
 function RefPickerBadgeContent({
   selectedItem,
@@ -243,9 +247,9 @@ function ProjectPickerTrigger({
                 iconDataUri={iconDataUri}
                 initial={placeholderInitial}
                 projectKey={projectKey}
-                imageStyle={styles.badgeProjectIcon}
-                fallbackStyle={styles.badgeProjectIconFallback}
-                textStyle={styles.badgeProjectIconFallbackText}
+                imageStyle={styles.projectIcon}
+                fallbackStyle={styles.projectIconFallback}
+                textStyle={styles.projectIconFallbackText}
               />
             ) : (
               <Folder size={iconSize} color={iconColor} />
@@ -431,9 +435,9 @@ function ProjectOptionItem({
           iconDataUri={iconDataUri}
           initial={placeholderInitial}
           projectKey={projectKey}
-          imageStyle={styles.projectOptionIcon}
-          fallbackStyle={styles.projectOptionIconFallback}
-          textStyle={styles.projectOptionIconFallbackText}
+          imageStyle={styles.projectIcon}
+          fallbackStyle={styles.projectIconFallback}
+          textStyle={styles.projectIconFallbackText}
         />
       </View>
     ),
@@ -1783,15 +1787,13 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
-  // Holds the Base row's height (a single trigger badge) so switching Isolation
-  // to Local hides the row's contents without shifting the rest of the form.
   baseSpacer: {
-    height: 28,
+    height: BADGE_HEIGHT,
   },
   badge: {
     flexDirection: "row",
     alignItems: "center",
-    height: 28,
+    height: BADGE_HEIGHT,
     maxWidth: 240,
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
@@ -1800,7 +1802,7 @@ const styles = StyleSheet.create((theme) => ({
   checkoutHintBadge: {
     flexDirection: "row",
     alignItems: "center",
-    height: 28,
+    height: BADGE_HEIGHT,
     maxWidth: 240,
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
@@ -1839,20 +1841,22 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     flexShrink: 0,
   },
-  badgeProjectIcon: {
+  projectIcon: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,
     borderRadius: theme.borderRadius.sm,
   },
-  badgeProjectIconFallback: {
+  projectIconFallback: {
     width: theme.iconSize.md,
     height: theme.iconSize.md,
     borderRadius: theme.borderRadius.sm,
     alignItems: "center",
     justifyContent: "center",
   },
-  badgeProjectIconFallbackText: {
-    fontSize: 10,
+  projectIconFallbackText: {
+    // Single uppercase initial inside an iconSize.md (16px) square — below the
+    // smallest font-size token, so it stays a literal sized to the box.
+    fontSize: PROJECT_ICON_FALLBACK_FONT_SIZE,
     fontWeight: "600",
   },
   rowIconBox: {
@@ -1860,21 +1864,5 @@ const styles = StyleSheet.create((theme) => ({
     height: theme.iconSize.md,
     alignItems: "center",
     justifyContent: "center",
-  },
-  projectOptionIcon: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
-  },
-  projectOptionIconFallback: {
-    width: theme.iconSize.md,
-    height: theme.iconSize.md,
-    borderRadius: theme.borderRadius.sm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  projectOptionIconFallbackText: {
-    fontSize: 10,
-    fontWeight: "600",
   },
 }));
