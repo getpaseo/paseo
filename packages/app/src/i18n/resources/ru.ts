@@ -357,8 +357,8 @@ export const ru: TranslationResources = {
         retry: "Повторить попытку",
         refresh: "Обновить файлы",
         refreshing: "Обновление файлов",
-        hideDotFiles: "Скрыть dot-файлы",
-        showDotFiles: "Показать dot-файлы",
+        hideHiddenFiles: "Скрыть скрытые файлы",
+        showHiddenFiles: "Показать скрытые файлы",
       },
       empty: {
         noFiles: "Нет файлов",

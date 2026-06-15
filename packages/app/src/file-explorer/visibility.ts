@@ -6,9 +6,9 @@ export function isHiddenExplorerPath(path: string): boolean {
 
 export function filterVisibleExplorerEntries(
   entries: ExplorerEntry[],
-  hideDotFiles: boolean,
+  showHiddenFiles: boolean,
 ): ExplorerEntry[] {
-  if (!hideDotFiles) {
+  if (showHiddenFiles) {
     return entries;
   }
   return entries.filter((entry) => !entry.name.startsWith("."));

@@ -355,8 +355,8 @@ export const ar: TranslationResources = {
         retry: "أعد المحاولة",
         refresh: "تحديث الملفات",
         refreshing: "تحديث الملفات",
-        hideDotFiles: "إخفاء ملفات النقطة",
-        showDotFiles: "إظهار ملفات النقطة",
+        hideHiddenFiles: "إخفاء الملفات المخفية",
+        showHiddenFiles: "إظهار الملفات المخفية",
       },
       empty: {
         noFiles: "لا توجد ملفات",

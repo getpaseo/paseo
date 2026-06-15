@@ -358,8 +358,8 @@ export const fr: TranslationResources = {
         retry: "Réessayer",
         refresh: "Actualiser les fichiers",
         refreshing: "Actualisation des fichiers",
-        hideDotFiles: "Masquer les fichiers point",
-        showDotFiles: "Afficher les fichiers point",
+        hideHiddenFiles: "Masquer les fichiers cachés",
+        showHiddenFiles: "Afficher les fichiers cachés",
       },
       empty: {
         noFiles: "Aucun fichier",

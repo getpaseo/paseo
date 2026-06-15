@@ -358,8 +358,8 @@ export const es: TranslationResources = {
         retry: "Rever",
         refresh: "Actualizar archivos",
         refreshing: "Actualizar archivos",
-        hideDotFiles: "Ocultar archivos con punto",
-        showDotFiles: "Mostrar archivos con punto",
+        hideHiddenFiles: "Ocultar archivos ocultos",
+        showHiddenFiles: "Mostrar archivos ocultos",
       },
       empty: {
         noFiles: "Sin archivos",

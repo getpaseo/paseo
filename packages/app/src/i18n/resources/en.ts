@@ -354,8 +354,8 @@ export const en = {
         retry: "Retry",
         refresh: "Refresh files",
         refreshing: "Refreshing files",
-        hideDotFiles: "Hide dotfiles",
-        showDotFiles: "Show dotfiles",
+        hideHiddenFiles: "Hide hidden files",
+        showHiddenFiles: "Show hidden files",
       },
       empty: {
         noFiles: "No files",

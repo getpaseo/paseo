@@ -355,8 +355,8 @@ export const zhCN: TranslationResources = {
         retry: "重试",
         refresh: "刷新文件",
         refreshing: "正在刷新文件",
-        hideDotFiles: "隐藏点文件",
-        showDotFiles: "显示点文件",
+        hideHiddenFiles: "隐藏隐藏文件",
+        showHiddenFiles: "显示隐藏文件",
       },
       empty: {
         noFiles: "没有文件",

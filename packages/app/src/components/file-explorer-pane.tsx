@@ -270,9 +270,11 @@ export function FileExplorerPane({
       workspaceRoot: normalizedWorkspaceRoot,
     });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
-  const hideDotFiles = usePanelStore((state) => state.explorerHideDotFiles);
+  const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
-  const toggleExplorerHideDotFiles = usePanelStore((state) => state.toggleExplorerHideDotFiles);
+  const toggleExplorerShowHiddenFiles = usePanelStore(
+    (state) => state.toggleExplorerShowHiddenFiles,
+  );
   const expandedPathsArray = usePanelStore((state) =>
     workspaceStateKey ? state.expandedPathsByWorkspace[workspaceStateKey] : undefined,
   );
@@ -308,9 +310,8 @@ export function FileExplorerPane({
       hasInitializedRef,
       workspaceStateKey,
       requestDirectoryListing,
-      hideDotFiles,
     });
-  }, [hasWorkspaceScope, hideDotFiles, requestDirectoryListing, workspaceStateKey]);
+  }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 
   const handleToggleDirectory = useCallback(
     (entry: ExplorerEntry) =>
@@ -385,26 +386,22 @@ export function FileExplorerPane({
     setSortOption(SORT_OPTIONS[nextIndex].value);
   }, [sortOption, setSortOption]);
 
-  const handleToggleDotFiles = useCallback(() => {
-    toggleExplorerHideDotFiles();
-    if (hideDotFiles) {
-      requestPersistedExpandedPaths({
-        workspaceStateKey,
-        requestDirectoryListing,
-        hideDotFiles: false,
-      });
+  const handleToggleHiddenFiles = useCallback(() => {
+    const willShow = !usePanelStore.getState().explorerShowHiddenFiles;
+    toggleExplorerShowHiddenFiles();
+    if (willShow) {
+      requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing });
     }
-  }, [hideDotFiles, requestDirectoryListing, toggleExplorerHideDotFiles, workspaceStateKey]);
+  }, [requestDirectoryListing, toggleExplorerShowHiddenFiles, workspaceStateKey]);
 
   const refreshExplorer = useCallback(
     () =>
       refreshExplorerDirectories({
         hasWorkspaceScope,
         expandedPaths,
-        hideDotFiles,
         requestDirectoryListing,
       }),
-    [expandedPaths, hasWorkspaceScope, hideDotFiles, requestDirectoryListing],
+    [expandedPaths, hasWorkspaceScope, requestDirectoryListing],
   );
   const { refetch: refetchExplorer, isFetching: isRefreshFetching } = useQuery({
     queryKey: ["fileExplorerRefresh", serverId, workspaceStateKey],
@@ -427,8 +424,8 @@ export function FileExplorerPane({
   const currentSortLabel = resolveCurrentSortLabel(sortOption, sortLabels);
 
   const treeRows = useMemo(
-    () => resolveTreeRows({ directories, expandedPaths, sortOption, hideDotFiles }),
-    [directories, expandedPaths, hideDotFiles, sortOption],
+    () => resolveTreeRows({ directories, expandedPaths, sortOption, showHiddenFiles }),
+    [directories, expandedPaths, showHiddenFiles, sortOption],
   );
 
   const showInitialLoading = resolveShowInitialLoading({
@@ -495,14 +492,13 @@ export function FileExplorerPane({
         showBackFromError={showBackFromError}
         treeRows={treeRows}
         currentSortLabel={currentSortLabel}
-        hideDotFiles={hideDotFiles}
         isRefreshFetching={isRefreshFetching}
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         treeListRef={treeListRef}
         scrollbar={scrollbar}
         renderTreeRow={renderTreeRow}
         handleSortCycle={handleSortCycle}
-        handleToggleDotFiles={handleToggleDotFiles}
+        handleToggleHiddenFiles={handleToggleHiddenFiles}
         handleRefresh={handleRefresh}
         handleBackFromError={handleBackFromError}
         handleRetry={handleRetry}
@@ -519,14 +515,13 @@ interface FileExplorerPaneContentProps {
   showBackFromError: boolean;
   treeRows: TreeRow[];
   currentSortLabel: string;
-  hideDotFiles: boolean;
   isRefreshFetching: boolean;
   showDesktopWebScrollbar: boolean;
   treeListRef: RefObject<FlatList<TreeRow> | null>;
   scrollbar: ReturnType<typeof useWebScrollViewScrollbar>;
   renderTreeRow: (info: ListRenderItemInfo<TreeRow>) => ReactElement;
   handleSortCycle: () => void;
-  handleToggleDotFiles: () => void;
+  handleToggleHiddenFiles: () => void;
   handleRefresh: () => void;
   handleBackFromError: () => void;
   handleRetry: () => void;
@@ -543,14 +538,13 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     showBackFromError,
     treeRows,
     currentSortLabel,
-    hideDotFiles,
     isRefreshFetching,
     showDesktopWebScrollbar,
     treeListRef,
     scrollbar,
     renderTreeRow,
     handleSortCycle,
-    handleToggleDotFiles,
+    handleToggleHiddenFiles,
     handleRefresh,
     handleBackFromError,
     handleRetry,
@@ -558,22 +552,24 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     iconButtonStyle: iconButtonStyleProp,
   } = props;
 
-  const dotfileToggleAccessibilityLabel = hideDotFiles
-    ? t("workspace.fileExplorer.actions.showDotFiles")
-    : t("workspace.fileExplorer.actions.hideDotFiles");
-  const emptyLabel = hideDotFiles
-    ? t("workspace.fileExplorer.empty.noVisibleFiles")
-    : t("workspace.fileExplorer.empty.noFiles");
-  const dotfileToggleStyle = useCallback(
+  const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
+
+  const hiddenFilesToggleAccessibilityLabel = showHiddenFiles
+    ? t("workspace.fileExplorer.actions.hideHiddenFiles")
+    : t("workspace.fileExplorer.actions.showHiddenFiles");
+  const emptyLabel = showHiddenFiles
+    ? t("workspace.fileExplorer.empty.noFiles")
+    : t("workspace.fileExplorer.empty.noVisibleFiles");
+  const hiddenFilesToggleStyle = useCallback(
     (state: PressableStateCallbackType) => [
       iconButtonStyleProp(state),
-      hideDotFiles && styles.iconButtonActive,
+      !showHiddenFiles && styles.iconButtonActive,
     ],
-    [hideDotFiles, iconButtonStyleProp],
+    [showHiddenFiles, iconButtonStyleProp],
   );
-  const dotfileToggleAccessibilityState = useMemo(
-    () => ({ selected: hideDotFiles }),
-    [hideDotFiles],
+  const hiddenFilesToggleAccessibilityState = useMemo(
+    () => ({ selected: !showHiddenFiles }),
+    [showHiddenFiles],
   );
 
   if (error) {
@@ -612,17 +608,17 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
         </Pressable>
         <View style={styles.headerActions}>
           <Pressable
-            onPress={handleToggleDotFiles}
+            onPress={handleToggleHiddenFiles}
             hitSlop={8}
-            style={dotfileToggleStyle}
+            style={hiddenFilesToggleStyle}
             accessibilityRole="button"
-            accessibilityLabel={dotfileToggleAccessibilityLabel}
-            accessibilityState={dotfileToggleAccessibilityState}
+            accessibilityLabel={hiddenFilesToggleAccessibilityLabel}
+            accessibilityState={hiddenFilesToggleAccessibilityState}
           >
-            {hideDotFiles ? (
-              <EyeOff size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            ) : (
+            {showHiddenFiles ? (
               <Eye size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            ) : (
+              <EyeOff size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
             )}
           </Pressable>
           <Pressable
@@ -699,14 +695,14 @@ function buildTreeRows({
   directories,
   expandedPaths,
   sortOption,
-  hideDotFiles,
+  showHiddenFiles,
   path,
   depth,
 }: {
   directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
   expandedPaths: Set<string>;
   sortOption: SortOption;
-  hideDotFiles: boolean;
+  showHiddenFiles: boolean;
   path: string;
   depth: number;
 }): TreeRow[] {
@@ -717,7 +713,7 @@ function buildTreeRows({
 
   const rows: TreeRow[] = [];
   const entries = sortEntries(
-    filterVisibleExplorerEntries(directory.entries, hideDotFiles),
+    filterVisibleExplorerEntries(directory.entries, showHiddenFiles),
     sortOption,
   );
 
@@ -729,7 +725,7 @@ function buildTreeRows({
           directories,
           expandedPaths,
           sortOption,
-          hideDotFiles,
+          showHiddenFiles,
           path: entry.path,
           depth: depth + 1,
         }),
@@ -793,12 +789,12 @@ function resolveTreeRows({
   directories,
   expandedPaths,
   sortOption,
-  hideDotFiles,
+  showHiddenFiles,
 }: {
   directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
   expandedPaths: Set<string>;
   sortOption: SortOption;
-  hideDotFiles: boolean;
+  showHiddenFiles: boolean;
 }): TreeRow[] {
   if (!directories.get(".")) {
     return [];
@@ -807,7 +803,7 @@ function resolveTreeRows({
     directories,
     expandedPaths,
     sortOption,
-    hideDotFiles,
+    showHiddenFiles,
     path: ".",
     depth: 0,
   });
@@ -927,7 +923,6 @@ async function initializeExplorer({
   hasInitializedRef,
   workspaceStateKey,
   requestDirectoryListing,
-  hideDotFiles,
 }: {
   hasWorkspaceScope: boolean;
   hasInitializedRef: RefObject<boolean>;
@@ -936,7 +931,6 @@ async function initializeExplorer({
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<boolean>;
-  hideDotFiles: boolean;
 }): Promise<void> {
   if (!hasWorkspaceScope || hasInitializedRef.current) {
     return;
@@ -950,27 +944,26 @@ async function initializeExplorer({
     hasInitializedRef.current = false;
     return;
   }
-  requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing, hideDotFiles });
+  requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing });
 }
 
 function requestPersistedExpandedPaths({
   workspaceStateKey,
   requestDirectoryListing,
-  hideDotFiles,
 }: {
   workspaceStateKey: string | null;
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
   ) => Promise<boolean>;
-  hideDotFiles: boolean;
 }): void {
+  const showHiddenFiles = usePanelStore.getState().explorerShowHiddenFiles;
   const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
   if (!persistedPaths) {
     return;
   }
   for (const path of persistedPaths) {
-    if (path !== "." && (!hideDotFiles || !isHiddenExplorerPath(path))) {
+    if (path !== "." && (showHiddenFiles || !isHiddenExplorerPath(path))) {
       void requestDirectoryListing(path, {
         recordHistory: false,
         setCurrentPath: false,
@@ -982,12 +975,10 @@ function requestPersistedExpandedPaths({
 async function refreshExplorerDirectories({
   hasWorkspaceScope,
   expandedPaths,
-  hideDotFiles,
   requestDirectoryListing,
 }: {
   hasWorkspaceScope: boolean;
   expandedPaths: Set<string>;
-  hideDotFiles: boolean;
   requestDirectoryListing: (
     path: string,
     opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
@@ -996,8 +987,9 @@ async function refreshExplorerDirectories({
   if (!hasWorkspaceScope) {
     return null;
   }
+  const showHiddenFiles = usePanelStore.getState().explorerShowHiddenFiles;
   const directoryPaths = Array.from(expandedPaths).filter(
-    (path) => !hideDotFiles || !isHiddenExplorerPath(path),
+    (path) => showHiddenFiles || !isHiddenExplorerPath(path),
   );
   if (!directoryPaths.includes(".")) {
     directoryPaths.unshift(".");

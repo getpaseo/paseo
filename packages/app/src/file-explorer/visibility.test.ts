@@ -13,13 +13,13 @@ function makeEntry(name: string, kind: ExplorerEntry["kind"]): ExplorerEntry {
 }
 
 describe("file explorer visibility", () => {
-  it("keeps dot-prefixed entries when dotfile hiding is disabled", () => {
+  it("keeps dot-prefixed entries when hidden files are shown", () => {
     const entries = [makeEntry(".env", "file"), makeEntry("src", "directory")];
 
-    expect(filterVisibleExplorerEntries(entries, false)).toEqual(entries);
+    expect(filterVisibleExplorerEntries(entries, true)).toEqual(entries);
   });
 
-  it("hides dot-prefixed files and directories", () => {
+  it("hides dot-prefixed files and directories when hidden files are not shown", () => {
     const entries = [
       makeEntry(".env", "file"),
       makeEntry(".git", "directory"),
@@ -27,7 +27,7 @@ describe("file explorer visibility", () => {
       makeEntry("src", "directory"),
     ];
 
-    expect(filterVisibleExplorerEntries(entries, true).map((entry) => entry.name)).toEqual([
+    expect(filterVisibleExplorerEntries(entries, false).map((entry) => entry.name)).toEqual([
       "README.md",
       "src",
     ]);
