@@ -35,6 +35,8 @@ describe("file explorer visibility", () => {
 
   it("detects paths nested under dot-prefixed directories", () => {
     expect(isHiddenExplorerPath(".")).toBe(false);
+    expect(isHiddenExplorerPath("..")).toBe(false);
+    expect(isHiddenExplorerPath("../sibling")).toBe(false);
     expect(isHiddenExplorerPath("src/components")).toBe(false);
     expect(isHiddenExplorerPath(".git")).toBe(true);
     expect(isHiddenExplorerPath("src/.cache/output.json")).toBe(true);

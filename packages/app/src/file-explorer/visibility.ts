@@ -1,7 +1,9 @@
 import type { ExplorerEntry } from "@/stores/session-store";
 
 export function isHiddenExplorerPath(path: string): boolean {
-  return path.split("/").some((segment) => segment !== "." && segment.startsWith("."));
+  return path
+    .split("/")
+    .some((segment) => segment !== "." && segment !== ".." && segment.startsWith("."));
 }
 
 export function filterVisibleExplorerEntries(
