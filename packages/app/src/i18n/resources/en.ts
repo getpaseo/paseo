@@ -749,6 +749,7 @@ export const en = {
     },
     actions: {
       addProject: "Add project",
+      newWorkspace: "New workspace",
       home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",

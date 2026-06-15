@@ -38,14 +38,18 @@ async function createWorkspaceViaUi(
   page: Page,
   input: {
     project: { projectKey: string; projectDisplayName: string };
-    backing: "local" | "worktree";
+    // null when the project has no git checkout: there is no Isolation control to
+    // touch, the backing is implicitly local.
+    backing: "local" | "worktree" | null;
     previousWorkspaceId: string;
     client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   },
 ): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
   await openGlobalNewWorkspaceComposer(page);
   await selectNewWorkspaceProject(page, input.project);
-  await selectWorkspaceBacking(page, input.backing);
+  if (input.backing !== null) {
+    await selectWorkspaceBacking(page, input.backing);
+  }
   await submitNewWorkspaceEmpty(page);
 
   return assertNewWorkspaceSidebarAndHeader(page, {
@@ -195,7 +199,8 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const second = await createWorkspaceViaUi(page, {
         project,
-        backing: "local",
+        // Non-git project: no Isolation control, backing is implicitly local.
+        backing: null,
         previousWorkspaceId: seeded.workspaceId,
         client,
       });

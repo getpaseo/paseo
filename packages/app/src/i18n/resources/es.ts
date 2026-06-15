@@ -769,6 +769,7 @@ export const es: TranslationResources = {
     },
     actions: {
       addProject: "Agregar proyecto",
+      newWorkspace: "Nuevo espacio de trabajo",
       home: "Hogar",
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",

@@ -116,6 +116,7 @@ interface SidebarSharedProps {
 
 interface SidebarLabels {
   addProject: string;
+  newWorkspace: string;
   home: string;
   settings: string;
   switchHost: string;
@@ -242,7 +243,7 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const handleNewWorkspaceNavigate = useCallback(() => {
     if (!activeServerId) return;
-    router.push(buildHostNewWorkspaceRoute(activeServerId));
+    router.navigate(buildHostNewWorkspaceRoute(activeServerId));
   }, [activeServerId]);
 
   const handleSettingsMobile = useCallback(() => {
@@ -287,6 +288,7 @@ export const LeftSidebar = memo(function LeftSidebar({
   const labels = useMemo(
     (): SidebarLabels => ({
       addProject: t("sidebar.actions.addProject"),
+      newWorkspace: t("sidebar.actions.newWorkspace"),
       home: t("sidebar.actions.home"),
       settings: t("sidebar.actions.settings"),
       switchHost: t("sidebar.host.switchTitle"),
@@ -802,6 +804,14 @@ function MobileSidebar({
           <View style={styles.sidebarContent} pointerEvents="auto">
             <View style={styles.sidebarHeaderRow}>
               <SidebarHeaderRow
+                icon={Plus}
+                label={labels.newWorkspace}
+                onPress={handleNewWorkspace}
+                testID="sidebar-global-new-workspace"
+              />
+            </View>
+            <View style={styles.sidebarHeaderRow}>
+              <SidebarHeaderRow
                 icon={MessagesSquare}
                 label={labels.sessions}
                 onPress={handleViewMore}
@@ -973,6 +983,14 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={paddingTopSpacerStyle} /> : null}
+          <View style={styles.sidebarHeaderRow}>
+            <SidebarHeaderRow
+              icon={Plus}
+              label={labels.newWorkspace}
+              onPress={handleNewWorkspaceNavigate}
+              testID="sidebar-global-new-workspace"
+            />
+          </View>
           <View style={styles.sidebarHeaderRow}>
             <SidebarHeaderRow
               icon={MessagesSquare}

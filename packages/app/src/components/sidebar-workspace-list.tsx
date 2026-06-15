@@ -1777,61 +1777,6 @@ function WorkspaceRow({
   );
 }
 
-function ProjectNewWorkspaceRow({
-  project,
-  displayName,
-  serverId,
-  onWorkspacePress,
-}: {
-  project: SidebarProjectEntry;
-  displayName: string;
-  serverId: string | null;
-  onWorkspacePress?: () => void;
-}) {
-  const { t } = useTranslation();
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handlePress = useCallback(() => {
-    if (!serverId) {
-      return;
-    }
-    onWorkspacePress?.();
-    router.navigate(
-      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
-        displayName,
-        projectId: project.projectKey,
-      }) as Href,
-    );
-  }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
-
-  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
-  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
-
-  const rowStyle = useMemo(
-    () => [styles.emptyProjectRow, isHovered && styles.emptyProjectRowHovered],
-    [isHovered],
-  );
-
-  return (
-    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("sidebar.workspace.actions.createWorkspaceFor", {
-          projectName: displayName,
-        })}
-        style={rowStyle}
-        onPress={handlePress}
-        testID={`sidebar-project-new-workspace-${project.projectKey}`}
-      >
-        <Plus size={14} color="#9ca3af" />
-        <Text style={styles.emptyProjectRowText} numberOfLines={1}>
-          {t("sidebar.workspace.actions.newWorkspace")}
-        </Text>
-      </Pressable>
-    </View>
-  );
-}
-
 function ProjectBlock({
   project,
   collapsed,
@@ -2032,15 +1977,6 @@ function ProjectBlock({
           nestable={useNestable}
           simultaneousGestureRef={parentGestureRef}
           containerStyle={styles.workspaceListContainer}
-        />
-      ) : null}
-
-      {!collapsed ? (
-        <ProjectNewWorkspaceRow
-          project={project}
-          displayName={displayName}
-          serverId={serverId}
-          onWorkspacePress={onWorkspacePress}
         />
       ) : null}
     </View>
@@ -2650,25 +2586,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[1],
     userSelect: "none",
-  },
-  emptyProjectRow: {
-    minHeight: 36,
-    marginBottom: theme.spacing[1],
-    paddingVertical: theme.spacing[2],
-    paddingLeft: theme.spacing[3] + theme.spacing[3],
-    paddingRight: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    userSelect: "none",
-  },
-  emptyProjectRowHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  emptyProjectRowText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
   },
   workspaceRowMain: {
     flexDirection: "row",

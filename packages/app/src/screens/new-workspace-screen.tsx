@@ -564,6 +564,16 @@ function useNewWorkspaceProjectPicker({
     [allowAllProjects, projects],
   );
 
+  // expo-router reuses the 'new' screen across navigations without remounting, so
+  // a manual picker choice would otherwise stick when navigating to a different
+  // project's New Workspace. Resetting on route project identity lets each
+  // route-driven navigation preselect its own project; in-screen manual override
+  // still works within a single visit.
+  const routeProjectKey = routeProject?.projectKey ?? null;
+  useEffect(() => {
+    setManualProjectKey(null);
+  }, [routeProjectKey]);
+
   const selectedProjectKey = manualProjectKey ?? initialProject?.projectKey ?? null;
 
   const selectedProject = useMemo(
@@ -1531,7 +1541,7 @@ export function NewWorkspaceScreen({
             />
           </View>
         </LabeledRow>
-        {supportsWorkspaceMultiplicity ? (
+        {canCreateWorktree ? (
           <LabeledRow label={t("newWorkspace.backing.label")}>
             <View>
               <IsolationPickerTrigger
@@ -1603,6 +1613,7 @@ export function NewWorkspaceScreen({
       backingPickerOpen,
       backingTriggerLabel,
       badgePressableStyle,
+      canCreateWorktree,
       effectiveBacking,
       handleBackingPickerOpenChange,
       handlePickerOpenChange,
@@ -1631,7 +1642,6 @@ export function NewWorkspaceScreen({
       selectedSourceDirectory,
       setPickerSearchQuery,
       showRefPicker,
-      supportsWorkspaceMultiplicity,
       t,
       theme.colors.foregroundMuted,
       theme.iconSize.sm,

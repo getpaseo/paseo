@@ -28,16 +28,21 @@ async function hideWorkspaceFromSidebar(page: Page, workspaceId: string): Promis
 }
 
 // Model B makes the project a first-class parent: archiving its last workspace
-// must not delete the project. The sidebar keeps the empty project row with a
-// "+ New workspace" affordance so the user can repopulate it.
+// must not delete the project. The per-project "+ New workspace" row is gone;
+// the empty project keeps its parent row, and creation stays reachable from the
+// project row's own new-worktree icon (git projects) and the global button.
 test.describe("Empty project persists", () => {
-  test("archiving the only workspace keeps the project row with a new-workspace affordance", async ({
+  test("archiving the only workspace keeps the project row with creation still reachable", async ({
     page,
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "empty-project-persists-" });
 
     try {
       const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      const projectNewWorktreeIcon = page.getByTestId(
+        `sidebar-project-new-worktree-${workspace.projectId}`,
+      );
+      const globalNewWorkspace = page.getByTestId("sidebar-global-new-workspace");
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
@@ -49,28 +54,23 @@ test.describe("Empty project persists", () => {
       await hideWorkspaceFromSidebar(page, workspace.workspaceId);
 
       // The workspace row goes away, but its project parent stays as an empty
-      // project with a "+ New workspace" row.
+      // project row. Creation is still reachable: the project row keeps its own
+      // new-worktree icon (revealed on hover) and the global button persists.
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toHaveCount(0, {
         timeout: 30_000,
       });
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-
-      const newWorkspaceRow = page.getByTestId(
-        `sidebar-project-new-workspace-${workspace.projectId}`,
-      );
-      await expect(newWorkspaceRow).toBeVisible({ timeout: 30_000 });
-      await expect(newWorkspaceRow).toContainText(/new workspace/i);
+      await expect(globalNewWorkspace).toBeVisible({ timeout: 30_000 });
+      await projectRow.hover();
+      await expect(projectNewWorktreeIcon).toBeVisible({ timeout: 30_000 });
 
       // The empty project survives a reload — it is persisted, not a transient
       // artifact of the just-archived workspace still lingering in memory.
       await page.reload();
       await waitForSidebarHydration(page);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      await expect(
-        page.getByTestId(`sidebar-project-new-workspace-${workspace.projectId}`),
-      ).toBeVisible({
-        timeout: 30_000,
-      });
+      await projectRow.hover();
+      await expect(projectNewWorktreeIcon).toBeVisible({ timeout: 30_000 });
     } finally {
       await workspace.cleanup();
     }

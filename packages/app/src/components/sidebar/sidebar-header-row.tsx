@@ -45,7 +45,7 @@ export function SidebarHeaderRow({
       const iconColor = isHighlighted ? theme.colors.foreground : theme.colors.foregroundMuted;
       return (
         <>
-          <Icon size={theme.iconSize.md} color={iconColor} />
+          <Icon size={theme.iconSize.sm} color={iconColor} />
           <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
         </>
       );
@@ -56,7 +56,7 @@ export function SidebarHeaderRow({
       label,
       theme.colors.foreground,
       theme.colors.foregroundMuted,
-      theme.iconSize.md,
+      theme.iconSize.sm,
     ],
   );
 
@@ -115,7 +115,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
   label: {
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

@@ -761,6 +761,7 @@ export const ru: TranslationResources = {
     },
     actions: {
       addProject: "Добавить проект",
+      newWorkspace: "Новое рабочее пространство",
       home: "Дом",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",

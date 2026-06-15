@@ -153,7 +153,7 @@ export async function openNewWorkspaceComposer(
 }
 
 export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> {
-  await page.getByTestId("sidebar-new-workspace").click();
+  await page.getByTestId("sidebar-global-new-workspace").click();
 
   await expect(page).toHaveURL(/\/h\/[^/]+\/new(?:\?.*)?$/, {
     timeout: 30_000,

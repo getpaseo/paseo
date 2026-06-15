@@ -737,6 +737,7 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       addProject: "添加 project",
+      newWorkspace: "新建工作区",
       home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",

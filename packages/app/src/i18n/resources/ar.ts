@@ -743,6 +743,7 @@ export const ar: TranslationResources = {
     },
     actions: {
       addProject: "إضافة مشروع",
+      newWorkspace: "مساحة عمل جديدة",
       home: "بيت",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
