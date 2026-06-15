@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
+import { MAX_SLUG_LENGTH } from "@getpaseo/protocol/branch-slug";
 import { Check, ChevronDown, Folder, GitBranch, GitPullRequest, X } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -55,35 +56,25 @@ import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
-  pickerItemToCheckoutRequest,
-  type PickerCheckoutRequest,
-  type PickerItem,
-} from "./new-workspace-picker-item";
+  createNewBranchPlaceholderName,
+  resolveNewBranchError,
+  resolveRequestedNewBranchSlug,
+} from "./new-workspace-branch-name";
+import { resolveNewWorkspaceCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
+import {
+  computePickerOptionData,
+  pickerItemOptionId,
+  pickerItemTriggerLabel,
+  type PickerOptionData,
+} from "./new-workspace-picker-options";
 import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
-
-function resolveCheckoutRequest(
-  selectedItem: PickerItem | null,
-  currentBranch: string | null,
-): PickerCheckoutRequest | undefined {
-  const selectedCheckoutRequest = pickerItemToCheckoutRequest(selectedItem);
-  if (selectedCheckoutRequest) return selectedCheckoutRequest;
-  if (!currentBranch) return undefined;
-  return {
-    action: "branch-off",
-    refName: currentBranch,
-  };
-}
+import { NewWorkspaceRefPickerOptionItem } from "./new-workspace-ref-picker-option-item";
 
 interface NewWorkspaceScreenProps {
   serverId: string;
   sourceDirectory?: string;
   projectId?: string;
   displayName?: string;
-}
-
-interface PickerOptionData {
-  options: ComboboxOptionType[];
-  itemById: Map<string, PickerItem>;
 }
 
 interface ProjectOptionData {
@@ -115,8 +106,6 @@ interface NewWorkspaceProjectPickerState {
   handleSelectProjectOption: (id: string) => void;
 }
 
-const BRANCH_OPTION_PREFIX = "branch:";
-const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_OPTION_PREFIX = "project:";
 
 function RefPickerBadgeContent({
@@ -303,55 +292,6 @@ function CheckoutHintBadge({
   );
 }
 
-function PickerOptionItem({
-  testID,
-  label,
-  description,
-  selected,
-  active,
-  disabled,
-  onPress,
-  isBranch,
-  iconColor,
-  iconSize,
-}: {
-  testID: string;
-  label: string;
-  description: string | undefined;
-  selected: boolean;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
-  isBranch: boolean;
-  iconColor: string;
-  iconSize: number;
-}) {
-  const leadingSlot = useMemo(
-    () => (
-      <View style={styles.rowIconBox}>
-        {isBranch ? (
-          <GitBranch size={iconSize} color={iconColor} />
-        ) : (
-          <GitPullRequest size={iconSize} color={iconColor} />
-        )}
-      </View>
-    ),
-    [isBranch, iconSize, iconColor],
-  );
-  return (
-    <ComboboxItem
-      testID={testID}
-      label={label}
-      description={description}
-      selected={selected}
-      active={active}
-      disabled={disabled}
-      onPress={onPress}
-      leadingSlot={leadingSlot}
-    />
-  );
-}
-
 function ProjectOptionItem({
   testID,
   projectKey,
@@ -405,61 +345,8 @@ function ProjectOptionItem({
   );
 }
 
-function branchOptionId(name: string): string {
-  return `${BRANCH_OPTION_PREFIX}${name}`;
-}
-
-function prOptionId(number: number): string {
-  return `${PR_OPTION_PREFIX}${number}`;
-}
-
 function projectOptionId(projectId: string): string {
   return `${PROJECT_OPTION_PREFIX}${projectId}`;
-}
-
-function formatPrLabel(item: { number: number; title: string }): string {
-  return `#${item.number} ${item.title}`;
-}
-
-function pickerItemLabel(item: PickerItem): string {
-  return item.kind === "branch" ? item.name : formatPrLabel(item.item);
-}
-
-function pickerItemTriggerLabel(item: PickerItem): string {
-  return pickerItemLabel(item);
-}
-
-function computePickerOptionData(
-  branchDetails: ReadonlyArray<{ name: string; committerDate: number }>,
-  prItems: ReadonlyArray<GitHubSearchItem>,
-): PickerOptionData {
-  const idMap = new Map<string, PickerItem>();
-
-  interface TimedOption {
-    option: ComboboxOptionType;
-    timestamp: number;
-  }
-  const timedOptions: TimedOption[] = [];
-
-  for (const branch of branchDetails) {
-    const id = branchOptionId(branch.name);
-    const option = { id, label: branch.name };
-    idMap.set(id, { kind: "branch", name: branch.name });
-    timedOptions.push({ option, timestamp: branch.committerDate });
-  }
-
-  for (const pr of prItems) {
-    if (!pr.headRefName) continue;
-    const id = prOptionId(pr.number);
-    const option = { id, label: formatPrLabel(pr) };
-    idMap.set(id, { kind: "github-pr", item: pr });
-    const updatedAtMs = pr.updatedAt ? Date.parse(pr.updatedAt) : 0;
-    const timestamp = Number.isNaN(updatedAtMs) ? 0 : Math.floor(updatedAtMs / 1000);
-    timedOptions.push({ option, timestamp });
-  }
-
-  timedOptions.sort((a, b) => b.timestamp - a.timestamp);
-  return { options: timedOptions.map((t) => t.option), itemById: idMap };
 }
 
 function computeProjectOptionData(projects: readonly HostProjectListItem[]): ProjectOptionData {
@@ -566,13 +453,113 @@ function getSelectedPickerItem(selection: PickerSelection | null): PickerItem | 
 
 function normalizeBranchDetails(
   data:
-    | { branchDetails?: Array<{ name: string; committerDate: number }>; branches?: string[] }
+    | {
+        branchDetails?: Array<{ name: string; committerDate: number }>;
+        branches?: string[];
+      }
     | undefined,
 ): Array<{ name: string; committerDate: number }> {
   const details = data?.branchDetails;
   if (details && details.length > 0) return details;
   const names = data?.branches ?? [];
   return names.map((name) => ({ name, committerDate: 0 }));
+}
+
+function focusNewBranchInputOnSelect(
+  item: PickerItem,
+  inputRef: React.RefObject<TextInput | null>,
+): void {
+  if (item.kind !== "new-branch") {
+    return;
+  }
+  setTimeout(() => inputRef.current?.focus(), 0);
+}
+
+function updateNewBranchPlaceholderOnSelect(
+  item: PickerItem,
+  setPlaceholderName: React.Dispatch<React.SetStateAction<string>>,
+): void {
+  if (item.kind !== "new-branch") {
+    return;
+  }
+  setPlaceholderName((current) => createNewBranchPlaceholderName({ previousName: current }));
+}
+
+function getPrPickerItems(input: {
+  githubFeaturesEnabled: boolean;
+  items: GitHubSearchItem[] | undefined;
+}): GitHubSearchItem[] {
+  if (!input.githubFeaturesEnabled) {
+    return [];
+  }
+  return input.items ?? [];
+}
+
+function getRefPickerEmptyText(input: {
+  branchSuggestionsFetching: boolean;
+  githubPrsFetching: boolean;
+  searchingLabel: string;
+  emptyLabel: string;
+}): string {
+  if (input.branchSuggestionsFetching || input.githubPrsFetching) {
+    return input.searchingLabel;
+  }
+  return input.emptyLabel;
+}
+
+function NewBranchNameField({
+  visible,
+  isPending,
+  inputRef,
+  value,
+  placeholder,
+  error,
+  onChangeText,
+}: {
+  visible: boolean;
+  isPending: boolean;
+  inputRef: React.RefObject<TextInput | null>;
+  value: string;
+  placeholder: string;
+  error: string | null;
+  onChangeText: (value: string) => void;
+}) {
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const containerStyle = useMemo(
+    () => [styles.newBranchInputContainer, isPending && styles.badgeDisabled],
+    [isPending],
+  );
+
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <View style={styles.newBranchField}>
+      <View style={containerStyle}>
+        <View style={styles.badgeIconBox}>
+          <GitBranch size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        </View>
+        <TextInput
+          ref={inputRef}
+          accessibilityLabel={t("newWorkspace.newBranch.accessibilityLabel")}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isPending}
+          maxLength={MAX_SLUG_LENGTH}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          spellCheck={false}
+          style={styles.newBranchInput}
+          testID="new-workspace-new-branch-input"
+          value={value}
+        />
+      </View>
+      {error ? <Text style={styles.newBranchErrorText}>{error}</Text> : null}
+    </View>
+  );
 }
 
 interface SubmitDraftInput {
@@ -604,7 +591,11 @@ async function createAndMergeWorkspace(input: {
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.createInput.firstAgentContext
-    ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
+    ? {
+        ...normalizedWorkspace,
+        status: "running" as const,
+        statusEnteredAt: new Date(),
+      }
     : normalizedWorkspace;
   input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
   return normalizedWorkspace;
@@ -786,8 +777,13 @@ export function NewWorkspaceScreen({
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
+  const [newBranchName, setNewBranchName] = useState("");
+  const [newBranchPlaceholderName, setNewBranchPlaceholderName] = useState(
+    createNewBranchPlaceholderName,
+  );
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
+  const newBranchInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -814,7 +810,10 @@ export function NewWorkspaceScreen({
     projectId,
     displayName: displayNameProp,
   });
-  const projectIconDataByProjectKey = useProjectIconDataByProjectKey({ serverId, projects });
+  const projectIconDataByProjectKey = useProjectIconDataByProjectKey({
+    serverId,
+    projects,
+  });
   const draftKey = `new-workspace:${serverId}:${selectedSourceDirectory ?? "choose-project"}`;
   const chatDraft = useAgentInputDraft({
     draftKey,
@@ -859,6 +858,24 @@ export function NewWorkspaceScreen({
   });
 
   const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
+  const isNewBranchSelected = selectedItem?.kind === "new-branch";
+  const requestedNewBranchSlug = useMemo(
+    () =>
+      resolveRequestedNewBranchSlug({
+        selectedItem,
+        newBranchName,
+        placeholderName: newBranchPlaceholderName,
+      }),
+    [newBranchName, newBranchPlaceholderName, selectedItem],
+  );
+  const newBranchError = useMemo(() => {
+    return resolveNewBranchError({
+      rawName: newBranchName,
+      requestedSlug: requestedNewBranchSlug,
+      isNewBranchSelected,
+      invalidLabel: t("newWorkspace.newBranch.invalid"),
+    });
+  }, [isNewBranchSelected, newBranchName, requestedNewBranchSlug, t]);
 
   const branchSuggestionsQuery = useQuery({
     queryKey: ["branch-suggestions", serverId, selectedSourceDirectory, debouncedPickerSearchQuery],
@@ -891,26 +908,43 @@ export function NewWorkspaceScreen({
     [branchSuggestionsQuery.data],
   );
   const githubFeaturesEnabled = githubPrSearchQuery.data?.githubFeaturesEnabled !== false;
-  const prItems: GitHubSearchItem[] = useMemo(() => {
-    if (!githubFeaturesEnabled) return [];
-    return githubPrSearchQuery.data?.items ?? [];
-  }, [githubFeaturesEnabled, githubPrSearchQuery.data?.items]);
+  const prItems: GitHubSearchItem[] = useMemo(
+    () =>
+      getPrPickerItems({
+        githubFeaturesEnabled,
+        items: githubPrSearchQuery.data?.items,
+      }),
+    [githubFeaturesEnabled, githubPrSearchQuery.data?.items],
+  );
+  const pickerItemLabels = useMemo(
+    () => ({
+      newBranch: t("newWorkspace.newBranch.placeholder"),
+    }),
+    [t],
+  );
 
   const { options, itemById }: PickerOptionData = useMemo(
-    () => computePickerOptionData(branchDetails, prItems),
-    [branchDetails, prItems],
+    () =>
+      computePickerOptionData({
+        branchDetails,
+        prItems,
+        newBranchLabel: pickerItemLabels.newBranch,
+      }),
+    [branchDetails, pickerItemLabels.newBranch, prItems],
   );
   const triggerLabel = useMemo(() => {
-    if (selectedItem) return pickerItemTriggerLabel(selectedItem);
+    if (selectedItem) return pickerItemTriggerLabel(selectedItem, pickerItemLabels);
     return currentBranch ?? "main";
-  }, [currentBranch, selectedItem]);
+  }, [currentBranch, pickerItemLabels, selectedItem]);
 
   const selectedOptionId = useMemo(() => {
     if (!selectedItem) return "";
-    return selectedItem.kind === "branch"
-      ? branchOptionId(selectedItem.name)
-      : prOptionId(selectedItem.item.number);
+    return pickerItemOptionId(selectedItem);
   }, [selectedItem]);
+  const refPickerIntoBaseLabel = useCallback(
+    (baseRef: string) => t("newWorkspace.refPicker.intoBase", { baseRef }),
+    [t],
+  );
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const next = syncPickerPrAttachment({
@@ -927,6 +961,8 @@ export function NewWorkspaceScreen({
         chatDraft.setAttachments(next.attachments);
       }
       setPickerOpen(false);
+      updateNewBranchPlaceholderOnSelect(item, setNewBranchPlaceholderName);
+      focusNewBranchInputOnSelect(item, newBranchInputRef);
     },
     [chatDraft, manualPickerSelection?.attachedPrNumber],
   );
@@ -963,7 +999,10 @@ export function NewWorkspaceScreen({
 
   const acceptCheckoutHint = useCallback(() => {
     if (!checkoutHintPrAttachment) return;
-    selectPickerItem({ kind: "github-pr", item: checkoutHintPrAttachment.item });
+    selectPickerItem({
+      kind: "github-pr",
+      item: checkoutHintPrAttachment.item,
+    });
   }, [checkoutHintPrAttachment, selectPickerItem]);
 
   const dismissCheckoutHint = useCallback(() => {
@@ -998,7 +1037,6 @@ export function NewWorkspaceScreen({
     ],
     [isPending],
   );
-
   const handlePickerOpenChange = useCallback((nextOpen: boolean) => {
     setPickerOpen(nextOpen);
     if (!nextOpen) {
@@ -1010,6 +1048,10 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(nextOpen);
   }, []);
 
+  const handleNewBranchNameChange = useCallback((value: string) => {
+    setNewBranchName(value);
+  }, []);
+
   const buildCreateWorktreeInput = useCallback(
     (input: {
       cwd: string;
@@ -1019,14 +1061,21 @@ export function NewWorkspaceScreen({
       if (!selectedProject) {
         throw new Error("Choose a project");
       }
-      const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
+      if (newBranchError) {
+        throw new Error(newBranchError);
+      }
+      const checkoutResolution = resolveNewWorkspaceCheckoutRequest({
+        selectedItem,
+        currentBranch,
+        newBranchSlug: requestedNewBranchSlug,
+      });
       const trimmedPrompt = input.prompt.trim();
       const hasFirstAgentContext = trimmedPrompt.length > 0 || input.attachments.length > 0;
 
       return {
         cwd: selectedProject.iconWorkingDir,
         projectId: selectedProject.projectKey,
-        worktreeSlug: createNameId(),
+        worktreeSlug: checkoutResolution.worktreeSlug ?? createNameId(),
         ...(hasFirstAgentContext
           ? {
               firstAgentContext: {
@@ -1035,10 +1084,10 @@ export function NewWorkspaceScreen({
               },
             }
           : {}),
-        ...checkoutRequest,
+        ...checkoutResolution.checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject],
+    [currentBranch, newBranchError, requestedNewBranchSlug, selectedItem, selectedProject],
   );
 
   const ensureWorkspace = useCallback(
@@ -1120,33 +1169,28 @@ export function NewWorkspaceScreen({
       const item = itemById.get(option.id);
       if (!item) return <View key={option.id} />;
 
-      const isBranch = item.kind === "branch";
-
-      const testID = isBranch
-        ? `new-workspace-ref-picker-branch-${item.name}`
-        : `new-workspace-ref-picker-pr-${item.item.number}`;
-
-      const description =
-        !isBranch && item.item.baseRefName
-          ? t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName })
-          : undefined;
-
       return (
-        <PickerOptionItem
-          testID={testID}
-          label={pickerItemLabel(item)}
-          description={description}
+        <NewWorkspaceRefPickerOptionItem
+          item={item}
+          labels={pickerItemLabels}
           selected={selected}
           active={active}
           disabled={isPending}
           onPress={onPress}
-          isBranch={isBranch}
+          intoBaseLabel={refPickerIntoBaseLabel}
           iconColor={theme.colors.foregroundMuted}
           iconSize={theme.iconSize.sm}
         />
       );
     },
-    [isPending, itemById, t, theme.colors.foregroundMuted, theme.iconSize.sm],
+    [
+      isPending,
+      itemById,
+      pickerItemLabels,
+      refPickerIntoBaseLabel,
+      theme.colors.foregroundMuted,
+      theme.iconSize.sm,
+    ],
   );
 
   const renderProjectOption = useCallback(
@@ -1206,10 +1250,12 @@ export function NewWorkspaceScreen({
     [composerState, isPending],
   );
 
-  const pickerEmptyText =
-    branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
-      ? t("newWorkspace.refPicker.searching")
-      : t("newWorkspace.refPicker.noMatchingRefs");
+  const pickerEmptyText = getRefPickerEmptyText({
+    branchSuggestionsFetching: branchSuggestionsQuery.isFetching,
+    githubPrsFetching: githubPrSearchQuery.isFetching,
+    searchingLabel: t("newWorkspace.refPicker.searching"),
+    emptyLabel: t("newWorkspace.refPicker.noMatchingRefs"),
+  });
 
   const composerFooter = useMemo(
     () => (
@@ -1274,6 +1320,15 @@ export function NewWorkspaceScreen({
             renderOption={renderPickerOption}
           />
         </View>
+        <NewBranchNameField
+          visible={isNewBranchSelected}
+          isPending={isPending}
+          inputRef={newBranchInputRef}
+          value={newBranchName}
+          placeholder={newBranchPlaceholderName}
+          error={newBranchError}
+          onChangeText={handleNewBranchNameChange}
+        />
         {agentControlsWithDisabled ? (
           <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
         ) : null}
@@ -1303,9 +1358,14 @@ export function NewWorkspaceScreen({
       dismissCheckoutHint,
       handlePickerOpenChange,
       handleProjectPickerOpenChange,
+      handleNewBranchNameChange,
       handleSelectOption,
       handleSelectProjectOption,
+      isNewBranchSelected,
       isPending,
+      newBranchError,
+      newBranchName,
+      newBranchPlaceholderName,
       openPicker,
       openProjectPicker,
       options,
@@ -1455,6 +1515,34 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+  },
+  newBranchField: {
+    minWidth: 180,
+    maxWidth: 240,
+  },
+  newBranchInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 28,
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2],
+    borderRadius: theme.borderRadius["2xl"],
+    gap: theme.spacing[1],
+    backgroundColor: theme.colors.surface1,
+  },
+  newBranchInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: 0,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    outlineWidth: 0,
+  },
+  newBranchErrorText: {
+    marginTop: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.destructive,
   },
   tooltipText: {
     fontSize: theme.fontSize.sm,

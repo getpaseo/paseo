@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import equal from "fast-deep-equal";
+import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -10,10 +11,14 @@ import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
 import { useHostProjects } from "@/projects/host-projects";
 import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import {
+  buildSidebarWorkspaceOrderScopeKey,
+  useSidebarOrderStore,
+} from "@/stores/sidebar-order-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
   buildSidebarProjectsFromHostProjects,
+  applyStoredSidebarOrdering,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   type SidebarProjectEntry,
@@ -22,6 +27,7 @@ import {
 
 export {
   appendMissingOrderKeys,
+  applyStoredSidebarOrdering,
   applyStoredOrdering,
   buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
@@ -77,7 +83,10 @@ function deriveEffectiveWorkspaceStatus(input: {
   agents?: Map<string, Agent>;
 }): EffectiveWorkspaceStatus {
   if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+    return {
+      status: input.workspace.status,
+      enteredAt: input.workspace.statusEnteredAt,
+    };
   }
 
   const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
@@ -97,7 +106,10 @@ function deriveEffectiveWorkspaceStatus(input: {
     return rootAgentActivity;
   }
 
-  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+  return {
+    status: input.workspace.status,
+    enteredAt: input.workspace.statusEnteredAt,
+  };
 }
 
 function getPendingInitialAgentCreateStartedAt(input: {
@@ -178,6 +190,7 @@ export function useSidebarWorkspaceEntry(
 
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
+const EMPTY_WORKSPACE_ORDER_BY_SCOPE: Record<string, string[]> = {};
 
 export interface SidebarWorkspacesListResult {
   projects: SidebarProjectEntry[];
@@ -200,6 +213,21 @@ export function useSidebarWorkspacesList(options?: {
   const isActive = Boolean(serverId) && options?.enabled !== false;
   const persistedProjectOrder = useSidebarOrderStore((state) =>
     isActive && serverId ? (state.projectOrderByServerId[serverId] ?? EMPTY_ORDER) : EMPTY_ORDER,
+  );
+  const persistedWorkspaceOrders = useSidebarOrderStore(
+    useShallow((state) => {
+      if (!isActive || !serverId) {
+        return EMPTY_WORKSPACE_ORDER_BY_SCOPE;
+      }
+      const scopePrefix = `${serverId}::`;
+      const scopedOrders: Record<string, string[]> = {};
+      for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject)) {
+        if (scopeKey.startsWith(scopePrefix)) {
+          scopedOrders[scopeKey] = order;
+        }
+      }
+      return scopedOrders;
+    }),
   );
   const hasHydratedWorkspaces = useSessionStore((state) =>
     isActive && serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
@@ -229,10 +257,18 @@ export function useSidebarWorkspacesList(options?: {
     if (!serverId || hostProjects.length === 0) {
       return EMPTY_PROJECTS;
     }
-    return buildSidebarProjectsFromHostProjects({
+    const baselineProjects = buildSidebarProjectsFromHostProjects({
       projects: hostProjects,
     });
-  }, [hostProjects, serverId]);
+    return applyStoredSidebarOrdering({
+      projects: baselineProjects,
+      persistedProjectOrder,
+      getWorkspaceOrder: (projectKey) => {
+        const scopeKey = buildSidebarWorkspaceOrderScopeKey(serverId, projectKey);
+        return persistedWorkspaceOrders[scopeKey] ?? EMPTY_ORDER;
+      },
+    });
+  }, [hostProjects, persistedProjectOrder, persistedWorkspaceOrders, serverId]);
 
   useEffect(() => {
     if (!serverId) {

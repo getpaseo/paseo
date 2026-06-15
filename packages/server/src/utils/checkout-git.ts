@@ -138,6 +138,15 @@ interface CheckoutFileChange {
   isUntracked?: boolean;
 }
 
+interface CheckoutFileStageState {
+  isStaged: boolean;
+  isUnstaged: boolean;
+  isUntracked: boolean;
+  isNewInIndex: boolean;
+  isRenameInIndex: boolean;
+  originalPath?: string;
+}
+
 interface CheckoutDiffRefs {
   baseRef: string;
   targetRef?: string;
@@ -516,7 +525,11 @@ async function tryResolveMergeBase(cwd: string, baseRef: string): Promise<string
   }
 }
 
-type FileStat = { additions: number; deletions: number; isBinary: boolean } | null;
+type FileStat = {
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+} | null;
 
 function normalizeNumstatPath(pathField: string): string {
   const braceRenameMatch = pathField.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
@@ -814,10 +827,143 @@ function isGitError(error: unknown): boolean {
 
 async function requireGitRepo(cwd: string): Promise<void> {
   try {
-    await runGitCommand(["rev-parse", "--git-dir"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
+    await runGitCommand(["rev-parse", "--git-dir"], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+    });
   } catch {
     throw new NotGitRepoError(cwd);
   }
+}
+
+function normalizeCheckoutPathspec(path: string): string {
+  if (path.trim().length === 0) {
+    throw new Error("File path is required");
+  }
+  if (path.includes("\0")) {
+    throw new Error("File path cannot contain null bytes");
+  }
+  return path;
+}
+
+function parseCheckoutFileStageStates(output: string): Map<string, CheckoutFileStageState> {
+  const states = new Map<string, CheckoutFileStageState>();
+  const entries = output.split("\0").filter(Boolean);
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.length < 4) {
+      continue;
+    }
+    const indexStatus = entry[0] ?? " ";
+    const worktreeStatus = entry[1] ?? " ";
+    if (indexStatus === "!" && worktreeStatus === "!") {
+      continue;
+    }
+    const path = entry.slice(3);
+    if (!path) {
+      continue;
+    }
+    const isUntracked = indexStatus === "?" && worktreeStatus === "?";
+    const isRenameOrCopy = indexStatus === "R" || indexStatus === "C";
+    const originalPath = isRenameOrCopy ? entries[index + 1] : undefined;
+    states.set(path, {
+      isStaged: !isUntracked && indexStatus !== " ",
+      isUnstaged: isUntracked || worktreeStatus !== " ",
+      isUntracked,
+      isNewInIndex: indexStatus === "A",
+      isRenameInIndex: indexStatus === "R",
+      ...(originalPath ? { originalPath } : {}),
+    });
+    if (isRenameOrCopy) {
+      index += 1;
+    }
+  }
+  return states;
+}
+
+async function getCheckoutFileStageStates(
+  cwd: string,
+  path?: string,
+): Promise<Map<string, CheckoutFileStageState>> {
+  const pathspec = path ? ["--", normalizeCheckoutPathspec(path)] : [];
+  const { stdout } = await runGitCommand(
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", ...pathspec],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  return parseCheckoutFileStageStates(stdout);
+}
+
+function applyCheckoutFileStageState(
+  file: ParsedDiffFile,
+  states: Map<string, CheckoutFileStageState>,
+): ParsedDiffFile {
+  const state = states.get(file.path);
+  return {
+    ...file,
+    isStaged: state?.isStaged ?? false,
+    isUnstaged: state?.isUnstaged ?? false,
+  };
+}
+
+export async function stageCheckoutFile(cwd: string, path: string): Promise<void> {
+  await requireGitRepo(cwd);
+  await runGitCommand(["add", "--", normalizeCheckoutPathspec(path)], {
+    cwd,
+    timeout: 120_000,
+  });
+}
+
+export async function unstageCheckoutFile(cwd: string, path: string): Promise<void> {
+  await requireGitRepo(cwd);
+  await runGitCommand(["reset", "--", normalizeCheckoutPathspec(path)], {
+    cwd,
+    timeout: 120_000,
+  });
+}
+
+export async function discardCheckoutFile(cwd: string, path: string): Promise<void> {
+  await requireGitRepo(cwd);
+  const normalizedPath = normalizeCheckoutPathspec(path);
+  const state = (await getCheckoutFileStageStates(cwd)).get(normalizedPath);
+  if (!state) {
+    return;
+  }
+  if (state.isStaged) {
+    await runGitCommand(["reset", "--", normalizedPath], {
+      cwd,
+      timeout: 120_000,
+    });
+    const postResetState = (await getCheckoutFileStageStates(cwd, normalizedPath)).get(
+      normalizedPath,
+    );
+    if (postResetState?.isUntracked === true) {
+      await runGitCommand(["clean", "-f", "--", normalizedPath], {
+        cwd,
+        timeout: 120_000,
+      });
+      if (state.isRenameInIndex && state.originalPath) {
+        await runGitCommand(
+          ["checkout", "HEAD", "--", normalizeCheckoutPathspec(state.originalPath)],
+          {
+            cwd,
+            timeout: 120_000,
+          },
+        );
+      }
+      return;
+    }
+  }
+  if (state.isUntracked || state.isNewInIndex) {
+    await runGitCommand(["clean", "-f", "--", normalizedPath], {
+      cwd,
+      timeout: 120_000,
+    });
+    return;
+  }
+  await runGitCommand(["checkout", "--", normalizedPath], {
+    cwd,
+    timeout: 120_000,
+  });
 }
 
 export async function getCurrentBranch(cwd: string): Promise<string | null> {
@@ -1910,7 +2056,10 @@ async function getCheckoutShortstatUncached(
     const tracked = parseCheckoutShortstat(stdout);
 
     if (tracked) {
-      return { additions: tracked.additions + untrackedAdditions, deletions: tracked.deletions };
+      return {
+        additions: tracked.additions + untrackedAdditions,
+        deletions: tracked.deletions,
+      };
     }
     if (untrackedAdditions > 0) {
       return { additions: untrackedAdditions, deletions: 0 };
@@ -2334,6 +2483,10 @@ export async function getCheckoutDiff(
 
   const trackedChanges = changes.filter((change) => !change.isUntracked);
   const untrackedChanges = changes.filter((change) => change.isUntracked === true);
+  const fileStageStates =
+    compare.includeStructured === true && compare.mode === "uncommitted"
+      ? await getCheckoutFileStageStates(cwd)
+      : new Map<string, CheckoutFileStageState>();
   const trackedDiff = await processTrackedChanges({
     cwd,
     refsForDiff: effectiveRefsForDiff,
@@ -2392,7 +2545,10 @@ export async function getCheckoutDiff(
   }
 
   if (compare.includeStructured) {
-    return { diff: diffText, structured };
+    return {
+      diff: diffText,
+      structured: structured.map((file) => applyCheckoutFileStageState(file, fileStageStates)),
+    };
   }
   return { diff: diffText };
 }
@@ -2432,7 +2588,9 @@ async function detectAndThrowMergeToBaseConflict(
       : String(error);
   try {
     const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-      runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd: operationCwd }),
+      runGitCommand(["diff", "--name-only", "--diff-filter=U"], {
+        cwd: operationCwd,
+      }),
       runGitCommand(["ls-files", "-u"], { cwd: operationCwd }),
       runGitCommand(["status", "--porcelain"], { cwd: operationCwd }),
     ]);
@@ -2458,7 +2616,10 @@ async function detectAndThrowMergeToBaseConflict(
       conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
     if (conflictDetected) {
       try {
-        await runGitCommand(["merge", "--abort"], { cwd: operationCwd, timeout: 120_000 });
+        await runGitCommand(["merge", "--abort"], {
+          cwd: operationCwd,
+          timeout: 120_000,
+        });
       } catch {
         // ignore
       }
@@ -2523,7 +2684,10 @@ export async function mergeToBase(
         timeout: 120_000,
       });
     } else {
-      await runGitCommand(["merge", currentBranch], { cwd: operationCwd, timeout: 120_000 });
+      await runGitCommand(["merge", currentBranch], {
+        cwd: operationCwd,
+        timeout: 120_000,
+      });
     }
   } catch (error) {
     await detectAndThrowMergeToBaseConflict({
@@ -2688,7 +2852,10 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
+  await runGitCommand(["push", "-u", "origin", currentBranch], {
+    cwd,
+    timeout: 120_000,
+  });
   github?.invalidate({ cwd });
 }
 
@@ -2761,7 +2928,10 @@ export async function createPullRequest(
     throw new Error(`Base ref mismatch: expected ${base}, got ${options.base}`);
   }
 
-  await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
+  await runGitCommand(["push", "-u", "origin", head], {
+    cwd,
+    timeout: 120_000,
+  });
 
   const result = await github.createPullRequest({
     cwd,

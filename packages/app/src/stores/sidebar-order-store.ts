@@ -27,7 +27,7 @@ function normalizeKeys(keys: string[]): string[] {
   return normalized;
 }
 
-function buildWorkspaceScopeKey(serverId: string, projectKey: string): string {
+export function buildSidebarWorkspaceOrderScopeKey(serverId: string, projectKey: string): string {
   return `${serverId.trim()}::${projectKey.trim()}`;
 }
 
@@ -62,7 +62,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
         if (!serverKey || !projectScope) {
           return [];
         }
-        const scopeKey = buildWorkspaceScopeKey(serverKey, projectScope);
+        const scopeKey = buildSidebarWorkspaceOrderScopeKey(serverKey, projectScope);
         return get().workspaceOrderByServerAndProject[scopeKey] ?? [];
       },
       setWorkspaceOrder: (serverId, projectKey, keys) => {
@@ -71,7 +71,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
         if (!serverKey || !projectScope) {
           return;
         }
-        const scopeKey = buildWorkspaceScopeKey(serverKey, projectScope);
+        const scopeKey = buildSidebarWorkspaceOrderScopeKey(serverKey, projectScope);
         const normalized = normalizeKeys(keys);
         set((state) => ({
           workspaceOrderByServerAndProject: {

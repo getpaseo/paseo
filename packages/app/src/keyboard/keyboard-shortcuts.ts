@@ -142,6 +142,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-move-tab-down": "settings.shortcuts.help.moveTabDown",
   "workspace-pane-close": "settings.shortcuts.help.closePane",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
+  "workspace-scripts-open": "settings.shortcuts.help.openScripts",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
   "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
   "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
@@ -651,6 +652,35 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "panels",
       label: "New terminal",
       keys: ["mod", "shift", "T"],
+    },
+  },
+  {
+    id: "workspace-scripts-open-cmd-alt-s-mac",
+    action: "workspace.scripts.open",
+    combo: "Cmd+Alt+S",
+    when: { mac: true, commandCenter: false, terminal: false, editable: false },
+    help: {
+      id: "workspace-scripts-open",
+      section: "panels",
+      label: "Open scripts",
+      keys: ["mod", "alt", "S"],
+    },
+  },
+  {
+    id: "workspace-scripts-open-ctrl-alt-s-non-mac",
+    action: "workspace.scripts.open",
+    combo: "Ctrl+Alt+S",
+    when: {
+      mac: false,
+      commandCenter: false,
+      terminal: false,
+      editable: false,
+    },
+    help: {
+      id: "workspace-scripts-open",
+      section: "panels",
+      label: "Open scripts",
+      keys: ["mod", "alt", "S"],
     },
   },
 
@@ -1280,9 +1310,21 @@ export function resolveKeyboardShortcut(input: {
 } {
   const { event, context, chordState, onChordReset, bindings = DEFAULT_BINDINGS } = input;
   if (chordState.step === 0) {
-    return resolveInitialChordStep({ event, context, chordState, onChordReset, bindings });
+    return resolveInitialChordStep({
+      event,
+      context,
+      chordState,
+      onChordReset,
+      bindings,
+    });
   }
-  return resolveAdvancingChordStep({ event, context, chordState, onChordReset, bindings });
+  return resolveAdvancingChordStep({
+    event,
+    context,
+    chordState,
+    onChordReset,
+    bindings,
+  });
 }
 
 export function getBindingIdForAction(

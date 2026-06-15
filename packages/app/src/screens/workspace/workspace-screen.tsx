@@ -157,7 +157,6 @@ import {
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
-import { shouldSeedEmptyWorkspaceDraft } from "@/screens/workspace/workspace-empty-draft-seed";
 import {
   buildBulkCloseConfirmationMessage,
   type BulkCloseConfirmationLabels,
@@ -220,7 +219,11 @@ function getWorkspaceFileLocationFields(
   if (target?.kind !== "file") {
     return { path: null };
   }
-  return { path: target.path, lineStart: target.lineStart, lineEnd: target.lineEnd };
+  return {
+    path: target.path,
+    lineStart: target.lineStart,
+    lineEnd: target.lineEnd,
+  };
 }
 
 function buildWorkspaceFileLocation(
@@ -229,7 +232,11 @@ function buildWorkspaceFileLocation(
   if (fields.path === null) {
     return null;
   }
-  return { path: fields.path, lineStart: fields.lineStart, lineEnd: fields.lineEnd };
+  return {
+    path: fields.path,
+    lineStart: fields.lineStart,
+    lineEnd: fields.lineEnd,
+  };
 }
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
@@ -264,8 +271,12 @@ function DynamicProviderIcon({ iconKey, size, color = "" }: DynamicProviderIconP
 
 const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+const mutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 const sourceControlPanelStrokeWidth15 = { strokeWidth: 1.5 };
 
@@ -502,7 +513,9 @@ function MobileTabTrailingAccessory({
       <DropdownMenuTrigger
         testID={`${menuTestIDBase}-trigger`}
         accessibilityRole="button"
-        accessibilityLabel={t("workspace.tabs.menu.openFor", { label: presentationLabel })}
+        accessibilityLabel={t("workspace.tabs.menu.openFor", {
+          label: presentationLabel,
+        })}
         hitSlop={8}
         style={mobileTabMenuTriggerStyle}
       >
@@ -786,7 +799,9 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
         ref={anchorRef}
         testID="workspace-tab-switcher-trigger"
         accessibilityRole="button"
-        accessibilityLabel={t("workspace.tabs.switcher.trigger", { count: tabs.length })}
+        accessibilityLabel={t("workspace.tabs.switcher.trigger", {
+          count: tabs.length,
+        })}
         style={switcherTriggerStyle}
         onPress={handleOpenSwitcher}
       >
@@ -984,7 +999,13 @@ interface WorkspaceHeaderMenuProps {
   onOpenSetupTab: () => void;
 }
 interface HeaderMenuProfileItemProps {
-  profile: { id: string; name: string; command: string; args?: string[]; icon?: string };
+  profile: {
+    id: string;
+    name: string;
+    command: string;
+    args?: string[];
+    icon?: string;
+  };
   disabled: boolean;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
 }
@@ -1211,6 +1232,8 @@ interface WorkspaceHeaderTitleBarProps {
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
+  isScriptsMenuOpen: boolean;
+  onScriptsMenuOpenChange: (open: boolean) => void;
 }
 
 function WorkspaceHeaderTitleBar({
@@ -1247,6 +1270,8 @@ function WorkspaceHeaderTitleBar({
   onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
+  isScriptsMenuOpen,
+  onScriptsMenuOpenChange,
 }: WorkspaceHeaderTitleBarProps) {
   return (
     <View style={styles.headerTitleContainer}>
@@ -1310,6 +1335,8 @@ function WorkspaceHeaderTitleBar({
             onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
             hideLabels
             presentation="ghost"
+            open={isScriptsMenuOpen}
+            onOpenChange={onScriptsMenuOpenChange}
           />
         ) : null}
       </View>
@@ -1745,8 +1772,19 @@ function WorkspaceScreenContent({
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
+  const [isScriptsMenuOpen, setIsScriptsMenuOpen] = useState(false);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
+
+  useEffect(() => {
+    setIsScriptsMenuOpen(false);
+  }, [normalizedServerId, normalizedWorkspaceId]);
+
+  useEffect(() => {
+    if (workspaceScripts.length === 0) {
+      setIsScriptsMenuOpen(false);
+    }
+  }, [workspaceScripts.length]);
 
   const workspaceTerminalScopeKey = useMemo(
     () => buildWorkspaceTerminalScopeKey(normalizedServerId, normalizedWorkspaceId),
@@ -1834,7 +1872,6 @@ function WorkspaceScreenContent({
     queryKey: terminalsQueryKey,
     removeTerminalFromCache,
     standaloneTerminalIds,
-    terminals,
   } = useWorkspaceTerminals({
     client,
     isConnected,
@@ -2165,7 +2202,10 @@ function WorkspaceScreenContent({
       if (!persistenceKey) {
         return;
       }
-      const tabId = openWorkspaceTabFocused(persistenceKey, { kind: "agent", agentId });
+      const tabId = openWorkspaceTabFocused(persistenceKey, {
+        kind: "agent",
+        agentId,
+      });
       if (tabId) {
         navigateToTabId(tabId);
       }
@@ -2173,7 +2213,6 @@ function WorkspaceScreenContent({
     [navigateToTabId, openWorkspaceTabFocused, persistenceKey],
   );
 
-  const emptyWorkspaceSeedRef = useRef<string | null>(null);
   const autoOpenedSetupTabWorkspaceRef = useRef<string | null>(null);
   const requestedWorkspaceSetupStatusKeyRef = useRef<string | null>(null);
 
@@ -2223,44 +2262,6 @@ function WorkspaceScreenContent({
     persistenceKey,
     upsertWorkspaceSetupProgress,
     workspaceSetupSnapshot,
-  ]);
-
-  useEffect(() => {
-    if (
-      !shouldSeedEmptyWorkspaceDraft({
-        isRouteFocused,
-        hasPersistenceKey: Boolean(persistenceKey),
-        hasWorkspaceDirectory: Boolean(workspaceDirectory),
-        hasHydratedWorkspaceLayoutStore,
-        hasHydratedAgents,
-        hasLoadedTerminals: terminalsQuery.isSuccess,
-        activeAgentCount: workspaceAgentVisibility.activeAgentIds.size,
-        terminalCount: terminals.length,
-        tabCount: tabs.length,
-      })
-    ) {
-      emptyWorkspaceSeedRef.current = null;
-      return;
-    }
-    const workspaceKey = `${normalizedServerId}:${normalizedWorkspaceId}`;
-    if (emptyWorkspaceSeedRef.current === workspaceKey) {
-      return;
-    }
-    emptyWorkspaceSeedRef.current = workspaceKey;
-    openWorkspaceDraftTab();
-  }, [
-    normalizedServerId,
-    normalizedWorkspaceId,
-    openWorkspaceDraftTab,
-    persistenceKey,
-    hasHydratedAgents,
-    hasHydratedWorkspaceLayoutStore,
-    isRouteFocused,
-    terminals.length,
-    terminalsQuery.isSuccess,
-    tabs.length,
-    workspaceDirectory,
-    workspaceAgentVisibility.activeAgentIds.size,
   ]);
 
   useEffect(() => {
@@ -2492,9 +2493,14 @@ function WorkspaceScreenContent({
           tabs: tabCount,
         }),
       agentsAndTabs: ({ agents, tabs: tabCount }) =>
-        t("workspace.tabs.confirmations.bulk.agentsAndTabs", { agents, tabs: tabCount }),
+        t("workspace.tabs.confirmations.bulk.agentsAndTabs", {
+          agents,
+          tabs: tabCount,
+        }),
       terminals: ({ terminals: terminalCount }) =>
-        t("workspace.tabs.confirmations.bulk.terminals", { terminals: terminalCount }),
+        t("workspace.tabs.confirmations.bulk.terminals", {
+          terminals: terminalCount,
+        }),
       tabs: ({ tabs: tabCount }) => t("workspace.tabs.confirmations.bulk.tabs", { tabs: tabCount }),
       agents: ({ agents }) => t("workspace.tabs.confirmations.bulk.agents", { agents }),
     }),
@@ -2692,7 +2698,10 @@ function WorkspaceScreenContent({
     }) {
       setHoveredCloseTabKey((current) => (current === input.tabId ? null : current));
       if (persistenceKey) {
-        closeWorkspaceTabWithCleanup({ tabId: input.tabId, target: input.target });
+        closeWorkspaceTabWithCleanup({
+          tabId: input.tabId,
+          target: input.target,
+        });
       }
     },
     [closeWorkspaceTabWithCleanup, persistenceKey],
@@ -2705,7 +2714,10 @@ function WorkspaceScreenContent({
         return;
       }
       if (tab.target.kind === "terminal") {
-        await handleCloseTerminalTab({ tabId, terminalId: tab.target.terminalId });
+        await handleCloseTerminalTab({
+          tabId,
+          terminalId: tab.target.terminalId,
+        });
         return;
       }
       if (tab.target.kind === "agent") {
@@ -2782,7 +2794,9 @@ function WorkspaceScreenContent({
         return;
       }
 
-      toast.show(t("workspace.tabs.toasts.reloadingAgent"), { durationMs: null });
+      toast.show(t("workspace.tabs.toasts.reloadingAgent"), {
+        durationMs: null,
+      });
       try {
         await client.refreshAgent(agentId);
         // Send the existing cursor so the server detects the new epoch and
@@ -2795,10 +2809,17 @@ function WorkspaceScreenContent({
           direction: "tail",
           projection: "projected",
           ...(currentCursor
-            ? { cursor: { epoch: currentCursor.epoch, seq: currentCursor.endSeq } }
+            ? {
+                cursor: {
+                  epoch: currentCursor.epoch,
+                  seq: currentCursor.endSeq,
+                },
+              }
             : {}),
         });
-        toast.show(t("workspace.tabs.toasts.reloadedAgent"), { variant: "success" });
+        toast.show(t("workspace.tabs.toasts.reloadedAgent"), {
+          variant: "success",
+        });
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToReloadAgent"),
@@ -2970,6 +2991,11 @@ function WorkspaceScreenContent({
         case "workspace.terminal.new":
           handleCreateTerminal();
           return true;
+        case "workspace.scripts.open":
+          if (workspaceScripts.length > 0) {
+            setIsScriptsMenuOpen(true);
+          }
+          return true;
         case "workspace.tab.close-current":
           if (activeTabId) {
             void handleCloseTabById(activeTabId);
@@ -3005,6 +3031,7 @@ function WorkspaceScreenContent({
       handleCreateTerminal,
       navigateToTabId,
       tabs,
+      workspaceScripts.length,
     ],
   );
 
@@ -3106,6 +3133,7 @@ function WorkspaceScreenContent({
       "workspace.tab.navigate-index",
       "workspace.tab.navigate-relative",
       "workspace.terminal.new",
+      "workspace.scripts.open",
     ] as const,
     enabled: Boolean(isRouteFocused && normalizedServerId && normalizedWorkspaceId),
     priority: 100,
@@ -3390,6 +3418,8 @@ function WorkspaceScreenContent({
             onViewTerminal={handleViewScriptTerminal}
             onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
             hideLabels={showCompactButtonLabels}
+            open={isScriptsMenuOpen}
+            onOpenChange={setIsScriptsMenuOpen}
           />
         ) : null}
         {!isMobile && workspaceDirectory ? (
@@ -3513,6 +3543,7 @@ function WorkspaceScreenContent({
       handleScriptTerminalStarted,
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
+      isScriptsMenuOpen,
       showCompactButtonLabels,
       isGitCheckout,
       handleToggleExplorer,
@@ -3529,7 +3560,12 @@ function WorkspaceScreenContent({
     [isFocusModeEnabled, isMobile],
   );
   const showExplorerSidebar = useMemo(
-    () => shouldShowWorkspaceExplorerSidebar({ isRouteFocused, isFocusModeEnabled, isMobile }),
+    () =>
+      shouldShowWorkspaceExplorerSidebar({
+        isRouteFocused,
+        isFocusModeEnabled,
+        isMobile,
+      }),
     [isRouteFocused, isFocusModeEnabled, isMobile],
   );
   const createTerminalDisabled = useMemo(
@@ -3665,6 +3701,8 @@ function WorkspaceScreenContent({
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
                 onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
+                isScriptsMenuOpen={isScriptsMenuOpen}
+                onScriptsMenuOpenChange={setIsScriptsMenuOpen}
               />
             </>
           }

@@ -1525,7 +1525,10 @@ test("getCheckoutDiff uses one-shot subscription protocol", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const promise = client.getCheckoutDiff("/tmp/project", { mode: "base", baseRef: "main" });
+  const promise = client.getCheckoutDiff("/tmp/project", {
+    mode: "base",
+    baseRef: "main",
+  });
 
   expect(mock.sent).toHaveLength(1);
   const subscribeRequest = parseSentFrame(mock.sent[0]);
@@ -2083,6 +2086,85 @@ test("requests checkout pull via RPC", async () => {
   });
 });
 
+test.each([
+  {
+    name: "stage",
+    call: (client: DaemonClient) =>
+      client.checkoutFileStage("/tmp/project", "src/app.ts", "req-stage-file"),
+    requestType: "checkout.file.stage.request",
+    responseType: "checkout.file.stage.response",
+    requestId: "req-stage-file",
+  },
+  {
+    name: "unstage",
+    call: (client: DaemonClient) =>
+      client.checkoutFileUnstage("/tmp/project", "src/app.ts", "req-unstage-file"),
+    requestType: "checkout.file.unstage.request",
+    responseType: "checkout.file.unstage.response",
+    requestId: "req-unstage-file",
+  },
+  {
+    name: "discard",
+    call: (client: DaemonClient) =>
+      client.checkoutFileDiscard("/tmp/project", "src/app.ts", "req-discard-file"),
+    requestType: "checkout.file.discard.request",
+    responseType: "checkout.file.discard.response",
+    requestId: "req-discard-file",
+  },
+])(
+  "requests checkout file $name via RPC",
+  async ({ call, requestType, responseType, requestId }) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const promise = call(client);
+
+    expect(mock.sent).toHaveLength(1);
+    const request = parseSentFrame(mock.sent[0]);
+    expect(request.type).toBe(requestType);
+    expect(request.cwd).toBe("/tmp/project");
+    expect(request.path).toBe("src/app.ts");
+    expect(request.requestId).toBe(requestId);
+
+    mock.triggerMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: responseType,
+          payload: {
+            cwd: "/tmp/project",
+            path: "src/app.ts",
+            requestId,
+            success: true,
+            error: null,
+          },
+        },
+      }),
+    );
+
+    await expect(promise).resolves.toEqual({
+      cwd: "/tmp/project",
+      path: "src/app.ts",
+      requestId,
+      success: true,
+      error: null,
+    });
+  },
+);
+
 test("renames a branch via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -2212,7 +2294,10 @@ test("resubscribes checkout diff streams after reconnect", async () => {
   const internal = client as unknown as {
     checkoutDiffSubscriptions: Map<
       string,
-      { cwd: string; compare: { mode: "uncommitted" | "base"; baseRef?: string } }
+      {
+        cwd: string;
+        compare: { mode: "uncommitted" | "base"; baseRef?: string };
+      }
     >;
   };
   internal.checkoutDiffSubscriptions.set("checkout-sub-1", {

@@ -619,7 +619,11 @@ export class VoiceAssistantWebSocketServer {
 
   // Main-loop stall visibility: terminal frames and agent traffic share one event
   // loop, so delay percentiles here are the ground truth for "the daemon is busy".
-  private snapshotEventLoopDelay(): { p50Ms: number; p99Ms: number; maxMs: number } | null {
+  private snapshotEventLoopDelay(): {
+    p50Ms: number;
+    p99Ms: number;
+    maxMs: number;
+  } | null {
     const monitor = this.eventLoopDelayMonitor;
     if (!monitor) {
       return null;
@@ -1150,6 +1154,8 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
+        // COMPAT(checkoutFileMutations): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        checkoutFileMutations: true,
       },
     };
   }

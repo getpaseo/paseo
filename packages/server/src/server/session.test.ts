@@ -68,6 +68,9 @@ interface SessionHandlerInternals {
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutRefreshRequest(params: unknown): Promise<unknown>;
+  handleCheckoutFileStageRequest(params: unknown): Promise<unknown>;
+  handleCheckoutFileUnstageRequest(params: unknown): Promise<unknown>;
+  handleCheckoutFileDiscardRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
@@ -113,6 +116,9 @@ const checkoutGitMocks = vi.hoisted(() => ({
   pushCurrentBranch: vi.fn(),
   renameCurrentBranch: vi.fn(),
   resolveBranchCheckout: vi.fn(),
+  discardCheckoutFile: vi.fn(),
+  stageCheckoutFile: vi.fn(),
+  unstageCheckoutFile: vi.fn(),
   warmCheckoutShortstatInBackground: vi.fn(),
 }));
 
@@ -165,6 +171,9 @@ vi.mock("../utils/checkout-git.js", async (importOriginal) => {
     pushCurrentBranch: checkoutGitMocks.pushCurrentBranch,
     renameCurrentBranch: checkoutGitMocks.renameCurrentBranch,
     resolveBranchCheckout: checkoutGitMocks.resolveBranchCheckout,
+    discardCheckoutFile: checkoutGitMocks.discardCheckoutFile,
+    stageCheckoutFile: checkoutGitMocks.stageCheckoutFile,
+    unstageCheckoutFile: checkoutGitMocks.unstageCheckoutFile,
     warmCheckoutShortstatInBackground: checkoutGitMocks.warmCheckoutShortstatInBackground,
   };
 });
@@ -408,7 +417,10 @@ describe("session voice mode streaming transcription", () => {
     await settleVoiceSession();
     harness.detector.emit("speech_stopped");
     await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+    harness.sttSession.emitCommitted({
+      segmentId: "segment-1",
+      previousSegmentId: null,
+    });
     harness.sttSession.emitTranscript({
       segmentId: "segment-1",
       transcript: "ship the streaming final",
@@ -454,7 +466,10 @@ describe("session voice mode streaming transcription", () => {
       await settleVoiceSession();
       harness.detector.emit("speech_stopped");
       await settleVoiceSession();
-      harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+      harness.sttSession.emitCommitted({
+        segmentId: "segment-1",
+        previousSegmentId: null,
+      });
 
       await vi.advanceTimersByTimeAsync(10_000);
       await settleVoiceSession();
@@ -484,7 +499,10 @@ describe("session voice mode streaming transcription", () => {
     await settleVoiceSession();
     harness.detector.emit("speech_stopped");
     await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
+    harness.sttSession.emitCommitted({
+      segmentId: "segment-1",
+      previousSegmentId: null,
+    });
     harness.sttSession.emitTranscript({
       segmentId: "segment-1",
       transcript: "background noise",
@@ -641,7 +659,9 @@ describe("project config RPC authorization", () => {
     const messages: unknown[] = [];
     const session = createSessionForTest({
       messages,
-      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]),
+      },
     });
 
     await session.handleMessage({
@@ -681,7 +701,9 @@ describe("project config RPC authorization", () => {
       const messages: unknown[] = [];
       const session = createSessionForTest({
         messages,
-        projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+        projectRegistry: {
+          list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]),
+        },
       });
 
       await session.handleMessage({
@@ -758,12 +780,16 @@ describe("project config RPC authorization", () => {
     const repoRoot = makeRoot();
     writeFileSync(
       join(repoRoot, "paseo.json"),
-      JSON.stringify({ worktree: { setup: "npm install", teardown: ["npm run clean"] } }),
+      JSON.stringify({
+        worktree: { setup: "npm install", teardown: ["npm run clean"] },
+      }),
     );
     const messages: unknown[] = [];
     const session = createSessionForTest({
       messages,
-      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]),
+      },
     });
 
     await session.handleMessage({
@@ -779,7 +805,9 @@ describe("project config RPC authorization", () => {
           requestId: "read-1",
           repoRoot,
           ok: true,
-          config: { worktree: { setup: "npm install", teardown: ["npm run clean"] } },
+          config: {
+            worktree: { setup: "npm install", teardown: ["npm run clean"] },
+          },
           revision: expect.objectContaining({
             mtimeMs: expect.any(Number),
             size: expect.any(Number),
@@ -1160,7 +1188,9 @@ describe("session checkout merge handling", () => {
       reason: "merge-to-base",
     });
     expect(github.invalidate).toHaveBeenCalledTimes(1);
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/base-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/base-worktree",
+    });
     expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
     expect(messages).toContainEqual({
       type: "checkout_merge_response",
@@ -1221,7 +1251,11 @@ describe("session checkout merge handling", () => {
         }),
       ),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
     checkoutGitMocks.mergeFromBase.mockResolvedValue(undefined);
 
     await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
@@ -1240,7 +1274,9 @@ describe("session checkout merge handling", () => {
       force: true,
       reason: "merge-from-base",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout_merge_from_base_response",
       payload: {
@@ -1330,7 +1366,11 @@ diff --git a/file.txt b/file.txt
     const messages: unknown[] = [];
     const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
     const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
-    const session = createSessionForTest({ checkoutDiffManager, workspaceGitService, messages });
+    const session = createSessionForTest({
+      checkoutDiffManager,
+      workspaceGitService,
+      messages,
+    });
 
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
 
@@ -1432,7 +1472,11 @@ diff --git a/file.txt b/file.txt
     ["metadataGeneration is schema-invalid", { metadataGeneration: "not an object" }],
     [
       "metadataGeneration exists but missing commitMessage",
-      { metadataGeneration: { pullRequest: { instructions: "Write a punchy PR." } } },
+      {
+        metadataGeneration: {
+          pullRequest: { instructions: "Write a punchy PR." },
+        },
+      },
     ],
     [
       "commitMessage exists but instructions is undefined",
@@ -1709,7 +1753,11 @@ diff --git a/file.txt b/file.txt
     ["metadataGeneration is schema-invalid", { metadataGeneration: "not an object" }],
     [
       "metadataGeneration exists but missing pullRequest",
-      { metadataGeneration: { commitMessage: { instructions: "Use conventional commits." } } },
+      {
+        metadataGeneration: {
+          commitMessage: { instructions: "Use conventional commits." },
+        },
+      },
     ],
     [
       "pullRequest exists but instructions is undefined",
@@ -1765,8 +1813,11 @@ diff --git a/file.txt b/file.txt
         },
       },
     });
-    const schema = (call as { schema?: { safeParse?: (value: unknown) => { success: boolean } } })
-      .schema;
+    const schema = (
+      call as {
+        schema?: { safeParse?: (value: unknown) => { success: boolean } };
+      }
+    ).schema;
 
     expect(agentResponseMocks.generateStructuredAgentResponseWithFallback).toHaveBeenCalledTimes(1);
     expect(call).toMatchObject({
@@ -1839,7 +1890,11 @@ diff --git a/file.txt b/file.txt
       url: "https://github.com/getpaseo/paseo/pull/2",
       number: 2,
     });
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutPrCreateRequest({
       type: "checkout_pr_create_request",
@@ -1854,7 +1909,9 @@ diff --git a/file.txt b/file.txt
       force: true,
       reason: "create-pr",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
       payload: {
@@ -1901,7 +1958,11 @@ describe("session checkout pull request merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutPrMergeRequest({
       type: "checkout_pr_merge_request",
@@ -1944,7 +2005,9 @@ describe("session checkout pull request merge", () => {
       force: true,
       reason: "merge-pr",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout_pr_merge_response",
       payload: {
@@ -1998,7 +2061,11 @@ describe("session checkout pull request merge", () => {
         createSnapshot(options?.force ? "BLOCKED" : "CLEAN"),
       ),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutPrMergeRequest({
       type: "checkout_pr_merge_request",
@@ -2051,7 +2118,11 @@ describe("session checkout pull request merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutPrMergeRequest({
       type: "checkout_pr_merge_request",
@@ -2113,7 +2184,11 @@ describe("session checkout pull request merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutPrMergeRequest({
       type: "checkout_pr_merge_request",
@@ -2176,7 +2251,11 @@ describe("session checkout pull request auto-merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
       type: "checkout.github.set_auto_merge.request",
@@ -2205,7 +2284,9 @@ describe("session checkout pull request auto-merge", () => {
       force: true,
       reason: "enable-pr-auto-merge",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout.github.set_auto_merge.response",
       payload: {
@@ -2242,7 +2323,11 @@ describe("session checkout pull request auto-merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
       type: "checkout.github.set_auto_merge.request",
@@ -2276,7 +2361,9 @@ describe("session checkout pull request auto-merge", () => {
       force: true,
       reason: "disable-pr-auto-merge",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout.github.set_auto_merge.response",
       payload: {
@@ -2305,7 +2392,11 @@ describe("session checkout pull request auto-merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
       type: "checkout.github.set_auto_merge.request",
@@ -2354,7 +2445,11 @@ describe("session checkout pull request auto-merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
       type: "checkout.github.set_auto_merge.request",
@@ -2410,7 +2505,11 @@ describe("session checkout pull request auto-merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
       type: "checkout.github.set_auto_merge.request",
@@ -2465,7 +2564,11 @@ describe("session checkout pull request auto-merge", () => {
         },
       }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
 
     await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
       type: "checkout.github.set_auto_merge.request",
@@ -2498,7 +2601,11 @@ describe("session checkout pull and push handling", () => {
     const messages: unknown[] = [];
     const github = { invalidate: vi.fn() };
     const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
     checkoutGitMocks.pullCurrentBranch.mockResolvedValue(undefined);
 
     await asSessionInternals(session).handleCheckoutPullRequest({
@@ -2512,7 +2619,9 @@ describe("session checkout pull and push handling", () => {
       force: true,
       reason: "pull",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout_pull_response",
       payload: {
@@ -2528,7 +2637,11 @@ describe("session checkout pull and push handling", () => {
     const messages: unknown[] = [];
     const github = { invalidate: vi.fn() };
     const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
     checkoutGitMocks.pushCurrentBranch.mockResolvedValue(undefined);
 
     await asSessionInternals(session).handleCheckoutPushRequest({
@@ -2542,7 +2655,9 @@ describe("session checkout pull and push handling", () => {
       force: true,
       reason: "push",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(messages).toContainEqual({
       type: "checkout_push_response",
       payload: {
@@ -2574,7 +2689,9 @@ describe("session checkout refresh handling", () => {
       requestId: "request-refresh",
     });
 
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({
+      cwd: "/tmp/request-worktree",
+    });
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
       force: true,
       includeGitHub: true,
@@ -2620,6 +2737,122 @@ describe("session checkout refresh handling", () => {
         success: false,
         error: { code: "UNKNOWN", message: "not a git repository" },
         requestId: "request-refresh-error",
+      },
+    });
+  });
+});
+
+describe("session checkout file mutation handling", () => {
+  test("stages a file and refreshes checkout state", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+    checkoutGitMocks.stageCheckoutFile.mockResolvedValue(undefined);
+
+    await asSessionInternals(session).handleCheckoutFileStageRequest({
+      type: "checkout.file.stage.request",
+      cwd: "/tmp/request-worktree",
+      path: "src/app.ts",
+      requestId: "request-stage-file",
+    });
+
+    expect(checkoutGitMocks.stageCheckoutFile).toHaveBeenCalledWith(
+      "/tmp/request-worktree",
+      "src/app.ts",
+    );
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+      force: true,
+      reason: "stage-file",
+    });
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(messages).toContainEqual({
+      type: "checkout.file.stage.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        path: "src/app.ts",
+        success: true,
+        error: null,
+        requestId: "request-stage-file",
+      },
+    });
+  });
+
+  test("unstages a file and refreshes checkout state", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+    checkoutGitMocks.unstageCheckoutFile.mockResolvedValue(undefined);
+
+    await asSessionInternals(session).handleCheckoutFileUnstageRequest({
+      type: "checkout.file.unstage.request",
+      cwd: "/tmp/request-worktree",
+      path: "src/app.ts",
+      requestId: "request-unstage-file",
+    });
+
+    expect(checkoutGitMocks.unstageCheckoutFile).toHaveBeenCalledWith(
+      "/tmp/request-worktree",
+      "src/app.ts",
+    );
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+      force: true,
+      reason: "unstage-file",
+    });
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(messages).toContainEqual({
+      type: "checkout.file.unstage.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        path: "src/app.ts",
+        success: true,
+        error: null,
+        requestId: "request-unstage-file",
+      },
+    });
+  });
+
+  test("reports discard errors without refreshing checkout diff", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+    checkoutGitMocks.discardCheckoutFile.mockRejectedValue(new Error("file is missing"));
+
+    await asSessionInternals(session).handleCheckoutFileDiscardRequest({
+      type: "checkout.file.discard.request",
+      cwd: "/tmp/request-worktree",
+      path: "src/app.ts",
+      requestId: "request-discard-file",
+    });
+
+    expect(checkoutGitMocks.discardCheckoutFile).toHaveBeenCalledWith(
+      "/tmp/request-worktree",
+      "src/app.ts",
+    );
+    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(checkoutDiffManager.scheduleRefreshForCwd).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout.file.discard.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        path: "src/app.ts",
+        success: false,
+        error: { code: "UNKNOWN", message: "file is missing" },
+        requestId: "request-discard-file",
       },
     });
   });
@@ -2728,8 +2961,14 @@ describe("session workspace descriptors", () => {
     };
     const session = createSessionForTest({
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      workspaceRegistry: {
+        get: vi.fn(),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([project]),
+        get: vi.fn(),
+      },
       workspaceGitService: {
         getSnapshot: vi.fn(),
         peekSnapshot: vi.fn(() =>
@@ -2798,8 +3037,14 @@ describe("session workspace descriptors", () => {
     };
     const session = createSessionForTest({
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      workspaceRegistry: {
+        get: vi.fn(),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([project]),
+        get: vi.fn(),
+      },
       workspaceGitService: {
         getSnapshot: vi.fn(),
         peekSnapshot: vi.fn(() =>
@@ -2921,9 +3166,11 @@ describe("session branch validation", () => {
     const workspaceGitService = {
       getSnapshot: vi.fn(),
       peekSnapshot: vi.fn(),
-      validateBranchRef: vi
-        .fn()
-        .mockResolvedValue({ kind: "remote-only", name: "feature", remoteRef: "origin/feature" }),
+      validateBranchRef: vi.fn().mockResolvedValue({
+        kind: "remote-only",
+        name: "feature",
+        remoteRef: "origin/feature",
+      }),
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
@@ -3102,8 +3349,14 @@ describe("session checkout switch branch handling", () => {
       ),
       validateBranchRef: vi.fn().mockResolvedValue({ kind: "local", name: "release" }),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
-    checkoutGitMocks.checkoutResolvedBranch.mockResolvedValue({ source: "local" });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
+    checkoutGitMocks.checkoutResolvedBranch.mockResolvedValue({
+      source: "local",
+    });
 
     await asSessionInternals(session).handleCheckoutSwitchBranchRequest({
       type: "checkout_switch_branch_request",
@@ -3224,7 +3477,11 @@ describe("session checkout rename branch handling", () => {
         }),
       ),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      messages,
+    });
     checkoutGitMocks.renameCurrentBranch.mockResolvedValue({
       previousBranch: "feature/old-name",
       currentBranch: "feature/new-name",
@@ -3341,7 +3598,12 @@ describe("session branch suggestions handling", () => {
   test("lists branch suggestions through the workspace git service", async () => {
     const messages: unknown[] = [];
     const branchDetails = [
-      { name: "feature/service", committerDate: 10, hasLocal: true, hasRemote: false },
+      {
+        name: "feature/service",
+        committerDate: 10,
+        hasLocal: true,
+        hasRemote: false,
+      },
     ];
     const workspaceGitService = {
       getSnapshot: vi.fn(),
@@ -3407,7 +3669,12 @@ describe("session stash list handling", () => {
     });
     expect(messages).toContainEqual({
       type: "stash_list_response",
-      payload: { cwd: "/tmp/repo", entries, error: null, requestId: "request-stashes" },
+      payload: {
+        cwd: "/tmp/repo",
+        entries,
+        error: null,
+        requestId: "request-stashes",
+      },
     });
   });
 });
@@ -3819,7 +4086,11 @@ describe("session pull request timeline handling", () => {
       conclusion: "failure",
       url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
       detailsUrl: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
-      output: { title: "Tests failed", summary: "1 failure", text: "Assertion failed" },
+      output: {
+        title: "Tests failed",
+        summary: "1 failure",
+        text: "Assertion failed",
+      },
       annotations: [],
       failedJobs: [],
       truncated: false,
@@ -3875,7 +4146,11 @@ describe("session pull request timeline handling", () => {
           conclusion: "failure",
           url: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
           detailsUrl: "https://github.com/getpaseo/paseo/actions/runs/456/job/789",
-          output: { title: "Tests failed", summary: "1 failure", text: "Assertion failed" },
+          output: {
+            title: "Tests failed",
+            summary: "1 failure",
+            text: "Assertion failed",
+          },
           annotations: [],
           failedJobs: [],
           truncated: false,

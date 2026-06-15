@@ -8,11 +8,14 @@ export interface PointerActivationConfig {
   holdTolerance: number;
 }
 
+export type PointerActivationMode = "hold" | "distance";
+
 export function getPointerActivationConstraint(
   useDragHandle: boolean,
   config: PointerActivationConfig,
+  handleActivationMode: PointerActivationMode = "hold",
 ): PointerActivationConstraint {
-  if (useDragHandle) {
+  if (useDragHandle && handleActivationMode === "hold") {
     return { delay: config.holdDelayMs, tolerance: config.holdTolerance };
   }
   return { distance: config.defaultDistance };

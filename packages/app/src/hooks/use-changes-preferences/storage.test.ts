@@ -22,12 +22,15 @@ describe("loadChangesPreferencesFromStorage", () => {
   });
 
   it("migrates the legacy wrap-lines toggle into the new preferences object", async () => {
-    const storage = createInMemoryKeyValueStorage({ "diff-wrap-lines": "true" });
+    const storage = createInMemoryKeyValueStorage({
+      "diff-wrap-lines": "true",
+    });
 
     const result = await loadChangesPreferencesFromStorage(storage);
 
     expect(result).toEqual({
       layout: "unified",
+      fileView: "tree",
       wrapLines: true,
       hideWhitespace: false,
     });
@@ -37,6 +40,7 @@ describe("loadChangesPreferencesFromStorage", () => {
   it("loads persisted layout and whitespace preferences without rewriting storage", async () => {
     const persisted = JSON.stringify({
       layout: "split",
+      fileView: "list",
       hideWhitespace: true,
       wrapLines: false,
     });
@@ -48,6 +52,7 @@ describe("loadChangesPreferencesFromStorage", () => {
 
     expect(result).toEqual({
       layout: "split",
+      fileView: "list",
       hideWhitespace: true,
       wrapLines: false,
     });
@@ -64,11 +69,16 @@ describe("saveChangesPreferences", () => {
 
     await saveChangesPreferences({
       queryClient,
-      updates: { layout: "split", hideWhitespace: true },
+      updates: { layout: "split", fileView: "list", hideWhitespace: true },
       storage,
     });
 
-    const expected = { ...DEFAULT_CHANGES_PREFERENCES, layout: "split", hideWhitespace: true };
+    const expected = {
+      ...DEFAULT_CHANGES_PREFERENCES,
+      layout: "split",
+      fileView: "list",
+      hideWhitespace: true,
+    };
     expect(queryClient.getQueryData(CHANGES_PREFERENCES_QUERY_KEY)).toEqual(expected);
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(expected));
   });

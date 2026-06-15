@@ -47,19 +47,59 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.tab.new": { id: "workspace.tab.new", scope: "workspace" },
   "worktree.archive": { id: "worktree.archive", scope: "sidebar" },
   "worktree.new": { id: "worktree.new", scope: "sidebar" },
-  "workspace.terminal.new": { id: "workspace.terminal.new", scope: "workspace" },
-  "workspace.tab.close.current": { id: "workspace.tab.close-current", scope: "workspace" },
+  "workspace.terminal.new": {
+    id: "workspace.terminal.new",
+    scope: "workspace",
+  },
+  "workspace.scripts.open": {
+    id: "workspace.scripts.open",
+    scope: "workspace",
+  },
+  "workspace.tab.close.current": {
+    id: "workspace.tab.close-current",
+    scope: "workspace",
+  },
   "sidebar.toggle.right": { id: "sidebar.toggle.right", scope: "sidebar" },
-  "workspace.pane.split.right": { id: "workspace.pane.split.right", scope: "workspace" },
-  "workspace.pane.split.down": { id: "workspace.pane.split.down", scope: "workspace" },
-  "workspace.pane.focus.left": { id: "workspace.pane.focus.left", scope: "workspace" },
-  "workspace.pane.focus.right": { id: "workspace.pane.focus.right", scope: "workspace" },
-  "workspace.pane.focus.up": { id: "workspace.pane.focus.up", scope: "workspace" },
-  "workspace.pane.focus.down": { id: "workspace.pane.focus.down", scope: "workspace" },
-  "workspace.pane.move-tab.left": { id: "workspace.pane.move-tab.left", scope: "workspace" },
-  "workspace.pane.move-tab.right": { id: "workspace.pane.move-tab.right", scope: "workspace" },
-  "workspace.pane.move-tab.up": { id: "workspace.pane.move-tab.up", scope: "workspace" },
-  "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
+  "workspace.pane.split.right": {
+    id: "workspace.pane.split.right",
+    scope: "workspace",
+  },
+  "workspace.pane.split.down": {
+    id: "workspace.pane.split.down",
+    scope: "workspace",
+  },
+  "workspace.pane.focus.left": {
+    id: "workspace.pane.focus.left",
+    scope: "workspace",
+  },
+  "workspace.pane.focus.right": {
+    id: "workspace.pane.focus.right",
+    scope: "workspace",
+  },
+  "workspace.pane.focus.up": {
+    id: "workspace.pane.focus.up",
+    scope: "workspace",
+  },
+  "workspace.pane.focus.down": {
+    id: "workspace.pane.focus.down",
+    scope: "workspace",
+  },
+  "workspace.pane.move-tab.left": {
+    id: "workspace.pane.move-tab.left",
+    scope: "workspace",
+  },
+  "workspace.pane.move-tab.right": {
+    id: "workspace.pane.move-tab.right",
+    scope: "workspace",
+  },
+  "workspace.pane.move-tab.up": {
+    id: "workspace.pane.move-tab.up",
+    scope: "workspace",
+  },
+  "workspace.pane.move-tab.down": {
+    id: "workspace.pane.move-tab.down",
+    scope: "workspace",
+  },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
 };
 
@@ -76,11 +116,23 @@ const MESSAGE_INPUT_DISPATCH: Record<
 > = {
   focus: { id: "message-input.focus", scope: "message-input" },
   send: { id: "message-input.send", scope: "message-input" },
-  "dictation-toggle": { id: "message-input.dictation-toggle", scope: "message-input" },
-  "dictation-cancel": { id: "message-input.dictation-cancel", scope: "message-input" },
-  "dictation-confirm": { id: "message-input.dictation-confirm", scope: "message-input" },
+  "dictation-toggle": {
+    id: "message-input.dictation-toggle",
+    scope: "message-input",
+  },
+  "dictation-cancel": {
+    id: "message-input.dictation-cancel",
+    scope: "message-input",
+  },
+  "dictation-confirm": {
+    id: "message-input.dictation-confirm",
+    scope: "message-input",
+  },
   "voice-toggle": { id: "message-input.voice-toggle", scope: "message-input" },
-  "voice-mute-toggle": { id: "message-input.voice-mute-toggle", scope: "message-input" },
+  "voice-mute-toggle": {
+    id: "message-input.voice-mute-toggle",
+    scope: "message-input",
+  },
 };
 
 function hasPayloadKey<K extends "index" | "delta" | "kind">(
@@ -138,7 +190,10 @@ function routeWorkspaceNavigateRelative(
   const target = getRelativeSidebarShortcutTarget({
     targets: ctx.sidebarShortcutTargets,
     currentTarget: currentWorkspace
-      ? { serverId: currentWorkspace.serverId, workspaceId: currentWorkspace.workspaceId }
+      ? {
+          serverId: currentWorkspace.serverId,
+          workspaceId: currentWorkspace.workspaceId,
+        }
       : null,
     delta: payload.delta,
   });
@@ -197,9 +252,15 @@ export function routeKeyboardShortcut(
     case "settings.toggle":
       return routeSettingsToggle(ctx);
     case "command-center.toggle":
-      return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
+      return {
+        kind: "command-center-toggle",
+        nextOpen: !ctx.commandCenterOpen,
+      };
     case "shortcuts.dialog.toggle":
-      return { kind: "shortcuts-dialog-toggle", nextOpen: !ctx.shortcutsDialogOpen };
+      return {
+        kind: "shortcuts-dialog-toggle",
+        nextOpen: !ctx.shortcutsDialogOpen,
+      };
     default:
       return NONE;
   }

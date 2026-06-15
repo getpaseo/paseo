@@ -160,6 +160,36 @@ export function applyStoredOrdering<T>(input: {
   return ordered;
 }
 
+export function applyStoredSidebarOrdering(input: {
+  projects: SidebarProjectEntry[];
+  persistedProjectOrder: string[];
+  getWorkspaceOrder: (projectKey: string) => string[];
+}): SidebarProjectEntry[] {
+  const orderedProjects = applyStoredOrdering({
+    items: input.projects,
+    storedOrder: input.persistedProjectOrder,
+    getKey: (project) => project.projectKey,
+  });
+
+  const nextProjects: SidebarProjectEntry[] = [];
+  let changed = orderedProjects !== input.projects;
+  for (const project of orderedProjects) {
+    const orderedWorkspaces = applyStoredOrdering({
+      items: project.workspaces,
+      storedOrder: input.getWorkspaceOrder(project.projectKey),
+      getKey: (workspace) => workspace.workspaceKey,
+    });
+    if (orderedWorkspaces === project.workspaces) {
+      nextProjects.push(project);
+      continue;
+    }
+    changed = true;
+    nextProjects.push({ ...project, workspaces: orderedWorkspaces });
+  }
+
+  return changed ? nextProjects : input.projects;
+}
+
 export function appendMissingOrderKeys(input: {
   currentOrder: string[];
   visibleKeys: string[];
@@ -205,7 +235,10 @@ export function computeSidebarOrderUpdates(input: {
       visibleKeys: project.workspaces.map((workspace) => workspace.workspaceKey),
     });
     if (nextWorkspaceOrder !== persistedWorkspaceOrder) {
-      workspaceOrders.push({ projectKey: project.projectKey, order: nextWorkspaceOrder });
+      workspaceOrders.push({
+        projectKey: project.projectKey,
+        order: nextWorkspaceOrder,
+      });
     }
   }
 

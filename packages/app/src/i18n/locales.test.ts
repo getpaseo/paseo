@@ -7,13 +7,14 @@ import {
 } from "./locales";
 
 describe("parseAppLanguage", () => {
-  it("accepts system and all UN official language locales", () => {
-    expect(["system", "ar", "en", "es", "fr", "ru", "zh-CN"].map(parseAppLanguage)).toEqual([
+  it("accepts system and all supported language locales", () => {
+    expect(["system", "ar", "en", "es", "fr", "ko", "ru", "zh-CN"].map(parseAppLanguage)).toEqual([
       "system",
       "ar",
       "en",
       "es",
       "fr",
+      "ko",
       "ru",
       "zh-CN",
     ]);
@@ -24,13 +25,14 @@ describe("parseAppLanguage", () => {
     expect(parseAppLanguage(null)).toBeNull();
   });
 
-  it("offers system plus the six UN official languages", () => {
+  it("offers system plus the supported app languages", () => {
     expect(LANGUAGE_OPTIONS.map((option) => option.value)).toEqual([
       "system",
       "ar",
       "en",
       "es",
       "fr",
+      "ko",
       "ru",
       "zh-CN",
     ]);
@@ -41,13 +43,20 @@ describe("formatLanguageOptionLabel", () => {
   it("shows the native language name and English name in English UI", () => {
     const arabic = LANGUAGE_OPTIONS.find((option) => option.value === "ar");
     const spanish = LANGUAGE_OPTIONS.find((option) => option.value === "es");
+    const korean = LANGUAGE_OPTIONS.find((option) => option.value === "ko");
     const chinese = LANGUAGE_OPTIONS.find((option) => option.value === "zh-CN");
 
     expect([
       formatLanguageOptionLabel(arabic!, "en", "System"),
       formatLanguageOptionLabel(spanish!, "en", "System"),
+      formatLanguageOptionLabel(korean!, "en", "System"),
       formatLanguageOptionLabel(chinese!, "en", "System"),
-    ]).toEqual(["العربية - Arabic", "Español - Spanish", "简体中文 - Simplified Chinese"]);
+    ]).toEqual([
+      "العربية - Arabic",
+      "Español - Spanish",
+      "한국어 - Korean",
+      "简体中文 - Simplified Chinese",
+    ]);
   });
 
   it("shows the native language name and Chinese name in Chinese UI", () => {
@@ -73,6 +82,18 @@ describe("formatLanguageOptionLabel", () => {
 
     expect(formatLanguageOptionLabel(system!, "zh-CN", "系统")).toBe("系统");
   });
+
+  it("shows the native language name and Korean name in Korean UI", () => {
+    const english = LANGUAGE_OPTIONS.find((option) => option.value === "en");
+    const korean = LANGUAGE_OPTIONS.find((option) => option.value === "ko");
+    const chinese = LANGUAGE_OPTIONS.find((option) => option.value === "zh-CN");
+
+    expect([
+      formatLanguageOptionLabel(english!, "ko", "시스템"),
+      formatLanguageOptionLabel(korean!, "ko", "시스템"),
+      formatLanguageOptionLabel(chinese!, "ko", "시스템"),
+    ]).toEqual(["English - 영어", "한국어", "简体中文 - 중국어 간체"]);
+  });
 });
 
 describe("resolveSupportedLocale", () => {
@@ -81,6 +102,7 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("en", ["zh-CN"])).toBe("en");
     expect(resolveSupportedLocale("es", ["en-US"])).toBe("es");
     expect(resolveSupportedLocale("fr", ["en-US"])).toBe("fr");
+    expect(resolveSupportedLocale("ko", ["en-US"])).toBe("ko");
     expect(resolveSupportedLocale("ru", ["en-US"])).toBe("ru");
     expect(resolveSupportedLocale("zh-CN", ["en-US"])).toBe("zh-CN");
   });
@@ -90,6 +112,7 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("system", ["en-US"])).toBe("en");
     expect(resolveSupportedLocale("system", ["es-MX"])).toBe("es");
     expect(resolveSupportedLocale("system", ["fr-CA"])).toBe("fr");
+    expect(resolveSupportedLocale("system", ["ko-KR"])).toBe("ko");
     expect(resolveSupportedLocale("system", ["ru-RU"])).toBe("ru");
   });
 

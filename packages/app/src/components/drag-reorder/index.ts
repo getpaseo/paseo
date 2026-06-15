@@ -4,6 +4,7 @@ export {
   getPointerActivationConstraint,
   type PointerActivationConfig,
   type PointerActivationConstraint,
+  type PointerActivationMode,
 } from "./pointer-activation";
 export {
   useDragReorderState,

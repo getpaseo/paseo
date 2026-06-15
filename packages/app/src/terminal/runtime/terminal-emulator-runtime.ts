@@ -147,6 +147,11 @@ const DEFAULT_TERMINAL_FONT_FAMILY = [
   "Monaco",
   "Consolas",
   "'Liberation Mono'",
+  "'D2Coding'",
+  "'Nanum Gothic Coding'",
+  "'Apple SD Gothic Neo'",
+  "'Malgun Gothic'",
+  "'Noto Sans CJK KR'",
   "monospace",
 ].join(", ");
 
@@ -1181,10 +1186,16 @@ export class TerminalEmulatorRuntime {
       activeTouch.mode = null;
     };
 
-    input.root.addEventListener("touchstart", touchStartHandler, { passive: true });
-    input.root.addEventListener("touchmove", touchMoveHandler, { passive: false });
+    input.root.addEventListener("touchstart", touchStartHandler, {
+      passive: true,
+    });
+    input.root.addEventListener("touchmove", touchMoveHandler, {
+      passive: false,
+    });
     input.root.addEventListener("touchend", touchEndHandler, { passive: true });
-    input.root.addEventListener("touchcancel", touchCancelHandler, { passive: true });
+    input.root.addEventListener("touchcancel", touchCancelHandler, {
+      passive: true,
+    });
 
     return () => {
       input.root.removeEventListener("touchstart", touchStartHandler);

@@ -5,6 +5,7 @@ import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
+import { ko } from "./resources/ko";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
@@ -101,11 +102,12 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
-  it("keeps UN official language keys in sync with English", () => {
+  it("keeps supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ko).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
   });
@@ -123,8 +125,19 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
+    expect(findInterpolationMismatches(ko)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
+  });
+
+  it("includes Korean language pack chrome for core workspace flows", () => {
+    expect(ko.settings.general.language.label).toBe("언어");
+    expect(ko.settings.general.language.options.ko).toBe("한국어");
+    expect(ko.shell.commandCenter.newAgent).toBe("새 Agent");
+    expect(ko.workspace.tabs.explorer.changes).toBe("변경사항");
+    expect(ko.workspace.git.diff.unified).toBe("통합 diff");
+    expect(ko.sidebar.workspace.actions.newWorkspace).toBe("새 워크스페이스");
+    expect(ko.newWorkspace.title).toBe("새 워크스페이스");
   });
 
   it("keeps reported Spanish settings and scripts labels clean", () => {
@@ -283,6 +296,7 @@ describe("translation resources", () => {
   it("includes keyboard shortcut help keys for the Batch 4G migration", () => {
     expect(en.settings.shortcuts.dialogTitle).toBe("Shortcuts");
     expect(en.settings.shortcuts.sections.tabsPanes).toBe("Tabs & Panes");
+    expect(en.settings.shortcuts.help.openScripts).toBe("Open scripts");
     expect(en.settings.shortcuts.help.toggleCommandCenter).toBe("Toggle command center");
     expect(en.settings.shortcuts.helpNotes.showKeyboardShortcuts).toBe(
       "Available when focus is not in a text field or terminal.",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import {
   appendMissingOrderKeys,
+  applyStoredSidebarOrdering,
   applyStoredOrdering,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
@@ -40,7 +41,12 @@ function sidebarProject(input: {
 }): SidebarProjectEntry {
   const projects = buildSidebarProjectsFromStructure({
     serverId: input.serverId ?? "srv",
-    projects: [project({ projectKey: input.projectKey, workspaceKeys: input.workspaceKeys })],
+    projects: [
+      project({
+        projectKey: input.projectKey,
+        workspaceKeys: input.workspaceKeys,
+      }),
+    ],
   });
   const result = projects[0];
   if (!result) {
@@ -79,6 +85,48 @@ describe("applyStoredOrdering", () => {
     });
 
     expect(result).toBe(baseline);
+  });
+});
+
+describe("applyStoredSidebarOrdering", () => {
+  it("applies persisted project and workspace order while leaving new entries in fallback slots", () => {
+    const projects = [
+      sidebarProject({
+        projectKey: "project-a",
+        workspaceKeys: ["main", "feature"],
+      }),
+      sidebarProject({ projectKey: "project-b", workspaceKeys: ["docs"] }),
+      sidebarProject({ projectKey: "project-c", workspaceKeys: ["ops"] }),
+    ];
+
+    const result = applyStoredSidebarOrdering({
+      projects,
+      persistedProjectOrder: ["project-c", "project-a"],
+      getWorkspaceOrder: (projectKey) =>
+        projectKey === "project-a" ? ["srv:feature", "srv:main"] : [],
+    });
+
+    expect(result.map((entry) => entry.projectKey)).toEqual([
+      "project-c",
+      "project-b",
+      "project-a",
+    ]);
+    expect(result[2]?.workspaces.map((workspace) => workspace.workspaceKey)).toEqual([
+      "srv:feature",
+      "srv:main",
+    ]);
+  });
+
+  it("returns the baseline reference when no stored order applies", () => {
+    const projects = [sidebarProject({ projectKey: "project-a", workspaceKeys: ["main"] })];
+
+    const result = applyStoredSidebarOrdering({
+      projects,
+      persistedProjectOrder: [],
+      getWorkspaceOrder: () => [],
+    });
+
+    expect(result).toBe(projects);
   });
 });
 
@@ -144,7 +192,12 @@ describe("buildSidebarProjectsFromStructure", () => {
   it("preserves the structure hook workspace order", () => {
     const projects = buildSidebarProjectsFromStructure({
       serverId: "srv",
-      projects: [project({ projectKey: "project-1", workspaceKeys: ["feature", "main"] })],
+      projects: [
+        project({
+          projectKey: "project-1",
+          workspaceKeys: ["feature", "main"],
+        }),
+      ],
     });
 
     expect(projects[0]?.workspaces.map((workspace) => workspace.workspaceId)).toEqual([
@@ -167,7 +220,10 @@ describe("computeSidebarOrderUpdates", () => {
 
   it("appends unseen projects and workspaces to the persisted orders", () => {
     const projects = [
-      sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2"] }),
+      sidebarProject({
+        projectKey: "project-a",
+        workspaceKeys: ["ws-1", "ws-2"],
+      }),
       sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-3"] }),
     ];
 
@@ -232,7 +288,11 @@ describe("deriveSidebarLoadingState", () => {
         hasHydratedWorkspaces: true,
         hasProjects: true,
       }),
-    ).toEqual({ isLoading: false, isInitialLoad: false, isRevalidating: false });
+    ).toEqual({
+      isLoading: false,
+      isInitialLoad: false,
+      isRevalidating: false,
+    });
   });
 
   it("short-circuits to idle when inactive", () => {
@@ -243,6 +303,10 @@ describe("deriveSidebarLoadingState", () => {
         hasHydratedWorkspaces: false,
         hasProjects: false,
       }),
-    ).toEqual({ isLoading: false, isInitialLoad: false, isRevalidating: false });
+    ).toEqual({
+      isLoading: false,
+      isInitialLoad: false,
+      isRevalidating: false,
+    });
   });
 });
