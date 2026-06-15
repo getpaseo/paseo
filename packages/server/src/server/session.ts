@@ -165,6 +165,7 @@ import {
   createPersistedWorkspaceRecord,
   resolveProjectDisplayName,
   resolveWorkspaceDisplayName,
+  resolveWorkspaceName,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -6579,7 +6580,7 @@ export class Session {
 
     return {
       ...base,
-      name: workspace.title ?? displayName,
+      name: resolveWorkspaceName({ title: workspace.title, derivedDisplayName: displayName }),
       diffStat: snapshot.git.diffStat ?? null,
       gitRuntime: this.buildWorkspaceGitRuntimePayload(snapshot) ?? undefined,
       githubRuntime: this.buildWorkspaceGitHubRuntimePayload(snapshot),
@@ -6601,7 +6602,10 @@ export class Session {
       workspaceDirectory: result.workspace.cwd,
       projectKind: "git",
       workspaceKind: result.workspace.kind,
-      name: result.workspace.title || result.worktree.branchName || result.workspace.displayName,
+      name: resolveWorkspaceName({
+        title: result.workspace.title,
+        derivedDisplayName: result.worktree.branchName || result.workspace.displayName,
+      }),
       title: result.workspace.title,
       archivingAt: null,
       status: "done",
