@@ -210,12 +210,16 @@ export async function selectWorkspaceBacking(
   page: Page,
   backing: "local" | "worktree",
 ): Promise<void> {
-  const control = page.getByTestId(`workspace-create-backing-${backing}`);
-  await expect(control).toBeVisible({ timeout: 30_000 });
+  const trigger = page.getByTestId("workspace-create-backing-trigger");
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.click();
+
+  const option = page.getByTestId(`workspace-create-backing-${backing}`);
+  await expect(option).toBeVisible({ timeout: 30_000 });
   // Worktree backing stays disabled until the checkout status query confirms the
   // selected project is a git repo; wait so the click actually flips the backing.
-  await expect(control).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 });
-  await control.click();
+  await expect(option).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 });
+  await option.click();
 }
 
 export async function fillWorkspaceTitle(page: Page, title: string): Promise<void> {

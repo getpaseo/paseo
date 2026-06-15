@@ -858,6 +858,12 @@ export const fr: TranslationResources = {
     backing: {
       local: "Local",
       worktree: "Nouveau worktree",
+      label: "Isolation",
+    },
+    fields: {
+      project: "Projet",
+      base: "Base",
+      baseNotApplicable: "Non applicable",
     },
     titlePlaceholder: "Titre (facultatif)",
     errors: {

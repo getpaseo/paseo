@@ -833,6 +833,12 @@ export const ar: TranslationResources = {
     backing: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
+      label: "العزل",
+    },
+    fields: {
+      project: "المشروع",
+      base: "الأساس",
+      baseNotApplicable: "غير قابل للتطبيق",
     },
     titlePlaceholder: "العنوان (اختياري)",
     errors: {

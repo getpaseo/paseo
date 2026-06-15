@@ -851,6 +851,12 @@ export const ru: TranslationResources = {
     backing: {
       local: "Локально",
       worktree: "Новый worktree",
+      label: "Изоляция",
+    },
+    fields: {
+      project: "Проект",
+      base: "База",
+      baseNotApplicable: "Неприменимо",
     },
     titlePlaceholder: "Название (необязательно)",
     errors: {

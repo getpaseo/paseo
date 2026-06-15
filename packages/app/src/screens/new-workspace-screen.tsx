@@ -14,8 +14,14 @@ import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit
 import { FileDropZone } from "@/components/file-drop-zone";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
+import { settingsStyles } from "@/styles/settings";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
@@ -559,67 +565,111 @@ function useNewWorkspaceProjectPicker({
   };
 }
 
-function WorkspaceBackingControls({
+function backingDropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.dropdownTrigger, pressed ? styles.dropdownTriggerPressed : null];
+}
+
+function BackingDropdown({
   backing,
   onBackingChange,
   canCreateWorktree,
-  title,
-  onTitleChange,
   disabled,
-  placeholderColor,
+  iconColor,
+  iconSize,
 }: {
   backing: "local" | "worktree";
   onBackingChange: (value: "local" | "worktree") => void;
   canCreateWorktree: boolean;
-  title: string;
-  onTitleChange: (value: string) => void;
   disabled: boolean;
-  placeholderColor: string;
+  iconColor: string;
+  iconSize: number;
 }) {
   const { t } = useTranslation();
-  const options = useMemo(
-    () => [
-      {
-        value: "local" as const,
-        label: t("newWorkspace.backing.local"),
-        disabled,
-        testID: "workspace-create-backing-local",
-        icon: ({ color, size }: { color: string; size: number }) => (
-          <Folder size={size} color={color} />
-        ),
-      },
-      {
-        value: "worktree" as const,
-        label: t("newWorkspace.backing.worktree"),
-        disabled: disabled || !canCreateWorktree,
-        testID: "workspace-create-backing-worktree",
-        icon: ({ color, size }: { color: string; size: number }) => (
-          <GitBranch size={size} color={color} />
-        ),
-      },
-    ],
-    [canCreateWorktree, disabled, t],
+  const selectLocal = useCallback(() => onBackingChange("local"), [onBackingChange]);
+  const selectWorktree = useCallback(() => onBackingChange("worktree"), [onBackingChange]);
+  const selectedLabel =
+    backing === "worktree" ? t("newWorkspace.backing.worktree") : t("newWorkspace.backing.local");
+  const localLeading = useMemo(
+    () => <Folder size={iconSize} color={iconColor} />,
+    [iconColor, iconSize],
+  );
+  const worktreeLeading = useMemo(
+    () => <GitBranch size={iconSize} color={iconColor} />,
+    [iconColor, iconSize],
   );
   return (
-    <>
-      <SegmentedControl
-        size="sm"
-        options={options}
-        value={backing}
-        onValueChange={onBackingChange}
-        testID="workspace-create-backing"
-      />
-      <TextInput
-        testID="workspace-create-title-input"
-        value={title}
-        onChangeText={onTitleChange}
-        editable={!disabled}
-        placeholder={t("newWorkspace.titlePlaceholder")}
-        placeholderTextColor={placeholderColor}
-        style={styles.titleInput}
-        accessibilityLabel={t("newWorkspace.titlePlaceholder")}
-      />
-    </>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        testID="workspace-create-backing-trigger"
+        disabled={disabled}
+        style={backingDropdownTriggerStyle}
+        accessibilityLabel={t("newWorkspace.backing.label")}
+      >
+        {backing === "worktree" ? (
+          <GitBranch size={iconSize} color={iconColor} />
+        ) : (
+          <Folder size={iconSize} color={iconColor} />
+        )}
+        <Text style={styles.dropdownTriggerText} numberOfLines={1}>
+          {selectedLabel}
+        </Text>
+        <ChevronDown size={iconSize} color={iconColor} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="end" width={220}>
+        <DropdownMenuItem
+          testID="workspace-create-backing-local"
+          selected={backing === "local"}
+          onSelect={selectLocal}
+          leading={localLeading}
+        >
+          {t("newWorkspace.backing.local")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          testID="workspace-create-backing-worktree"
+          selected={backing === "worktree"}
+          disabled={!canCreateWorktree}
+          onSelect={selectWorktree}
+          leading={worktreeLeading}
+        >
+          {t("newWorkspace.backing.worktree")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function LabeledRow({
+  label,
+  withBorder,
+  children,
+}: {
+  label: string;
+  withBorder: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={withBorder ? styles.rowWithBorder : settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{label}</Text>
+      </View>
+      <View style={styles.rowControl}>{children}</View>
+    </View>
+  );
+}
+
+// Keeps the Base row at the same height whether or not the active picker is
+// shown, so switching Isolation never shifts the form vertically.
+function BasePlaceholder({ iconColor, iconSize }: { iconColor: string; iconSize: number }) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.basePlaceholder}>
+      <View style={styles.badgeIconBox}>
+        <GitBranch size={iconSize} color={iconColor} />
+      </View>
+      <Text style={styles.badgeText} numberOfLines={1}>
+        {t("newWorkspace.fields.baseNotApplicable")}
+      </Text>
+    </View>
   );
 }
 
@@ -1405,80 +1455,112 @@ export function NewWorkspaceScreen({
 
   const composerFooter = useMemo(
     () => (
-      <View testID="new-workspace-ref-picker-row" style={styles.optionsRow}>
-        <View>
-          <ProjectPickerTrigger
-            pickerAnchorRef={projectPickerAnchorRef}
-            onPress={openProjectPicker}
-            disabled={isPending || projectPickerOptions.length === 0}
-            badgePressableStyle={badgePressableStyle}
-            label={projectTriggerLabel}
-            projectKey={selectedProject?.projectKey ?? null}
-            iconDataUri={
-              selectedProject
-                ? (projectIconDataByProjectKey.get(selectedProject.projectKey) ?? null)
-                : null
-            }
-            iconColor={theme.colors.foregroundMuted}
-            iconSize={theme.iconSize.sm}
-          />
-          <Combobox
-            options={projectPickerOptions}
-            value={selectedProjectOptionId}
-            onSelect={handleSelectProjectOption}
-            searchable
-            searchPlaceholder="Search projects"
-            title="Project"
-            open={projectPickerOpen}
-            onOpenChange={handleProjectPickerOpenChange}
-            desktopPlacement="bottom-start"
-            anchorRef={projectPickerAnchorRef}
-            emptyText="No projects available."
-            renderOption={renderProjectOption}
-          />
+      <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
+        <View style={styles.formCard}>
+          {supportsWorkspaceMultiplicity ? (
+            <LabeledRow label={t("newWorkspace.fields.title")} withBorder={false}>
+              <TextInput
+                testID="workspace-create-title-input"
+                value={title}
+                onChangeText={setTitle}
+                editable={!isPending}
+                placeholder={t("newWorkspace.titlePlaceholder")}
+                placeholderTextColor={theme.colors.foregroundMuted}
+                style={styles.titleInput}
+                accessibilityLabel={t("newWorkspace.titlePlaceholder")}
+              />
+            </LabeledRow>
+          ) : null}
+          <LabeledRow
+            label={t("newWorkspace.fields.project")}
+            withBorder={supportsWorkspaceMultiplicity}
+          >
+            <View>
+              <ProjectPickerTrigger
+                pickerAnchorRef={projectPickerAnchorRef}
+                onPress={openProjectPicker}
+                disabled={isPending || projectPickerOptions.length === 0}
+                badgePressableStyle={badgePressableStyle}
+                label={projectTriggerLabel}
+                projectKey={selectedProject?.projectKey ?? null}
+                iconDataUri={
+                  selectedProject
+                    ? (projectIconDataByProjectKey.get(selectedProject.projectKey) ?? null)
+                    : null
+                }
+                iconColor={theme.colors.foregroundMuted}
+                iconSize={theme.iconSize.sm}
+              />
+              <Combobox
+                options={projectPickerOptions}
+                value={selectedProjectOptionId}
+                onSelect={handleSelectProjectOption}
+                searchable
+                searchPlaceholder="Search projects"
+                title="Project"
+                open={projectPickerOpen}
+                onOpenChange={handleProjectPickerOpenChange}
+                desktopPlacement="bottom-start"
+                anchorRef={projectPickerAnchorRef}
+                emptyText="No projects available."
+                renderOption={renderProjectOption}
+              />
+            </View>
+          </LabeledRow>
+          {supportsWorkspaceMultiplicity ? (
+            <LabeledRow label={t("newWorkspace.backing.label")} withBorder>
+              <BackingDropdown
+                backing={effectiveBacking}
+                onBackingChange={setBacking}
+                canCreateWorktree={canCreateWorktree}
+                disabled={isPending}
+                iconColor={theme.colors.foregroundMuted}
+                iconSize={theme.iconSize.sm}
+              />
+            </LabeledRow>
+          ) : null}
+          <LabeledRow
+            label={t("newWorkspace.fields.base")}
+            withBorder={supportsWorkspaceMultiplicity}
+          >
+            {showRefPicker ? (
+              <View>
+                <RefPickerTrigger
+                  pickerAnchorRef={pickerAnchorRef}
+                  onPress={openPicker}
+                  disabled={isPending || !selectedSourceDirectory}
+                  badgePressableStyle={badgePressableStyle}
+                  selectedItem={selectedItem}
+                  triggerLabel={triggerLabel}
+                  accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
+                  tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
+                  iconColor={theme.colors.foregroundMuted}
+                  iconSize={theme.iconSize.sm}
+                />
+                <Combobox
+                  options={options}
+                  value={selectedOptionId}
+                  onSelect={handleSelectOption}
+                  searchable
+                  searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
+                  title={t("newWorkspace.refPicker.title")}
+                  open={pickerOpen}
+                  onOpenChange={handlePickerOpenChange}
+                  onSearchQueryChange={setPickerSearchQuery}
+                  desktopPlacement="bottom-start"
+                  anchorRef={pickerAnchorRef}
+                  emptyText={pickerEmptyText}
+                  renderOption={renderPickerOption}
+                />
+              </View>
+            ) : (
+              <BasePlaceholder
+                iconColor={theme.colors.foregroundMuted}
+                iconSize={theme.iconSize.sm}
+              />
+            )}
+          </LabeledRow>
         </View>
-        {supportsWorkspaceMultiplicity ? (
-          <WorkspaceBackingControls
-            backing={effectiveBacking}
-            onBackingChange={setBacking}
-            canCreateWorktree={canCreateWorktree}
-            title={title}
-            onTitleChange={setTitle}
-            disabled={isPending}
-            placeholderColor={theme.colors.foregroundMuted}
-          />
-        ) : null}
-        {showRefPicker ? (
-          <View>
-            <RefPickerTrigger
-              pickerAnchorRef={pickerAnchorRef}
-              onPress={openPicker}
-              disabled={isPending || !selectedSourceDirectory}
-              badgePressableStyle={badgePressableStyle}
-              selectedItem={selectedItem}
-              triggerLabel={triggerLabel}
-              accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
-              tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
-              iconColor={theme.colors.foregroundMuted}
-              iconSize={theme.iconSize.sm}
-            />
-            <Combobox
-              options={options}
-              value={selectedOptionId}
-              onSelect={handleSelectOption}
-              searchable
-              searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
-              title={t("newWorkspace.refPicker.title")}
-              open={pickerOpen}
-              onOpenChange={handlePickerOpenChange}
-              onSearchQueryChange={setPickerSearchQuery}
-              desktopPlacement="bottom-start"
-              anchorRef={pickerAnchorRef}
-              emptyText={pickerEmptyText}
-              renderOption={renderPickerOption}
-            />
-          </View>
-        ) : null}
         {agentControlsWithDisabled ? (
           <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
         ) : null}
@@ -1623,11 +1705,56 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.destructive,
     lineHeight: 20,
   },
-  optionsRow: {
+  formStack: {
+    gap: theme.spacing[2],
+  },
+  formCard: {
+    backgroundColor: theme.colors.surface1,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+  },
+  rowWithBorder: {
     flexDirection: "row",
     alignItems: "center",
-    flexWrap: "wrap",
-    gap: theme.spacing[2],
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  rowControl: {
+    alignItems: "flex-end",
+  },
+  dropdownTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 28,
+    maxWidth: 240,
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  dropdownTriggerPressed: {
+    opacity: 0.85,
+  },
+  dropdownTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    flexShrink: 1,
+  },
+  basePlaceholder: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 28,
+    maxWidth: 240,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius["2xl"],
+    gap: theme.spacing[1],
+    opacity: 0.5,
   },
   badge: {
     flexDirection: "row",
@@ -1643,8 +1770,10 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 140,
     maxWidth: 240,
     paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius["2xl"],
-    backgroundColor: theme.colors.surface1,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },

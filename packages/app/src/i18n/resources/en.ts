@@ -839,6 +839,12 @@ export const en = {
     backing: {
       local: "Local",
       worktree: "New worktree",
+      label: "Isolation",
+    },
+    fields: {
+      project: "Project",
+      base: "Base",
+      baseNotApplicable: "Not applicable",
     },
     titlePlaceholder: "Title (optional)",
     errors: {

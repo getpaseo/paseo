@@ -859,6 +859,12 @@ export const es: TranslationResources = {
     backing: {
       local: "Local",
       worktree: "Nuevo worktree",
+      label: "Aislamiento",
+    },
+    fields: {
+      project: "Proyecto",
+      base: "Base",
+      baseNotApplicable: "No aplicable",
     },
     titlePlaceholder: "Título (opcional)",
     errors: {

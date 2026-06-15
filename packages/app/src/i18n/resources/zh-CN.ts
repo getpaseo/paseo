@@ -824,6 +824,12 @@ export const zhCN: TranslationResources = {
     backing: {
       local: "本地",
       worktree: "新建 worktree",
+      label: "隔离",
+    },
+    fields: {
+      project: "项目",
+      base: "基线",
+      baseNotApplicable: "不适用",
     },
     titlePlaceholder: "标题（可选）",
     errors: {
