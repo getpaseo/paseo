@@ -51,6 +51,16 @@ export function buildWorkspaceExplorerStateKey(scope: FileExplorerWorkspaceScope
   return `root:${normalizedWorkspaceRoot}`;
 }
 
+export function dropFailedExpandedPaths(
+  current: readonly string[],
+  failed: ReadonlySet<string>,
+): string[] {
+  if (failed.size === 0) {
+    return [...current];
+  }
+  return current.filter((path) => !failed.has(path));
+}
+
 export function useFileExplorerActions(params: { serverId: string } & FileExplorerWorkspaceScope) {
   const { t } = useTranslation();
   const { serverId, workspaceId, workspaceRoot } = params;
@@ -87,7 +97,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   const requestDirectoryListing = useCallback(
     async (
       path: string,
-      options?: { recordHistory?: boolean; setCurrentPath?: boolean },
+      options?: { recordHistory?: boolean; setCurrentPath?: boolean; silent?: boolean },
     ): Promise<boolean> => {
       if (!workspaceStateKey) {
         return false;
@@ -95,11 +105,12 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       const normalizedPath = path && path.length > 0 ? path : ".";
       const shouldSetCurrentPath = options?.setCurrentPath ?? true;
       const shouldRecordHistory = options?.recordHistory ?? shouldSetCurrentPath;
+      const silent = options?.silent ?? false;
 
       updateExplorerState((state) => ({
         ...state,
         isLoading: true,
-        lastError: null,
+        lastError: silent ? state.lastError : null,
         pendingRequest: { path: normalizedPath, mode: "list" },
         ...(shouldSetCurrentPath
           ? {
@@ -116,7 +127,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: t("workspace.fileExplorer.states.unavailable"),
+          lastError: silent ? state.lastError : t("workspace.fileExplorer.states.unavailable"),
           pendingRequest: null,
         }));
         return false;
@@ -126,7 +137,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError: t("workspace.terminal.hostDisconnected"),
+          lastError: silent ? state.lastError : t("workspace.terminal.hostDisconnected"),
           pendingRequest: null,
         }));
         return false;
@@ -138,7 +149,9 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
           const nextState: AgentFileExplorerState = {
             ...state,
             isLoading: false,
-            lastError: null,
+            // Silent calls must not touch lastError so a background hydration
+            // success does not clear an unrelated, user-visible error.
+            lastError: silent ? state.lastError : null,
             pendingRequest: null,
             directories: state.directories,
             files: state.files,
@@ -152,13 +165,14 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         });
         return true;
       } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : t("workspace.fileExplorer.errors.failedToListDirectory");
         updateExplorerState((state) => ({
           ...state,
           isLoading: false,
-          lastError:
-            error instanceof Error
-              ? error.message
-              : t("workspace.fileExplorer.errors.failedToListDirectory"),
+          lastError: silent ? state.lastError : message,
           pendingRequest: null,
         }));
         return false;

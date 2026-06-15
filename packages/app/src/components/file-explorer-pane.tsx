@@ -40,8 +40,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
-import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
+import {
+  buildWorkspaceExplorerStateKey,
+  dropFailedExpandedPaths,
+  useFileExplorerActions,
+} from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
@@ -929,7 +932,7 @@ async function initializeExplorer({
   workspaceStateKey: string | null;
   requestDirectoryListing: (
     path: string,
-    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean; silent?: boolean },
   ) => Promise<boolean>;
 }): Promise<void> {
   if (!hasWorkspaceScope || hasInitializedRef.current) {
@@ -944,31 +947,54 @@ async function initializeExplorer({
     hasInitializedRef.current = false;
     return;
   }
-  requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing });
+  void requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing });
 }
 
-function requestPersistedExpandedPaths({
+async function requestPersistedExpandedPaths({
   workspaceStateKey,
   requestDirectoryListing,
 }: {
   workspaceStateKey: string | null;
   requestDirectoryListing: (
     path: string,
-    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean; silent?: boolean },
   ) => Promise<boolean>;
-}): void {
-  const showHiddenFiles = usePanelStore.getState().explorerShowHiddenFiles;
-  const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
-  if (!persistedPaths) {
+}): Promise<void> {
+  if (!workspaceStateKey) {
     return;
   }
-  for (const path of persistedPaths) {
-    if (path !== "." && (showHiddenFiles || !isHiddenExplorerPath(path))) {
-      void requestDirectoryListing(path, {
+  const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey];
+  if (!persistedPaths || persistedPaths.length === 0) {
+    return;
+  }
+  const showHiddenFiles = usePanelStore.getState().explorerShowHiddenFiles;
+  const candidates = persistedPaths.filter(
+    (path) => path !== "." && (showHiddenFiles || !isHiddenExplorerPath(path)),
+  );
+  if (candidates.length === 0) {
+    return;
+  }
+  // Hydrate persisted expansions silently so that one missing subdirectory
+  // (e.g. deleted on disk while the app was closed) does not poison the
+  // whole panel with a panel-level error. Prune the failed entries from
+  // the persisted state so subsequent opens stay clean.
+  const results = await Promise.all(
+    candidates.map((path) =>
+      requestDirectoryListing(path, {
         recordHistory: false,
         setCurrentPath: false,
-      });
-    }
+        silent: true,
+      }).then((ok) => ({ path, ok })),
+    ),
+  );
+  const failed = new Set(results.filter((r) => !r.ok).map((r) => r.path));
+  if (failed.size === 0) {
+    return;
+  }
+  const latest = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey] ?? [];
+  const pruned = dropFailedExpandedPaths(latest, failed);
+  if (pruned.length !== latest.length) {
+    usePanelStore.getState().setExpandedPathsForWorkspace(workspaceStateKey, pruned);
   }
 }
 
