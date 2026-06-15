@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, Home, MessagesSquare, Plus, Search, Settings, X } from "lucide-react-native";
+import { Clock, FolderPlus, Home, Plus, Search, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   type Dispatch,
@@ -811,7 +811,7 @@ function MobileSidebar({
                 variant="compact"
               />
               <SidebarHeaderRow
-                icon={MessagesSquare}
+                icon={Clock}
                 label={labels.sessions}
                 onPress={handleViewMore}
                 isActive={isSessionsActive}
@@ -992,7 +992,7 @@ function DesktopSidebar({
               variant="compact"
             />
             <SidebarHeaderRow
-              icon={MessagesSquare}
+              icon={Clock}
               label={labels.sessions}
               onPress={handleViewMore}
               isActive={isSessionsActive}

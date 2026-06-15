@@ -212,7 +212,7 @@ export async function openSessions(page: Page): Promise<void> {
   await expect(page).toHaveURL(new RegExp(`${buildHostSessionsRoute(getServerId())}$`), {
     timeout: 30_000,
   });
-  await expect(page.getByText("Sessions", { exact: true }).last()).toBeVisible({
+  await expect(page.getByText("Agent history", { exact: true }).last()).toBeVisible({
     timeout: 30_000,
   });
 }

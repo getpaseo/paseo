@@ -287,7 +287,7 @@ describe("translation resources", () => {
   });
 
   it("includes sessions and agent list keys for the Batch 4H migration", () => {
-    expect(en.sessions.title).toBe("Sessions");
+    expect(en.sessions.title).toBe("Agent history");
     expect(en.sessions.empty).toBe("No sessions yet");
     expect(en.sessions.actions.loadMore).toBe("Load more");
     expect(en.agentList.fallbackTitle).toBe("New session");
@@ -350,7 +350,7 @@ describe("translation resources", () => {
     expect(en.sidebar.actions.home).toBe("Home");
     expect(en.sidebar.actions.settings).toBe("Settings");
     expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
-    expect(en.sidebar.sections.sessions).toBe("Sessions");
+    expect(en.sidebar.sections.sessions).toBe("History");
     expect(en.sidebar.workspace.actions.newWorkspace).toBe("New workspace");
     expect(en.sidebar.workspace.actions.createWorkspaceFor).toBe(
       "Create a new workspace for {{projectName}}",

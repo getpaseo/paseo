@@ -208,7 +208,7 @@ export const ru: TranslationResources = {
     },
   },
   sessions: {
-    title: "Сессии",
+    title: "История агентов",
     empty: "Сеансов пока нет",
     actions: {
       loadMore: "Загрузить больше",
@@ -767,7 +767,7 @@ export const ru: TranslationResources = {
       closeSidebar: "Закрыть боковую панель",
     },
     sections: {
-      sessions: "Сессии",
+      sessions: "История",
     },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",

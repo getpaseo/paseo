@@ -205,7 +205,7 @@ export const en = {
     },
   },
   sessions: {
-    title: "Sessions",
+    title: "Agent history",
     empty: "No sessions yet",
     actions: {
       loadMore: "Load more",
@@ -755,7 +755,7 @@ export const en = {
       closeSidebar: "Close sidebar",
     },
     sections: {
-      sessions: "Sessions",
+      sessions: "History",
     },
     worktreeSetup: {
       title: "Set up worktree scripts",

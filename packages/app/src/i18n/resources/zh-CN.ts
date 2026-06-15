@@ -206,7 +206,7 @@ export const zhCN: TranslationResources = {
     },
   },
   sessions: {
-    title: "会话",
+    title: "Agent 历史",
     empty: "还没有会话",
     actions: {
       loadMore: "加载更多",
@@ -743,7 +743,7 @@ export const zhCN: TranslationResources = {
       closeSidebar: "关闭侧边栏",
     },
     sections: {
-      sessions: "会话",
+      sessions: "历史",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",

@@ -209,7 +209,7 @@ export const es: TranslationResources = {
     },
   },
   sessions: {
-    title: "Sesiones",
+    title: "Historial de agentes",
     empty: "Aún no hay sesiones",
     actions: {
       loadMore: "Cargar más",
@@ -775,7 +775,7 @@ export const es: TranslationResources = {
       closeSidebar: "Cerrar barra lateral",
     },
     sections: {
-      sessions: "Sesiones",
+      sessions: "Historial",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",

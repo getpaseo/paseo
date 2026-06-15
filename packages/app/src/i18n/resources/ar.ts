@@ -206,7 +206,7 @@ export const ar: TranslationResources = {
     },
   },
   sessions: {
-    title: "الجلسات",
+    title: "سجل الوكلاء",
     empty: "لا توجد جلسات بعد",
     actions: {
       loadMore: "تحميل المزيد",
@@ -749,7 +749,7 @@ export const ar: TranslationResources = {
       closeSidebar: "إغلاق الشريط الجانبي",
     },
     sections: {
-      sessions: "الجلسات",
+      sessions: "السجل",
     },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
