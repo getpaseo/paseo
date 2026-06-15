@@ -237,7 +237,10 @@ describe("translation resources", () => {
     expect(en.importSession.status.connectHost).toBe("Connect to a host to import sessions");
     expect(en.importSession.actions.refresh).toBe("Refresh sessions");
     expect(en.workspace.fileExplorer.sort.name).toBe("Name");
+    expect(en.workspace.fileExplorer.actions.hideHiddenFiles).toBe("Hide hidden files");
+    expect(en.workspace.fileExplorer.actions.showHiddenFiles).toBe("Show hidden files");
     expect(en.workspace.fileExplorer.empty.noFiles).toBe("No files");
+    expect(en.workspace.fileExplorer.empty.noVisibleFiles).toBe("No visible files");
     expect(en.workspace.setup.status.running).toBe("Running");
     expect(en.workspace.setup.empty.noCommands).toBe("No setup commands ran for this workspace.");
     expect(en.workspace.browser.unavailable.title).toBe("Browser is desktop-only");

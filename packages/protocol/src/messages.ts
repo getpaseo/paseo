@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
@@ -140,6 +141,7 @@ export const MutableDaemonConfigSchema = z
       providers: [],
     }),
     autoArchiveAfterMerge: z.boolean().default(false),
+    enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
   })
@@ -153,6 +155,7 @@ export const MutableDaemonConfigPatchSchema = z
       .optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
+    enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
   })
@@ -1762,6 +1765,8 @@ export const ClientHeartbeatMessageSchema = z.object({
   type: z.literal("client_heartbeat"),
   deviceType: z.enum(["web", "mobile"]),
   focusedAgentId: z.string().nullable(),
+  // COMPAT(terminalFocusHeartbeat): added in v0.1.97, remove optional default after 2026-12-13 once old clients no longer send heartbeats without terminal focus.
+  focusedTerminalId: z.string().nullable().optional().default(null),
   lastActivityAt: z.string(),
   appVisible: z.boolean(),
   appVisibilityChangedAt: z.string().optional(),
@@ -3737,6 +3742,7 @@ const TerminalInfoSchema = z.object({
   name: z.string(),
   cwd: z.string(),
   title: z.string().optional(),
+  activity: TerminalActivitySchema.nullable().optional(),
 });
 
 export const TerminalCellSchema = z.object({
@@ -3857,6 +3863,20 @@ export const TerminalStreamExitSchema = z.object({
   }),
 });
 
+export const TerminalAttentionRequiredSchema = z.object({
+  type: z.literal("terminal_attention_required"),
+  payload: z.object({
+    serverId: z.string().optional(),
+    terminalId: z.string(),
+    cwd: z.string(),
+    workspaceId: z.string().optional(),
+    reason: z.enum(["finished", "needs_input"]),
+    title: z.string(),
+    body: z.string(),
+    shouldNotify: z.boolean(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -3966,6 +3986,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
   TerminalStreamExitSchema,
+  TerminalAttentionRequiredSchema,
   ChatCreateResponseSchema,
   ChatListResponseSchema,
   ChatInspectResponseSchema,

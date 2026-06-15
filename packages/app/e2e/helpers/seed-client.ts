@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { createTempDirectory, createTempGitRepo } from "./workspace";
 
@@ -26,9 +27,21 @@ export interface SeedDaemonClient {
   createTerminal(
     cwd: string,
     name?: string,
+    requestId?: string,
+    options?: { agentId?: string; command?: string; args?: string[] },
   ): Promise<{
-    terminal: { id: string; name: string; cwd: string } | null;
+    terminal: { id: string; name: string; cwd: string; activity?: TerminalActivity | null } | null;
     error: string | null;
+  }>;
+  listTerminals(cwd?: string): Promise<{
+    terminals: Array<{
+      id: string;
+      name: string;
+      cwd: string;
+      title?: string;
+      activity?: TerminalActivity | null;
+    }>;
+    error?: string | null;
   }>;
   createAgent(options: {
     provider: string;

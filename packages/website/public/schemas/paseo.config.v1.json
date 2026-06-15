@@ -60,6 +60,9 @@
             "autoArchiveAfterMerge": {
               "type": "boolean"
             },
+            "enableTerminalAgentHooks": {
+              "type": "boolean"
+            },
             "appendSystemPrompt": {
               "type": "string"
             },

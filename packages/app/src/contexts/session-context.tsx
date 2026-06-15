@@ -490,6 +490,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const focusedAgentId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedAgentId ?? null,
   );
+  const focusedTerminalId = useSessionStore(
+    (state) => state.sessions[serverId]?.focusedTerminalId ?? null,
+  );
   const sessionAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
 
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
@@ -815,7 +818,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   // Client activity tracking (heartbeat, push token registration)
-  useClientActivity({ client, focusedAgentId, onAppResumed: handleAppResumed });
+  useClientActivity({ client, focusedAgentId, focusedTerminalId, onAppResumed: handleAppResumed });
   usePushTokenRegistration({ client, serverId });
 
   const notifyAgentAttention = useCallback(
@@ -1648,6 +1651,27 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     });
 
+    const unsubTerminalAttention = client.on("terminal_attention_required", (message) => {
+      if (message.type !== "terminal_attention_required") {
+        return;
+      }
+      if (!message.payload.shouldNotify) {
+        return;
+      }
+      void sendOsNotification({
+        title: message.payload.title,
+        body: message.payload.body,
+        // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is
+        // carried as a fallback identifier when the daemon resolved no workspace.
+        data: {
+          serverId: message.payload.serverId ?? serverId,
+          terminalId: message.payload.terminalId,
+          cwd: message.payload.cwd,
+          ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
+        },
+      });
+    });
+
     return () => {
       unsubAgentUpdate();
       unsubAgentStream();
@@ -1667,6 +1691,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubVoiceInputState();
       unsubAgentDeleted();
       unsubAgentArchived();
+      unsubTerminalAttention();
       agentStreamReducerQueue.dispose({ flush: true });
     };
   }, [

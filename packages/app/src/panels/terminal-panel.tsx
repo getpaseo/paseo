@@ -11,7 +11,8 @@ import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry
 import { queryClient } from "@/query/query-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspace } from "@/stores/session-store-hooks";
+import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
+import { terminalActivityToStatusBucket } from "@/utils/terminal-activity-bucket";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -37,8 +38,7 @@ function useTerminalPanelDescriptor(
 ): PanelDescriptor {
   const { t } = useTranslation();
   const client = useSessionStore((state) => state.sessions[context.serverId]?.client ?? null);
-  const workspace = useWorkspace(context.serverId, context.workspaceId);
-  const workspaceDirectory = workspace?.workspaceDirectory || null;
+  const workspaceDirectory = useWorkspaceDirectory(context.serverId, context.workspaceId);
   const terminalsQuery = useQuery(
     {
       queryKey: ["terminals", context.serverId, workspaceDirectory] as const,
@@ -63,16 +63,19 @@ function useTerminalPanelDescriptor(
     subtitle: t("workspace.tabs.fallback.terminal"),
     titleState: "ready",
     icon: Terminal,
-    statusBucket: null,
+    statusBucket: terminalActivityToStatusBucket(terminal?.activity?.state),
   };
 }
 
 function TerminalPanel() {
   const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
-  const workspace = useWorkspace(serverId, workspaceId);
-  const workspaceDirectory = workspace?.workspaceDirectory || null;
-  const isGitCheckout = workspace?.projectKind === "git";
+  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
+    workspaceDirectory: w.workspaceDirectory,
+    isGitCheckout: w.projectKind === "git",
+  }));
+  const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
+  const isGitCheckout = workspaceFields?.isGitCheckout ?? false;
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const handleOpenFileExplorer = useCallback(() => {
     if (!workspaceDirectory) {

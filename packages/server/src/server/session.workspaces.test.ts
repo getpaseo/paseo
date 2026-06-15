@@ -118,6 +118,7 @@ interface SessionTestAccess {
   paseoHome: string;
   terminalManager: {
     killTerminal(id: string): unknown;
+    clearTerminalAttention?(id: string): Promise<boolean>;
   } | null;
   workspaceGitService: {
     getCheckout: (cwd: string) => Promise<unknown>;
@@ -460,6 +461,7 @@ function createSessionForWorkspaceTests(
     appVersion?: string | null;
     onMessage?: (message: SessionOutboundMessage) => void;
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
+    terminalManager?: ReturnType<typeof asTerminalManager> | null;
   } = {},
 ): TestSession {
   const logger = {
@@ -582,11 +584,40 @@ function createSessionForWorkspaceTests(
       stt: null,
       tts: null,
       providerSnapshotManager: createProviderSnapshotManagerStub().manager,
-      terminalManager: null,
+      terminalManager: options.terminalManager ?? null,
     }),
   );
   return session;
 }
+
+test("client heartbeat clears attention for the focused terminal", async () => {
+  const clearedTerminalIds: string[] = [];
+  const session = createSessionForWorkspaceTests({
+    terminalManager: asTerminalManager({
+      subscribeTerminalsChanged: () => () => {},
+      clearTerminalAttention: async (terminalId: string) => {
+        clearedTerminalIds.push(terminalId);
+        return true;
+      },
+    }),
+  });
+
+  await session.handleMessage({
+    type: "client_heartbeat",
+    deviceType: "web",
+    focusedAgentId: null,
+    focusedTerminalId: "terminal-1",
+    lastActivityAt: "2026-06-13T12:00:00.000Z",
+    appVisible: true,
+  });
+
+  expect(clearedTerminalIds).toEqual(["terminal-1"]);
+  expect(session.getClientActivity()).toMatchObject({
+    focusedAgentId: null,
+    focusedTerminalId: "terminal-1",
+    appVisible: true,
+  });
+});
 
 test("create_agent_request keeps requested child cwd when grouped under an existing parent workspace", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-cwd-"));

@@ -357,9 +357,12 @@ export const ru: TranslationResources = {
         retry: "Повторить попытку",
         refresh: "Обновить файлы",
         refreshing: "Обновление файлов",
+        hideHiddenFiles: "Скрыть скрытые файлы",
+        showHiddenFiles: "Показать скрытые файлы",
       },
       empty: {
         noFiles: "Нет файлов",
+        noVisibleFiles: "Нет видимых файлов",
       },
       states: {
         unavailable: "Workspace недоступен",

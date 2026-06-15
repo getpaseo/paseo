@@ -358,9 +358,12 @@ export const es: TranslationResources = {
         retry: "Rever",
         refresh: "Actualizar archivos",
         refreshing: "Actualizar archivos",
+        hideHiddenFiles: "Ocultar archivos ocultos",
+        showHiddenFiles: "Mostrar archivos ocultos",
       },
       empty: {
         noFiles: "Sin archivos",
+        noVisibleFiles: "No hay archivos visibles",
       },
       states: {
         unavailable: "Workspaceno está disponible",

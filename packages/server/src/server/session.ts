@@ -31,6 +31,7 @@ import {
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import {
   type BinaryFrame,
   encodeFileTransferFrame,
@@ -629,6 +630,7 @@ export interface SessionOptions {
   daemonVersion?: string;
   daemonRuntimeConfig?: {
     listen: string | null;
+    appBaseUrl?: string;
     relay: {
       enabled: boolean;
       endpoint: string;
@@ -816,11 +818,13 @@ export class Session {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
+  private unsubscribeTerminalActivityEvents: (() => void) | null = null;
   private agentUpdatesSubscription: AgentUpdatesSubscriptionState | null = null;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
   private clientActivity: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
+    focusedTerminalId: string | null;
     lastActivityAt: Date;
     appVisible: boolean;
     appVisibilityChangedAt: Date;
@@ -1010,6 +1014,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       listAgentPayloads: () => this.listAgentPayloads(),
+      listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
@@ -1101,6 +1106,7 @@ export class Session {
   public getClientActivity(): {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
+    focusedTerminalId: string | null;
     lastActivityAt: Date;
     appVisible: boolean;
     appVisibilityChangedAt: Date;
@@ -1296,6 +1302,13 @@ export class Session {
    */
   private subscribeToOptionalManagers(): void {
     this.terminalController.start();
+    if (this.terminalManager) {
+      this.unsubscribeTerminalActivityEvents = this.terminalManager.subscribeTerminalsChanged(
+        (event) => {
+          void this.emitWorkspaceUpdateForCwd(event.cwd);
+        },
+      );
+    }
     const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
       // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
       const visibleEntries = entries.filter((entry) =>
@@ -3905,6 +3918,7 @@ export class Session {
         relayPublicEndpoint: relay?.publicEndpoint,
         relayUseTls: relay?.useTls,
         relayPublicUseTls: relay?.publicUseTls,
+        appBaseUrl: this.daemonRuntimeConfig?.appBaseUrl,
         includeQr: true,
         logger: this.sessionLogger,
       });
@@ -4514,20 +4528,38 @@ export class Session {
   private handleClientHeartbeat(msg: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
+    focusedTerminalId?: string | null;
     lastActivityAt: string;
     appVisible: boolean;
     appVisibilityChangedAt?: string;
   }): void {
+    const focusedTerminalId = msg.focusedTerminalId?.trim() || null;
     const appVisibilityChangedAt = msg.appVisibilityChangedAt
       ? new Date(msg.appVisibilityChangedAt)
       : new Date(msg.lastActivityAt);
     this.clientActivity = {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
+      focusedTerminalId,
       lastActivityAt: new Date(msg.lastActivityAt),
       appVisible: msg.appVisible,
       appVisibilityChangedAt,
     };
+    if (msg.appVisible && focusedTerminalId) {
+      void this.clearFocusedTerminalAttention(focusedTerminalId);
+    }
+  }
+
+  private async clearFocusedTerminalAttention(terminalId: string): Promise<void> {
+    const terminalManager = this.terminalManager;
+    if (!terminalManager) {
+      return;
+    }
+    try {
+      await terminalManager.clearTerminalAttention(terminalId);
+    } catch (error) {
+      this.sessionLogger.warn({ err: error, terminalId }, "Failed to clear terminal attention");
+    }
   }
 
   /**
@@ -6207,6 +6239,23 @@ export class Session {
         },
       });
     }
+  }
+
+  private async listTerminalActivityContributions(): Promise<
+    Array<{ cwd: string; activity: TerminalActivity | null }>
+  > {
+    const terminalManager = this.terminalManager;
+    if (!terminalManager) {
+      return [];
+    }
+    const directories = terminalManager.listDirectories();
+    const terminalsByDirectory = await Promise.all(
+      directories.map((cwd) => terminalManager.getTerminals(cwd)),
+    );
+    return terminalsByDirectory.flat().map((session) => ({
+      cwd: session.cwd,
+      activity: session.getActivity(),
+    }));
   }
 
   /**
@@ -9040,6 +9089,10 @@ export class Session {
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
       this.unsubscribeAgentEvents = null;
+    }
+    if (this.unsubscribeTerminalActivityEvents) {
+      this.unsubscribeTerminalActivityEvents();
+      this.unsubscribeTerminalActivityEvents = null;
     }
     if (this.unsubscribeProviderSnapshotEvents) {
       this.unsubscribeProviderSnapshotEvents();

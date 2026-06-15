@@ -5,6 +5,7 @@ export const DESKTOP_IDLE_POLL_INTERVAL_MS = 5_000;
 export interface HeartbeatPayload {
   deviceType: "web" | "mobile";
   focusedAgentId: string | null;
+  focusedTerminalId: string | null;
   lastActivityAt: string;
   appVisible: boolean;
   appVisibilityChangedAt?: string;
@@ -19,6 +20,7 @@ export interface ClientActivityTrackerInput {
   client: HeartbeatClient;
   deviceType: "web" | "mobile";
   initialFocusedAgentId: string | null;
+  initialFocusedTerminalId: string | null;
   initialAppVisible: boolean;
   now: () => number;
   onAppResumed?: (awayMs: number) => void;
@@ -28,6 +30,7 @@ export interface ClientActivityTracker {
   recordUserActivity(): void;
   maybeSendImmediateHeartbeat(): void;
   setFocusedAgentId(id: string | null): void;
+  setFocusedTerminalId(id: string | null): void;
   notifyAppVisibility(visible: boolean): { changed: boolean };
   notifySystemIdleMs(idleMs: number | null): void;
   sendHeartbeat(): void;
@@ -42,6 +45,7 @@ export function createClientActivityTracker(
   let appVisibilityChangedAtMs = now();
   let backgroundedAtMs: number | null = appVisible ? null : now();
   let focusedAgentId = input.initialFocusedAgentId;
+  let focusedTerminalId = input.initialFocusedTerminalId;
   let lastImmediateHeartbeatAtMs = 0;
 
   function sendHeartbeat(): void {
@@ -49,6 +53,7 @@ export function createClientActivityTracker(
     client.sendHeartbeat({
       deviceType,
       focusedAgentId,
+      focusedTerminalId,
       lastActivityAt: new Date(lastActivityAtMs).toISOString(),
       appVisible,
       appVisibilityChangedAt: new Date(appVisibilityChangedAtMs).toISOString(),
@@ -73,6 +78,12 @@ export function createClientActivityTracker(
     setFocusedAgentId(id) {
       if (focusedAgentId === id) return;
       focusedAgentId = id;
+      recordUserActivity();
+      sendHeartbeat();
+    },
+    setFocusedTerminalId(id) {
+      if (focusedTerminalId === id) return;
+      focusedTerminalId = id;
       recordUserActivity();
       sendHeartbeat();
     },

@@ -355,9 +355,12 @@ export const zhCN: TranslationResources = {
         retry: "重试",
         refresh: "刷新文件",
         refreshing: "正在刷新文件",
+        hideHiddenFiles: "隐藏隐藏文件",
+        showHiddenFiles: "显示隐藏文件",
       },
       empty: {
         noFiles: "没有文件",
+        noVisibleFiles: "没有可见文件",
       },
       states: {
         unavailable: "Workspace 不可用",

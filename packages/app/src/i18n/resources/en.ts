@@ -354,9 +354,12 @@ export const en = {
         retry: "Retry",
         refresh: "Refresh files",
         refreshing: "Refreshing files",
+        hideHiddenFiles: "Hide hidden files",
+        showHiddenFiles: "Show hidden files",
       },
       empty: {
         noFiles: "No files",
+        noVisibleFiles: "No visible files",
       },
       states: {
         unavailable: "Workspace is unavailable",
