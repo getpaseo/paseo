@@ -4,7 +4,6 @@ import { gotoWorkspace } from "./helpers/launcher";
 import {
   assertNewWorkspaceSidebarAndHeader,
   connectNewWorkspaceDaemonClient,
-  fillWorkspaceTitle,
   openGlobalNewWorkspaceComposer,
   selectNewWorkspaceProject,
   selectWorkspaceBacking,
@@ -40,7 +39,6 @@ async function createWorkspaceViaUi(
   input: {
     project: { projectKey: string; projectDisplayName: string };
     backing: "local" | "worktree";
-    title?: string;
     previousWorkspaceId: string;
     client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   },
@@ -48,9 +46,6 @@ async function createWorkspaceViaUi(
   await openGlobalNewWorkspaceComposer(page);
   await selectNewWorkspaceProject(page, input.project);
   await selectWorkspaceBacking(page, input.backing);
-  if (input.title) {
-    await fillWorkspaceTitle(page, input.title);
-  }
   await submitNewWorkspaceEmpty(page);
 
   return assertNewWorkspaceSidebarAndHeader(page, {
@@ -98,7 +93,6 @@ test.describe("Workspace multiplicity creation flow", () => {
       const second = await createWorkspaceViaUi(page, {
         project,
         backing: "local",
-        title: "Second local",
         previousWorkspaceId: seeded.workspaceId,
         client,
       });
@@ -113,7 +107,7 @@ test.describe("Workspace multiplicity creation flow", () => {
       const secondRow = page.getByTestId(workspaceRowTestId(second.workspaceId));
       await expect(firstRow).toBeVisible({ timeout: 30_000 });
       await expect(secondRow).toBeVisible({ timeout: 30_000 });
-      await expect(secondRow).toContainText("Second local");
+      await expect(secondRow).toContainText(second.workspaceName);
 
       // Selecting the second workspace shows the shared checkout's files.
       await gotoWorkspace(page, second.workspaceId);
@@ -202,7 +196,6 @@ test.describe("Workspace multiplicity creation flow", () => {
       const second = await createWorkspaceViaUi(page, {
         project,
         backing: "local",
-        title: "Second non-git",
         previousWorkspaceId: seeded.workspaceId,
         client,
       });
@@ -220,7 +213,7 @@ test.describe("Workspace multiplicity creation flow", () => {
       });
       const secondRow = page.getByTestId(workspaceRowTestId(second.workspaceId));
       await expect(secondRow).toBeVisible({ timeout: 30_000 });
-      await expect(secondRow).toContainText("Second non-git");
+      await expect(secondRow).toContainText(second.workspaceName);
     } finally {
       await seeded.cleanup();
     }
