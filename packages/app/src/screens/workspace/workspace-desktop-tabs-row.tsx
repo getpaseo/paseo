@@ -82,9 +82,13 @@ import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
-import { getProviderIcon } from "@/components/provider-icons";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { TerminalProfileInput } from "@/screens/workspace/terminals/use-workspace-terminals";
+import { ProfileIcon, usePinnedLaunchers } from "@/workspace-pins/launch";
+import { runPinnedTabTarget, type TabTargetHandlers } from "@/workspace-pins/run";
+import type { PinnedTabTarget } from "@/workspace-pins/target";
+import { PinnedTargetsRow } from "@/workspace-pins/pinned-targets-row";
+import { PinnableMenuItem } from "@/workspace-pins/pinnable-menu-item";
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
@@ -105,27 +109,16 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
 const ThemedPlus = withUnistyles(Plus);
-const ThemedProfileSquareTerminal = withUnistyles(SquareTerminal);
-
-interface DynamicProviderIconProps {
-  iconKey: string;
-  size: number;
-  color?: string;
-}
-
-function DynamicProviderIcon({ iconKey, size, color = "" }: DynamicProviderIconProps) {
-  const Icon = getProviderIcon(iconKey);
-  return <Icon size={size} color={color} />;
-}
-
-const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
-
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const AGENT_ICON = <ThemedSquarePen size={14} uniProps={mutedColorMapping} />;
 const TERMINAL_ICON = <ThemedSquareTerminal size={14} uniProps={mutedColorMapping} />;
 const BROWSER_ICON = <ThemedGlobe size={14} uniProps={mutedColorMapping} />;
+
+const DRAFT_TARGET: PinnedTabTarget = { kind: "draft" };
+const TERMINAL_TARGET: PinnedTabTarget = { kind: "terminal" };
+const BROWSER_TARGET: PinnedTabTarget = { kind: "browser" };
 
 function newTabActionButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.newTabActionButton, (hovered || pressed) && styles.newTabActionButtonHovered];
@@ -140,46 +133,39 @@ function updateMeasuredWidth(setWidth: Dispatch<SetStateAction<number>>, event: 
   setWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
 }
 
-interface DropdownMenuProfileItemProps {
-  profile: { id: string; name: string; command: string; args?: string[]; icon?: string };
-  disabled?: boolean;
-  onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
+function ProfileLeadingIcon({ iconKey }: { iconKey: string | undefined }) {
+  return (
+    <View style={styles.terminalProfileIconWrapper}>
+      <ProfileIcon iconKey={iconKey} />
+    </View>
+  );
 }
 
-function DropdownMenuProfileItem({
-  profile,
-  disabled,
-  onCreateTerminalWithProfile,
-}: DropdownMenuProfileItemProps) {
-  const handleSelect = useCallback(() => {
-    onCreateTerminalWithProfile({
-      name: profile.name,
-      command: profile.command,
-      args: profile.args,
-    });
-  }, [onCreateTerminalWithProfile, profile]);
+interface PinnableProfileMenuItemProps {
+  profile: { id: string; name: string; command: string; args?: string[]; icon?: string };
+  disabled?: boolean;
+  onLaunch: (target: PinnedTabTarget) => void;
+}
 
-  const icon = getTerminalProfileIcon(profile);
-
-  const leading = useMemo(() => {
-    if (!icon) {
-      return (
-        <View style={styles.terminalProfileIconWrapper}>
-          <ThemedProfileSquareTerminal size={14} uniProps={mutedColorMapping} />
-        </View>
-      );
-    }
-    return (
-      <View style={styles.terminalProfileIconWrapper}>
-        <ThemedDynamicProviderIcon iconKey={icon} size={14} uniProps={mutedColorMapping} />
-      </View>
-    );
-  }, [icon]);
+function PinnableProfileMenuItem({ profile, disabled, onLaunch }: PinnableProfileMenuItemProps) {
+  const target = useMemo<PinnedTabTarget>(
+    () => ({ kind: "profile", profileId: profile.id }),
+    [profile.id],
+  );
+  const leading = useMemo(
+    () => <ProfileLeadingIcon iconKey={getTerminalProfileIcon(profile)} />,
+    [profile],
+  );
+  const handleSelect = useCallback(() => onLaunch(target), [onLaunch, target]);
 
   return (
-    <DropdownMenuItem leading={leading} disabled={disabled} onSelect={handleSelect}>
-      {profile.name}
-    </DropdownMenuItem>
+    <PinnableMenuItem
+      target={target}
+      label={profile.name}
+      leading={leading}
+      disabled={disabled}
+      onSelect={handleSelect}
+    />
   );
 }
 
@@ -215,6 +201,25 @@ function WorkspaceInlineAddTabButton({
     [config?.terminalProfiles],
   );
 
+  const handlers = useMemo<TabTargetHandlers>(
+    () => ({
+      createDraft: onCreateAgentTab,
+      createTerminal: onCreateTerminal,
+      createBrowser: onCreateBrowser,
+      createTerminalWithProfile: onCreateTerminalWithProfile,
+    }),
+    [onCreateAgentTab, onCreateBrowser, onCreateTerminal, onCreateTerminalWithProfile],
+  );
+
+  const onLaunch = useCallback(
+    (target: PinnedTabTarget) => {
+      runPinnedTabTarget(target, profiles, handlers);
+    },
+    [handlers, profiles],
+  );
+
+  const launchers = usePinnedLaunchers({ serverId: normalizedServerId, onLaunch });
+
   const tooltipText = t("workspace.tabs.actions.newAgent");
 
   return (
@@ -238,6 +243,7 @@ function WorkspaceInlineAddTabButton({
           </View>
         </TooltipContent>
       </Tooltip>
+      <PinnedTargetsRow launchers={launchers} testIdPrefix="workspace-pinned-target" />
       <DropdownMenu>
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="triggerRef">
@@ -255,38 +261,38 @@ function WorkspaceInlineAddTabButton({
           </TooltipContent>
         </Tooltip>
         <DropdownMenuContent side="bottom" align="end" offset={4} minWidth={200}>
-          <DropdownMenuItem
+          <PinnableMenuItem
             testID="workspace-new-tab-menu-agent"
+            target={DRAFT_TARGET}
+            label={t("workspace.tabs.actions.newAgent")}
             leading={AGENT_ICON}
             onSelect={onCreateAgentTab}
-          >
-            {t("workspace.tabs.actions.newAgent")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
+          />
+          <PinnableMenuItem
             testID="workspace-new-tab-menu-terminal"
+            target={TERMINAL_TARGET}
+            label={t("workspace.tabs.actions.newTerminal")}
             leading={TERMINAL_ICON}
             disabled={terminalDisabled}
             onSelect={terminalDisabled ? undefined : onCreateTerminal}
-          >
-            {t("workspace.tabs.actions.newTerminal")}
-          </DropdownMenuItem>
+          />
           {showCreateBrowserTab ? (
-            <DropdownMenuItem
+            <PinnableMenuItem
               testID="workspace-new-tab-menu-browser"
+              target={BROWSER_TARGET}
+              label={t("workspace.tabs.actions.newBrowser")}
               leading={BROWSER_ICON}
               onSelect={onCreateBrowser}
-            >
-              {t("workspace.tabs.actions.newBrowser")}
-            </DropdownMenuItem>
+            />
           ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
           {profiles.map((profile) => (
-            <DropdownMenuProfileItem
+            <PinnableProfileMenuItem
               key={profile.id}
               profile={profile}
               disabled={terminalDisabled}
-              onCreateTerminalWithProfile={onCreateTerminalWithProfile}
+              onLaunch={onLaunch}
             />
           ))}
           <DropdownMenuSeparator />
@@ -474,8 +480,13 @@ function TabHandleContent({
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
 }) {
+  const tabHandleDataSet = useMemo(
+    () => ({ statusBucket: presentation.statusBucket ?? "none" }),
+    [presentation.statusBucket],
+  );
+
   return (
-    <View style={styles.tabHandle}>
+    <View style={styles.tabHandle} dataSet={tabHandleDataSet}>
       <View style={styles.tabIcon}>
         <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
       </View>

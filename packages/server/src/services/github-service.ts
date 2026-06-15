@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { GitHubSearchKind } from "@getpaseo/protocol/messages";
-import { findExecutable } from "../utils/executable.js";
+import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { resolveGitHubRemote } from "../utils/github-remote.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
@@ -227,6 +227,7 @@ const PullRequestTimelineReviewNodeSchema = z.object({
   id: z.string().catch(""),
   state: z.string().catch(""),
   body: z.string().nullable().catch(null),
+  bodyHTML: z.string().nullable().catch(null),
   url: z.string().catch(""),
   submittedAt: z.string().nullable().catch(null),
   author: TimelineAuthorSchema,
@@ -235,6 +236,7 @@ const PullRequestTimelineReviewNodeSchema = z.object({
 const PullRequestTimelineCommentNodeSchema = z.object({
   id: z.string().catch(""),
   body: z.string().nullable().catch(null),
+  bodyHTML: z.string().nullable().catch(null),
   url: z.string().catch(""),
   createdAt: z.string().nullable().catch(null),
   author: TimelineAuthorSchema,
@@ -413,6 +415,7 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
           id
           state
           body
+          bodyHTML
           url
           submittedAt
           author {
@@ -429,6 +432,7 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id
           body
+          bodyHTML
           url
           createdAt
           author {
@@ -453,6 +457,7 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
             nodes {
               id
               body
+              bodyHTML
               url
               createdAt
               author {
@@ -2265,7 +2270,7 @@ function toPullRequestTimelineReviewItem(
       author: review.author?.login ?? "unknown",
       authorUrl: review.author?.url ?? null,
       avatarUrl: review.author?.avatarUrl ?? null,
-      body: review.body ?? "",
+      body: normalizeGitHubTimelineBody(review.body ?? "", review.bodyHTML ?? ""),
       createdAt: parseOptionalTime(review.submittedAt ?? null),
       url: review.url,
       reviewState,
@@ -2282,10 +2287,129 @@ function toPullRequestTimelineCommentItem(
     author: comment.author?.login ?? "unknown",
     authorUrl: comment.author?.url ?? null,
     avatarUrl: comment.author?.avatarUrl ?? null,
-    body: comment.body ?? "",
+    body: normalizeGitHubTimelineBody(comment.body ?? "", comment.bodyHTML ?? ""),
     createdAt: parseOptionalTime(comment.createdAt ?? null),
     url: comment.url,
   };
+}
+
+interface ImageSourceReference {
+  src: string;
+  start: number;
+  end: number;
+}
+
+const RAW_MARKDOWN_IMAGE_RE = /!\[[^\]]*\]\(\s*([^\s)]+)(?:\s+["'][^)]*["'])?\s*\)/g;
+const HTML_IMAGE_RE = /<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1[^>]*>/gi;
+const GITHUB_RENDERED_IMAGE_HOSTS = new Set([
+  "camo.githubusercontent.com",
+  "private-user-images.githubusercontent.com",
+]);
+
+function normalizeGitHubTimelineBody(body: string, bodyHTML: string): string {
+  const rawImages = extractRawImageSourceReferences(body);
+  if (rawImages.length === 0) {
+    return body;
+  }
+
+  const renderedSources = extractRenderedImageSources(bodyHTML);
+  if (renderedSources.length !== rawImages.length) {
+    return body;
+  }
+
+  let cursor = 0;
+  let normalized = "";
+  for (let index = 0; index < rawImages.length; index += 1) {
+    const rawImage = rawImages[index];
+    const renderedSrc = renderedSources[index];
+    if (
+      !rawImage ||
+      !renderedSrc ||
+      !isRawGitHubAttachmentSource(rawImage.src) ||
+      !isGitHubRenderedImageSource(renderedSrc)
+    ) {
+      return body;
+    }
+    normalized += body.slice(cursor, rawImage.start);
+    normalized += renderedSrc;
+    cursor = rawImage.end;
+  }
+  normalized += body.slice(cursor);
+  return normalized;
+}
+
+function extractRawImageSourceReferences(source: string): ImageSourceReference[] {
+  const references = [
+    ...extractHtmlImageSourceReferences(source),
+    ...extractMarkdownImageSourceReferences(source),
+  ];
+  return references.sort((left, right) => left.start - right.start);
+}
+
+function extractRenderedImageSources(source: string): string[] {
+  return extractHtmlImageSourceReferences(source).map((reference) => reference.src);
+}
+
+function extractHtmlImageSourceReferences(source: string): ImageSourceReference[] {
+  const references: ImageSourceReference[] = [];
+  HTML_IMAGE_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = HTML_IMAGE_RE.exec(source)) !== null) {
+    const src = decodeHtmlAttribute(match[2] ?? "");
+    if (!src) {
+      continue;
+    }
+    const rawAttributeSrc = match[2] ?? "";
+    const start = match.index + match[0].indexOf(rawAttributeSrc);
+    references.push({ src, start, end: start + rawAttributeSrc.length });
+  }
+  return references;
+}
+
+function extractMarkdownImageSourceReferences(source: string): ImageSourceReference[] {
+  const references: ImageSourceReference[] = [];
+  RAW_MARKDOWN_IMAGE_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = RAW_MARKDOWN_IMAGE_RE.exec(source)) !== null) {
+    const src = match[1] ?? "";
+    if (!src) {
+      continue;
+    }
+    const start = match.index + match[0].indexOf(src);
+    references.push({ src, start, end: start + src.length });
+  }
+  return references;
+}
+
+function isRawGitHubAttachmentSource(src: string): boolean {
+  try {
+    const url = new URL(src);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "github.com" &&
+      url.pathname.startsWith("/user-attachments/assets/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isGitHubRenderedImageSource(src: string): boolean {
+  try {
+    const url = new URL(src);
+    return url.protocol === "https:" && GITHUB_RENDERED_IMAGE_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">");
 }
 
 function toPullRequestTimelineReviewThreadItems(

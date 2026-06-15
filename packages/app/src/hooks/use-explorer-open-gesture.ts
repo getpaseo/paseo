@@ -20,6 +20,7 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
     windowWidth,
     animateToOpen,
     animateToClose,
+    setOverlayPeek,
     isGesturing,
     gestureAnimatingRef,
     openGestureRef,
@@ -93,6 +94,8 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
         })
         .onStart(() => {
           isGesturing.value = true;
+          // The overlay is display:none while closed; reveal it for the drag.
+          runOnJS(setOverlayPeek)(true);
         })
         .onUpdate((event) => {
           // Right sidebar: start from closed position (+windowWidth) and move towards 0.
@@ -122,6 +125,7 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
         })
         .onFinalize(() => {
           isGesturing.value = false;
+          runOnJS(setOverlayPeek)(false);
         }),
     [
       enabled,
@@ -131,6 +135,7 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
       mobilePanelState,
       animateToOpen,
       animateToClose,
+      setOverlayPeek,
       isGesturing,
       openGestureRef,
       leftOpenGestureRef,

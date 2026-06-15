@@ -99,15 +99,18 @@ export const zhCN: TranslationResources = {
     },
     attachments: {
       addImage: "添加图片",
+      addFile: "Upload file",
       addIssueOrPr: "添加 issue 或 PR",
       dropImagesHere: "将图片拖放到这里",
+      dropFilesHere: "Drop files here",
       editQueuedMessage: "编辑排队消息",
       sendQueuedMessageNow: "立即发送排队消息",
       openImage: "打开图片附件",
       removeImage: "移除图片附件",
+      removeFile: "Remove file attachment",
       openGithub: "打开 {{kind}} #{{number}}",
       removeGithub: "移除 {{kind}} #{{number}}",
-      browserElement: "元素 · {{tag}}",
+      element: "元素",
       openBrowserElement: "打开浏览器元素附件",
       removeBrowserElement: "移除浏览器元素附件",
       openReview: "打开 review 附件",
@@ -119,6 +122,8 @@ export const zhCN: TranslationResources = {
       noHostSelected: "未选择 Host",
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
+      uploadFailed: "Failed to upload file",
+      fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
       archiveAgent: "归档当前 Agent",
@@ -201,7 +206,7 @@ export const zhCN: TranslationResources = {
     },
   },
   sessions: {
-    title: "会话",
+    title: "Agent 历史",
     empty: "还没有会话",
     actions: {
       loadMore: "加载更多",
@@ -250,9 +255,12 @@ export const zhCN: TranslationResources = {
       imageUnavailable: "图片不可用",
       imagePreviewUnavailable: "图片预览不可用。",
       imagePreviewLoadFailed: "无法加载图片预览。",
-      reviewOne: "Review · 1 条评论",
-      reviewMany: "Review · {{count}} 条评论",
+      review: "审查",
+      commentsOne: "1 条评论",
+      commentsMany: "{{count}} 条评论",
       textAttachment: "文本附件",
+      text: "文本",
+      file: "文件",
     },
     speak: {
       header: "已朗读",
@@ -347,9 +355,12 @@ export const zhCN: TranslationResources = {
         retry: "重试",
         refresh: "刷新文件",
         refreshing: "正在刷新文件",
+        hideHiddenFiles: "隐藏隐藏文件",
+        showHiddenFiles: "显示隐藏文件",
       },
       empty: {
         noFiles: "没有文件",
+        noVisibleFiles: "没有可见文件",
       },
       states: {
         unavailable: "Workspace 不可用",
@@ -456,6 +467,8 @@ export const zhCN: TranslationResources = {
         splitDown: "向下拆分窗格",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        pinTarget: "固定",
+        unpinTarget: "取消固定",
       },
       explorer: {
         open: "打开 explorer",
@@ -583,16 +596,16 @@ export const zhCN: TranslationResources = {
           success: "已归档",
         },
         mergePr: {
-          squash: "Squash and merge",
-          merge: "Create a merge commit",
-          rebase: "Rebase and merge",
+          squash: "Merge",
+          merge: "Merge",
+          rebase: "Merge",
           pending: "正在 merge PR...",
           success: "PR 已 merge",
         },
         autoMerge: {
-          enableSquash: "启用 squash auto-merge",
-          enableMerge: "启用 merge commit auto-merge",
-          enableRebase: "启用 rebase auto-merge",
+          enableSquash: "Auto merge",
+          enableMerge: "Auto merge",
+          enableRebase: "Auto merge",
           enabled: "Auto-merge 已启用",
           enabling: "正在启用 auto-merge...",
           disabling: "正在禁用 auto-merge...",
@@ -729,12 +742,13 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       addProject: "添加 project",
+      newWorkspace: "新建工作区",
       home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
     },
     sections: {
-      sessions: "会话",
+      sessions: "历史",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -789,6 +803,12 @@ export const zhCN: TranslationResources = {
         hideConfirm: "隐藏",
         cancel: "取消",
       },
+      deleteWorktreePrompt: {
+        title: "归档 workspace",
+        message: "同时从磁盘删除 worktree？",
+        keep: "保留在磁盘上",
+        delete: "删除",
+      },
       rename: {
         title: "重命名 workspace",
         submit: "重命名",
@@ -807,6 +827,17 @@ export const zhCN: TranslationResources = {
   newWorkspace: {
     title: "新建 workspace",
     create: "创建",
+    backing: {
+      local: "本地",
+      worktree: "新建 worktree",
+      label: "隔离",
+    },
+    fields: {
+      project: "项目",
+      base: "基线",
+      baseNotApplicable: "不适用",
+    },
+    titlePlaceholder: "标题（可选）",
     errors: {
       hostDisconnected: "Host 未连接",
       createWorktreeFailed: "创建 worktree 失败",
@@ -1005,6 +1036,11 @@ export const zhCN: TranslationResources = {
     placeholder: "输入目录路径...",
     opening: "正在打开 project...",
     empty: "开始输入路径",
+    errors: {
+      directory_not_found: "找不到目录。",
+      open_failed: "无法打开项目。",
+    },
+    openPath: "打开路径",
   },
   branchSwitcher: {
     currentBranch: "当前分支：{{branchName}}。按下以切换分支。",
@@ -1262,7 +1298,7 @@ export const zhCN: TranslationResources = {
       creatingAgent: "正在创建 Agent",
     },
     file: {
-      executionDirectoryMissing: "未找到 workspace 执行目录。",
+      directoryMissing: "未找到 workspace 目录。",
       loading: "正在加载文件...",
       noPreview: "没有可用预览",
       binaryPreviewUnavailable: "二进制预览不可用",
@@ -1623,7 +1659,10 @@ export const zhCN: TranslationResources = {
         nameLabel: "Name",
         commandLabel: "Command",
         argsLabel: "Arguments",
+        nameRequired: "Name is required",
+        commandRequired: "Command is required",
         argsHint: "Space-separated arguments passed to the command",
+        saving: "Saving...",
         remove: "Remove",
         removeConfirmTitle: "Remove profile?",
         removeConfirmMessage: 'Remove "{{name}}"?',

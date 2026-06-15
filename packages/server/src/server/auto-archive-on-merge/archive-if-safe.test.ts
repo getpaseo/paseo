@@ -93,6 +93,8 @@ function createHarness(overrides?: {
     agentManager: {} as AutoArchiveArchiveOptions["agentManager"],
     agentStorage: {} as AutoArchiveArchiveOptions["agentStorage"],
     terminalManager: {} as AutoArchiveArchiveOptions["terminalManager"],
+    resolveWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
+    listActiveWorkspaces: vi.fn(async () => []),
     archiveWorkspaceRecord: vi.fn(),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -113,8 +115,7 @@ function createHarness(overrides?: {
   const deps: ArchiveIfSafeDependencies = {
     archivePaseoWorktree,
     isPaseoOwnedWorktreeCwd,
-    killTerminalsUnderPath: vi.fn(),
-    isPathWithinRoot: vi.fn(() => true),
+    killTerminalsForWorkspace: vi.fn(),
   };
   const log = createLogger();
   const inFlight = new Set<string>();
@@ -288,6 +289,10 @@ describe("archiveIfSafe", () => {
         targetPath: CWD,
         repoRoot: "/tmp/repo",
         worktreesRoot: WORKTREES_ROOT,
+        // A merged worktree is the last reference to its directory; remove it from
+        // disk so merged worktrees do not accumulate. Sibling protection still
+        // happens inside the service (last-reference + ownership gated).
+        deleteWorktreeFromDisk: true,
         requestId: "auto-archive-on-merge",
       },
     );

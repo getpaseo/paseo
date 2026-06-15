@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { createTempGitRepo } from "./workspace";
 import { navigateToTerminal, setupDeterministicPrompt } from "./terminal-perf";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
@@ -12,6 +13,16 @@ export interface TerminalInstance {
   id: string;
   name: string;
   cwd: string;
+}
+
+interface CreateTerminalInput {
+  name: string;
+  command?: string;
+  args?: string[];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class TerminalE2EHarness {
@@ -50,12 +61,44 @@ export class TerminalE2EHarness {
     await this.tempRepo.cleanup().catch(() => {});
   }
 
-  async createTerminal(input: { name: string }): Promise<TerminalInstance> {
-    const result = await this.client.createTerminal(this.tempRepo.path, input.name);
+  async createTerminal(input: CreateTerminalInput): Promise<TerminalInstance> {
+    const options =
+      input.command || input.args
+        ? {
+            command: input.command,
+            args: input.args,
+          }
+        : undefined;
+    const result = await this.client.createTerminal(
+      this.tempRepo.path,
+      input.name,
+      undefined,
+      options,
+    );
     if (!result.terminal) {
       throw new Error(`Failed to create terminal: ${result.error}`);
     }
     return result.terminal;
+  }
+
+  async waitForTerminalActivity(input: {
+    terminalId: string;
+    state: TerminalActivityState | null;
+    timeoutMs?: number;
+  }): Promise<void> {
+    const timeoutMs = input.timeoutMs ?? 10_000;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const result = await this.client.listTerminals(this.tempRepo.path);
+      const terminal = result.terminals.find((entry) => entry.id === input.terminalId);
+      if ((terminal?.activity?.state ?? null) === input.state) {
+        return;
+      }
+      await sleep(50);
+    }
+    throw new Error(
+      `Timed out waiting for terminal ${input.terminalId} activity state ${input.state ?? "unknown"}`,
+    );
   }
 
   async killTerminal(terminalId: string): Promise<void> {

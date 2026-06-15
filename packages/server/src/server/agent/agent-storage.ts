@@ -36,6 +36,7 @@ const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),
+  workspaceId: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastActivityAt: z.string().optional(),
@@ -191,23 +192,19 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    workspaceIdOrOptions?: string | { title?: string | null; internal?: boolean },
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
-    const nextOptions = typeof workspaceIdOrOptions === "string" ? options : workspaceIdOrOptions;
     await this.load();
     await this.waitForPendingWrite(agent.id);
     const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
-      nextOptions !== undefined && Object.prototype.hasOwnProperty.call(nextOptions, "title");
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
-      nextOptions !== undefined && Object.prototype.hasOwnProperty.call(nextOptions, "internal");
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (nextOptions?.title ?? null) : (existing?.title ?? null),
+      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
       createdAt: existing?.createdAt,
-      internal: hasInternalOverride
-        ? nextOptions?.internal
-        : (agent.internal ?? existing?.internal),
+      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
     });
 
     // Preserve soft-delete/archive status across snapshot flushes.

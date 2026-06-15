@@ -157,6 +157,7 @@ describe.skipIf(isPlatform("win32"))("worktree-bootstrap POSIX-only", () => {
 
       await runAsyncWorktreeBootstrap({
         agentId: "agent-test",
+        workspaceId: "ws-agent-test",
         worktree: worktreeBootstrap.worktree,
         shouldBootstrap: worktreeBootstrap.shouldBootstrap,
         terminalManager: null,
@@ -271,6 +272,7 @@ describe.skipIf(isPlatform("win32"))("worktree-bootstrap POSIX-only", () => {
       const persisted: AgentTimelineItem[] = [];
       await runAsyncWorktreeBootstrap({
         agentId: "agent-carriage-return",
+        workspaceId: "ws-carriage-return",
         worktree: worktreeBootstrap.worktree,
         shouldBootstrap: worktreeBootstrap.shouldBootstrap,
         terminalManager: null,
@@ -331,9 +333,11 @@ describe.skipIf(isPlatform("win32"))("worktree-bootstrap POSIX-only", () => {
 
       const registeredEnvs: Array<{ cwd: string; env: Record<string, string> }> = [];
       const createTerminalEnvs: Record<string, string>[] = [];
+      const createTerminalWorkspaceIds: Array<string | undefined> = [];
       const persisted: AgentTimelineItem[] = [];
       await runAsyncWorktreeBootstrap({
         agentId: "agent-shared-runtime-port",
+        workspaceId: "ws-shared-runtime-port",
         worktree: worktreeBootstrap.worktree,
         shouldBootstrap: worktreeBootstrap.shouldBootstrap,
         terminalManager: {
@@ -342,6 +346,7 @@ describe.skipIf(isPlatform("win32"))("worktree-bootstrap POSIX-only", () => {
           },
           async createTerminal(options) {
             createTerminalEnvs.push(options.env ?? {});
+            createTerminalWorkspaceIds.push(options.workspaceId);
             return {
               id: "term-1",
               name: options.name ?? "Terminal",
@@ -398,6 +403,7 @@ describe.skipIf(isPlatform("win32"))("worktree-bootstrap POSIX-only", () => {
       expect(registeredEnvs[0]?.env.PASEO_WORKTREE_PORT).toBe(setupPort);
       expect(createTerminalEnvs.length).toBeGreaterThan(0);
       expect(createTerminalEnvs[0]?.PASEO_WORKTREE_PORT).toBe(setupPort);
+      expect(createTerminalWorkspaceIds).toEqual(["ws-shared-runtime-port"]);
 
       const terminalToolCall = persisted.find(
         (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>

@@ -36,7 +36,6 @@ import {
   ChevronDown,
   Columns2,
   Download,
-  GitBranch,
   GitCommitHorizontal,
   GitMerge,
   ListChevronsDownUp,
@@ -80,6 +79,7 @@ import { GitHubIcon } from "@/components/icons/github-icon";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
+import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
@@ -101,11 +101,10 @@ import {
 import {
   buildReviewDraftScopeKey,
   buildReviewDraftKey,
-  useActiveReviewDraftMode,
   useReviewAttachmentSnapshot,
-  useSetActiveReviewDraftMode,
+  useResolvedDiffMode,
+  useSetDiffModeOverride,
   type ReviewDraftComment,
-  type ReviewDraftMode,
   getInlineReviewThreadState,
   getSplitInlineReviewThreadState,
   InlineReviewGutterCell,
@@ -1087,7 +1086,6 @@ interface GitDiffPaneProps {
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
-  hideHeaderRow?: boolean;
   enabled?: boolean;
 }
 
@@ -1113,7 +1111,6 @@ const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
-const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 interface DiffLayoutToggleGroupProps {
@@ -1501,6 +1498,7 @@ interface DerivedStatusState {
   baseRef: string | undefined;
   hasUncommittedChanges: boolean;
   actionsDisabled: boolean;
+  currentBranchName: string | null;
 }
 
 function deriveStatusState({
@@ -1518,6 +1516,8 @@ function deriveStatusState({
   const baseRef = gitStatus?.baseRef ?? undefined;
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
+  const currentBranchName =
+    gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
   return {
     gitStatus,
     isGit,
@@ -1526,6 +1526,7 @@ function deriveStatusState({
     baseRef,
     hasUncommittedChanges,
     actionsDisabled,
+    currentBranchName,
   };
 }
 
@@ -1581,19 +1582,12 @@ function shouldEnableCheckoutDiff(input: { paneEnabled: boolean; isGit: boolean 
   return input.paneEnabled && input.isGit;
 }
 
-export function GitDiffPane({
-  serverId,
-  workspaceId,
-  cwd,
-  hideHeaderRow,
-  enabled,
-}: GitDiffPaneProps) {
+export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPaneProps) {
   const { settings: appSettings } = useAppSettings();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
   const canUseSplitLayout = isWeb && !isMobile;
-  const [diffModeOverride, setDiffModeOverride] = useState<ReviewDraftMode | null>(null);
   const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
     useChangesPreferences();
   const wrapLines = changesPreferences.wrapLines;
@@ -1613,9 +1607,6 @@ export function GitDiffPane({
   const handleToggleHideWhitespace = useCallback(() => {
     void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
   }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
-
-  // handleSelectUncommitted/handleSelectBase are defined later, after reviewDraftScopeKey
-  // and setActiveReviewMode are available, so they can record the active review mode.
 
   const handleLayoutUnified = useCallback(() => {
     handleLayoutChange("unified");
@@ -1689,10 +1680,9 @@ export function GitDiffPane({
     error: statusError,
   } = useCheckoutStatusQuery({ serverId, cwd });
   const statusState = deriveStatusState({ status, isStatusLoading, isStatusError, statusError });
-  const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges } = statusState;
+  const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges, currentBranchName } =
+    statusState;
 
-  // Auto-select diff mode based on state: uncommitted when dirty, base when clean
-  const autoDiffMode: ReviewDraftMode = hasUncommittedChanges ? "uncommitted" : "base";
   const reviewDraftScopeKey = useMemo(
     () =>
       buildReviewDraftScopeKey({
@@ -1704,8 +1694,11 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, serverId, workspaceId],
   );
-  const activeReviewMode = useActiveReviewDraftMode({ scopeKey: reviewDraftScopeKey });
-  const diffMode = diffModeOverride ?? activeReviewMode ?? autoDiffMode;
+  const diffMode = useResolvedDiffMode({
+    scopeKey: reviewDraftScopeKey,
+    hasUncommittedChanges,
+  });
+  const setDiffModeOverride = useSetDiffModeOverride();
 
   const {
     files,
@@ -1731,17 +1724,20 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, diffMode, serverId, workspaceId],
   );
-  const setActiveReviewMode = useSetActiveReviewDraftMode();
 
   const handleSelectUncommitted = useCallback(() => {
-    setDiffModeOverride("uncommitted");
-    setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "uncommitted" });
-  }, [reviewDraftScopeKey, setActiveReviewMode]);
+    setDiffModeOverride({
+      scopeKey: reviewDraftScopeKey,
+      override: { serverId, cwd, mode: "uncommitted", isDirtyAtSelection: hasUncommittedChanges },
+    });
+  }, [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride]);
 
   const handleSelectBase = useCallback(() => {
-    setDiffModeOverride("base");
-    setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "base" });
-  }, [reviewDraftScopeKey, setActiveReviewMode]);
+    setDiffModeOverride({
+      scopeKey: reviewDraftScopeKey,
+      override: { serverId, cwd, mode: "base", isDirtyAtSelection: hasUncommittedChanges },
+    });
+  }, [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride]);
 
   const reviewActions = useInlineReviewController({
     reviewDraftKey,
@@ -1994,11 +1990,6 @@ export function GitDiffPane({
     }
   }, [allExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
 
-  // Clear diff mode override when auto mode changes (e.g., after commit)
-  useEffect(() => {
-    setDiffModeOverride(null);
-  }, [autoDiffMode]);
-
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
       if (item.type === "header") {
@@ -2112,7 +2103,11 @@ export function GitDiffPane({
     }),
     [],
   );
-  const { gitActions, branchLabel } = useGitActions({ serverId, cwd, icons: gitActionsIcons });
+  const { gitActions, branchLabel, worktreeDeletePrompt } = useGitActions({
+    serverId,
+    cwd,
+    icons: gitActionsIcons,
+  });
   const committedDiffDescription = useMemo(
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
     [baseRefLabel, branchLabel],
@@ -2158,15 +2153,18 @@ export function GitDiffPane({
 
   return (
     <View style={styles.container}>
-      {!hideHeaderRow ? (
+      {isGit && (currentBranchName || isMobile) ? (
         <View style={styles.header} testID="changes-header">
-          <View style={styles.headerLeft}>
-            <ThemedGitBranch size={16} uniProps={foregroundMutedIconColorMapping} />
-            <Text style={styles.branchLabel} testID="changes-branch" numberOfLines={1}>
-              {branchLabel}
-            </Text>
-          </View>
-          {isGit ? <GitActionsSplitButton gitActions={gitActions} /> : null}
+          <BranchSwitcher
+            currentBranchName={currentBranchName}
+            serverId={serverId}
+            workspaceId={workspaceId ?? cwd}
+            workspaceDirectory={cwd}
+            isGitCheckout={isGit}
+            testID="changes-branch-switcher"
+          />
+          {isMobile ? <GitActionsSplitButton gitActions={gitActions} /> : null}
+          {worktreeDeletePrompt}
         </View>
       ) : null}
 
@@ -2267,19 +2265,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flex: 1,
-    minWidth: 0,
-  },
-  branchLabel: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.medium,
-    flexShrink: 1,
   },
   diffStatusContainer: {
     height: WORKSPACE_SECONDARY_HEADER_HEIGHT,

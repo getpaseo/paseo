@@ -7,8 +7,12 @@ export type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type TerminalEntry = ListTerminalsPayload["terminals"][number];
 type CreatedTerminal = NonNullable<CreateTerminalResponse["payload"]["terminal"]>;
 
-export function buildTerminalsQueryKey(serverId: string, workspaceDirectory: string | null) {
-  return ["terminals", serverId, workspaceDirectory] as const;
+export function buildTerminalsQueryKey(
+  serverId: string,
+  workspaceDirectory: string | null,
+  workspaceId?: string | null,
+) {
+  return ["terminals", serverId, workspaceDirectory, workspaceId ?? null] as const;
 }
 
 export function canCreateWorkspaceTerminal(input: {

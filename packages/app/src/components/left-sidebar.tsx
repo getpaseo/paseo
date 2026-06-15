@@ -1,5 +1,5 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, Home, MessagesSquare, Plus, Search, Settings, X } from "lucide-react-native";
+import { Clock, FolderPlus, Home, Plus, Search, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   type Dispatch,
@@ -117,6 +117,7 @@ interface SidebarSharedProps {
 
 interface SidebarLabels {
   addProject: string;
+  newWorkspace: string;
   home: string;
   settings: string;
   switchHost: string;
@@ -243,7 +244,7 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const handleNewWorkspaceNavigate = useCallback(() => {
     if (!activeServerId) return;
-    router.push(buildHostNewWorkspaceRoute(activeServerId));
+    router.navigate(buildHostNewWorkspaceRoute(activeServerId));
   }, [activeServerId]);
 
   const handleSettingsMobile = useCallback(() => {
@@ -296,6 +297,7 @@ export const LeftSidebar = memo(function LeftSidebar({
   const labels = useMemo(
     (): SidebarLabels => ({
       addProject: t("sidebar.actions.addProject"),
+      newWorkspace: t("sidebar.actions.newWorkspace"),
       home: t("sidebar.actions.home"),
       settings: t("sidebar.actions.settings"),
       switchHost: t("sidebar.host.switchTitle"),
@@ -624,7 +626,7 @@ function MobileSidebar({
     windowWidth,
     animateToOpen,
     animateToClose,
-    settledGeneration,
+    overlayVisible,
     isGesturing,
     mobilePanelState,
     gestureAnimatingRef,
@@ -758,25 +760,13 @@ function MobileSidebar({
     [activeHostStatusColor],
   );
 
-  // settledGeneration as deps: after each settle the updater is rebuilt so the
-  // shared values are re-applied to the view, protecting against a heavy Fabric
-  // commit reverting the transform to stale React-committed props (#9635).
-  const sidebarAnimatedStyle = useAnimatedStyle(
-    () => ({
-      transform: [{ translateX: translateX.value }],
-    }),
-    [settledGeneration],
-  );
+  const sidebarAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
-  // pointerEvents comes from React state, not the worklet: the Fabric revert
-  // protection above does not cover pointerEvents, so a worklet-driven value
-  // can wedge an invisible tap-eating backdrop after a heavy commit.
-  const backdropAnimatedStyle = useAnimatedStyle(
-    () => ({
-      opacity: backdropOpacity.value,
-    }),
-    [settledGeneration],
-  );
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
 
   let overlayPointerEvents: "auto" | "none" | "box-none";
   if (!isWeb) overlayPointerEvents = "box-none";
@@ -787,6 +777,9 @@ function MobileSidebar({
     () => [
       staticStyles.backdrop,
       backdropAnimatedStyle,
+      // pointerEvents is React-owned, not worklet-owned: Reanimated never
+      // touches it, so a stale animated-prop revert can't wedge an invisible
+      // tap-eating backdrop.
       { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
     ],
     [backdropAnimatedStyle, isOpen],
@@ -800,21 +793,39 @@ function MobileSidebar({
     ],
     [mobileSidebarInsetStyle, sidebarAnimatedStyle, theme.colors.surfaceSidebar],
   );
+  // display is React-owned on the plain wrapper View (no animated styles), so
+  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
+  // reverts the panel transform to after a heavy commit (reanimated#9635).
+  const overlayStyle = useMemo(
+    () => [
+      StyleSheet.absoluteFillObject,
+      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
+    ],
+    [overlayVisible],
+  );
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+    <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
       <Animated.View style={backdropStyle} />
 
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
         <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
           <View style={styles.sidebarContent} pointerEvents="auto">
-            <View style={styles.sidebarHeaderRow}>
+            <View style={styles.sidebarHeaderGroup}>
               <SidebarHeaderRow
-                icon={MessagesSquare}
+                icon={Plus}
+                label={labels.newWorkspace}
+                onPress={handleNewWorkspace}
+                testID="sidebar-global-new-workspace"
+                variant="compact"
+              />
+              <SidebarHeaderRow
+                icon={Clock}
                 label={labels.sessions}
                 onPress={handleViewMore}
                 isActive={isSessionsActive}
                 testID="sidebar-sessions"
+                variant="compact"
               />
             </View>
             <WorkspacesSectionHeader
@@ -981,13 +992,21 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={paddingTopSpacerStyle} /> : null}
-          <View style={styles.sidebarHeaderRow}>
+          <View style={styles.sidebarHeaderGroup}>
             <SidebarHeaderRow
-              icon={MessagesSquare}
+              icon={Plus}
+              label={labels.newWorkspace}
+              onPress={handleNewWorkspaceNavigate}
+              testID="sidebar-global-new-workspace"
+              variant="compact"
+            />
+            <SidebarHeaderRow
+              icon={Clock}
               label={labels.sessions}
               onPress={handleViewMore}
               isActive={isSessionsActive}
               testID="sidebar-sessions"
+              variant="compact"
             />
           </View>
         </View>
@@ -1145,8 +1164,13 @@ const staticStyles = RNStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  sidebarHeaderRow: {
-    position: "relative",
+  sidebarHeaderGroup: {
+    paddingTop: theme.spacing[2],
+    // Match WorkspacesSectionHeader's paddingTop below the divider so the divider
+    // sits visually centered between the Sessions row and the Workspaces header.
+    paddingBottom: theme.spacing[2],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   workspacesSectionHeader: {
     flexDirection: "row",

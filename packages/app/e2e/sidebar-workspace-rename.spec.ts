@@ -1,8 +1,6 @@
-import { execSync } from "node:child_process";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { seedWorkspace } from "./helpers/seed-client";
-import { captureWsSessionFrames } from "./helpers/rename";
 import { getServerId } from "./helpers/server-id";
 
 function workspaceRowTestId(workspaceId: string): string {
@@ -32,23 +30,15 @@ async function openRenameModal(page: Page, workspaceId: string) {
   return input;
 }
 
+// In Model B the workspace title is its identity: renaming sets a custom title
+// layered over the derived branch/directory name, and reconciliation never
+// touches it. The sidebar row shows the title verbatim — no branch mutation.
 test.describe("Sidebar workspace rename", () => {
-  test("renaming via kebab updates the branch name on disk and in the sidebar", async ({
-    page,
-  }) => {
+  test("renaming via kebab sets a custom title that survives reload", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-rename-" });
 
     try {
       expect(workspace.workspaceName).toBe("main");
-
-      const renameRequests = captureWsSessionFrames(
-        page,
-        "checkout.rename_branch.request",
-        (inner) => ({
-          branch: String(inner.branch ?? ""),
-          cwd: String(inner.cwd ?? ""),
-        }),
-      );
 
       await gotoAppShell(page);
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toBeVisible({
@@ -57,56 +47,26 @@ test.describe("Sidebar workspace rename", () => {
 
       const input = await openRenameModal(page, workspace.workspaceId);
       await expect(input).toHaveValue("main");
-      await input.fill("Feature Rename 2");
 
+      const customTitle = "Payments Refactor";
+      await input.fill(customTitle);
       await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
 
       await expect(input).toHaveCount(0, { timeout: 15_000 });
+      // The title is shown exactly as typed — not slugified into a branch name.
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
-        "feature-rename-2",
+        customTitle,
         { timeout: 15_000 },
       );
 
-      expect(renameRequests.length).toBeGreaterThan(0);
-      expect(renameRequests.at(-1)).toEqual({
-        branch: "feature-rename-2",
-        cwd: workspace.workspaceDirectory,
-      });
-
-      const currentBranchOnDisk = execSync("git branch --show-current", {
-        cwd: workspace.repoPath,
-        stdio: "pipe",
-      })
-        .toString()
-        .trim();
-      expect(currentBranchOnDisk).toBe("feature-rename-2");
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("rename surfaces server errors inline and keeps the modal open", async ({ page }) => {
-    const workspace = await seedWorkspace({
-      repoPrefix: "sidebar-rename-error-",
-      repo: { branches: ["taken"] },
-    });
-
-    try {
-      await gotoAppShell(page);
-      const input = await openRenameModal(page, workspace.workspaceId);
-      await expect(input).toHaveValue("main");
-
-      await input.fill("taken");
-      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
-
-      const errorNode = page.getByTestId(
-        workspaceRenameModalTestId(workspace.workspaceId, "error"),
-      );
-      await expect(errorNode).toBeVisible({ timeout: 15_000 });
-      await expect(errorNode).toContainText(/already exists|branch/i);
-      await expect(input).toBeVisible();
+      // The custom title is backing metadata on the workspace: a full reload
+      // re-resolves the descriptor from persistence and must not lose it. This
+      // exercises the same descriptor resolution reconciliation re-runs against,
+      // so a reconcile pass cannot overwrite the user's title either.
+      await page.reload();
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
-        "main",
+        customTitle,
+        { timeout: 30_000 },
       );
     } finally {
       await workspace.cleanup();

@@ -250,6 +250,12 @@ interface ManagedAgentBase {
   id: string;
   provider: AgentProvider;
   cwd: string;
+  /**
+   * Workspace this agent belongs to, stamped at creation. Independent of cwd:
+   * cwd answers "where does it run", workspaceId answers "which workspace owns it".
+   * Null/undefined for legacy agents created before ownership stamping.
+   */
+  workspaceId?: string;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
@@ -849,11 +855,11 @@ export class AgentManager {
     agentId?: string,
     options?: {
       labels?: Record<string, string>;
-      workspaceId?: string;
       initialPrompt?: string;
       env?: Record<string, string>;
       persistSession?: boolean;
       initialTitle?: string | null;
+      workspaceId?: string;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
@@ -867,8 +873,8 @@ export class AgentManager {
     const session = await client.createSession(launchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
-      workspaceId: options?.workspaceId,
       initialTitle: options?.initialTitle,
+      workspaceId: options?.workspaceId,
     });
   }
 
@@ -891,6 +897,7 @@ export class AgentManager {
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
+      workspaceId?: string;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(
@@ -1021,6 +1028,7 @@ export class AgentManager {
     // Preserve existing labels and timeline during reload.
     return this.registerSession(session, storedConfig, agentId, {
       labels: existing.labels,
+      workspaceId: existing.workspaceId,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
       lastUserMessageAt: existing.lastUserMessageAt,
@@ -1204,6 +1212,7 @@ export class AgentManager {
         id: record.id,
         provider: record.provider,
         cwd: record.cwd,
+        workspaceId: record.workspaceId,
         session: null,
         capabilities: STORED_AGENT_CAPABILITIES,
         config: buildStoredAgentConfig(record),
@@ -2321,7 +2330,6 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     options?: {
-      workspaceId?: string;
       createdAt?: Date;
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
@@ -2336,6 +2344,7 @@ export class AgentManager {
       attention?: AttentionState;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
+      workspaceId?: string;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "registerSession");
@@ -2369,7 +2378,6 @@ export class AgentManager {
     this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
     await this.refreshRuntimeInfo(managed, { emit: !options?.publishWhenReady });
     await this.persistSnapshot(managed, {
-      workspaceId: options?.workspaceId,
       title: initialPersistedTitle,
     });
     if (!options?.publishWhenReady) {
@@ -2378,7 +2386,7 @@ export class AgentManager {
 
     await this.refreshSessionState(managed, { emit: !options?.publishWhenReady });
     managed.lifecycle = "idle";
-    await this.persistSnapshot(managed, { workspaceId: options?.workspaceId });
+    await this.persistSnapshot(managed);
     this.emitState(managed, { persist: false });
     this.subscribeToSession(managed);
     return { ...managed };
@@ -2436,6 +2444,7 @@ export class AgentManager {
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
+          workspaceId?: string;
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -2444,6 +2453,7 @@ export class AgentManager {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
+      workspaceId: options?.workspaceId,
       session,
       capabilities: session.capabilities,
       config,
@@ -2639,17 +2649,13 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { workspaceId?: string; title?: string | null; internal?: boolean },
+    options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     if (!this.registry) {
       return;
     }
     // Don't persist internal agents - they're ephemeral system tasks
     if (agent.internal) {
-      return;
-    }
-    if (options?.workspaceId !== undefined) {
-      await this.registry.applySnapshot(agent, options.workspaceId, options);
       return;
     }
     await this.registry.applySnapshot(agent, options);

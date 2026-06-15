@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
+
+import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
+import type { ProcessTerminator } from "../../../utils/tree-kill.js";
 import type {
   ReadableStream as NodeReadableStream,
   WritableStream as NodeWritableStream,
@@ -186,6 +189,10 @@ function resolveTerminalCommand(
 export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
+  // ACP agents can list prior sessions via `session/list`. The runtime probe in
+  // listImportableSessions returns nothing for agents that don't advertise the
+  // capability, so enabling this here only makes the daemon query them.
+  supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: true,
   supportsReasoningStream: true,
@@ -325,6 +332,7 @@ interface ACPAgentClientOptions {
   capabilities?: AgentCapabilityFlags;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  terminateProcess?: ProcessTerminator;
 }
 
 interface ACPAgentSessionOptions {
@@ -353,6 +361,7 @@ interface ACPAgentSessionOptions {
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  terminateProcess?: ProcessTerminator;
 }
 
 export interface SpawnedACPProcess {
@@ -600,9 +609,11 @@ export class ACPAgentClient implements AgentClient {
   ) => Promise<void>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
+  protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
+    this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
     this.logger = options.logger.child({
       module: "agent",
@@ -758,7 +769,13 @@ export class ACPAgentClient implements AgentClient {
       let cursor: string | null | undefined;
       for (;;) {
         const page: ListSessionsResponse = await this.runACPRequest(() =>
-          probe.connection.listSessions(cursor ? { cursor } : {}),
+          probe.connection.listSessions({
+            ...(cursor ? { cursor } : {}),
+            // Filter by working directory at the source. Without this the agent
+            // returns globally-recent sessions, which the `limit` below can
+            // truncate before the current directory's sessions are reached.
+            ...(options?.cwd ? { cwd: options.cwd } : {}),
+          }),
         );
         for (const session of page.sessions) {
           sessions.push({
@@ -856,7 +873,7 @@ export class ACPAgentClient implements AgentClient {
         ]),
       );
     } catch (error) {
-      await terminateChildProcess(child, 2_000);
+      await terminateChildProcess(child, 2_000, this.terminateProcess);
       throw error;
     } finally {
       if (timeout) {
@@ -894,7 +911,7 @@ export class ACPAgentClient implements AgentClient {
         // No active session to close here; ignore capability.
       }
     } finally {
-      await terminateChildProcess(probe.child, 2_000);
+      await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
     }
   }
 
@@ -1004,9 +1021,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private historyPending = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
+  private readonly terminateProcess: ProcessTerminator;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
+    this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
@@ -1654,14 +1673,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    for (const terminal of this.terminalEntries.values()) {
-      terminal.child.kill("SIGTERM");
-    }
+    const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
+      this.terminateProcess(terminal.child, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }),
+    );
+    await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
 
     if (this.child) {
-      this.child.kill("SIGTERM");
-      await waitForChildExit(this.child, 2_000);
+      await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
 
     this.subscribers.clear();
@@ -1843,7 +1865,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async releaseTerminal(params: { sessionId: string; terminalId: string }): Promise<void> {
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
-      entry.child.kill("SIGTERM");
+      await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     this.terminalEntries.delete(params.terminalId);
   }
@@ -1851,7 +1873,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async killTerminal(params: KillTerminalRequest): Promise<Record<string, never>> {
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
-      entry.child.kill("SIGTERM");
+      await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     return {};
   }
@@ -2874,29 +2896,16 @@ function coerceSessionConfigMetadata(
   return metadata as Partial<AgentSessionConfig>;
 }
 
-async function waitForChildExit(
-  child: ChildProcessWithoutNullStreams,
-  timeoutMs: number,
-): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return;
-  }
-  await Promise.race([
-    new Promise<void>((resolve) => child.once("exit", () => resolve())),
-    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
-  }
-}
-
 async function terminateChildProcess(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number,
+  terminate: ProcessTerminator,
 ): Promise<void> {
-  child.kill("SIGTERM");
-  child.stdin.destroy();
-  child.stdout.destroy();
-  child.stderr.destroy();
-  await waitForChildExit(child, timeoutMs);
+  try {
+    await terminate(child, { gracefulTimeoutMs: timeoutMs, forceTimeoutMs: timeoutMs });
+  } finally {
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }
 }

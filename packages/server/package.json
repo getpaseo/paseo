@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.94",
+  "version": "0.1.96",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -22,6 +22,11 @@
       "types": "./dist/server/utils/tool-call-parsers.d.ts",
       "source": "./src/utils/tool-call-parsers.ts",
       "default": "./dist/server/utils/tool-call-parsers.js"
+    },
+    "./agent-hooks": {
+      "types": "./dist/server/terminal/agent-hooks/provider-registry.d.ts",
+      "source": "./src/terminal/agent-hooks/provider-registry.ts",
+      "default": "./dist/server/terminal/agent-hooks/provider-registry.js"
     }
   },
   "publishConfig": {
@@ -59,10 +64,10 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.133",
-    "@getpaseo/client": "0.1.94",
-    "@getpaseo/highlight": "0.1.94",
-    "@getpaseo/protocol": "0.1.94",
-    "@getpaseo/relay": "0.1.94",
+    "@getpaseo/client": "0.1.96",
+    "@getpaseo/highlight": "0.1.96",
+    "@getpaseo/protocol": "0.1.96",
+    "@getpaseo/relay": "0.1.96",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",

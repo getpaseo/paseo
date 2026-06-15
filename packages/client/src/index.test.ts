@@ -199,6 +199,7 @@ test("createPaseoClient exposes workspace list through the daemon client", async
   await expect(listPromise).resolves.toEqual({
     requestId: request.requestId,
     entries: [],
+    emptyProjects: [],
     pageInfo: {
       nextCursor: null,
       prevCursor: null,
@@ -241,7 +242,6 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
     type: "fetch_workspaces_request",
     requestId: "workspace-refetch-request",
-    filter: { idPrefix: "workspace_sdk" },
     page: { limit: 25 },
   });
 
@@ -676,6 +676,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       providers: {},
       metadataGeneration: { providers: [] },
       autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
     },
   });
@@ -729,6 +730,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
       },
       metadataGeneration: { providers: [] },
       autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
       appendSystemPrompt: "",
     },
   });

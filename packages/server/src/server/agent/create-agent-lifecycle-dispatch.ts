@@ -3,7 +3,10 @@ import type pino from "pino";
 
 import type { GitHubService } from "../../services/github-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
-import { archivePaseoWorktree } from "../paseo-worktree-archive-service.js";
+import {
+  type ActiveWorkspaceRef,
+  archivePaseoWorktree,
+} from "../paseo-worktree-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -26,14 +29,15 @@ interface CreateAgentLifecycleDispatchDependencies {
   workspaceGitService: WorkspaceGitService;
   createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
+  resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
+  listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => void;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
-  isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
-  killTerminalsUnderPath: (rootPath: string) => Promise<void>;
+  killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   logger: pino.Logger;
 }
 
@@ -207,12 +211,13 @@ export class CreateAgentLifecycleDispatch {
         workspaceGitService: this.dependencies.workspaceGitService,
         agentManager: this.dependencies.agentManager,
         agentStorage: this.dependencies.agentStorage,
+        resolveWorkspaceIdForCwd: this.dependencies.resolveWorkspaceIdForCwd,
+        listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
         archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
         clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
-        isPathWithinRoot: this.dependencies.isPathWithinRoot,
-        killTerminalsUnderPath: this.dependencies.killTerminalsUnderPath,
+        killTerminalsForWorkspace: this.dependencies.killTerminalsForWorkspace,
         sessionLogger: this.dependencies.logger,
       },
       {

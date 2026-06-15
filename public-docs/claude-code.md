@@ -2,7 +2,8 @@
 title: Claude Code
 description: How Paseo runs Claude Code and how Anthropic's usage policy applies.
 nav: Claude Code
-order: 7
+order: 23
+category: Providers
 ---
 
 # Claude Code
@@ -57,4 +58,4 @@ Paseo has first-class terminal support. You can run Claude Code in your terminal
 - [Anthropic: Use the Claude Agent SDK with your Claude plan](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
 - [Custom providers](/docs/custom-providers), for custom binaries, third-party endpoints, or multiple Claude profiles.
 - [Supported providers](/docs/supported-providers), for other agents you can run alongside Claude Code.
-- [Paseo vs Claude Desktop](/docs/alternatives/claude-desktop), for a feature comparison.
+- [Paseo vs Claude Desktop](/alternatives/claude-desktop), for a feature comparison.

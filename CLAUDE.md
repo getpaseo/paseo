@@ -39,11 +39,13 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/service-proxy.md](docs/service-proxy.md)                 | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                      |
 | [docs/development.md](docs/development.md)                     | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                     |
 | [docs/rpc-namespacing.md](docs/rpc-namespacing.md)             | WebSocket RPC naming convention — dotted namespaces and `.request`/`.response` pairs                                           |
+| [docs/terminal-performance.md](docs/terminal-performance.md)   | Terminal latency pipeline, coalescing/backpressure invariants, benchmark + perf spec usage                                     |
 | [docs/testing.md](docs/testing.md)                             | TDD workflow, determinism, real dependencies over mocks, test organization                                                     |
 | [docs/mobile-testing.md](docs/mobile-testing.md)               | Maestro and mobile test workflows                                                                                              |
 | [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md) | Isolated in-process daemon test harness                                                                                        |
 | [docs/android.md](docs/android.md)                             | App variants, local/cloud builds, EAS workflows                                                                                |
 | [docs/release.md](docs/release.md)                             | Release playbook, draft releases, completion checklist                                                                         |
+| [docs/terminal-activity.md](docs/terminal-activity.md)         | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                     | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 
 ## Quick start

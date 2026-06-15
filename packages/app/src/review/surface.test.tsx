@@ -168,7 +168,7 @@ function comment(overrides: Partial<ReviewDraftComment> = {}): ReviewDraftCommen
 
 describe("useInlineReviewController", () => {
   beforeEach(() => {
-    useReviewDraftStore.setState({ drafts: {}, activeModesByScope: {} });
+    useReviewDraftStore.setState({ drafts: {}, diffModeOverrides: {} });
   });
 
   afterEach(() => {

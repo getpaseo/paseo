@@ -9,6 +9,7 @@ import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
 import { createWorktreeCommand } from "./commands/worktree/index.js";
+import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
 import { runRestartCommand as runDaemonRestartCommand } from "./commands/daemon/restart.js";
@@ -96,6 +97,7 @@ export function createCli(): Command {
   // Top-level local daemon shortcuts
   program.addCommand(onboardCommand());
   program.addCommand(daemonStartCommand());
+  program.addCommand(createHooksCommand());
 
   addJsonOption(
     program

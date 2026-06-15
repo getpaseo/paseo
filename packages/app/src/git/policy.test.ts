@@ -190,6 +190,25 @@ describe("git-actions-policy", () => {
     });
   });
 
+  it("prioritizes push over pull request merge when local commits are unpushed", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isOnBaseBranch: false,
+        aheadCount: 2,
+        aheadOfOrigin: 2,
+        hasPullRequest: true,
+        pullRequestUrl: "https://example.com/pr/456",
+        pullRequestState: "open",
+        pullRequestMergeable: "MERGEABLE",
+        pullRequestGithub: githubStatus(),
+        shipDefault: "pr",
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+  });
+
   it("shows update-from-base only on feature branches that are behind the base branch", () => {
     const actions = buildGitActions(
       createInput({
@@ -358,7 +377,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Squash and merge",
+      label: "Merge",
     });
   });
 
@@ -379,7 +398,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Squash and merge",
+      label: "Merge",
     });
   });
 
@@ -439,11 +458,11 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Squash and merge",
+      label: "Merge",
     });
   });
 
-  it("promotes Create PR over push and local merge when PR is the ship default", () => {
+  it("promotes push over Create PR when local commits are unpushed", () => {
     const actions = buildGitActions(
       createInput({
         hasRemote: true,
@@ -455,8 +474,8 @@ describe("git-actions-policy", () => {
     );
 
     expect(actions.primary).toMatchObject({
-      id: "pr",
-      label: "Create PR",
+      id: "push",
+      label: "Push",
     });
   });
 
@@ -493,7 +512,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Squash and merge",
+      label: "Merge",
     });
     expect(actions.secondary.some((action) => action.id === "merge-branch")).toBe(true);
   });
@@ -564,7 +583,7 @@ describe("git-actions-policy", () => {
       },
       {
         id: "merge-pr-squash",
-        label: "Squash and merge",
+        label: "Merge",
         pendingLabel: "Merging PR...",
         successLabel: "PR merged",
         disabled: false,
@@ -573,7 +592,7 @@ describe("git-actions-policy", () => {
       },
       {
         id: "merge-pr-merge",
-        label: "Create a merge commit",
+        label: "Merge",
         pendingLabel: "Merging PR...",
         successLabel: "PR merged",
         disabled: false,
@@ -582,7 +601,7 @@ describe("git-actions-policy", () => {
       },
       {
         id: "merge-pr-rebase",
-        label: "Rebase and merge",
+        label: "Merge",
         pendingLabel: "Merging PR...",
         successLabel: "PR merged",
         disabled: false,
@@ -684,7 +703,7 @@ describe("git-actions-policy", () => {
     );
 
     expect(oldDaemonStatus.github).toBeUndefined();
-    expect(actions.primary).toMatchObject({ id: "merge-pr-squash", label: "Squash and merge" });
+    expect(actions.primary).toMatchObject({ id: "merge-pr-squash", label: "Merge" });
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",
       "push",
@@ -725,7 +744,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "enable-pr-auto-merge-squash",
-      label: "Enable auto-merge with squash",
+      label: "Auto merge",
     });
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",
@@ -832,7 +851,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-merge",
-      label: "Create a merge commit",
+      label: "Merge",
     });
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",

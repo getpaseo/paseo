@@ -59,6 +59,7 @@ export function createLastWorkspaceSelectionStore(storage: LastWorkspaceSelectio
     selection = normalized;
     revision += 1;
     notifyListeners();
+    // workspaceId is opaque; do not parse this persisted selection back into a path.
     void storage.write(JSON.stringify(normalized)).catch(() => {});
   }
 

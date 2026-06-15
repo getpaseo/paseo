@@ -2,7 +2,8 @@
 title: Schedules
 description: Run Paseo agents on intervals or cron.
 nav: Schedules
-order: 11
+order: 31
+category: Automation
 ---
 
 # Schedules

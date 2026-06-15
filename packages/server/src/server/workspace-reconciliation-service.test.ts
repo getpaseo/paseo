@@ -73,6 +73,26 @@ function createTestLogger() {
   return logger as unknown as pino.Logger;
 }
 
+interface CapturedLogRecord {
+  message: string;
+  payload: unknown;
+}
+
+function createCapturingLogger() {
+  const infoRecords: CapturedLogRecord[] = [];
+  const logger = {
+    child: () => logger,
+    trace: () => undefined,
+    debug: () => undefined,
+    info: (payload: unknown, message?: string) => {
+      infoRecords.push({ payload, message: message ?? "" });
+    },
+    warn: () => undefined,
+    error: () => undefined,
+  };
+  return { logger: logger as unknown as pino.Logger, infoRecords };
+}
+
 function createWorkspaceGitServiceStub(
   metadataByCwd: Record<
     string,
@@ -189,7 +209,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(workspaces.get("w1")!.archivedAt).toBeTruthy();
   });
 
-  test("archives orphaned projects after all workspaces are archived", async () => {
+  test("keeps a project active after all its workspaces are archived", async () => {
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
 
     projects.set(
@@ -225,8 +245,8 @@ describe("WorkspaceReconciliationService", () => {
     const result = await service.runOnce();
 
     const projChange = result.changesApplied.find((c) => c.kind === "project_archived");
-    expect(projChange).toBeDefined();
-    expect(projects.get("p1")!.archivedAt).toBeTruthy();
+    expect(projChange).toBeUndefined();
+    expect(projects.get("p1")!.archivedAt).toBeFalsy();
   });
 
   test("updates project kind when a directory becomes a git repo", async () => {
@@ -436,7 +456,7 @@ describe("WorkspaceReconciliationService", () => {
         expect.objectContaining({
           kind: "project_archived",
           projectId: repoDir,
-          reason: "no_active_workspaces",
+          reason: "merged_duplicate",
         }),
       ]),
     );
@@ -691,5 +711,76 @@ describe("WorkspaceReconciliationService", () => {
 
     expect(onChanges).toHaveBeenCalledTimes(1);
     expect(onChanges.mock.calls[0][0].length).toBeGreaterThan(0);
+  });
+
+  test("logs reconciliation changes with affected paths and reasons", async () => {
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    const { logger, infoRecords } = createCapturingLogger();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: "/tmp/does-not-exist-log-test",
+        kind: "non_git",
+        displayName: "ghost",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: "/tmp/does-not-exist-log-test",
+        kind: "directory",
+        displayName: "ghost",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger,
+    });
+
+    await service.runOnce();
+
+    expect(infoRecords).toEqual([
+      {
+        message: "Workspace reconciliation applied changes",
+        payload: expect.objectContaining({
+          changeCount: 1,
+          changes: expect.arrayContaining([
+            {
+              kind: "workspace_archived",
+              workspaceId: "w1",
+              directory: "/tmp/does-not-exist-log-test",
+              reason: "directory_missing",
+            },
+          ]),
+          durationMs: expect.any(Number),
+        }),
+      },
+    ]);
+    expect(projects.get("p1")!.archivedAt).toBeFalsy();
+  });
+
+  test("does not log reconciliation when no changes are applied", async () => {
+    const { projectRegistry, workspaceRegistry } = createTestRegistries();
+    const { logger, infoRecords } = createCapturingLogger();
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger,
+    });
+
+    await service.runOnce();
+
+    expect(infoRecords).toEqual([]);
   });
 });

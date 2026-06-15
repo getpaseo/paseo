@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import equal from "fast-deep-equal";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { selectWorkspace, workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
@@ -32,6 +34,14 @@ export {
   type SidebarWorkspaceEntry,
 } from "./sidebar-workspaces-view-model";
 
+function normalizeCurrentBranch(currentBranch: string | null | undefined): string | null {
+  if (!currentBranch) {
+    return null;
+  }
+  const trimmed = currentBranch.trim();
+  return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -49,6 +59,8 @@ export function createSidebarWorkspaceEntry(input: {
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
+    title: input.workspace.title ?? null,
+    currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
@@ -147,22 +159,31 @@ export function useSidebarWorkspaceEntry(
   serverId: string | null,
   workspaceId: string | null,
 ): SidebarWorkspaceEntry | null {
-  const pendingCreateAttempts = useCreateFlowStore((state) => state.pendingByDraftId);
-  const agents = useSessionStore((state) =>
-    serverId ? state.sessions[serverId]?.agents : undefined,
+  // Deep-compare so that adding/removing unrelated pending creates doesn't re-render this row.
+  const pendingCreateAttempts = useStoreWithEqualityFn(
+    useCreateFlowStore,
+    (state) => state.pendingByDraftId,
+    workspaceEqualityFns.deep,
   );
-  const projectWorkspaceEntry = useCallback(
-    (workspace: WorkspaceDescriptor): SidebarWorkspaceEntry =>
-      createSidebarWorkspaceEntry({
+
+  // Single subscription: reads workspace + agents together, computes the full entry, and
+  // deep-compares the output. Agents-Map identity churn (setAgents replaces the Map on every
+  // status transition) never causes a React re-render unless the derived entry actually changes.
+  return useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      const workspace = selectWorkspace(state, serverId, workspaceId);
+      if (!workspace) return null;
+      const agents = serverId ? state.sessions[serverId]?.agents : undefined;
+      return createSidebarWorkspaceEntry({
         serverId: serverId ?? "",
         workspace,
         pendingCreateAttempts,
         agents,
-      }),
-    [agents, pendingCreateAttempts, serverId],
+      });
+    },
+    equal,
   );
-
-  return useWorkspaceFields(serverId, workspaceId, projectWorkspaceEntry);
 }
 
 const EMPTY_ORDER: string[] = [];

@@ -3,6 +3,7 @@ title: Why Paseo?
 description: What Paseo is, what it isn't, and how it fits into your workflow.
 nav: Why Paseo?
 order: 2
+category: Getting started
 ---
 
 # Why Paseo?

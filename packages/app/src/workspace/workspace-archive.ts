@@ -3,7 +3,7 @@ import {
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-execution";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 export interface WorkspaceArchiveTarget {
   serverId: string;

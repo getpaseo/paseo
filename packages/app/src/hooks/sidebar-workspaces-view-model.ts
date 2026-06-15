@@ -8,6 +8,12 @@ import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
+function workspaceNameFromDirectory(directory: string): string {
+  const trimmed = directory.trim().replace(/[\\/]+$/g, "");
+  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
+}
+
 export type SidebarStateBucket = WorkspaceDescriptor["status"];
 
 export interface SidebarWorkspaceEntry {
@@ -20,6 +26,11 @@ export interface SidebarWorkspaceEntry {
   projectKind: WorkspaceDescriptor["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
+  // Raw user-set title (null when the name is derived from branch/directory).
+  // Prefills the rename input and signals whether a reset is available.
+  title: string | null;
+  // Checkout branch (null when not a git checkout or detached HEAD).
+  currentBranch: string | null;
   statusBucket: SidebarStateBucket;
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -54,7 +65,9 @@ function createStructuralWorkspaceEntry(input: {
     workspaceDirectory: undefined,
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
-    name: input.workspaceId,
+    name: workspaceNameFromDirectory(input.project.iconWorkingDir) || input.workspaceId,
+    title: null,
+    currentBranch: null,
     statusBucket: "done",
     statusEnteredAt: null,
     archivingAt: null,

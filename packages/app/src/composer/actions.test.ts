@@ -179,6 +179,7 @@ function createFakeSendClient(
         throw options.rejection;
       }
     },
+    uploadFile: async () => ({ requestId: "test", file: null, error: null }),
   };
 }
 

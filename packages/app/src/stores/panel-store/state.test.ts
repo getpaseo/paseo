@@ -7,6 +7,7 @@ import {
 import {
   buildOpenFileExplorerPatch,
   buildToggleFileExplorerPatch,
+  migratePanelState,
   selectIsAgentListOpen,
   selectIsFileExplorerOpen,
   selectPanelVisibility,
@@ -93,6 +94,14 @@ describe("panel-store explorer tab resolution", () => {
         },
       }),
     ).toBe("files");
+  });
+});
+
+describe("panel-store migration", () => {
+  it("defaults hidden-file visibility to showing hidden files", () => {
+    const state = migratePanelState({}, 10, { isWeb: false });
+
+    expect(state.explorerShowHiddenFiles).toBe(true);
   });
 });
 

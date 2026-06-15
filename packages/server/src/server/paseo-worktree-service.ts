@@ -1,4 +1,5 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { resolve } from "node:path";
 import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -6,7 +7,11 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
-import { deriveProjectGroupingName, normalizeWorkspaceId } from "./workspace-registry-model.js";
+import {
+  classifyDirectoryForProjectMembership,
+  deriveProjectGroupingName,
+  generateWorkspaceId,
+} from "./workspace-registry-model.js";
 import {
   createWorktreeCore,
   type CreateWorktreeCoreDeps,
@@ -195,23 +200,25 @@ async function upsertWorkspaceForWorktree(options: {
   projectId?: string;
   repoRoot: string;
   worktree: WorktreeConfig;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
+  deps: Pick<
+    CreatePaseoWorktreeDeps,
+    "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
+  >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = normalizeWorkspaceId(options.worktree.worktreePath);
-  const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
-  const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
-  const existingWorkspace = await findWorkspaceByDirectory(
-    normalizedCwd,
-    options.deps.workspaceRegistry,
-  );
+  const normalizedCwd = resolve(options.worktree.worktreePath);
+  const normalizedInputCwd = resolve(options.inputCwd);
+  const normalizedRepoRoot = resolve(options.repoRoot);
+  // Creation never deduplicates by directory: a worktree directory may back
+  // more than one workspace. We still resolve the source project from the
+  // originating checkout, but always mint a fresh workspace record.
   const sourceProject = await resolveSourceProjectForWorktree({
     inputCwd: normalizedInputCwd,
     projectId: options.projectId,
     repoRoot: normalizedRepoRoot,
-    existingWorkspace,
+    existingWorkspace: null,
     deps: options.deps,
   });
-  const workspaceId = normalizedCwd;
+  const workspaceId = generateWorkspaceId();
   const now = new Date().toISOString();
 
   await options.deps.projectRegistry.upsert(
@@ -233,13 +240,84 @@ async function upsertWorkspaceForWorktree(options: {
     cwd: normalizedCwd,
     kind: "worktree",
     displayName: options.worktree.branchName || normalizedCwd,
-    createdAt: existingWorkspace?.createdAt ?? now,
+    createdAt: now,
     updatedAt: now,
     archivedAt: null,
   });
 
   await options.deps.workspaceRegistry.upsert(workspace);
   return (await options.deps.workspaceRegistry.get(workspace.workspaceId)) ?? workspace;
+}
+
+export interface CreateLocalCheckoutWorkspaceDeps {
+  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list" | "upsert">;
+  workspaceGitService: Pick<WorkspaceGitService, "getCheckout">;
+}
+
+// Always create a NEW workspace record backed by the existing directory `cwd`.
+// Never reuses a same-cwd record: a directory may back any number of
+// workspaces. Used by explicit user creation.
+export async function createLocalCheckoutWorkspace(
+  options: { cwd: string; title?: string | null },
+  deps: CreateLocalCheckoutWorkspaceDeps,
+): Promise<PersistedWorkspaceRecord> {
+  const normalizedCwd = resolve(options.cwd);
+  const checkout = await deps.workspaceGitService.getCheckout(normalizedCwd);
+  const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
+  const now = new Date().toISOString();
+  const projectRecord = await resolveProjectRecordForMembership({
+    membership,
+    timestamp: now,
+    projectRegistry: deps.projectRegistry,
+  });
+  await deps.projectRegistry.upsert(projectRecord);
+
+  const trimmedTitle = options.title?.trim();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: generateWorkspaceId(),
+    projectId: projectRecord.projectId,
+    cwd: normalizedCwd,
+    kind: membership.workspaceKind,
+    displayName: membership.workspaceDisplayName,
+    title: trimmedTitle ? trimmedTitle : null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await deps.workspaceRegistry.upsert(workspace);
+  return workspace;
+}
+
+async function resolveProjectRecordForMembership(options: {
+  membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
+  timestamp: string;
+  projectRegistry: Pick<ProjectRegistry, "get" | "list">;
+}) {
+  const rootPath = options.membership.projectRootPath;
+  const projects = await options.projectRegistry.list();
+  const existingProject =
+    projects.find((project) => !project.archivedAt && project.rootPath === rootPath) ??
+    projects.find((project) => project.rootPath === rootPath) ??
+    null;
+
+  if (!existingProject) {
+    return createPersistedProjectRecord({
+      projectId: options.membership.projectKey,
+      rootPath,
+      kind: options.membership.projectKind,
+      displayName: options.membership.projectName,
+      createdAt: options.timestamp,
+      updatedAt: options.timestamp,
+    });
+  }
+
+  return {
+    ...existingProject,
+    rootPath,
+    kind: options.membership.projectKind,
+    archivedAt: null,
+    updatedAt: options.timestamp,
+  };
 }
 
 interface SourceProjectForWorktree {
@@ -357,12 +435,4 @@ async function findWorkspaceForSource(options: {
     workspaces.find((workspace) => workspace.cwd === options.repoRoot && !workspace.archivedAt) ??
     null
   );
-}
-
-async function findWorkspaceByDirectory(
-  cwd: string,
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">,
-): Promise<PersistedWorkspaceRecord | null> {
-  const workspaces = await workspaceRegistry.list();
-  return workspaces.find((workspace) => workspace.cwd === cwd) ?? null;
 }

@@ -386,16 +386,18 @@ emptied duplicate.
 
 Array of workspace records. A workspace is a specific working directory within a project.
 
-| Field         | Type                                            | Description                    |
-| ------------- | ----------------------------------------------- | ------------------------------ |
-| `workspaceId` | `string`                                        | Primary key                    |
-| `projectId`   | `string`                                        | FK to Project.projectId        |
-| `cwd`         | `string`                                        | Filesystem path                |
-| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                |
-| `displayName` | `string`                                        |                                |
-| `createdAt`   | `string` (ISO 8601)                             |                                |
-| `updatedAt`   | `string` (ISO 8601)                             |                                |
-| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable |
+| Field         | Type                                            | Description                                                                                                                                                                           |
+| ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | `string`                                        | Opaque stable identifier (`wks_<hex>`), generated independently of the directory. MUST NOT be treated as a path; compare by exact equality. Use the `cwd` field for directory access. |
+| `projectId`   | `string`                                        | FK to Project.projectId                                                                                                                                                               |
+| `cwd`         | `string`                                        | Filesystem path                                                                                                                                                                       |
+| `kind`        | `"local_checkout" \| "worktree" \| "directory"` |                                                                                                                                                                                       |
+| `displayName` | `string`                                        |                                                                                                                                                                                       |
+| `createdAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
+| `updatedAt`   | `string` (ISO 8601)                             |                                                                                                                                                                                       |
+| `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
+
+> **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. Path-derived grouping keys (e.g. `deriveWorkspaceDirectoryKey`, used at bootstrap to group agents into a workspace) are directory keys, not workspace identity, and must not be persisted or compared as ids.
 
 ---
 
@@ -429,6 +431,13 @@ These small files are not validated as full Zod schemas but are persisted under 
 ## Client-side stores (App)
 
 These live in React Native `AsyncStorage` or browser `IndexedDB`, not on the daemon filesystem.
+
+### Keying convention: directory-backed vs workspace-owned
+
+Right-sidebar client state splits on whether it is determined by the directory or owned by the workspace (two workspaces can share one `cwd`). The split is enforced by the cache key, so changing a key changes the sharing semantics — see [architecture.md](architecture.md#right-sidebar-boundary-directory-backed-vs-workspace-owned) for the full table.
+
+- **Directory-backed** (shared by same-`cwd` workspaces): keyed by `(serverId, cwd)`. Git status/diff, GitHub PR status, PR timeline, file preview content. These are TanStack Query caches, not persisted stores.
+- **Workspace-owned** (independent per workspace): keyed by `workspaceId`, with `cwd` used only as a fallback when no `workspaceId` is present. Review draft comments (`@paseo:review-draft-store`), diff-mode overrides (in-memory), workspace composer attachments, and file-explorer nav/expand state. The `workspaceId` part of these keys is **opaque** — never parse it back into a path.
 
 ### Draft Store
 

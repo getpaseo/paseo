@@ -55,7 +55,13 @@ export async function runCreateCommand(
       );
     }
 
-    const worktreePath = workspace.workspaceDirectory ?? workspace.id;
+    if (!workspace.workspaceDirectory) {
+      throw cmdError(
+        "WORKTREE_CREATE_FAILED",
+        "Failed to create worktree: workspace directory missing from daemon response",
+      );
+    }
+    const worktreePath = workspace.workspaceDirectory;
 
     return {
       type: "single",

@@ -6,9 +6,14 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import type { GitHubService } from "../services/github-service.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
-import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+} from "./workspace-registry.js";
 import {
   attemptFirstAgentBranchAutoName,
+  createLocalCheckoutWorkspace,
   createPaseoWorktree,
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
@@ -34,7 +39,7 @@ test("creates a worktree and registers it in the source workspace project withou
     displayName: "acme/repo",
   });
   const sourceWorkspace = createPersistedWorkspaceRecordForTest({
-    workspaceId: repoDir,
+    workspaceId: "ws-main-checkout",
     projectId: sourceProject.projectId,
     cwd: repoDir,
     kind: "local_checkout",
@@ -57,6 +62,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.created).toBe(true);
   expect(result.workspace.cwd).toBe(result.worktree.worktreePath);
   expect(result.workspace.kind).toBe("worktree");
+  expect(result.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
@@ -76,7 +82,7 @@ test("registers a new worktree in the existing root project after the main check
     displayName: "acme/repo",
   });
   const existingWorktree = createPersistedWorkspaceRecordForTest({
-    workspaceId: path.join(tempDir, "existing-worktree"),
+    workspaceId: "ws-existing-worktree",
     projectId: sourceProject.projectId,
     cwd: path.join(tempDir, "existing-worktree"),
     kind: "worktree",
@@ -137,8 +143,24 @@ test.skipIf(isPlatform("win32"))(
     expect(second.created).toBe(false);
     expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
     expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
+    // Creation never dedupes by directory: the same worktree path yields a
+    // distinct workspace record on the second call.
+    expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
+
+test("creates a distinct local checkout workspace for the same cwd on every call", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+
+  const first = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
+  const second = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
+
+  expect(first.cwd).toBe(second.cwd);
+  expect(first.workspaceId).not.toBe(second.workspaceId);
+  expect(deps.workspaces.size).toBe(2);
+});
 
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();
@@ -478,6 +500,7 @@ test("does not mutate registries or broadcast when core worktree creation fails"
 });
 
 interface TestDeps extends CreatePaseoWorktreeDeps {
+  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -497,6 +520,7 @@ function createDeps(options?: {
     workspaces,
     projectRegistry: {
       get: async (projectId) => projects.get(projectId) ?? null,
+      list: async () => Array.from(projects.values()),
       upsert: async (record) => {
         events.push(`project:${record.projectId}`);
         projects.set(record.projectId, record);
@@ -582,6 +606,15 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     peekSnapshot: (cwd) => createWorkspaceGitSnapshot(cwd),
+    getCheckout: async (cwd) => ({
+      cwd,
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    }),
     getSnapshot: async (cwd) => createWorkspaceGitSnapshot(cwd),
     resolveRepoRoot: async (cwd) => {
       try {

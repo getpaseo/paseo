@@ -6,23 +6,29 @@ import type {
   TerminalStateSnapshotOptions,
 } from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
+import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 
 export interface WorkerTerminalInfo {
   id: string;
   name: string;
   cwd: string;
+  workspaceId?: string;
   title?: string;
+  activity: TerminalActivity | null;
 }
 
 export interface WorkerCreateTerminalOptions {
   id?: string;
   cwd: string;
+  workspaceId?: string;
   name?: string;
   title?: string;
   env?: Record<string, string>;
   command?: string;
   args?: string[];
+  activityToken?: string;
+  activityUrl?: string | null;
 }
 
 export interface WorkerKillAndWaitOptions {
@@ -31,11 +37,6 @@ export interface WorkerKillAndWaitOptions {
 }
 
 export type TerminalWorkerRequest =
-  | {
-      type: "getTerminals";
-      requestId: string;
-      cwd: string;
-    }
   | {
       type: "createTerminal";
       requestId: string;
@@ -46,6 +47,17 @@ export type TerminalWorkerRequest =
       requestId: string;
       cwd: string;
       env: Record<string, string>;
+    }
+  | {
+      type: "setActivity";
+      requestId: string;
+      terminalId: string;
+      state: TerminalActivityState;
+    }
+  | {
+      type: "clearAttention";
+      requestId: string;
+      terminalId: string;
     }
   | {
       type: "killTerminal";
@@ -71,10 +83,6 @@ export type TerminalWorkerRequest =
       start?: number;
       end?: number;
       stripAnsi?: boolean;
-    }
-  | {
-      type: "listDirectories";
-      requestId: string;
     }
   | {
       type: "killAll";
@@ -138,9 +146,17 @@ export type TerminalWorkerEvent =
       type: "terminalsChanged";
       cwd: string;
       terminals: WorkerTerminalInfo[];
+    }
+  | {
+      type: "terminalActivityChange";
+      terminalId: string;
+      activity: TerminalActivity | null;
+      previous: TerminalActivity | null;
     };
 
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
 
 export type TerminalWorkerCaptureResult = CaptureTerminalLinesResult;
+// The worker fills TerminalStateSnapshot.replayPreamble on getTerminalState so
+// the parent can cache the input-mode preamble instead of re-deriving it.
 export type TerminalWorkerStateResult = TerminalStateSnapshot | null;

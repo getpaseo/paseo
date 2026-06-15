@@ -2,12 +2,14 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
+import { resolveActiveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -25,6 +27,7 @@ import {
   wrapSessionMessage,
 } from "./messages.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
@@ -39,7 +42,11 @@ import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
-import { computeNotificationPlan, type ClientPresenceState } from "./agent-attention-policy.js";
+import {
+  computeNotificationPlan,
+  isPushEligibleAttentionReason,
+  type ClientPresenceState,
+} from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
@@ -74,6 +81,24 @@ interface WebSocketServerConfig {
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
+
+type TerminalAttentionReason = "finished" | "needs_input";
+
+function resolveTerminalAttentionReason(input: {
+  attentionReason?: TerminalActivity["attentionReason"];
+  previousState: "working" | "idle" | "attention" | null;
+  state: "working" | "idle" | "attention" | null;
+}): TerminalAttentionReason | null {
+  if (input.attentionReason === "finished") return "finished";
+  if (input.attentionReason === "needs_input") return "needs_input";
+  if (input.state === "attention") return "needs_input";
+  if (input.previousState === "working" && input.state === "idle") return "finished";
+  return null;
+}
+
+function terminalAttentionTitle(reason: TerminalAttentionReason): string {
+  return reason === "needs_input" ? "Terminal needs input" : "Terminal finished";
+}
 
 function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
@@ -331,6 +356,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonRuntimeConfig:
     | {
         listen: string | null;
+        appBaseUrl?: string;
         relay: {
           enabled: boolean;
           endpoint: string;
@@ -379,8 +405,10 @@ export class VoiceAssistantWebSocketServer {
   private serverCapabilities: ServerCapabilities | undefined;
   private readonly runtimeMetrics = new WebSocketRuntimeMetricsWindow();
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
+  private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
+  private unsubscribeTerminalActivity: (() => void) | null = null;
 
   constructor(
     server: HTTPServer,
@@ -424,6 +452,7 @@ export class VoiceAssistantWebSocketServer {
     daemonRuntimeConfig?: {
       listen: string | null;
       worktreesRoot?: string;
+      appBaseUrl?: string;
       relay: {
         enabled: boolean;
         endpoint: string;
@@ -528,6 +557,29 @@ export class VoiceAssistantWebSocketServer {
   }): void {
     this.speech = params.speech ?? null;
     this.terminalManager = params.terminalManager ?? null;
+    if (this.terminalManager) {
+      this.unsubscribeTerminalActivity = this.terminalManager.subscribeTerminalActivity((event) => {
+        const reason = resolveTerminalAttentionReason({
+          attentionReason: event.activity?.attentionReason,
+          previousState: event.previous?.state ?? null,
+          state: event.activity?.state ?? null,
+        });
+        if (!reason) {
+          return;
+        }
+        void this.broadcastTerminalAttention({
+          terminalId: event.terminalId,
+          cwd: event.cwd,
+          terminalName: event.name,
+          reason,
+        }).catch((err) => {
+          this.logger.warn(
+            { err, terminalId: event.terminalId },
+            "Failed to broadcast terminal attention",
+          );
+        });
+      });
+    }
     this.dictation = params.dictation ?? null;
     this.onLifecycleIntent = params.onLifecycleIntent ?? null;
     this.serviceProxy = params.serviceProxy ?? null;
@@ -561,11 +613,30 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private startRuntimeMetricsInterval(): void {
+    this.eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 10 });
+    this.eventLoopDelayMonitor.enable();
     const runtimeMetricsInterval = setInterval(() => {
       this.flushRuntimeMetrics();
     }, WS_RUNTIME_METRICS_FLUSH_MS);
     this.runtimeMetricsInterval = runtimeMetricsInterval;
     (runtimeMetricsInterval as unknown as { unref?: () => void }).unref?.();
+  }
+
+  // Main-loop stall visibility: terminal frames and agent traffic share one event
+  // loop, so delay percentiles here are the ground truth for "the daemon is busy".
+  private snapshotEventLoopDelay(): { p50Ms: number; p99Ms: number; maxMs: number } | null {
+    const monitor = this.eventLoopDelayMonitor;
+    if (!monitor) {
+      return null;
+    }
+    const toMs = (nanoseconds: number): number => Math.round(nanoseconds / 1e5) / 10;
+    const snapshot = {
+      p50Ms: toMs(monitor.percentile(50)),
+      p99Ms: toMs(monitor.percentile(99)),
+      maxMs: toMs(monitor.max),
+    };
+    monitor.reset();
+    return snapshot;
   }
 
   private verifyWsUpgrade(
@@ -673,11 +744,15 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
     this.unsubscribeDaemonConfigChange = null;
+    this.unsubscribeTerminalActivity?.();
+    this.unsubscribeTerminalActivity = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
     }
     this.flushRuntimeMetrics({ final: true });
+    this.eventLoopDelayMonitor?.disable();
+    this.eventLoopDelayMonitor = null;
 
     const uniqueConnections = new Set<SessionConnection>([
       ...this.sessions.values(),
@@ -860,6 +935,22 @@ export class VoiceAssistantWebSocketServer {
           return;
         }
         this.sendBinaryToConnection(connection, frame);
+      },
+      getTransportBufferedAmount: () => {
+        if (!connection) {
+          return null;
+        }
+        // Relay-attached sockets are a WebSocketLike that doesn't expose
+        // bufferedAmount. Return null when no socket gives a signal so the
+        // terminal fallback can't mistake "no signal" for "client keeping up";
+        // a direct ws reports its real buffered bytes (0 when drained).
+        let maxBuffered: number | null = null;
+        for (const socket of connection.sockets) {
+          if (typeof socket.bufferedAmount === "number") {
+            maxBuffered = Math.max(maxBuffered ?? 0, socket.bufferedAmount);
+          }
+        }
+        return maxBuffered;
       },
       onLifecycleIntent: (intent) => {
         this.onLifecycleIntent?.(intent);
@@ -1064,6 +1155,8 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
+        // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
+        workspaceMultiplicity: true,
       },
     };
   }
@@ -1641,6 +1734,7 @@ export class VoiceAssistantWebSocketServer {
         outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
         outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
         bufferedAmount: runtimeMetrics.bufferedAmount,
+        eventLoopDelay: this.snapshotEventLoopDelay(),
         runtime: sessionMetrics,
         latency: runtimeMetrics.latency,
         agents: agentSnapshot,
@@ -1655,6 +1749,7 @@ export class VoiceAssistantWebSocketServer {
       return {
         appVisible: false,
         focusedAgentId: null,
+        focusedTerminalId: null,
         lastActivityAtMs: null,
       };
     }
@@ -1662,6 +1757,7 @@ export class VoiceAssistantWebSocketServer {
     return {
       appVisible: activity.appVisible,
       focusedAgentId: activity.focusedAgentId,
+      focusedTerminalId: activity.focusedTerminalId,
       lastActivityAtMs: activity.lastActivityAt.getTime(),
     };
   }
@@ -1697,8 +1793,8 @@ export class VoiceAssistantWebSocketServer {
 
     const plan = computeNotificationPlan({
       allStates,
-      agentId: params.agentId,
-      reason: params.reason,
+      focusTarget: { kind: "agent", id: params.agentId },
+      pushEligible: isPushEligibleAttentionReason(params.reason),
       nowMs,
     });
 
@@ -1727,6 +1823,82 @@ export class VoiceAssistantWebSocketServer {
         },
       });
 
+      this.sendToClient(ws, message);
+    }
+  }
+
+  private async resolveWorkspaceIdForCwd(cwd: string): Promise<string | undefined> {
+    const workspaces = await this.workspaceRegistry.list();
+    return resolveActiveWorkspaceRecordForCwd(cwd, workspaces)?.workspaceId;
+  }
+
+  private async broadcastTerminalAttention(params: {
+    terminalId: string;
+    cwd: string;
+    terminalName: string;
+    reason: TerminalAttentionReason;
+  }): Promise<void> {
+    const clientEntries: Array<{
+      ws: WebSocketLike;
+      state: ClientPresenceState;
+    }> = [];
+
+    for (const [ws, connection] of this.sessions) {
+      clientEntries.push({
+        ws,
+        state: this.getClientActivityState(connection.session),
+      });
+    }
+
+    const allStates = clientEntries.map((e) => e.state);
+    const nowMs = Date.now();
+    const workspaceId = await this.resolveWorkspaceIdForCwd(params.cwd);
+
+    const plan = computeNotificationPlan({
+      allStates,
+      focusTarget: { kind: "terminal", id: params.terminalId },
+      pushEligible: true,
+      nowMs,
+    });
+
+    const title = terminalAttentionTitle(params.reason);
+    const body = params.terminalName;
+
+    if (plan.shouldPush) {
+      void this.pushNotificationSender
+        .send({
+          title,
+          body,
+          data: {
+            serverId: this.serverId,
+            terminalId: params.terminalId,
+            cwd: params.cwd,
+            ...(workspaceId ? { workspaceId } : {}),
+          },
+        })
+        .catch((err) => {
+          this.logger.warn(
+            { err, terminalId: params.terminalId },
+            "Failed to send push notification",
+          );
+        });
+    }
+
+    for (const [clientIndex, { ws }] of clientEntries.entries()) {
+      const shouldNotify = clientIndex === plan.inAppRecipientIndex;
+      const message = wrapSessionMessage({
+        type: "terminal_attention_required",
+        payload: {
+          serverId: this.serverId,
+          terminalId: params.terminalId,
+          cwd: params.cwd,
+          ...(workspaceId ? { workspaceId } : {}),
+          reason: params.reason,
+          title,
+          body,
+          shouldNotify,
+        },
+      });
       this.sendToClient(ws, message);
     }
   }

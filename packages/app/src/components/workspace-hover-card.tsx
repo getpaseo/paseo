@@ -12,7 +12,7 @@ import { Dimensions, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleCheck, CircleDot, CircleX, ExternalLink } from "lucide-react-native";
+import { CircleCheck, CircleDot, CircleX, ExternalLink, GitBranch } from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import type { Theme } from "@/styles/theme";
 import { DiffStat } from "@/components/diff-stat";
@@ -286,6 +286,18 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          {workspace.currentBranch && workspace.currentBranch !== workspace.name ? (
+            <View style={styles.cardBranchRow}>
+              <ThemedGitBranch size={12} uniProps={foregroundMutedColorMapping} />
+              <Text
+                style={styles.cardBranchText}
+                numberOfLines={1}
+                testID="hover-card-workspace-branch"
+              >
+                {workspace.currentBranch}
+              </Text>
+            </View>
+          ) : null}
           {prHint || workspace.diffStat ? (
             <View style={styles.cardMetaRow}>
               {workspace.diffStat ? (
@@ -309,6 +321,7 @@ function WorkspaceHoverCardContent({
   );
 }
 
+const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
@@ -470,6 +483,20 @@ const styles = StyleSheet.create((theme) => ({
     gap: 6,
     paddingHorizontal: theme.spacing[3],
     paddingBottom: theme.spacing[2],
+  },
+  cardBranchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+  },
+  cardBranchText: {
+    flex: 1,
+    minWidth: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
   },
   separator: {
     height: 1,

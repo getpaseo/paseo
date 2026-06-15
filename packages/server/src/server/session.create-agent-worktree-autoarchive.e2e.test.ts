@@ -64,18 +64,6 @@ async function expectActiveAgentListEmpty(): Promise<void> {
   expect(active.entries).toEqual([]);
 }
 
-async function expectWorktreeAbsentFromList(repoDir: string, worktreePath: string): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        const listed = await ctx.client.getPaseoWorktreeList({ cwd: repoDir });
-        return listed.worktrees.map((worktree) => worktree.worktreePath).includes(worktreePath);
-      },
-      { timeout: 15000, interval: 100 },
-    )
-    .toBe(false);
-}
-
 async function expectWorktreePresentInList(repoDir: string, worktreePath: string): Promise<void> {
   await expect
     .poll(
@@ -148,8 +136,10 @@ test("create_agent_request creates a worktree and auto-archives both after the f
 
   await ctx.client.waitForFinish(created.id, 10000);
 
+  // Archiving removes the task and its agents, but never deletes the worktree
+  // from disk — a directory can back multiple workspaces.
   await expectAgentAbsentFromActiveList(created.id);
-  await expectWorktreeAbsentFromList(repoDir, created.cwd);
+  await expectWorktreePresentInList(repoDir, created.cwd);
 }, 30000);
 
 test("create_agent_request with autoArchive archives only the agent when no worktree was created", async () => {
@@ -216,14 +206,14 @@ test("create_agent_request with worktree but no autoArchive leaves agent and wor
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 });
 
-test("archiving a created worktree still archives nested agents", async () => {
+test("archiving a created worktree archives its agents but leaves the worktree on disk", async () => {
   const created = await createAgentInBranchOffWorktree();
 
   await ctx.client.waitForFinish(created.agentId, 10000);
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 
   await expectAgentAbsentFromActiveList(created.agentId);
-  await expectWorktreeAbsentFromList(created.repoDir, created.worktreePath);
+  await expectWorktreePresentInList(created.repoDir, created.worktreePath);
 });
 
 test("create_agent_request rejects legacy git options before creating a worktree", async () => {

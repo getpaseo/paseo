@@ -40,6 +40,9 @@ export interface WorktreeBootstrapTerminalResult {
 
 export interface RunAsyncWorktreeBootstrapOptions {
   agentId: string;
+  // Workspace the bootstrapped terminals belong to. Stamping it lets
+  // workspaceId-scoped archive tear these terminals down.
+  workspaceId: string;
   worktree: WorktreeConfig;
   shouldBootstrap?: boolean;
   terminalManager: TerminalManager | null;
@@ -540,6 +543,7 @@ async function runWorktreeTerminalBootstrap(
           cwd: options.worktree.worktreePath,
           name: spec.name,
           env: runtimeEnv,
+          workspaceId: options.workspaceId,
         });
         await waitForTerminalBootstrapReadiness(terminal);
         terminal.send({

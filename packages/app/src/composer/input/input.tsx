@@ -89,6 +89,8 @@ export interface MessageInputProps {
   allowEmptySubmit?: boolean;
   /** Optional accessibility label for the primary submit button. */
   submitButtonAccessibilityLabel?: string;
+  /** Optional testID for the primary submit button. */
+  submitButtonTestID?: string;
   submitIcon?: "arrow" | "return";
   isSubmitDisabled?: boolean;
   isSubmitLoading?: boolean;
@@ -784,6 +786,7 @@ function SendButtonTooltip({
   sendButtonCombinedStyle,
   isSubmitLoading,
   submitIcon,
+  submitButtonTestID,
   buttonIconSize,
   sendKeys,
   sendTooltipLabel,
@@ -797,6 +800,7 @@ function SendButtonTooltip({
   sendButtonCombinedStyle: React.ComponentProps<typeof TooltipTrigger>["style"];
   isSubmitLoading: boolean;
   submitIcon: "arrow" | "return";
+  submitButtonTestID: string | undefined;
   buttonIconSize: number;
   sendKeys: ShortcutChord | null | undefined;
   sendTooltipLabel: string;
@@ -809,6 +813,7 @@ function SendButtonTooltip({
         disabled={isSendButtonDisabled}
         accessibilityLabel={submitAccessibilityLabel}
         accessibilityRole="button"
+        testID={submitButtonTestID}
         style={sendButtonCombinedStyle}
       >
         <SendButtonContent
@@ -1132,6 +1137,7 @@ interface ResolvedMessageInputProps {
   hasExternalContent: boolean;
   allowEmptySubmit: boolean;
   submitButtonAccessibilityLabel: string | undefined;
+  submitButtonTestID: string | undefined;
   submitIcon: "arrow" | "return";
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
@@ -1172,6 +1178,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     hasExternalContent: props.hasExternalContent ?? false,
     allowEmptySubmit: props.allowEmptySubmit ?? false,
     submitButtonAccessibilityLabel: props.submitButtonAccessibilityLabel,
+    submitButtonTestID: props.submitButtonTestID,
     submitIcon: props.submitIcon ?? "arrow",
     isSubmitDisabled: props.isSubmitDisabled ?? false,
     isSubmitLoading: props.isSubmitLoading ?? false,
@@ -1220,6 +1227,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       hasExternalContent,
       allowEmptySubmit,
       submitButtonAccessibilityLabel,
+      submitButtonTestID,
       submitIcon,
       isSubmitDisabled,
       isSubmitLoading,
@@ -1872,6 +1880,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 sendButtonCombinedStyle={sendButtonCombinedStyle}
                 isSubmitLoading={isSubmitLoading}
                 submitIcon={submitIcon}
+                submitButtonTestID={submitButtonTestID}
                 buttonIconSize={buttonIconSize}
                 sendKeys={DEFAULT_SEND_KEYS}
                 sendTooltipLabel={sendTooltipLabel}

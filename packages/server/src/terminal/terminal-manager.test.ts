@@ -429,3 +429,102 @@ it("setTerminalTitle returns true and updates the terminal title for existing te
   expect(manager.setTerminalTitle(session.id, "x")).toBe(true);
   expect(session.getTitle()).toBe("x");
 });
+
+it("new terminal starts with unknown activity", async () => {
+  manager = createTerminalManager();
+  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+
+  expect(session.getActivity()).toBeNull();
+});
+
+it("includes nullable activity in terminals-changed snapshot items", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const snapshots: Array<{ id: string; activityState: string | null }[]> = [];
+  const unsubscribe = manager.subscribeTerminalsChanged((input) => {
+    snapshots.push(
+      input.terminals.map((terminal) => ({
+        id: terminal.id,
+        activityState: terminal.activity?.state ?? null,
+      })),
+    );
+  });
+
+  const session = await manager.createTerminal({ cwd });
+
+  expect(snapshots.length).toBeGreaterThan(0);
+  const lastSnapshot = snapshots[snapshots.length - 1];
+  expect(lastSnapshot?.find((t) => t.id === session.id)?.activityState).toBeNull();
+
+  unsubscribe();
+});
+
+it("setTerminalActivity returns true and emits terminals-changed", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  interface ActivityEntry {
+    id: string;
+    state: string | null;
+  }
+  const snapshots: ActivityEntry[][] = [];
+  const unsubscribe = manager.subscribeTerminalsChanged((input) => {
+    snapshots.push(
+      input.terminals.map((terminal) => ({
+        id: terminal.id,
+        state: terminal.activity?.state ?? null,
+      })),
+    );
+  });
+
+  const session = await manager.createTerminal({ cwd });
+  await expect(manager.setTerminalActivity(session.id, "working")).resolves.toBe(true);
+
+  const hasWorkingActivity = (entries: ActivityEntry[]) =>
+    entries.some((e) => e.id === session.id && e.state === "working");
+
+  expect(snapshots.some(hasWorkingActivity)).toBe(true);
+
+  unsubscribe();
+});
+
+it("clearTerminalAttention returns attention terminals to idle", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  interface ActivityEntry {
+    id: string;
+    state: string | null;
+  }
+  const snapshots: ActivityEntry[][] = [];
+  const unsubscribe = manager.subscribeTerminalsChanged((input) => {
+    snapshots.push(
+      input.terminals.map((terminal) => ({
+        id: terminal.id,
+        state: terminal.activity?.state ?? null,
+      })),
+    );
+  });
+
+  const session = await manager.createTerminal({ cwd });
+  await manager.setTerminalActivity(session.id, "attention");
+
+  await expect(manager.clearTerminalAttention(session.id)).resolves.toBe(true);
+
+  expect(session.getActivity()?.state).toBe("idle");
+  expect(
+    snapshots.some((entries) =>
+      entries.some((entry) => entry.id === session.id && entry.state === "idle"),
+    ),
+  ).toBe(true);
+
+  unsubscribe();
+});
+
+it("clearTerminalAttention leaves non-attention terminals unchanged", async () => {
+  manager = createTerminalManager();
+  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+  await manager.setTerminalActivity(session.id, "working");
+
+  await expect(manager.clearTerminalAttention(session.id)).resolves.toBe(false);
+
+  expect(session.getActivity()?.state).toBe("working");
+});

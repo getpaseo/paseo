@@ -14,7 +14,7 @@ export const Route = createFileRoute("/sponsor")({
 
 function Sponsor() {
   return (
-    <SiteShell>
+    <SiteShell width="default">
       <h1 className="text-3xl font-medium tracking-tight mb-8">Sponsor</h1>
 
       {/* Founder note */}

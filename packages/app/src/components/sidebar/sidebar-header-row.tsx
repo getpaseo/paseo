@@ -1,8 +1,15 @@
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { LucideIcon } from "lucide-react-native";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
+import { ICON_SIZE } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
+
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+type SidebarHeaderRowVariant = "header" | "compact";
 
 interface SidebarHeaderRowProps {
   icon: LucideIcon;
@@ -12,14 +19,15 @@ interface SidebarHeaderRowProps {
   testID?: string;
   nativeID?: string;
   accessibilityLabel?: string;
+  /**
+   * "header" (default): a sidebar-height row with its own bottom separator —
+   * the lone header at the top of a sidebar (settings "Back to workspace").
+   * "compact": a workspace-row-height row with no separator, for entries that
+   * sit in a header group whose wrapper owns the single divider.
+   */
+  variant?: SidebarHeaderRowVariant;
 }
 
-/**
- * Top-of-sidebar header row: a sidebar-height pressable with an icon + label
- * and a full-width border separator beneath. Used as the first element of a
- * sidebar (workspace "Sessions", settings "Back to workspace"). Owns its own
- * separator line so both sidebars converge on the same edge and padding.
- */
 export function SidebarHeaderRow({
   icon: Icon,
   label,
@@ -28,8 +36,14 @@ export function SidebarHeaderRow({
   testID,
   nativeID,
   accessibilityLabel,
+  variant = "header",
 }: SidebarHeaderRowProps) {
-  const { theme } = useUnistyles();
+  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
+
+  const containerStyle = useMemo(
+    () => (variant === "compact" ? styles.containerCompact : styles.container),
+    [variant],
+  );
 
   const buttonStyle = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -42,26 +56,21 @@ export function SidebarHeaderRow({
   const renderChildren = useCallback(
     (state: PressableStateCallbackType & { hovered?: boolean }) => {
       const isHighlighted = Boolean(state.hovered) || isActive;
-      const iconColor = isHighlighted ? theme.colors.foreground : theme.colors.foregroundMuted;
       return (
         <>
-          <Icon size={theme.iconSize.md} color={iconColor} />
+          <ThemedIcon
+            size={ICON_SIZE.sm}
+            uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
+          />
           <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
         </>
       );
     },
-    [
-      Icon,
-      isActive,
-      label,
-      theme.colors.foreground,
-      theme.colors.foregroundMuted,
-      theme.iconSize.md,
-    ],
+    [ThemedIcon, isActive, label],
   );
 
   return (
-    <View style={styles.container}>
+    <View style={containerStyle}>
       <Pressable
         onPress={onPress}
         testID={testID}
@@ -103,10 +112,18 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
     userSelect: "none",
   },
+  containerCompact: {
+    paddingHorizontal: theme.spacing[2],
+    justifyContent: "center",
+    userSelect: "none",
+  },
   button: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    // Match the sidebar workspace-row shape (height, padding, radius) so the
+    // compact header entries sit tight against the workspace list below.
+    minHeight: 36,
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.lg,
@@ -115,7 +132,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
   label: {
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },

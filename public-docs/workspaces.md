@@ -2,7 +2,8 @@
 title: Workspaces
 description: Understand Paseo's project, workspace, and session model before setting up agents or git worktrees.
 nav: Workspaces
-order: 3
+order: 10
+category: Workspaces
 ---
 
 # Workspaces

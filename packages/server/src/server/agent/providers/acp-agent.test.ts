@@ -1,4 +1,4 @@
-import { type ChildProcess } from "node:child_process";
+import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -28,15 +28,18 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
+import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_ALLOW_ALL_MODE_ID,
   COPILOT_MODES,
+  CopilotACPAgentClient,
   beforeCopilotModeWriter,
   transformCopilotConfigOptions,
   transformCopilotModeId,
   transformCopilotSessionResponse,
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
+import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -83,7 +86,7 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(): ACPAgentSession {
+function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -102,8 +105,34 @@ function createSession(): ACPAgentSession {
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      ...(terminateProcess ? { terminateProcess } : {}),
     },
   );
+}
+
+// Typed substitute for the real tree-kill terminator. Records which child
+// processes it was asked to terminate, so tests assert on observable state
+// instead of spying on the production function. In "deferred" mode the
+// terminations hang until releaseAll(), letting tests observe parallelism.
+class FakeTerminator {
+  readonly terminated: TreeKillTarget[] = [];
+  private readonly pending: Array<() => void> = [];
+
+  constructor(private readonly mode: "immediate" | "deferred" = "immediate") {}
+
+  readonly terminate: ProcessTerminator = async (child) => {
+    this.terminated.push(child);
+    if (this.mode === "deferred") {
+      await new Promise<void>((resolve) => this.pending.push(resolve));
+    }
+    return "terminated";
+  };
+
+  releaseAll(): void {
+    for (const resolve of this.pending.splice(0)) {
+      resolve();
+    }
+  }
 }
 
 function createSessionWithConfig(
@@ -139,6 +168,25 @@ function createTerminalChildStub(): ChildProcess {
   child.stdout = new EventEmitter() as ChildProcess["stdout"];
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
   child.kill = vi.fn(() => true) as ChildProcess["kill"];
+  return child;
+}
+
+function createDestroyableStream(): { destroyed: boolean; destroy: () => void } {
+  const stream = {
+    destroyed: false,
+    destroy() {
+      stream.destroyed = true;
+    },
+  };
+  return stream;
+}
+
+function createProbeChildStub(): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+  child.stdin = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stdin"];
+  child.stdout = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stdout"];
+  child.stderr = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stderr"];
+  child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
   return child;
 }
 
@@ -1362,6 +1410,111 @@ describe("ACPAgentClient listModes", () => {
   });
 });
 
+describe("ACPAgentClient listImportableSessions", () => {
+  function makeClient(args: { listSessions: ReturnType<typeof vi.fn>; supportsList?: boolean }) {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { listSessions: args.listSessions },
+          initialize: {
+            agentCapabilities:
+              args.supportsList === false ? {} : { sessionCapabilities: { list: {} } },
+          },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    return new TestACPAgentClient({
+      provider: "kimi",
+      logger: createTestLogger(),
+      defaultCommand: ["kimi", "acp"],
+      defaultModes: [],
+    });
+  }
+
+  test("forwards the requested cwd to session/list so the agent filters by directory", async () => {
+    const listSessions = vi.fn().mockResolvedValue({
+      sessions: [
+        {
+          sessionId: "session-1",
+          cwd: "/Users/moonshot",
+          title: "细致查看一下本仓库内容",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const client = makeClient({ listSessions });
+    const result = await client.listImportableSessions({ cwd: "/Users/moonshot", limit: 20 });
+
+    expect(listSessions).toHaveBeenCalledWith({ cwd: "/Users/moonshot" });
+    expect(result).toEqual([
+      {
+        providerHandleId: "session-1",
+        cwd: "/Users/moonshot",
+        title: "细致查看一下本仓库内容",
+        firstPromptPreview: null,
+        lastPromptPreview: null,
+        lastActivityAt: new Date("2026-06-13T00:00:00.000Z"),
+      },
+    ]);
+  });
+
+  test("omits cwd from session/list when none is requested", async () => {
+    const listSessions = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const client = makeClient({ listSessions });
+
+    await client.listImportableSessions({ limit: 20 });
+
+    expect(listSessions).toHaveBeenCalledWith({});
+  });
+
+  test("forwards cwd alongside the pagination cursor across pages", async () => {
+    const listSessions = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessions: [{ sessionId: "s1", cwd: "/Users/moonshot", title: null, updatedAt: null }],
+        nextCursor: "cursor-2",
+      })
+      .mockResolvedValueOnce({
+        sessions: [{ sessionId: "s2", cwd: "/Users/moonshot", title: null, updatedAt: null }],
+        nextCursor: null,
+      });
+
+    const client = makeClient({ listSessions });
+    await client.listImportableSessions({ cwd: "/Users/moonshot" });
+
+    expect(listSessions).toHaveBeenNthCalledWith(1, { cwd: "/Users/moonshot" });
+    expect(listSessions).toHaveBeenNthCalledWith(2, {
+      cursor: "cursor-2",
+      cwd: "/Users/moonshot",
+    });
+  });
+});
+
+describe("ACP providers advertise session listing", () => {
+  // The daemon's agent-manager only queries providers whose
+  // capabilities.supportsSessionListing is true. Without it, ACP providers
+  // (Kimi and other custom ACP agents, Copilot) are skipped and import shows
+  // nothing even though listImportableSessions is implemented.
+  test("generic ACP clients (e.g. Kimi) report supportsSessionListing", () => {
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: ["kimi", "acp"],
+    });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
+  });
+
+  test("Copilot ACP client reports supportsSessionListing", () => {
+    const client = new CopilotACPAgentClient({ logger: createTestLogger() });
+    expect(client.capabilities.supportsSessionListing).toBe(true);
+  });
+});
+
 describe("transformPiModels", () => {
   test("keeps slash-free labels unchanged", () => {
     expect(
@@ -1865,5 +2018,152 @@ describe("ACPAgentSession", () => {
     await expect(turnFailed).resolves.toMatchObject({
       error: expect.not.stringContaining("[object Object]"),
     });
+  });
+});
+
+interface ACPCloseInternals {
+  child: ChildProcess | null;
+  connection: unknown;
+  sessionId: string | null;
+}
+
+async function startTerminal(
+  session: ACPAgentSession,
+  child: ChildProcess,
+  command = "sleep",
+): Promise<string> {
+  vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child as ChildProcessWithoutNullStreams);
+  const terminal = await session.createTerminal({
+    sessionId: "session-1",
+    command,
+    args: ["60"],
+  });
+  vi.restoreAllMocks();
+  return terminal.terminalId;
+}
+
+describe("ACPAgentSession close() tree-kill", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("close() terminates the main child process via the process tree", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
+    const internals = asInternals<ACPCloseInternals>(session);
+
+    const child = createTerminalChildStub();
+    // The ACP host process is set by the live connect handshake, which has no
+    // in-test seam; everything else is driven through the public API.
+    internals.child = child;
+    internals.connection = null;
+    internals.sessionId = null;
+
+    await session.close();
+
+    expect(terminator.terminated).toContain(child);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() terminates running terminal child processes", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
+
+    const terminalChild = createTerminalChildStub();
+    await startTerminal(session, terminalChild);
+
+    await session.close();
+
+    expect(terminator.terminated).toContain(terminalChild);
+    expect(terminalChild.kill).not.toHaveBeenCalled();
+  });
+
+  test("close() terminates terminal child processes in parallel", async () => {
+    const terminator = new FakeTerminator("deferred");
+    const session = createSession(terminator.terminate);
+
+    const firstChild = createTerminalChildStub();
+    const secondChild = createTerminalChildStub();
+    await startTerminal(session, firstChild);
+    await startTerminal(session, secondChild);
+
+    const close = session.close();
+    await Promise.resolve();
+
+    expect(terminator.terminated).toEqual([firstChild, secondChild]);
+
+    terminator.releaseAll();
+    await close;
+  });
+
+  test("killTerminal terminates the terminal process tree without a direct SIGTERM", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
+
+    const child = createTerminalChildStub();
+    const terminalId = await startTerminal(session, child);
+
+    await session.killTerminal({ sessionId: "session-1", terminalId });
+
+    expect(terminator.terminated).toContain(child);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  test("releaseTerminal terminates and removes a running terminal", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
+
+    const child = createTerminalChildStub();
+    const terminalId = await startTerminal(session, child);
+
+    await session.releaseTerminal({ sessionId: "session-1", terminalId });
+
+    expect(terminator.terminated).toContain(child);
+    expect(child.kill).not.toHaveBeenCalled();
+    await expect(session.terminalOutput({ sessionId: "session-1", terminalId })).rejects.toThrow(
+      `Unknown terminal '${terminalId}'`,
+    );
+  });
+});
+
+describe("ACPAgentClient probe cleanup", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("terminates the probe process tree and closes its stdio", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              modes: null,
+              models: null,
+              configOptions: [],
+            }),
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+      terminateProcess: terminator.terminate,
+    });
+
+    await client.listModels({ cwd: "/tmp/acp-models", force: false });
+
+    expect(terminator.terminated).toContain(child);
+    expect(child.stdin.destroyed).toBe(true);
+    expect(child.stdout.destroyed).toBe(true);
+    expect(child.stderr.destroyed).toBe(true);
   });
 });

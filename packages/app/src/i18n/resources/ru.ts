@@ -99,15 +99,18 @@ export const ru: TranslationResources = {
     },
     attachments: {
       addImage: "Добавить изображение",
+      addFile: "Upload file",
       addIssueOrPr: "Добавить проблему или PR",
       dropImagesHere: "Скиньте изображения сюда",
+      dropFilesHere: "Drop files here",
       editQueuedMessage: "Изменить сообщение в очереди",
       sendQueuedMessageNow: "Отправить сообщение в очереди сейчас",
       openImage: "Открыть прикрепленное изображение",
       removeImage: "Удалить прикрепленное изображение",
+      removeFile: "Remove file attachment",
       openGithub: "Открыть{{kind}}#{{number}}",
       removeGithub: "Удалить{{kind}}#{{number}}",
-      browserElement: "Элемент ·{{tag}}",
+      element: "Элемент",
       openBrowserElement: "Открыть вложение элемента браузера",
       removeBrowserElement: "Удалить вложение элемента браузера",
       openReview: "Открыть прикрепленный файл с отзывом",
@@ -119,6 +122,8 @@ export const ru: TranslationResources = {
       noHostSelected: "Хост не выбран",
       initialPromptRequired: "Требуется начальное приглашение",
       alreadyLoading: "Уже загружается",
+      uploadFailed: "Failed to upload file",
+      fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
       archiveAgent: "Архивировать текущего агента",
@@ -203,7 +208,7 @@ export const ru: TranslationResources = {
     },
   },
   sessions: {
-    title: "Сессии",
+    title: "История агентов",
     empty: "Сеансов пока нет",
     actions: {
       loadMore: "Загрузить больше",
@@ -252,9 +257,12 @@ export const ru: TranslationResources = {
       imageUnavailable: "Изображение недоступно",
       imagePreviewUnavailable: "Предварительный просмотр изображения недоступен.",
       imagePreviewLoadFailed: "Невозможно загрузить предварительный просмотр изображения.",
-      reviewOne: "Отзыв · 1 комментарий",
-      reviewMany: "Обзор · Комментарии{{count}}",
+      review: "Ревью",
+      commentsOne: "1 комментарий",
+      commentsMany: "Комментарии: {{count}}",
       textAttachment: "Текстовое вложение",
+      text: "Текст",
+      file: "Файл",
     },
     speak: {
       header: "Говорил",
@@ -349,9 +357,12 @@ export const ru: TranslationResources = {
         retry: "Повторить попытку",
         refresh: "Обновить файлы",
         refreshing: "Обновление файлов",
+        hideHiddenFiles: "Скрыть скрытые файлы",
+        showHiddenFiles: "Показать скрытые файлы",
       },
       empty: {
         noFiles: "Нет файлов",
+        noVisibleFiles: "Нет видимых файлов",
       },
       states: {
         unavailable: "Workspace недоступен",
@@ -459,6 +470,8 @@ export const ru: TranslationResources = {
         splitDown: "Разделить панель вниз",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        pinTarget: "Закрепить",
+        unpinTarget: "Открепить",
       },
       explorer: {
         open: "Открыть проводник",
@@ -589,16 +602,16 @@ export const ru: TranslationResources = {
           success: "В архиве",
         },
         mergePr: {
-          squash: "Сжать и объединить",
-          merge: "Создать коммит слияния",
-          rebase: "Перебазировать и объединить",
+          squash: "Объединить",
+          merge: "Объединить",
+          rebase: "Объединить",
           pending: "Объединение PR...",
           success: "PR объединен",
         },
         autoMerge: {
-          enableSquash: "Включить автоматическое объединение со сквошом",
-          enableMerge: "Включить автоматическое слияние с фиксацией слияния",
-          enableRebase: "Включить автоматическое слияние с перебазированием",
+          enableSquash: "Автообъединение",
+          enableMerge: "Автообъединение",
+          enableRebase: "Автообъединение",
           enabled: "Автоматическое объединение включено",
           enabling: "Включение автоматического объединения...",
           disabling: "Отключение автоматического объединения...",
@@ -753,12 +766,13 @@ export const ru: TranslationResources = {
     },
     actions: {
       addProject: "Добавить проект",
+      newWorkspace: "Новое рабочее пространство",
       home: "Дом",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
     },
     sections: {
-      sessions: "Сессии",
+      sessions: "История",
     },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",
@@ -816,6 +830,12 @@ export const ru: TranslationResources = {
         hideConfirm: "Скрывать",
         cancel: "Отмена",
       },
+      deleteWorktreePrompt: {
+        title: "Архивировать рабочее пространство",
+        message: "Также удалить рабочее дерево с диска?",
+        keep: "Оставить на диске",
+        delete: "Удалить",
+      },
       rename: {
         title: "Переименовать рабочую область",
         submit: "Переименовать",
@@ -834,6 +854,17 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
+    backing: {
+      local: "Локально",
+      worktree: "Новый worktree",
+      label: "Изоляция",
+    },
+    fields: {
+      project: "Проект",
+      base: "База",
+      baseNotApplicable: "Неприменимо",
+    },
+    titlePlaceholder: "Название (необязательно)",
     errors: {
       hostDisconnected: "Host не подключен",
       createWorktreeFailed: "Не удалось создать рабочее дерево.",
@@ -1042,6 +1073,11 @@ export const ru: TranslationResources = {
     placeholder: "Введите путь к каталогу...",
     opening: "Открытие проекта...",
     empty: "Начните вводить путь",
+    errors: {
+      directory_not_found: "Каталог не найден.",
+      open_failed: "Не удалось открыть проект.",
+    },
+    openPath: "Открыть путь",
   },
   branchSwitcher: {
     currentBranch: "Текущая ветка:{{branchName}}. Нажмите, чтобы переключить ветку.",
@@ -1306,7 +1342,7 @@ export const ru: TranslationResources = {
       creatingAgent: "Создание агента",
     },
     file: {
-      executionDirectoryMissing: "Каталог выполнения Workspace не найден.",
+      directoryMissing: "Каталог Workspace не найден.",
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
@@ -1672,7 +1708,10 @@ export const ru: TranslationResources = {
         nameLabel: "Name",
         commandLabel: "Command",
         argsLabel: "Arguments",
+        nameRequired: "Name is required",
+        commandRequired: "Command is required",
         argsHint: "Space-separated arguments passed to the command",
+        saving: "Saving...",
         remove: "Remove",
         removeConfirmTitle: "Remove profile?",
         removeConfirmMessage: 'Remove "{{name}}"?',

@@ -198,10 +198,12 @@ export async function buildAgentSessionConfig(
 ): Promise<{
   sessionConfig: AgentSessionConfig;
   setupContinuation?: AgentWorktreeSetupContinuation;
+  createdWorkspaceId?: string;
 }> {
   let cwd = expandTilde(config.cwd);
   const normalized = normalizeGitOptions(gitOptions, legacyWorktreeName);
   let setupContinuation: AgentWorktreeSetupContinuation | undefined;
+  let createdWorkspaceId: string | undefined;
 
   if (!normalized) {
     return {
@@ -243,6 +245,7 @@ export async function buildAgentSessionConfig(
     );
     cwd = createdWorktree.worktree.worktreePath;
     setupContinuation = createdWorktree.setupContinuation;
+    createdWorkspaceId = createdWorktree.workspace.workspaceId;
   } else if (normalized.createNewBranch) {
     const baseBranch =
       normalized.baseBranch ??
@@ -268,6 +271,7 @@ export async function buildAgentSessionConfig(
       cwd,
     },
     setupContinuation,
+    createdWorkspaceId,
   };
 }
 
@@ -449,6 +453,8 @@ export async function handlePaseoWorktreeArchiveRequest(
       worktreePath: msg.worktreePath,
       repoRoot: msg.repoRoot,
       branchName: msg.branchName,
+      workspaceId: msg.workspaceId,
+      deleteWorktreeFromDisk: msg.deleteWorktreeFromDisk,
     });
     if (!result.ok) {
       dependencies.emit({
@@ -622,6 +628,7 @@ export async function createPaseoWorktreeWorkflow(
         startAfterAgentCreate: ({ agentId }) => {
           void runAsyncWorktreeBootstrap({
             agentId,
+            workspaceId: workspace.workspaceId,
             worktree: createdWorktree.worktree,
             shouldBootstrap: createdWorktree.created,
             terminalManager: setupContinuation.terminalManager,

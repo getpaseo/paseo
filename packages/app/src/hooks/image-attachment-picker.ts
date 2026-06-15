@@ -1,4 +1,5 @@
 import type { DesktopDialogBridge } from "@/desktop/host";
+import { RASTER_IMAGE_FILE_EXTENSIONS } from "@/attachments/file-types";
 import { i18n } from "@/i18n/i18next";
 import { isAbsolutePath } from "@/utils/path";
 
@@ -16,20 +17,6 @@ export interface ExpoImagePickerAssetLike {
   fileName?: string | null;
   file?: File | null;
 }
-
-const IMAGE_FILE_EXTENSIONS = [
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "avif",
-  "heic",
-  "heif",
-  "tiff",
-  "bmp",
-  "svg",
-];
 
 function shouldTreatAsFileUri(uri: string): boolean {
   return uri.startsWith("file://") || isAbsolutePath(uri);
@@ -89,7 +76,7 @@ export async function openImagePathsWithDesktopDialog(
     filters: [
       {
         name: i18n.t("imageAttachmentPicker.dialogFilterName"),
-        extensions: IMAGE_FILE_EXTENSIONS,
+        extensions: RASTER_IMAGE_FILE_EXTENSIONS,
       },
     ],
     title: i18n.t("imageAttachmentPicker.dialogTitle"),

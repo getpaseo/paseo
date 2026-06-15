@@ -31,6 +31,7 @@ describe("workspace route parsing", () => {
   it("keeps URL-safe workspace IDs unencoded", () => {
     expect(encodeWorkspaceIdForPathSegment("164")).toBe("164");
     expect(decodeWorkspaceIdFromPathSegment("164")).toBe("164");
+    expect(decodeWorkspaceIdFromPathSegment("wks_10b3479c955fcc4c")).toBe("wks_10b3479c955fcc4c");
   });
 
   it("encodes non-URL-safe workspace IDs as base64url", () => {

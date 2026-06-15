@@ -2,7 +2,8 @@
 title: Orchestration skills
 description: "Paseo orchestration skills: teach coding agents to spawn, coordinate, and manage other agents using slash commands."
 nav: Skills
-order: 12
+order: 32
+category: Automation
 ---
 
 # Orchestration skills

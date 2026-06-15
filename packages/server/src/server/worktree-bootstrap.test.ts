@@ -119,6 +119,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     await expect(
       runAsyncWorktreeBootstrap({
         agentId: "agent-live-failure",
+        workspaceId: "ws-live-failure",
         worktree: worktreeBootstrap.worktree,
         shouldBootstrap: worktreeBootstrap.shouldBootstrap,
         terminalManager: null,
@@ -169,6 +170,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     const persisted: AgentTimelineItem[] = [];
     await runAsyncWorktreeBootstrap({
       agentId: "agent-large-output",
+      workspaceId: "ws-large-output",
       worktree: worktreeBootstrap.worktree,
       shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: null,
@@ -238,6 +240,7 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     await runAsyncWorktreeBootstrap({
       agentId: "agent-terminal-readiness",
+      workspaceId: "ws-terminal-readiness",
       worktree: worktreeBootstrap.worktree,
       shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: {
@@ -382,8 +385,11 @@ describe("runAsyncWorktreeBootstrap", () => {
           }),
           kill: () => {},
           onTitleChange: () => () => {},
+          onActivityChange: () => () => {},
           getSize: () => ({ rows: 1, cols: 1 }),
           getTitle: () => undefined,
+          getActivity: () => null,
+          setActivity: () => {},
           getExitInfo: () => null,
           killAndWait: async () => {},
         };
@@ -391,16 +397,34 @@ describe("runAsyncWorktreeBootstrap", () => {
         return session;
       },
       registerCwdEnv() {},
+      validateTerminalActivityToken() {
+        return "unknown" as const;
+      },
       getTerminal(id) {
         return sessionsById.get(id);
       },
+      async getTerminalState() {
+        return null;
+      },
+      setTerminalTitle() {
+        return false;
+      },
+      async setTerminalActivity() {
+        return false;
+      },
       killTerminal() {},
       async killTerminalAndWait() {},
+      async captureTerminal() {
+        return { lines: [], totalLines: 0 };
+      },
       listDirectories() {
         return [];
       },
       killAll() {},
       subscribeTerminalsChanged() {
+        return () => {};
+      },
+      subscribeTerminalActivity() {
         return () => {};
       },
     };

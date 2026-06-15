@@ -93,6 +93,15 @@ export async function expectFirstTerminalTabContains(page: Page, text: string): 
   );
 }
 
+export async function expectTerminalTabOpen(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(
+    page.locator('[data-testid^="workspace-tab-terminal_"]').filter({ visible: true }).first(),
+  ).toBeVisible({ timeout: options?.timeout ?? 30_000 });
+}
+
 export async function sampleWorkspaceTabIds(
   page: Page,
   options: { durationMs?: number; intervalMs?: number } = {},

@@ -10,7 +10,7 @@ import {
   canRunRealProvider,
   getRealProviderRuntimeSettings,
 } from "../../../daemon-e2e/real-provider-test-config.js";
-import { findExecutable } from "../../../../utils/executable.js";
+import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
 import { claudeQuery } from "./query.js";
 
 class Pushable<T> implements AsyncIterable<T> {

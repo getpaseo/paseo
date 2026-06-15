@@ -224,15 +224,16 @@ describe("translation resources", () => {
     expect(en.importSession.status.connectHost).toBe("Connect to a host to import sessions");
     expect(en.importSession.actions.refresh).toBe("Refresh sessions");
     expect(en.workspace.fileExplorer.sort.name).toBe("Name");
+    expect(en.workspace.fileExplorer.actions.hideHiddenFiles).toBe("Hide hidden files");
+    expect(en.workspace.fileExplorer.actions.showHiddenFiles).toBe("Show hidden files");
     expect(en.workspace.fileExplorer.empty.noFiles).toBe("No files");
+    expect(en.workspace.fileExplorer.empty.noVisibleFiles).toBe("No visible files");
     expect(en.workspace.setup.status.running).toBe("Running");
     expect(en.workspace.setup.empty.noCommands).toBe("No setup commands ran for this workspace.");
     expect(en.workspace.browser.unavailable.title).toBe("Browser is desktop-only");
     expect(en.workspace.browser.controls.enterUrl).toBe("Enter URL");
     expect(en.workspace.terminal.hostDisconnected).toBe("Host is not connected");
-    expect(en.panels.file.executionDirectoryMissing).toBe(
-      "Workspace execution directory not found.",
-    );
+    expect(en.panels.file.directoryMissing).toBe("Workspace directory not found.");
   });
 
   it("includes workspace Git and review keys for the Batch 4B migration", () => {
@@ -289,7 +290,7 @@ describe("translation resources", () => {
   });
 
   it("includes sessions and agent list keys for the Batch 4H migration", () => {
-    expect(en.sessions.title).toBe("Sessions");
+    expect(en.sessions.title).toBe("Agent history");
     expect(en.sessions.empty).toBe("No sessions yet");
     expect(en.sessions.actions.loadMore).toBe("Load more");
     expect(en.agentList.fallbackTitle).toBe("New session");
@@ -352,7 +353,7 @@ describe("translation resources", () => {
     expect(en.sidebar.actions.home).toBe("Home");
     expect(en.sidebar.actions.settings).toBe("Settings");
     expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
-    expect(en.sidebar.sections.sessions).toBe("Sessions");
+    expect(en.sidebar.sections.sessions).toBe("History");
     expect(en.sidebar.workspace.actions.newWorkspace).toBe("New workspace");
     expect(en.sidebar.workspace.actions.createWorkspaceFor).toBe(
       "Create a new workspace for {{projectName}}",
@@ -575,10 +576,11 @@ describe("translation resources", () => {
   });
 
   it("includes remaining utility chrome keys for the Batch 4T migration", () => {
-    expect(en.message.attachments.reviewOne).toBe("Review · 1 comment");
-    expect(en.message.attachments.reviewMany).toBe("Review · {{count}} comments");
+    expect(en.message.attachments.review).toBe("Review");
+    expect(en.message.attachments.commentsOne).toBe("1 comment");
+    expect(en.message.attachments.commentsMany).toBe("{{count}} comments");
     expect(en.message.attachments.textAttachment).toBe("Text attachment");
-    expect(en.composer.attachments.browserElement).toBe("Element · {{tag}}");
+    expect(en.composer.attachments.element).toBe("Element");
     expect(en.workspace.hoverCard.scriptsAccessibility).toBe("Workspace scripts");
     expect(en.branchSwitcher.restoreStashTitle).toBe("Restore stashed changes?");
     expect(en.branchSwitcher.stashRestored).toBe("Stashed changes restored");

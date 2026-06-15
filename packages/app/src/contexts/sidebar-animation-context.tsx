@@ -9,13 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Keyboard, useWindowDimensions } from "react-native";
-import {
-  runOnJS,
-  useSharedValue,
-  withTiming,
-  Easing,
-  type SharedValue,
-} from "react-native-reanimated";
+import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
@@ -38,6 +32,9 @@ import {
 
 const ANIMATION_DURATION = 220;
 const ANIMATION_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
+// Keeps the overlay displayed long enough for the close animation to finish
+// before React hides it.
+const OVERLAY_CLOSE_GRACE_MS = 300;
 export const MOBILE_VISUAL_PANEL_AGENT = 0;
 export const MOBILE_VISUAL_PANEL_AGENT_LIST = 1;
 export const MOBILE_VISUAL_PANEL_FILE_EXPLORER = 2;
@@ -50,7 +47,8 @@ interface SidebarAnimationContextValue {
   animateToClose: () => void;
   startMobilePanelTransition: (mobileView: "agent" | "agent-list" | "file-explorer") => void;
   settleMobilePanel: (mobileView: "agent" | "agent-list" | "file-explorer") => void;
-  settledGeneration: number;
+  overlayVisible: boolean;
+  setOverlayPeek: (peek: boolean) => void;
   isGesturing: SharedValue<boolean>;
   mobileVisualPanel: SharedValue<number>;
   mobilePanelState: SharedValue<number>;
@@ -101,16 +99,27 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
-  // After an open/close settles, a heavy Fabric commit can re-apply React's
-  // stale committed props onto the native view, reverting the UI-thread
-  // transform (reanimated#9635 — sidebar reappears "ghost-open"). Bumping this
-  // counter after every settle re-renders the consumers so the animated styles
-  // refresh React's committed props from the settled shared values. It must
-  // never write a shared value — it only triggers a React re-commit.
-  const [settledGeneration, setSettledGeneration] = useState(0);
-  const bumpSettledGeneration = useCallback(() => {
-    setSettledGeneration((generation) => generation + 1);
-  }, []);
+  // React owns whether the overlay is displayed at all; the worklet owns its
+  // motion. On Fabric, Reanimated re-applies its own (possibly stale) animated
+  // props over React's committed props on every commit, so a settled-closed
+  // overlay can ghost back on screen after a heavy commit (reanimated#9635) —
+  // no committed transform/opacity value can prevent that. display lives on
+  // the plain wrapper View that Reanimated never touches, so React's value is
+  // authoritative: a hidden overlay stays hidden no matter what the animated
+  // props revert to. overlayPeek shows the overlay during an open gesture
+  // before the store flips; the close grace keeps it displayed while the
+  // close animation plays.
+  const [overlayPeek, setOverlayPeek] = useState(false);
+  const overlayTarget = isOpen || overlayPeek;
+  const [overlayVisible, setOverlayVisible] = useState(overlayTarget);
+  useEffect(() => {
+    if (overlayTarget) {
+      setOverlayVisible(true);
+      return;
+    }
+    const timer = setTimeout(() => setOverlayVisible(false), OVERLAY_CLOSE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [overlayTarget]);
 
   // Track previous isOpen to detect changes
   const prevIsOpen = useRef(isOpen);
@@ -238,7 +247,6 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
             if (isCompactLayout) {
               settleMobilePanel("agent-list");
             }
-            runOnJS(bumpSettledGeneration)();
           },
         );
         backdropOpacity.value = withTiming(targets.backdropOpacity, {
@@ -262,7 +270,6 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
           if (isCompactLayout && mobileView === "agent") {
             settleMobilePanel("agent");
           }
-          runOnJS(bumpSettledGeneration)();
         },
       );
       backdropOpacity.value = withTiming(targets.backdropOpacity, {
@@ -277,7 +284,6 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
     if (isCompactLayout && ownsMobileViewChange) {
       settleMobilePanel(mobileView);
     }
-    bumpSettledGeneration();
   }, [
     isOpen,
     mobileView,
@@ -290,7 +296,6 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
     mobilePanelState,
     startMobilePanelTransition,
     settleMobilePanel,
-    bumpSettledGeneration,
   ]);
 
   const animateToOpen = useCallback(() => {
@@ -305,20 +310,13 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       (finished) => {
         if (!finished) return;
         settleMobilePanel("agent-list");
-        runOnJS(bumpSettledGeneration)();
       },
     );
     backdropOpacity.value = withTiming(1, {
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  }, [
-    translateX,
-    backdropOpacity,
-    startMobilePanelTransition,
-    settleMobilePanel,
-    bumpSettledGeneration,
-  ]);
+  }, [translateX, backdropOpacity, startMobilePanelTransition, settleMobilePanel]);
 
   const animateToClose = useCallback(() => {
     "worklet";
@@ -332,21 +330,13 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       (finished) => {
         if (!finished) return;
         settleMobilePanel("agent");
-        runOnJS(bumpSettledGeneration)();
       },
     );
     backdropOpacity.value = withTiming(0, {
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  }, [
-    translateX,
-    backdropOpacity,
-    windowWidth,
-    startMobilePanelTransition,
-    settleMobilePanel,
-    bumpSettledGeneration,
-  ]);
+  }, [translateX, backdropOpacity, windowWidth, startMobilePanelTransition, settleMobilePanel]);
 
   const value = useMemo<SidebarAnimationContextValue>(
     () => ({
@@ -357,7 +347,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       animateToClose,
       startMobilePanelTransition,
       settleMobilePanel,
-      settledGeneration,
+      overlayVisible,
+      setOverlayPeek,
       isGesturing,
       mobileVisualPanel,
       mobilePanelState,
@@ -373,7 +364,7 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       animateToClose,
       startMobilePanelTransition,
       settleMobilePanel,
-      settledGeneration,
+      overlayVisible,
       isGesturing,
       mobileVisualPanel,
       mobilePanelState,

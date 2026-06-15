@@ -53,4 +53,8 @@ describe("parseImageDataUrl", () => {
   it("ignores non-image data URLs", () => {
     expect(parseImageDataUrl("data:text/plain;base64,SGVsbG8=")).toBeNull();
   });
+
+  it("ignores SVG data URLs", () => {
+    expect(parseImageDataUrl("data:image/svg+xml;base64,PHN2ZyAvPg==")).toBeNull();
+  });
 });
