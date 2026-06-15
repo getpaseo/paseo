@@ -2544,6 +2544,18 @@ class ClaudeAgentSession implements AgentSession {
       } catch {
         /* ignore */
       }
+      // Tree-kill the old process tree now that the SDK has cleaned up.
+      // If we skip this, MCP children of the previous claude process can
+      // survive as orphans when the session spawns a replacement query.
+      if (this.childProcess) {
+        await terminateWithTreeKill(this.childProcess, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        }).catch(() => {
+          /* process may already be dead */
+        });
+        this.childProcess = null;
+      }
     }
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
