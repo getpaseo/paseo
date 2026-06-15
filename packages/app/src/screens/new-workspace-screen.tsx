@@ -1545,6 +1545,10 @@ export function NewWorkspaceScreen({
             />
           </View>
         </LabeledRow>
+        {/* The Isolation row keeps its height for non-git projects so switching
+            projects never shifts the form; worktree backing is git-only, so a
+            non-git project renders an invisible spacer matching the trigger
+            height exactly. */}
         {canCreateWorktree ? (
           <LabeledRow label={t("newWorkspace.backing.label")}>
             <View>
@@ -1571,7 +1575,9 @@ export function NewWorkspaceScreen({
               />
             </View>
           </LabeledRow>
-        ) : null}
+        ) : (
+          <View style={styles.baseSpacer} />
+        )}
         {/* The Base row keeps its height so toggling Isolation never shifts the
             form; on Local backing it renders an invisible spacer with no label
             or control, matching the trigger height exactly. */}
