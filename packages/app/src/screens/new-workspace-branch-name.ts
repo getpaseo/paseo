@@ -41,8 +41,7 @@ export function resolveNewBranchError(input: {
   isNewBranchSelected: boolean;
   invalidLabel: string;
 }): string | null {
-  const shouldValidate = input.rawName.trim().length > 0 || input.isNewBranchSelected;
-  if (!shouldValidate) {
+  if (!input.isNewBranchSelected) {
     return null;
   }
   const validation = validateBranchSlug(input.requestedSlug ?? "");

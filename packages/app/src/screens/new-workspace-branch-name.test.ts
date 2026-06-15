@@ -90,4 +90,15 @@ describe("resolveNewBranchError", () => {
       }),
     ).toBeNull();
   });
+
+  it("ignores a stale field value when another ref is selected", () => {
+    expect(
+      resolveNewBranchError({
+        rawName: "Feature Korea",
+        requestedSlug: null,
+        isNewBranchSelected: false,
+        invalidLabel: "Invalid branch name",
+      }),
+    ).toBeNull();
+  });
 });
