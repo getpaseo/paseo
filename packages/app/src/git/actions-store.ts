@@ -14,9 +14,9 @@ import {
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
 import {
-  resolveWorkspaceIdByExecutionDirectory,
+  resolveWorkspaceIdByDirectory,
   resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-execution";
+} from "@/utils/workspace-identity";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { i18n } from "@/i18n/i18next";
 
@@ -158,12 +158,13 @@ function snapshotWorktreeArchiveState(input: {
   worktreePath: string;
 }): WorktreeArchiveSnapshot {
   const workspaces = useSessionStore.getState().sessions[input.serverId]?.workspaces;
-  const workspaceId =
-    resolveWorkspaceIdByExecutionDirectory({
-      workspaces: workspaces?.values(),
-      workspaceDirectory: input.worktreePath,
-    }) ?? input.worktreePath;
-  const workspaceKey = resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId });
+  const workspaceId = resolveWorkspaceIdByDirectory({
+    workspaces: workspaces?.values(),
+    workspaceDirectory: input.worktreePath,
+  });
+  const workspaceKey = workspaceId
+    ? resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId })
+    : null;
   return {
     workspace: workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null,
     worktreeLists: appQueryClient.getQueriesData({
@@ -173,13 +174,13 @@ function snapshotWorktreeArchiveState(input: {
   };
 }
 
-function removeWorktreeFromSessionStore(input: { serverId: string; worktreePath: string }): void {
+function removeWorktreeFromSessionStore(input: { serverId: string; workspaceId: string }): void {
   const serverId = input.serverId.trim();
-  const worktreePath = input.worktreePath.trim();
-  if (!serverId || !worktreePath) {
+  const workspaceId = input.workspaceId.trim();
+  if (!serverId || !workspaceId) {
     return;
   }
-  useSessionStore.getState().removeWorkspace(serverId, worktreePath);
+  useSessionStore.getState().removeWorkspace(serverId, workspaceId);
 }
 
 function restoreWorktreeArchiveState(input: {
@@ -195,9 +196,9 @@ function restoreWorktreeArchiveState(input: {
   }
 }
 
-function purgeArchivedWorkspaceState(input: { serverId: string; worktreePath: string }): void {
+function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
   const serverId = input.serverId.trim();
-  const workspaceId = input.worktreePath.trim();
+  const workspaceId = input.workspaceId.trim();
   if (!serverId || !workspaceId) {
     return;
   }
@@ -504,31 +505,35 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       run: async () => {
         const client = resolveClient(serverId);
         const snapshot = snapshotWorktreeArchiveState({ serverId, worktreePath });
-        markWorkspaceArchivePending({
-          serverId,
-          workspaceId: snapshot.workspace?.id ?? worktreePath,
-          workspaceDirectory: snapshot.workspace?.workspaceDirectory ?? worktreePath,
-        });
+        // The server archive is keyed by worktreePath and must always run. The
+        // optimistic client-side updates are keyed by workspace id, so they only
+        // apply when the workspace is resolved in the local store.
+        const workspace = snapshot.workspace;
+        if (workspace) {
+          markWorkspaceArchivePending({
+            serverId,
+            workspaceId: workspace.id,
+            workspaceDirectory: workspace.workspaceDirectory,
+          });
+          removeWorktreeFromSessionStore({ serverId, workspaceId: workspace.id });
+        }
         removeWorktreeFromCachedLists({ serverId, worktreePath });
-        removeWorktreeFromSessionStore({
-          serverId,
-          worktreePath: snapshot.workspace?.id ?? worktreePath,
-        });
         try {
           const payload = await client.archivePaseoWorktree({ worktreePath });
           if (payload.error) {
             throw new Error(payload.error.message);
           }
         } catch (error) {
-          clearWorkspaceArchivePending({
-            serverId,
-            workspaceId: snapshot.workspace?.id ?? worktreePath,
-          });
+          if (workspace) {
+            clearWorkspaceArchivePending({ serverId, workspaceId: workspace.id });
+          }
           restoreWorktreeArchiveState({ serverId, snapshot });
           throw error;
         }
         invalidateWorktreeList();
-        purgeArchivedWorkspaceState({ serverId, worktreePath });
+        if (workspace) {
+          purgeArchivedWorkspaceState({ serverId, workspaceId: workspace.id });
+        }
       },
     });
   },

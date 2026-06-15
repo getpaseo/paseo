@@ -261,7 +261,7 @@ export async function navigateToWorkspaceViaSidebar(
   await switchWorkspaceViaSidebar({
     page,
     serverId: getServerId(),
-    targetWorkspacePath: workspaceId,
+    workspaceId,
   });
 }
 

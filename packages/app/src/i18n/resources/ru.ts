@@ -357,9 +357,12 @@ export const ru: TranslationResources = {
         retry: "Повторить попытку",
         refresh: "Обновить файлы",
         refreshing: "Обновление файлов",
+        hideHiddenFiles: "Скрыть скрытые файлы",
+        showHiddenFiles: "Показать скрытые файлы",
       },
       empty: {
         noFiles: "Нет файлов",
+        noVisibleFiles: "Нет видимых файлов",
       },
       states: {
         unavailable: "Workspace недоступен",
@@ -1319,7 +1322,7 @@ export const ru: TranslationResources = {
       creatingAgent: "Создание агента",
     },
     file: {
-      executionDirectoryMissing: "Каталог выполнения Workspace не найден.",
+      directoryMissing: "Каталог Workspace не найден.",
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -8,7 +8,7 @@ import {
   findExecutable,
   quoteWindowsArgument,
   quoteWindowsCommand,
-} from "./executable.js";
+} from "./executable-resolution.js";
 import { isPlatform } from "../test-utils/platform.js";
 
 const originalEnv = {
@@ -99,6 +99,36 @@ describe("findExecutable", () => {
       prependPath(dir);
 
       expectWindowsPathsEqual(await findExecutable("foo"), cmd);
+    });
+
+    test("finds a .cmd for an extensionless absolute path", async () => {
+      const dir = makeTempDir();
+      const command = path.join(dir, "codex");
+      const cmd = writeExecutable(`${command}.cmd`, "@echo off\r\necho 0.1\r\n");
+
+      expectWindowsPathsEqual(await findExecutable(command), cmd);
+    });
+
+    test("finds a winget portable executable outside PATH", async () => {
+      const originalLocalAppData = process.env.LOCALAPPDATA;
+      const localAppData = makeTempDir();
+      const packageDir = path.join(
+        localAppData,
+        "Microsoft",
+        "WinGet",
+        "Packages",
+        "Anthropic.ClaudeCode_abc",
+      );
+      mkdirSync(packageDir, { recursive: true });
+      const claude = path.join(packageDir, "claude.exe");
+      copyFileSync(process.execPath, claude);
+      process.env.LOCALAPPDATA = localAppData;
+      process.env.PATH = makeTempDir();
+      try {
+        expectWindowsPathsEqual(await findExecutable("claude"), claude);
+      } finally {
+        process.env.LOCALAPPDATA = originalLocalAppData;
+      }
     });
   });
 

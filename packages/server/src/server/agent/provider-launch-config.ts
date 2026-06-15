@@ -1,5 +1,8 @@
 import { isAbsolute } from "node:path";
-import { executableExists, findExecutable } from "../../utils/executable.js";
+import {
+  executableExists,
+  findExecutable,
+} from "../../executable-resolution/executable-resolution.js";
 import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
 export {
   AgentProviderRuntimeSettingsMapSchema,

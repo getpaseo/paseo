@@ -245,6 +245,9 @@ export function migratePanelState(
   ) {
     state.diffExpandedPathsByWorkspace = {};
   }
+  if (typeof state.explorerShowHiddenFiles !== "boolean") {
+    state.explorerShowHiddenFiles = true;
+  }
 
   return state;
 }

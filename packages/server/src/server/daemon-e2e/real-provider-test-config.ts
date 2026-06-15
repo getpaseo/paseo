@@ -10,7 +10,7 @@ import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
-import { isCommandAvailable } from "../../utils/executable.js";
+import { isCommandAvailable } from "../../executable-resolution/executable-resolution.js";
 
 export const realProviders = ["claude", "codex", "opencode", "pi"] as const;
 export type RealProvider = (typeof realProviders)[number];

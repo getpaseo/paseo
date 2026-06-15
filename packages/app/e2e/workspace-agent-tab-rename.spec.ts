@@ -7,8 +7,8 @@ import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { captureWsSessionFrames, renameModalInput, renameModalSubmit } from "./helpers/rename";
 import { getServerId } from "./helpers/server-id";
 
-async function openAgentInWorkspace(page: Page, agent: { id: string; cwd: string }) {
-  await page.goto(buildHostAgentDetailRoute(getServerId(), agent.id, agent.cwd));
+async function openAgentInWorkspace(page: Page, agent: { id: string; workspaceId: string }) {
+  await page.goto(buildHostAgentDetailRoute(getServerId(), agent.id, agent.workspaceId));
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },

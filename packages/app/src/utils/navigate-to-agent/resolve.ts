@@ -1,6 +1,6 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
 import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
 
 export interface NavigateToAgentInput {
@@ -29,7 +29,7 @@ export function resolveNavigateToAgent(
     serverId: input.serverId,
     agentId: input.agentId,
   });
-  const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+  const workspaceId = resolveWorkspaceIdByDirectory({
     workspaces,
     workspaceDirectory: agentCwd,
   });

@@ -65,6 +65,7 @@ function buildTracker(
     client,
     deviceType: overrides.deviceType ?? "web",
     initialFocusedAgentId: overrides.initialFocusedAgentId ?? "agent-1",
+    initialFocusedTerminalId: overrides.initialFocusedTerminalId ?? null,
     initialAppVisible: overrides.initialAppVisible ?? true,
     now: clock.now,
     onAppResumed: overrides.onAppResumed,
@@ -128,6 +129,20 @@ describe("client activity tracker", () => {
     tracker.setFocusedAgentId("agent-1");
 
     expect(client.recordedHeartbeats).toHaveLength(0);
+  });
+
+  it("sends one immediate heartbeat when the focused terminal changes", () => {
+    const { tracker, client, clock } = buildTracker({ initialFocusedTerminalId: null });
+
+    clock.advance(5_000);
+    tracker.setFocusedTerminalId("terminal-1");
+
+    expect(client.recordedHeartbeats).toHaveLength(1);
+    expect(client.latest()).toMatchObject({
+      focusedAgentId: "agent-1",
+      focusedTerminalId: "terminal-1",
+      lastActivityAt: new Date(START_MS + 5_000).toISOString(),
+    });
   });
 
   it("drives lastActivityAt forward from system idle polling", () => {

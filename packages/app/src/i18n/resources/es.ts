@@ -358,9 +358,12 @@ export const es: TranslationResources = {
         retry: "Rever",
         refresh: "Actualizar archivos",
         refreshing: "Actualizar archivos",
+        hideHiddenFiles: "Ocultar archivos ocultos",
+        showHiddenFiles: "Mostrar archivos ocultos",
       },
       empty: {
         noFiles: "Sin archivos",
+        noVisibleFiles: "No hay archivos visibles",
       },
       states: {
         unavailable: "Workspaceno está disponible",
@@ -1327,7 +1330,7 @@ export const es: TranslationResources = {
       creatingAgent: "Agente creador",
     },
     file: {
-      executionDirectoryMissing: "No se encontró el directorio de ejecución deWorkspace.",
+      directoryMissing: "No se encontró el directorio de Workspace.",
       loading: "Cargando archivo...",
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",

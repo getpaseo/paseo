@@ -22,6 +22,11 @@
       "types": "./dist/server/utils/tool-call-parsers.d.ts",
       "source": "./src/utils/tool-call-parsers.ts",
       "default": "./dist/server/utils/tool-call-parsers.js"
+    },
+    "./agent-hooks": {
+      "types": "./dist/server/terminal/agent-hooks/provider-registry.d.ts",
+      "source": "./src/terminal/agent-hooks/provider-registry.ts",
+      "default": "./dist/server/terminal/agent-hooks/provider-registry.js"
     }
   },
   "publishConfig": {

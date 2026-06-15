@@ -354,9 +354,12 @@ export const en = {
         retry: "Retry",
         refresh: "Refresh files",
         refreshing: "Refreshing files",
+        hideHiddenFiles: "Hide hidden files",
+        showHiddenFiles: "Show hidden files",
       },
       empty: {
         noFiles: "No files",
+        noVisibleFiles: "No visible files",
       },
       states: {
         unavailable: "Workspace is unavailable",
@@ -1298,7 +1301,7 @@ export const en = {
       creatingAgent: "Creating agent",
     },
     file: {
-      executionDirectoryMissing: "Workspace execution directory not found.",
+      directoryMissing: "Workspace directory not found.",
       loading: "Loading file...",
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",

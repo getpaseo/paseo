@@ -355,9 +355,12 @@ export const ar: TranslationResources = {
         retry: "أعد المحاولة",
         refresh: "تحديث الملفات",
         refreshing: "تحديث الملفات",
+        hideHiddenFiles: "إخفاء الملفات المخفية",
+        showHiddenFiles: "إظهار الملفات المخفية",
       },
       empty: {
         noFiles: "لا توجد ملفات",
+        noVisibleFiles: "لا توجد ملفات مرئية",
       },
       states: {
         unavailable: "Workspace غير متوفر",
@@ -1292,7 +1295,7 @@ export const ar: TranslationResources = {
       creatingAgent: "وكيل الخلق",
     },
     file: {
-      executionDirectoryMissing: "لم يتم العثور على دليل تنفيذ Workspace.",
+      directoryMissing: "لم يتم العثور على دليل Workspace.",
       loading: "جارٍ تحميل الملف...",
       noPreview: "لا تتوفر معاينة",
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",

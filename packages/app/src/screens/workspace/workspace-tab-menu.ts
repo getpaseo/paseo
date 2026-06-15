@@ -1,6 +1,6 @@
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { i18n } from "@/i18n/i18next";
-import { encodeFilePathForPathSegment } from "@/utils/host-routes";
+import { encodeFilePathForPathSegment, encodeWorkspaceIdForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 
 export type WorkspaceTabMenuSurface = "desktop" | "mobile";
@@ -136,7 +136,7 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
     return `workspace-browser-close-${tab.target.browserId}`;
   }
   if (tab.target.kind === "setup") {
-    return `workspace-setup-close-${encodeFilePathForPathSegment(tab.target.workspaceId)}`;
+    return `workspace-setup-close-${encodeWorkspaceIdForPathSegment(tab.target.workspaceId)}`;
   }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }

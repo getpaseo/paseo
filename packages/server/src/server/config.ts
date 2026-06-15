@@ -386,6 +386,7 @@ export function loadConfig(
     mcpEnabled,
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
+    enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
     appendSystemPrompt,
     terminalProfiles,
     mcpDebug: env.MCP_DEBUG === "1",
