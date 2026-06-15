@@ -1156,7 +1156,7 @@ const staticStyles = RNStyleSheet.create({
 
 const styles = StyleSheet.create((theme) => ({
   sidebarHeaderGroup: {
-    paddingTop: theme.spacing[1],
+    paddingTop: theme.spacing[2],
     // Match WorkspacesSectionHeader's paddingTop below the divider so the divider
     // sits visually centered between the Sessions row and the Workspaces header.
     paddingBottom: theme.spacing[2],
