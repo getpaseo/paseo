@@ -106,6 +106,47 @@ describe("resolveStructuredGenerationProviders", () => {
     ]);
   });
 
+  test("skips disabled providers when resolving dynamic defaults", async () => {
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: {
+        listProviders: vi.fn(async () => [
+          {
+            provider: "opencode",
+            status: READY,
+            enabled: false,
+            models: [
+              {
+                provider: "opencode",
+                id: "anthropic/claude-haiku-4-5",
+                label: "Claude Haiku 4.5",
+              },
+              {
+                provider: "opencode",
+                id: "openai/gpt-5.4-mini",
+                label: "GPT 5.4 Mini",
+              },
+            ],
+          },
+          {
+            provider: "nvidia",
+            status: READY,
+            enabled: true,
+            models: [
+              {
+                provider: "nvidia",
+                id: "nvidia/nemotron-3-super-120b-a12b",
+                label: "Nemotron 3 Super",
+              },
+            ],
+          },
+        ]),
+      },
+    });
+
+    expect(providers).toEqual([{ provider: "nvidia", model: "nvidia/nemotron-3-super-120b-a12b" }]);
+  });
+
   test("resolves a provider-only current selection to that provider's default model", async () => {
     const providers = await resolveStructuredGenerationProviders({
       cwd: "/tmp/repo",

@@ -671,6 +671,44 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentClient", () => {
+  test("reuses the availability model probe when listing models", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    pi.queueModels([
+      { provider: "openrouter", id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+    ]);
+
+    await expect(client.isAvailable()).resolves.toBe(true);
+    await expect(
+      client.listModels({ cwd: "/tmp/paseo-pi-workspace", force: false }),
+    ).resolves.toEqual([
+      {
+        provider: "pi",
+        id: "openrouter/anthropic/claude-sonnet-4.5",
+        label: "Claude Sonnet 4.5",
+        description: "openrouter/anthropic/claude-sonnet-4.5",
+        metadata: {
+          provider: "openrouter",
+          modelId: "anthropic/claude-sonnet-4.5",
+        },
+        thinkingOptions: undefined,
+        defaultThinkingOptionId: undefined,
+      },
+    ]);
+
+    expect(pi.recordedLaunches).toHaveLength(1);
+    expect(pi.latestSession().closed).toBe(true);
+  });
+
+  test("lists no draft features without starting a Pi session", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await expect(client.listFeatures(createConfig())).resolves.toEqual([]);
+
+    expect(pi.recordedLaunches).toHaveLength(0);
+  });
+
   test("lists JSONL persisted sessions from configured provider params", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-sessions-"));
     const cwd = path.join(root, "workspace");

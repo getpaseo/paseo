@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -1860,6 +1861,7 @@ export class PiRpcAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly providerParams: PiProviderParams;
   private readonly runtime: PiRuntime;
+  private availableModelsCache: Promise<AgentModelDefinition[]> | null = null;
 
   constructor(options: PiRpcAgentClientOptions) {
     this.logger = options.logger;
@@ -1961,15 +1963,14 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const runtimeSession = await this.runtime.startSession({ cwd: options.cwd });
-    try {
-      return transformPiModels((await runtimeSession.getAvailableModels()).map(mapPiModel));
-    } finally {
-      await runtimeSession.close();
-    }
+    return await this.getAvailableModels(options.cwd, { force: options.force });
   }
 
   async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
+    return [];
+  }
+
+  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
     return [];
   }
 
@@ -2000,16 +2001,35 @@ export class PiRpcAgentClient implements AgentClient {
     if (!availability.available) {
       return false;
     }
-    const runtimeSession = await this.runtime.startSession({ cwd: homedir() }).catch(() => null);
-    if (!runtimeSession) {
-      return false;
-    }
     try {
-      return (await runtimeSession.getAvailableModels()).length > 0;
+      return (await this.getAvailableModels(homedir(), { force: false })).length > 0;
     } catch {
       return false;
+    }
+  }
+
+  private async getAvailableModels(
+    cwd: string,
+    options: { force: boolean },
+  ): Promise<AgentModelDefinition[]> {
+    if (!this.availableModelsCache || options.force) {
+      const cache = this.fetchAvailableModels(cwd).catch((error) => {
+        if (this.availableModelsCache === cache) {
+          this.availableModelsCache = null;
+        }
+        throw error;
+      });
+      this.availableModelsCache = cache;
+    }
+    return await this.availableModelsCache;
+  }
+
+  private async fetchAvailableModels(cwd: string): Promise<AgentModelDefinition[]> {
+    const runtimeSession = await this.runtime.startSession({ cwd });
+    try {
+      return transformPiModels((await runtimeSession.getAvailableModels()).map(mapPiModel));
     } finally {
-      await runtimeSession.close().catch(() => undefined);
+      await runtimeSession.close();
     }
   }
 

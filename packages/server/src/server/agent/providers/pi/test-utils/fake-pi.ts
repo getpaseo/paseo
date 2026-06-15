@@ -19,6 +19,7 @@ export class FakePi implements PiRuntime {
   private readonly sessions: FakePiSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: PiRpcSlashCommand[][] = [];
+  private readonly queuedModels: PiModel[][] = [];
 
   constructor(command: [string, ...string[]] = ["pi"]) {
     this.command = command;
@@ -32,12 +33,17 @@ export class FakePi implements PiRuntime {
     this.recordedLaunches.push(launch);
     const session = new FakePiSession(launch);
     session.commands = this.queuedCommands.shift() ?? [];
+    session.models = this.queuedModels.shift() ?? [];
     this.sessions.push(session);
     return session;
   }
 
   queueCommands(commands: PiRpcSlashCommand[]): void {
     this.queuedCommands.push(commands);
+  }
+
+  queueModels(models: PiModel[]): void {
+    this.queuedModels.push(models);
   }
 
   latestSession(): FakePiSession {
@@ -73,6 +79,7 @@ export class FakePiSession implements PiRuntimeSession {
   commands: PiRpcSlashCommand[] = [];
   compactError: Error | null = null;
   emitCompactEnd = true;
+  closed = false;
   state: PiSessionState;
 
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
@@ -174,7 +181,9 @@ export class FakePiSession implements PiRuntimeSession {
     this.respondToExtensionUiRequest(id, { cancelled: true });
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closed = true;
+  }
 
   emit(event: PiRuntimeEvent): void {
     for (const subscriber of this.subscribers) {
