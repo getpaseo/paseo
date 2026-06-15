@@ -21,6 +21,8 @@ export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
   queryFactory?: ClaudeQueryFactory;
+  /** Called with the spawned child process so the caller can tree-kill it on close. */
+  onChildProcess?: (child: ChildProcess) => void;
 }
 
 function isChildProcessWithStreams(child: ChildProcess): child is ChildProcessWithoutNullStreams {
@@ -54,9 +56,9 @@ function resolveClaudeSpawnCommand(
 
 function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
-  runtimeSettings?: ProviderRuntimeSettings,
-  launchEnv?: Record<string, string>,
+  context: ClaudeQueryContext,
 ): ClaudeOptions {
+  const { runtimeSettings, launchEnv, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -94,6 +96,7 @@ function applyRuntimeSettingsToClaudeOptions(
         // The command is always a resolved binary path, so shell routing is unnecessary.
         shell: false,
       });
+      onChildProcess?.(child);
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
           options.stderr?.(chunk.toString());
@@ -111,10 +114,6 @@ export function claudeQuery(input: ClaudeQueryInput, context: ClaudeQueryContext
   const launchQuery = context.queryFactory ?? query;
   return launchQuery({
     ...input,
-    options: applyRuntimeSettingsToClaudeOptions(
-      input.options,
-      context.runtimeSettings,
-      context.launchEnv,
-    ),
+    options: applyRuntimeSettingsToClaudeOptions(input.options, context),
   });
 }

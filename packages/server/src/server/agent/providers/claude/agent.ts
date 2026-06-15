@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -90,6 +91,7 @@ import {
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
 import { withTimeout } from "../../../../utils/promise-timeout.js";
+import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 
@@ -1661,6 +1663,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
+  private childProcess: ChildProcess | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
@@ -2127,6 +2130,22 @@ class ClaudeAgentSession implements AgentSession {
     await this.awaitWithTimeout(this.query?.return?.(), "close query return");
     this.query = null;
     this.input = null;
+    // Terminate the entire process tree (claude + MCP children) to prevent
+    // orphan accumulation. The SDK's internal cleanup may only kill the
+    // direct child process.
+    if (this.childProcess) {
+      const result = await terminateWithTreeKill(this.childProcess, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      });
+      if (result === "kill-timeout") {
+        this.logger.warn(
+          { pid: this.childProcess.pid, agentId: this.agentId },
+          "Claude process tree did not report exit after SIGKILL",
+        );
+      }
+      this.childProcess = null;
+    }
     if (this.persistSession === false && this.claudeSessionId) {
       // Claude Code currently ignores --no-session-persistence outside --print mode
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
@@ -2541,6 +2560,9 @@ class ClaudeAgentSession implements AgentSession {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
         queryFactory: this.queryFactory,
+        onChildProcess: (child) => {
+          this.childProcess = child;
+        },
       },
     );
     const fastMode = this.resolveFastModeSetting();
