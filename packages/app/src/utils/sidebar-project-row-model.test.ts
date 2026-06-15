@@ -16,6 +16,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     workspaceKind: "checkout",
     name: "paseo",
     title: null,
+    currentBranch: null,
     statusBucket: "done",
     diffStat: null,
     prHint: null,

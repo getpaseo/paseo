@@ -29,6 +29,8 @@ export interface SidebarWorkspaceEntry {
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
+  // Checkout branch (null when not a git checkout or detached HEAD).
+  currentBranch: string | null;
   statusBucket: SidebarStateBucket;
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -65,6 +67,7 @@ function createStructuralWorkspaceEntry(input: {
     workspaceKind: "checkout",
     name: workspaceNameFromDirectory(input.project.iconWorkingDir) || input.workspaceId,
     title: null,
+    currentBranch: null,
     statusBucket: "done",
     statusEnteredAt: null,
     archivingAt: null,

@@ -1541,9 +1541,12 @@ function WorkspaceRowWithMenu({
   }, [t, toast, workspace.workspaceDirectory, workspace.workspaceId]);
 
   const handleCopyBranchName = useCallback(() => {
-    void Clipboard.setStringAsync(workspace.name);
+    if (!workspace.currentBranch) {
+      return;
+    }
+    void Clipboard.setStringAsync(workspace.currentBranch);
     toast.copied(t("sidebar.workspace.toasts.branchNameCopied"));
-  }, [t, toast, workspace.name]);
+  }, [t, toast, workspace.currentBranch]);
 
   const renameMutation = useMutation({
     mutationFn: async (title: string) => {

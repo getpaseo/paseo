@@ -29,6 +29,7 @@ function workspace(input: {
     workspaceKind: "checkout",
     name: input.name,
     title: null,
+    currentBranch: null,
     statusBucket: input.statusBucket ?? "done",
     archivingAt: null,
     statusEnteredAt: input.statusEnteredAt ?? null,

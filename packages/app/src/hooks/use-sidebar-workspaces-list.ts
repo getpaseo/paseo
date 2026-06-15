@@ -34,6 +34,14 @@ export {
   type SidebarWorkspaceEntry,
 } from "./sidebar-workspaces-view-model";
 
+function normalizeCurrentBranch(currentBranch: string | null | undefined): string | null {
+  if (!currentBranch) {
+    return null;
+  }
+  const trimmed = currentBranch.trim();
+  return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -52,6 +60,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
     title: input.workspace.title ?? null,
+    currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
