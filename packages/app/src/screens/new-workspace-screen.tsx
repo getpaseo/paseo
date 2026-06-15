@@ -723,6 +723,7 @@ async function createMultiplicityWorkspace(input: {
   selectedItem: PickerItem | null;
   currentBranch: string | null;
   title: string;
+  withInitialAgent: boolean;
   mergeWorkspaces: (
     serverId: string,
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
@@ -747,7 +748,10 @@ async function createMultiplicityWorkspace(input: {
     throw new Error(payload.error ?? input.createFailedMessage);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
-  input.mergeWorkspaces(input.serverId, [normalizedWorkspace]);
+  const workspaceForInitialMerge = input.withInitialAgent
+    ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
+    : normalizedWorkspace;
+  input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
   return normalizedWorkspace;
 }
 
@@ -758,6 +762,7 @@ interface CreateChatAgentInput {
     cwd: string;
     prompt: string;
     attachments: AgentAttachment[];
+    withInitialAgent: boolean;
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
   draftKey: string;
@@ -782,6 +787,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     cwd,
     prompt: text,
     attachments: reviewAttachments,
+    withInitialAgent: true,
   });
   submitWorkspaceDraft({
     serverId,
@@ -1194,7 +1200,12 @@ export function NewWorkspaceScreen({
   );
 
   const ensureWorkspace = useCallback(
-    async (input: { cwd: string; prompt: string; attachments: AgentAttachment[] }) => {
+    async (input: {
+      cwd: string;
+      prompt: string;
+      attachments: AgentAttachment[];
+      withInitialAgent: boolean;
+    }) => {
       if (createdWorkspace) {
         return createdWorkspace;
       }
@@ -1209,6 +1220,7 @@ export function NewWorkspaceScreen({
             selectedItem,
             currentBranch,
             title,
+            withInitialAgent: input.withInitialAgent,
             mergeWorkspaces,
             serverId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),

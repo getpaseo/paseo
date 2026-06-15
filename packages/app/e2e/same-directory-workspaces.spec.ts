@@ -59,6 +59,17 @@ test.describe("Same-directory workspaces", () => {
         "# shared change\n",
       );
 
+      // Make the write authoritative on the daemon before the UI reads it. The
+      // git status/diff is otherwise refreshed by a debounced filesystem watcher,
+      // and a loaded CI host can lag that debounce past the assertion window —
+      // the source of this spec's flakiness. Forcing a refresh (the same path as
+      // the UI's manual refresh) recomputes the snapshot and diff now, so the
+      // first subscribe on mount already includes SHARED_CHANGE.md.
+      const refreshed = await seeded.client.checkoutRefresh(seeded.repoPath);
+      if (!refreshed.success) {
+        throw new Error(`Failed to refresh checkout: ${JSON.stringify(refreshed.error)}`);
+      }
+
       // Workspace A: the new file shows in both the file browser and the git
       // changes view.
       await gotoWorkspace(page, seeded.workspaceId);

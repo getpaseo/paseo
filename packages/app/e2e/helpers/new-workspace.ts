@@ -212,6 +212,9 @@ export async function selectWorkspaceBacking(
 ): Promise<void> {
   const control = page.getByTestId(`workspace-create-backing-${backing}`);
   await expect(control).toBeVisible({ timeout: 30_000 });
+  // Worktree backing stays disabled until the checkout status query confirms the
+  // selected project is a git repo; wait so the click actually flips the backing.
+  await expect(control).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 });
   await control.click();
 }
 

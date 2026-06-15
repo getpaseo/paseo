@@ -35,6 +35,13 @@ export interface SeedDaemonClient {
     workspace: { id: string; name: string } | null;
     error: string | null;
   }>;
+  /**
+   * Force the daemon to recompute its git snapshot and diff for a checkout,
+   * mirroring the UI's manual refresh. Tests use this to make an out-of-band
+   * working-tree write authoritative before asserting on it in the UI, instead
+   * of racing the filesystem watcher's debounce.
+   */
+  checkoutRefresh(cwd: string): Promise<{ success: boolean; error: unknown }>;
   createTerminal(
     cwd: string,
     name?: string,
