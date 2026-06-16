@@ -265,7 +265,7 @@ function formatFinishNotificationBody(params: FinishNotificationBodyInput): stri
   if (!lastAssistantMessage) {
     return statusLine;
   }
-  return `${statusLine}\n\nLast assistant message:\n${lastAssistantMessage}`;
+  return `${statusLine}\n\n<agent-response>\n${lastAssistantMessage}\n</agent-response>`;
 }
 
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {

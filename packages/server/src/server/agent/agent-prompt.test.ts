@@ -156,7 +156,7 @@ test("finish notifications tell the parent the child's last assistant message", 
 
   expect(parentPrompt).toEqual(
     formatSystemNotificationPrompt(
-      "Agent child-agent (Child Agent) finished.\n\nLast assistant message:\nImplemented the cleanup and all checks pass.",
+      "Agent child-agent (Child Agent) finished.\n\n<agent-response>\nImplemented the cleanup and all checks pass.\n</agent-response>",
     ),
   );
 });
