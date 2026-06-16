@@ -944,7 +944,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           logger: childLogger,
           paseoHome: options.paseoHome,
           worktreesRoot: options.worktreesRoot,
-          workspaceGitService: options.workspaceGitService,
           terminalManager,
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,

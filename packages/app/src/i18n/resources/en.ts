@@ -1854,8 +1854,6 @@ export const en = {
       metadata: {
         title: "Metadata generation",
         info: "Project-specific instructions injected into the AI prompts Paseo uses to generate metadata - use them to enforce your team's conventions like branch naming, commit style, or PR format",
-        agentTitle: "Agent titles",
-        agentTitlePlaceholder: "Keep titles imperative and under 40 characters",
         branchName: "Branch names",
         branchNamePlaceholder: "Prefix branches with feat/ or fix/, mb/ for personal branches",
         commitMessage: "Commit messages",

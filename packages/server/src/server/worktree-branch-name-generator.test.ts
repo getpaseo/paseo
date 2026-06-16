@@ -193,7 +193,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     ["paseo.json valid but missing metadataGeneration", {}],
     [
       "metadataGeneration exists but missing branchName",
-      { metadataGeneration: { agentTitle: { instructions: "Use mb/." } } },
+      { metadataGeneration: { commitMessage: { instructions: "Use Conventional Commits." } } },
     ],
     ["branchName exists but instructions is undefined", { metadataGeneration: { branchName: {} } }],
     [

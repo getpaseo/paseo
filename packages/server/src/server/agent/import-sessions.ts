@@ -8,7 +8,6 @@ import type {
 } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { AgentPersistenceHandle, AgentProvider } from "./agent-sdk-types.js";
-import type { StructuredGenerationDaemonConfig } from "./structured-generation-providers.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
 import type {
@@ -16,7 +15,6 @@ import type {
   ImportAgentRequestMessageSchema,
   RecentProviderSessionDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import type { WorkspaceGitService } from "../workspace-git-service.js";
 import { createRealpathAwarePathMatcher } from "../../utils/path.js";
 
 type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>;
@@ -59,10 +57,6 @@ export interface ImportProviderSessionInput {
   workspaceId: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
-  daemonConfig?: StructuredGenerationDaemonConfig | null;
-  paseoHome?: string;
   logger: Logger;
 }
 

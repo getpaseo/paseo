@@ -311,37 +311,6 @@ function parseStructuredBranchNamePrompt(
   return { title: title || "Mock task", branch };
 }
 
-function parseStructuredAgentTitlePrompt(prompt: AgentPromptInput): { title: string } | null {
-  const text = promptToText(prompt);
-  const hasAgentTitlePrompt =
-    text.includes("Generate metadata for a coding agent based on the user prompt.") &&
-    (text.includes("Return JSON only with a single field 'title'.") || text.includes('"title"'));
-  if (
-    !hasAgentTitlePrompt &&
-    !(
-      text.includes("You must respond with JSON only that matches this JSON Schema") &&
-      text.includes('"title"') &&
-      text.includes("User prompt:")
-    )
-  ) {
-    return null;
-  }
-
-  const seed = text.split("User prompt:\n").at(-1)?.trim() ?? "";
-  const firstLine =
-    seed
-      .split("\n")
-      .find((line) => line.trim().length > 0)
-      ?.trim() ?? "Mock task";
-  const title = firstLine
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .replace(/\s+/g, " ")
-    .slice(0, 80)
-    .trim();
-
-  return { title: title || "Mock task" };
-}
-
 function buildRepeatedPayload(bytes: number, prefix: string): string {
   const line = `${prefix} ${"x".repeat(96)}\n`;
   let output = "";
@@ -678,11 +647,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const stress = parseAgentStreamStressPrompt(prompt);
     const questionPrompt = parseMockQuestionPrompt(prompt);
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
-    const structuredAgentTitle = parseStructuredAgentTitlePrompt(prompt);
     if (structuredBranchName) {
       this.scheduleStructuredJsonTurn(turn, structuredBranchName);
-    } else if (structuredAgentTitle) {
-      this.scheduleStructuredJsonTurn(turn, structuredAgentTitle);
     } else if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
     } else if (questionPrompt) {

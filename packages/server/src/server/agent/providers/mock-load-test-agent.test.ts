@@ -74,34 +74,6 @@ describe("MockLoadTestAgentClient", () => {
     });
   });
 
-  test("returns schema-shaped JSON for structured agent-title generation", async () => {
-    vi.useFakeTimers();
-    const client = new MockLoadTestAgentClient();
-    const session = await client.createSession({
-      provider: "mock",
-      cwd: process.cwd(),
-      model: "ten-second-stream",
-    });
-
-    const resultPromise = session.run(
-      [
-        "Generate metadata for a coding agent based on the user prompt.",
-        "Title: short descriptive label (<= 80 chars).",
-        "Return JSON only with a single field 'title'.",
-        "",
-        "User prompt:",
-        "Fix login bug",
-      ].join("\n"),
-    );
-    await vi.advanceTimersByTimeAsync(0);
-
-    await expect(resultPromise).resolves.toMatchObject({
-      sessionId: session.id,
-      finalText: JSON.stringify({ title: "Fix login bug" }),
-      canceled: false,
-    });
-  });
-
   test("emits sub-word tokens, reasoning, and sequential tool calls during a foreground turn", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

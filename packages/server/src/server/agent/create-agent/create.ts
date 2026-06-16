@@ -5,7 +5,6 @@ import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeInput } from "../../paseo-worktree-service.js";
 import { expandUserPath, resolvePathFromBase } from "../../path-utils.js";
 import { toWorktreeRequestError } from "../../worktree-errors.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type {
   AgentWorktreeSetupContinuation,
   CreatePaseoWorktreeSetupContinuationInput,
@@ -14,7 +13,6 @@ import type {
 } from "../../worktree-session.js";
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
 import type { AgentManager, ManagedAgent } from "../agent-manager.js";
-import type { StructuredGenerationDaemonConfig } from "../structured-generation-providers.js";
 import type {
   AgentPromptContentBlock,
   AgentPromptInput,
@@ -45,13 +43,8 @@ interface CreateAgentCommandDependencies {
   logger: Logger;
   paseoHome?: string;
   worktreesRoot?: string;
-  workspaceGitService?: Pick<
-    WorkspaceGitService,
-    "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
-  >;
   terminalManager?: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
-  daemonConfig?: StructuredGenerationDaemonConfig | null;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh workspace for a cwd and returns its id. Used when an agent is
   // created with no parent and no worktree: it owns a brand-new workspace rather
@@ -73,7 +66,6 @@ export interface CreateAgentFromSessionInput {
   labels: Record<string, string>;
   env?: Record<string, string>;
   provisionalTitle: string | null;
-  explicitTitle: string | null;
   firstAgentContext: FirstAgentContext;
   buildSessionConfig: (
     config: AgentSessionConfig,
@@ -123,10 +115,8 @@ export interface CreateAgentCommandResult {
 interface ResolvedCreateAgent {
   config: AgentSessionConfig;
   createOptions?: AgentCreateOptions;
-  metadataInitialPrompt?: string;
   prompt?: AgentPromptInput;
   runOptions?: AgentRunOptions;
-  explicitTitle: string | null;
   setupContinuation?: AgentWorktreeSetupContinuation;
   background: boolean;
   promptFailure: "throw" | "log";
@@ -220,10 +210,8 @@ async function resolveSessionCreateAgent(
       // path). createdWorkspaceId is the freshly created worktree's workspace.
       workspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
     },
-    metadataInitialPrompt: trimmedPrompt,
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
-    explicitTitle: input.explicitTitle,
     setupContinuation,
     background: true,
     promptFailure: "throw",
@@ -302,9 +290,7 @@ async function resolveMcpCreateAgent(
             ...(workspaceId ? { workspaceId } : {}),
           }
         : undefined,
-    metadataInitialPrompt: trimmedPrompt,
     prompt: trimmedPrompt,
-    explicitTitle: input.title.trim(),
     setupContinuation,
     background: input.background,
     promptFailure: "log",

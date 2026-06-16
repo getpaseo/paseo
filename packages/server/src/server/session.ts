@@ -3225,7 +3225,7 @@ export class Session {
     let createdAgentId: string | null = null;
     try {
       const trimmedPrompt = initialPrompt?.trim();
-      const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
+      const { provisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
       });
@@ -3259,9 +3259,7 @@ export class Session {
           logger: this.sessionLogger,
           paseoHome: this.paseoHome,
           worktreesRoot: this.worktreesRoot,
-          workspaceGitService: this.workspaceGitService,
           providerSnapshotManager: this.providerSnapshotManager,
-          daemonConfig: this.readStructuredGenerationDaemonConfig(),
         },
         {
           kind: "session",
@@ -3277,7 +3275,6 @@ export class Session {
           labels,
           env,
           provisionalTitle,
-          explicitTitle,
           firstAgentContext,
           buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
             this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
@@ -3455,10 +3452,6 @@ export class Session {
         workspaceId: workspace.workspaceId,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
-        workspaceGitService: this.workspaceGitService,
-        providerSnapshotManager: this.providerSnapshotManager,
-        daemonConfig: this.readStructuredGenerationDaemonConfig(),
-        paseoHome: this.paseoHome,
         logger: this.sessionLogger,
       });
       await this.registerWorkspaceForImportedAgent(workspace);

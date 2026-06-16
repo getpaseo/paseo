@@ -1823,8 +1823,6 @@ export const zhCN: TranslationResources = {
       metadata: {
         title: "元数据生成",
         info: "注入到 Paseo 用来生成元数据的 AI prompts 中的 Project 专属指令，可用于强制执行团队约定，例如分支命名、提交风格或 PR 格式",
-        agentTitle: "Agent 标题",
-        agentTitlePlaceholder: "标题保持祈使句且不超过 40 个字符",
         branchName: "分支名称",
         branchNamePlaceholder: "分支以 feat/ 或 fix/ 开头，个人分支使用 mb/",
         commitMessage: "提交消息",
