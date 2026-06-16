@@ -454,7 +454,7 @@ export async function handlePaseoWorktreeArchiveRequest(
       repoRoot: msg.repoRoot,
       branchName: msg.branchName,
       workspaceId: msg.workspaceId,
-      deleteWorktreeFromDisk: msg.deleteWorktreeFromDisk,
+      scope: msg.scope,
     });
     if (!result.ok) {
       dependencies.emit({

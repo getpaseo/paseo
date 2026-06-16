@@ -114,8 +114,8 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { openExternalUrl } from "@/utils/open-external-url";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { archiveWorkspacesOptimistically } from "@/workspace/workspace-archive";
+import { selectProjectWorkspacesToArchive } from "@/workspace/project-workspace-archive";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
-import { WorktreeDeletePrompt } from "@/workspace/worktree-delete-prompt";
 import {
   isWeb as platformIsWeb,
   isNative as platformIsNative,
@@ -1510,7 +1510,14 @@ function WorkspaceRowWithMenu({
   }, [selected, workspace]);
 
   const archiveController = useWorkspaceArchive({
-    workspace,
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    workspaceDirectory: workspace.workspaceDirectory,
+    workspaceKind: workspace.workspaceKind,
+    name: workspace.name,
+    isDirty: workspace.archiveHasUncommittedChanges,
+    aheadOfOrigin: workspace.archiveUnpushedCommitCount,
+    diffStat: workspace.diffStat,
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
@@ -1519,7 +1526,7 @@ function WorkspaceRowWithMenu({
     if (isArchiving) {
       return;
     }
-    archiveController.beginArchive();
+    archiveController.archive();
   }, [archiveController, isArchiving]);
 
   const handleCopyPath = useCallback(() => {
@@ -1623,13 +1630,6 @@ function WorkspaceRowWithMenu({
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
-      />
-      <WorktreeDeletePrompt
-        visible={archiveController.deletePromptOpen}
-        workspaceName={workspace.name}
-        onKeep={archiveController.confirmKeepOnDisk}
-        onDelete={archiveController.confirmDeleteFromDisk}
-        onCancel={archiveController.cancelDeletePrompt}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
@@ -1927,16 +1927,22 @@ function ProjectBlock({
       }
 
       setIsRemovingProject(true);
-      void archiveWorkspacesOptimistically({
-        client,
-        workspaces: project.workspaces,
-      }).then((failures) => {
-        if (failures.length > 0) {
-          toast.error(t("sidebar.project.toasts.removeFailed"));
-        }
-        setIsRemovingProject(false);
-        return;
-      });
+      void selectProjectWorkspacesToArchive(project.workspaces)
+        .then((workspaces) => archiveWorkspacesOptimistically({ client, workspaces }))
+        .then((failures) => {
+          if (failures.length > 0) {
+            toast.error(t("sidebar.project.toasts.removeFailed"));
+          }
+          setIsRemovingProject(false);
+          return;
+        })
+        .catch((error) => {
+          toast.error(
+            error instanceof Error ? error.message : t("sidebar.project.toasts.removeFailed"),
+          );
+          setIsRemovingProject(false);
+          return;
+        });
     })();
   }, [isRemovingProject, serverId, displayName, t, toast, project.workspaces]);
 

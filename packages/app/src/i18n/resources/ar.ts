@@ -814,12 +814,6 @@ export const ar: TranslationResources = {
           'إخفاء "{{workspaceName}}" من الشريط الجانبي؟\n\n لن يتم تغيير الملفات الموجودة على القرص.',
         hideConfirm: "يخفي",
         cancel: "يلغي",
-        deleteWorktreePrompt: {
-          title: "أرشفة مساحة العمل",
-          message: "هل تريد أيضًا إزالة شجرة العمل من القرص؟",
-          keep: "الاحتفاظ على القرص",
-          delete: "حذف",
-        },
       },
       rename: {
         title: "إعادة تسمية مساحة العمل",

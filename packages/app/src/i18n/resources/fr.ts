@@ -839,12 +839,6 @@ export const fr: TranslationResources = {
           "Masquer «{{workspaceName}}» dans la barre latérale?\n\nLes fichiers sur le disque ne seront pas modifiés.",
         hideConfirm: "Cacher",
         cancel: "Annuler",
-        deleteWorktreePrompt: {
-          title: "Archiver l'espace de travail",
-          message: "Supprimer aussi le worktree du disque?",
-          keep: "Conserver sur le disque",
-          delete: "Supprimer",
-        },
       },
       rename: {
         title: "Renommer l'espace de travail",

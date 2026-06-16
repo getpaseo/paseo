@@ -4,8 +4,9 @@ import type pino from "pino";
 import type { GitHubService } from "../../services/github-service.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
+  archiveByScope,
   type ActiveWorkspaceRef,
-  archivePaseoWorktree,
+  resolveWorkspaceIdAtPath,
 } from "../paseo-worktree-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
@@ -203,31 +204,46 @@ export class CreateAgentLifecycleDispatch {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
     }
 
-    await archivePaseoWorktree(
+    const workspaceId = await resolveWorkspaceIdAtPath(
       {
-        paseoHome: this.dependencies.paseoHome,
-        worktreesRoot: this.dependencies.worktreesRoot,
-        github: this.dependencies.github,
-        workspaceGitService: this.dependencies.workspaceGitService,
-        agentManager: this.dependencies.agentManager,
-        agentStorage: this.dependencies.agentStorage,
         findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
         listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
-        archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
-        emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
-        markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
-        clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
-        killTerminalsForWorkspace: this.dependencies.killTerminalsForWorkspace,
-        sessionLogger: this.dependencies.logger,
       },
-      {
-        targetPath: options.worktreePath,
-        repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
-        worktreesRoot: ownership.worktreeRoot,
-        worktreesBaseRoot: this.dependencies.worktreesRoot,
-        requestId: randomUUID(),
-      },
+      options.worktreePath,
     );
+
+    if (!workspaceId) {
+      this.dependencies.logger.warn(
+        { worktreePath: options.worktreePath },
+        "Could not resolve workspace for auto-archive; skipping",
+      );
+    } else {
+      await archiveByScope(
+        {
+          paseoHome: this.dependencies.paseoHome,
+          worktreesRoot: this.dependencies.worktreesRoot,
+          github: this.dependencies.github,
+          workspaceGitService: this.dependencies.workspaceGitService,
+          agentManager: this.dependencies.agentManager,
+          agentStorage: this.dependencies.agentStorage,
+          findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
+          listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
+          archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
+          emitWorkspaceUpdatesForWorkspaceIds:
+            this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
+          markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,
+          clearWorkspaceArchiving: this.dependencies.clearWorkspaceArchiving,
+          killTerminalsForWorkspace: this.dependencies.killTerminalsForWorkspace,
+          sessionLogger: this.dependencies.logger,
+        },
+        {
+          scope: { kind: "workspace", workspaceId },
+          repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
+          worktreesBaseRoot: this.dependencies.worktreesRoot,
+          requestId: randomUUID(),
+        },
+      );
+    }
 
     if (options.agentId) {
       this.dependencies.emitAgentRemove(options.agentId);

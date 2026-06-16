@@ -267,10 +267,7 @@ import {
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
-import {
-  type ActiveWorkspaceRef,
-  archiveWorkspaceContents,
-} from "./paseo-worktree-archive-service.js";
+import { archiveByScope, type ActiveWorkspaceRef } from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
@@ -8037,31 +8034,43 @@ export class Session {
       if (!existing) {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
-      if (existing.kind === "worktree") {
-        throw new Error("Use worktree archive for Paseo worktrees");
-      }
-      const archivedAt = new Date().toISOString();
-      // Archive removes the task (the workspace record) and everything the
-      // workspace owns — its agents and terminals — scoped by workspaceId so a
-      // sibling workspace sharing the same directory is untouched. The directory
-      // itself is never deleted here; local checkouts are not Paseo-owned.
-      this.markWorkspaceArchiving([existing.workspaceId], archivedAt);
-      try {
-        await archiveWorkspaceContents(
-          {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            killTerminalsForWorkspace: (workspaceId) =>
-              this.terminalController.killTerminalsForWorkspace(workspaceId),
-            sessionLogger: this.sessionLogger,
-          },
-          existing.workspaceId,
-        );
-        await this.archiveWorkspaceRecord(existing.workspaceId, archivedAt);
-      } finally {
-        this.clearWorkspaceArchiving([existing.workspaceId]);
-      }
-      await this.emitWorkspaceUpdateForWorkspaceId(existing.workspaceId);
+
+      const gitSnapshot = await this.workspaceGitService
+        .getSnapshot(existing.cwd)
+        .catch(() => null);
+      const repoRoot = gitSnapshot?.git?.repoRoot ?? null;
+
+      await archiveByScope(
+        {
+          paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
+          github: this.github,
+          workspaceGitService: this.workspaceGitService,
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
+          listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+          emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+            this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+          markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+            this.markWorkspaceArchiving(workspaceIds, archivingAt),
+          clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+          killTerminalsForWorkspace: (workspaceId) =>
+            this.terminalController.killTerminalsForWorkspace(workspaceId),
+          sessionLogger: this.sessionLogger,
+        },
+        {
+          scope: { kind: "workspace", workspaceId: existing.workspaceId },
+          repoRoot,
+          worktreesBaseRoot: this.worktreesRoot,
+          requestId: request.requestId,
+        },
+      );
+
+      const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
+      const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
+      await this.emitWorkspaceUpdateForWorkspaceId(request.workspaceId);
       this.emit({
         type: "archive_workspace_response",
         payload: {

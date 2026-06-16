@@ -1614,10 +1614,15 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   // present the daemon archives this exact workspace; when absent it falls back to
   // resolving by worktreePath, preferring the worktree-kind record on a cwd tie.
   workspaceId: z.string().optional(),
-  // COMPAT(worktreeDiskDeletion): added in v0.1.97, drop the optional gate when floor >= v0.1.97.
-  // When true, and the workspace is the last active reference to a Paseo-owned
-  // worktree, the daemon also removes the worktree directory from disk. Default
-  // false: archiving only removes the workspace record and leaves the directory.
+  // COMPAT(worktreeArchiveScope): added in v0.1.97, drop the gate when floor >= v0.1.97.
+  // Scope of the archive operation. "workspace" archives a single workspace record
+  // (today's default UI behavior). "worktree" archives every active workspace whose
+  // cwd resolves to the target directory, then removes the directory if it is
+  // Paseo-owned. Omitted/unknown values default to "workspace" for old-client safety.
+  scope: z.enum(["workspace", "worktree"]).optional().default("workspace"),
+  // COMPAT(worktreeDiskDeletion): added in v0.1.97, ignored as of v0.1.97
+  // (disk removal derived from scope + last-reference + ownership); field
+  // retained for wire parse-compat, drop when floor >= v0.1.97.
   deleteWorktreeFromDisk: z.boolean().optional().default(false),
   requestId: z.string(),
 });

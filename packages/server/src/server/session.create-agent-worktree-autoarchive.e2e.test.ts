@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -136,10 +136,10 @@ test("create_agent_request creates a worktree and auto-archives both after the f
 
   await ctx.client.waitForFinish(created.id, 10000);
 
-  // Archiving removes the task and its agents, but never deletes the worktree
-  // from disk — a directory can back multiple workspaces.
+  // Auto-archive is asynchronous after the agent turns complete; poll until the
+  // last-reference worktree directory is gone.
   await expectAgentAbsentFromActiveList(created.id);
-  await expectWorktreePresentInList(repoDir, created.cwd);
+  await expect.poll(() => existsSync(created.cwd), { timeout: 10000, interval: 100 }).toBe(false);
 }, 30000);
 
 test("create_agent_request with autoArchive archives only the agent when no worktree was created", async () => {
@@ -206,14 +206,36 @@ test("create_agent_request with worktree but no autoArchive leaves agent and wor
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 });
 
-test("archiving a created worktree archives its agents but leaves the worktree on disk", async () => {
+test("archiving a created worktree removes the directory on last reference", async () => {
   const created = await createAgentInBranchOffWorktree();
 
   await ctx.client.waitForFinish(created.agentId, 10000);
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 
   await expectAgentAbsentFromActiveList(created.agentId);
+  await expectWorktreeListEmpty(created.repoDir);
+  expect(existsSync(created.worktreePath)).toBe(false);
+});
+
+test("auto-archiving a created worktree keeps the directory when a sibling workspace references it", async () => {
+  const created = await createAgentInBranchOffWorktree({ autoArchive: true });
+
+  // Create a sibling workspace that shares the same backing directory.
+  const sibling = await ctx.client.createWorkspace({
+    source: { kind: "directory", path: created.worktreePath },
+    title: "sibling",
+  });
+  if (!sibling.workspace) {
+    throw new Error(sibling.error ?? "Failed to create sibling workspace");
+  }
+
+  await ctx.client.waitForFinish(created.agentId, 10000);
+
+  await expectAgentAbsentFromActiveList(created.agentId);
   await expectWorktreePresentInList(created.repoDir, created.worktreePath);
+  expect(existsSync(created.worktreePath)).toBe(true);
+
+  await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 });
 
 test("create_agent_request rejects legacy git options before creating a worktree", async () => {

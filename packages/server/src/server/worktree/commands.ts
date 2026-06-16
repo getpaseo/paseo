@@ -2,8 +2,10 @@ import { join } from "node:path";
 
 import { getPaseoWorktreesRoot, isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
-  archivePaseoWorktree,
+  archiveByScope,
+  resolveWorkspaceIdAtPath,
   type ArchivePaseoWorktreeDependencies,
+  type ArchiveScope,
 } from "../paseo-worktree-archive-service.js";
 import type {
   CreatePaseoWorktreeInput,
@@ -101,7 +103,7 @@ export interface ArchivePaseoWorktreeCommandInput {
   worktreeSlug?: string;
   branchName?: string;
   workspaceId?: string;
-  deleteWorktreeFromDisk?: boolean;
+  scope?: ArchiveScope["kind"];
 }
 
 export type ArchivePaseoWorktreeCommandResult =
@@ -121,34 +123,61 @@ export async function archivePaseoWorktreeCommand(
   input: ArchivePaseoWorktreeCommandInput,
 ): Promise<ArchivePaseoWorktreeCommandResult> {
   const resolvedTarget = await resolveArchiveTarget(dependencies, input);
-  const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
-    paseoHome: dependencies.paseoHome,
-    worktreesRoot: dependencies.worktreesRoot,
-  });
+  const scope = input.scope ?? "workspace";
 
-  if (!ownership.allowed) {
+  if (scope === "worktree") {
+    const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
+      paseoHome: dependencies.paseoHome,
+      worktreesRoot: dependencies.worktreesRoot,
+    });
+
+    if (!ownership.allowed) {
+      return {
+        ok: false,
+        code: "NOT_ALLOWED",
+        message: "Worktree is not a Paseo-owned worktree",
+        removedAgents: [],
+      };
+    }
+
+    const result = await archiveByScope(dependencies, {
+      scope: { kind: "worktree", targetPath: resolvedTarget.targetPath },
+      repoRoot: ownership.repoRoot ?? resolvedTarget.repoRoot ?? null,
+      worktreesRoot: ownership.worktreeRoot,
+      worktreesBaseRoot: dependencies.worktreesRoot,
+      requestId: input.requestId,
+    });
+
     return {
-      ok: false,
-      code: "NOT_ALLOWED",
-      message: "Worktree is not a Paseo-owned worktree",
+      ok: true,
+      removedAgents: result.archivedAgentIds,
+    };
+  }
+
+  const workspaceId =
+    input.workspaceId ?? (await resolveWorkspaceIdAtPath(dependencies, resolvedTarget.targetPath));
+
+  if (!workspaceId) {
+    dependencies.sessionLogger?.warn(
+      { targetPath: resolvedTarget.targetPath },
+      "Could not resolve workspace for archive; skipping",
+    );
+    return {
+      ok: true,
       removedAgents: [],
     };
   }
 
-  const repoRoot = ownership.repoRoot ?? resolvedTarget.repoRoot ?? null;
-  const removedAgents = await archivePaseoWorktree(dependencies, {
-    targetPath: resolvedTarget.targetPath,
-    repoRoot,
-    worktreesRoot: ownership.worktreeRoot,
+  const result = await archiveByScope(dependencies, {
+    scope: { kind: "workspace", workspaceId },
+    repoRoot: resolvedTarget.repoRoot,
     worktreesBaseRoot: dependencies.worktreesRoot,
-    workspaceId: input.workspaceId,
-    deleteWorktreeFromDisk: input.deleteWorktreeFromDisk,
     requestId: input.requestId,
   });
 
   return {
     ok: true,
-    removedAgents,
+    removedAgents: result.archivedAgentIds,
   };
 }
 

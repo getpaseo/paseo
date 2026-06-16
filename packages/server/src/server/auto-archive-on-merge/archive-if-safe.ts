@@ -4,9 +4,10 @@ import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
+  archiveByScope,
   type ActiveWorkspaceRef,
-  archivePaseoWorktree,
   killTerminalsForWorkspace,
+  resolveWorkspaceIdAtPath,
 } from "../paseo-worktree-archive-service.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
@@ -34,13 +35,15 @@ export interface AutoArchiveArchiveOptions {
 }
 
 export interface ArchiveIfSafeDependencies {
-  archivePaseoWorktree: typeof archivePaseoWorktree;
+  archiveByScope: typeof archiveByScope;
+  resolveWorkspaceIdAtPath: typeof resolveWorkspaceIdAtPath;
   isPaseoOwnedWorktreeCwd: typeof isPaseoOwnedWorktreeCwd;
   killTerminalsForWorkspace: typeof killTerminalsForWorkspace;
 }
 
 const defaultDependencies: ArchiveIfSafeDependencies = {
-  archivePaseoWorktree,
+  archiveByScope,
+  resolveWorkspaceIdAtPath,
   isPaseoOwnedWorktreeCwd,
   killTerminalsForWorkspace,
 };
@@ -97,7 +100,19 @@ export async function archiveIfSafe(input: {
     }
 
     try {
-      await deps.archivePaseoWorktree(
+      const workspaceId = await deps.resolveWorkspaceIdAtPath(
+        {
+          findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+          listActiveWorkspaces: options.listActiveWorkspaces,
+        },
+        cwd,
+      );
+      if (!workspaceId) {
+        log.warn({ cwd }, "Auto-archive could not resolve a workspace for cwd; skipping");
+        return;
+      }
+
+      await deps.archiveByScope(
         {
           paseoHome: options.paseoHome,
           worktreesRoot: options.worktreesRoot,
@@ -111,25 +126,20 @@ export async function archiveIfSafe(input: {
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
           markWorkspaceArchiving: options.markWorkspaceArchiving,
           clearWorkspaceArchiving: options.clearWorkspaceArchiving,
-          killTerminalsForWorkspace: (workspaceId) =>
+          killTerminalsForWorkspace: (workspaceIdToKill) =>
             deps.killTerminalsForWorkspace(
               {
                 terminalManager: options.terminalManager,
                 sessionLogger: log,
               },
-              workspaceId,
+              workspaceIdToKill,
             ),
           sessionLogger: log,
         },
         {
-          targetPath: cwd,
+          scope: { kind: "workspace", workspaceId },
           repoRoot: ownership.repoRoot ?? null,
-          worktreesRoot: ownership.worktreeRoot,
           worktreesBaseRoot: options.worktreesRoot,
-          // Last-reference + Paseo-ownership gated inside the service, so sibling
-          // workspaces sharing the directory stay protected. Removing the merged
-          // worktree off disk prevents merged worktrees from accumulating.
-          deleteWorktreeFromDisk: true,
           requestId: "auto-archive-on-merge",
         },
       );

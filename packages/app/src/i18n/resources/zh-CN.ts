@@ -805,12 +805,6 @@ export const zhCN: TranslationResources = {
         hideMessage: "从侧边栏隐藏「{{workspaceName}}」？\n\n磁盘上的文件不会被更改。",
         hideConfirm: "隐藏",
         cancel: "取消",
-        deleteWorktreePrompt: {
-          title: "归档 workspace",
-          message: "同时从磁盘删除 worktree？",
-          keep: "保留在磁盘上",
-          delete: "删除",
-        },
       },
       rename: {
         title: "重命名 workspace",

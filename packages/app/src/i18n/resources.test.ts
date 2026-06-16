@@ -254,21 +254,6 @@ describe("translation resources", () => {
     expect(en.openProject.tiles.addProject.title).toBe("Add a project");
   });
 
-  it("resolves the worktree delete prompt keys used by the sidebar prompt", () => {
-    const strings = flattenStrings(en);
-
-    expect(strings["sidebar.workspace.confirmations.deleteWorktreePrompt.title"]).toBe(
-      "Archive workspace",
-    );
-    expect(strings["sidebar.workspace.confirmations.deleteWorktreePrompt.message"]).toBe(
-      "Also remove the worktree from disk?",
-    );
-    expect(strings["sidebar.workspace.confirmations.deleteWorktreePrompt.keep"]).toBe(
-      "Keep on disk",
-    );
-    expect(strings["sidebar.workspace.confirmations.deleteWorktreePrompt.delete"]).toBe("Delete");
-  });
-
   it("includes provider selector and pairing keys for the Batch 4D migration", () => {
     expect(en.modelSelector.title).toBe("Select provider");
     expect(en.modelSelector.favorites).toBe("Favorites");

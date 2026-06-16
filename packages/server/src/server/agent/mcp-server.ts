@@ -2248,9 +2248,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           repoRoot,
           worktreePath,
           worktreeSlug,
-          // This tool's contract is to delete the worktree; on-disk removal still
-          // only happens when no sibling workspace references the directory.
-          deleteWorktreeFromDisk: true,
+          // This tool archives every workspace on the directory, then removes the
+          // directory. Disk removal is derived from scope + last-reference.
+          scope: "worktree",
         },
       );
       if (!result.ok) {
