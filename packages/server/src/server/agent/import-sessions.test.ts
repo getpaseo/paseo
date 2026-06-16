@@ -379,7 +379,6 @@ test("importProviderSession imports a selected provider session without listing"
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
   } as unknown as AgentStorage;
-  const scheduleAgentMetadataGeneration = vi.fn();
 
   const result = await importProviderSession({
     request: {
@@ -392,7 +391,6 @@ test("importProviderSession imports a selected provider session without listing"
     agentManager,
     agentStorage,
     logger: { warn: vi.fn(), error: vi.fn() } as never,
-    deps: { scheduleAgentMetadataGeneration },
   });
 
   expect(agentManager.importProviderSession).toHaveBeenCalledWith({
@@ -402,15 +400,6 @@ test("importProviderSession imports a selected provider session without listing"
     workspaceId: "ws-imported",
     labels: undefined,
   });
-  expect(scheduleAgentMetadataGeneration).toHaveBeenCalledWith(
-    expect.objectContaining({
-      agentManager,
-      agentId: snapshot.id,
-      cwd,
-      initialPrompt: "Trace recent provider sessions\n\nkeep it tight",
-      explicitTitle: null,
-    }),
-  );
   expect(result).toEqual({ snapshot, timelineSize: 2 });
 });
 

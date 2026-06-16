@@ -226,22 +226,6 @@ export class AgentStorage {
     await this.upsert({ ...record, title });
   }
 
-  async setGeneratedTitle(agentId: string, title: string): Promise<StoredAgentRecord> {
-    await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = this.cache.get(agentId) ?? null;
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    const nextRecord = {
-      ...record,
-      title,
-      updatedAt: new Date().toISOString(),
-    };
-    await this.queueRecordWrite(nextRecord);
-    return nextRecord;
-  }
-
   async flush(): Promise<void> {
     await this.load().catch(() => undefined);
     const writes = Array.from(this.pendingWrites.values());

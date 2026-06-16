@@ -14,7 +14,6 @@ import type {
 } from "../../worktree-session.js";
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
 import type { AgentManager, ManagedAgent } from "../agent-manager.js";
-import { scheduleAgentMetadataGeneration } from "../agent-metadata-generator.js";
 import type { StructuredGenerationDaemonConfig } from "../structured-generation-providers.js";
 import type {
   AgentPromptContentBlock,
@@ -327,25 +326,6 @@ async function sendInitialPrompt(
   resolved: ResolvedCreateAgent,
   snapshot: ManagedAgent,
 ): Promise<{ started: boolean; liveSnapshot: ManagedAgent }> {
-  scheduleAgentMetadataGeneration({
-    agentManager: dependencies.agentManager,
-    agentId: snapshot.id,
-    cwd: snapshot.cwd,
-    workspaceGitService: dependencies.workspaceGitService,
-    providerSnapshotManager: dependencies.providerSnapshotManager,
-    daemonConfig: dependencies.daemonConfig,
-    currentSelection: {
-      provider: snapshot.provider,
-      model: snapshot.runtimeInfo?.model ?? resolved.config.model,
-      thinkingOptionId:
-        snapshot.runtimeInfo?.thinkingOptionId ?? resolved.config.thinkingOptionId ?? null,
-    },
-    initialPrompt: resolved.metadataInitialPrompt,
-    explicitTitle: resolved.explicitTitle,
-    paseoHome: dependencies.paseoHome,
-    logger: dependencies.logger,
-  });
-
   try {
     const prompt = resolved.prompt;
     if (prompt === undefined) {

@@ -1331,20 +1331,6 @@ export class AgentManager {
     this.emitState(agent, { persist: false });
   }
 
-  async setGeneratedTitle(agentId: string, title: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    const normalizedTitle = title.trim();
-    if (!normalizedTitle) {
-      return;
-    }
-
-    const registry = this.requireRegistry();
-    const persisted = await registry.setGeneratedTitle(agent.id, normalizedTitle);
-
-    agent.updatedAt = new Date(persisted.updatedAt);
-    this.emitState(agent, { persist: false });
-  }
-
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     const agent = this.requireAgent(agentId);
     agent.labels = { ...agent.labels, ...labels };

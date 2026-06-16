@@ -12,6 +12,16 @@ import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.j
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
+vi.mock("../agent-response-loop.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agent-response-loop.js")>();
+  return {
+    ...actual,
+    generateStructuredAgentResponseWithFallback: vi.fn().mockResolvedValue({
+      title: "LLM generated title",
+    }),
+  };
+});
+
 const logger = createTestLogger();
 
 function createRealAgentManager(storage: AgentStorage): AgentManager {
@@ -194,6 +204,76 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
 
     const storedChild = await storage.get(child.id);
     expect(storedChild?.workspaceId).toBe("ws-new-worktree");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("session create keeps the provisional prompt title and does not overwrite it with an LLM summary", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-title-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        initialPrompt: "Implement auth retries with backoff\n\ninclude tests",
+        labels: {},
+        provisionalTitle: "Implement auth retries with backoff",
+        explicitTitle: null,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+
+    // Give any scheduled LLM title generation time to run and potentially
+    // overwrite the provisional title.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const stored = await storage.get(snapshot.id);
+    expect(stored?.title).toBe("Implement auth retries with backoff");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("session create keeps an explicit title and does not overwrite it with an LLM summary", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-explicit-title-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir, title: "Explicit override" },
+        initialPrompt: "Implement auth retries with backoff",
+        labels: {},
+        provisionalTitle: "Implement auth retries with backoff",
+        explicitTitle: "Explicit override",
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const stored = await storage.get(snapshot.id);
+    expect(stored?.title).toBe("Explicit override");
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
