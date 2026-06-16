@@ -174,6 +174,9 @@ export function sanitizePermissionRequest(
   if (sanitized.input === undefined) {
     delete sanitized.input;
   }
+  if (sanitized.detail === undefined) {
+    delete sanitized.detail;
+  }
   if (sanitized.suggestions === undefined) {
     delete sanitized.suggestions;
   }

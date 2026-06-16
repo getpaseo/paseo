@@ -17,6 +17,7 @@ import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sd
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
+  AgentPermissionRequestPayloadSchema,
   AgentSnapshotPayloadSchema,
 } from "@getpaseo/protocol/messages";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../workspace-registry.js";
@@ -3737,6 +3738,66 @@ describe("agent snapshot MCP serialization", () => {
         `list_agents response failed AgentListItemPayloadSchema: ${JSON.stringify(parsed.error.issues, null, 2)}`,
       );
     }
+  });
+
+  it("emits list_pending_permissions payloads that satisfy the declared output schema", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.listAgents.mockReturnValue([
+      createManagedAgent({
+        id: "agent-with-permission",
+        provider: "codex",
+        pendingPermissions: new Map([
+          [
+            "perm-minimal",
+            {
+              id: "perm-minimal",
+              provider: "codex",
+              name: "request_user_input",
+              kind: "question",
+              title: "Need input",
+              input: { prompt: "Pick one" },
+              detail: undefined,
+              metadata: { source: "test" },
+            },
+          ],
+        ]),
+      }),
+    ]);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "list_pending_permissions");
+    const response = await tool.handler({});
+
+    const permissions = z
+      .array(
+        z.object({
+          agentId: z.string(),
+          status: z.string(),
+          request: AgentPermissionRequestPayloadSchema,
+        }),
+      )
+      .parse(response.structuredContent.permissions);
+    expect(permissions).toEqual([
+      {
+        agentId: "agent-with-permission",
+        status: "idle",
+        request: {
+          id: "perm-minimal",
+          provider: "codex",
+          name: "request_user_input",
+          kind: "question",
+          title: "Need input",
+          input: { prompt: "Pick one" },
+          metadata: { source: "test" },
+        },
+      },
+    ]);
+    expectOutputSchemaAccepts(tool, response.structuredContent);
   });
 
   it("loads archived agents before reading get_agent_activity", async () => {
