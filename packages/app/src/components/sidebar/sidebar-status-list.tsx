@@ -42,6 +42,7 @@ import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/wo
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import * as Clipboard from "expo-clipboard";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -380,9 +381,7 @@ function StatusWorkspaceRowWithMenu({
     workspaceDirectory: workspace.workspaceDirectory,
     workspaceKind: workspace.workspaceKind,
     name: workspace.name,
-    isDirty: workspace.archiveHasUncommittedChanges,
-    aheadOfOrigin: workspace.archiveUnpushedCommitCount,
-    diffStat: workspace.diffStat,
+    ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });

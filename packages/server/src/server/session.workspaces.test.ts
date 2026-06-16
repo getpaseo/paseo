@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -22,6 +22,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "./agent/agent-sdk-types.js";
+import { createWorktree } from "../utils/worktree.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
@@ -4030,6 +4031,111 @@ test("archive_workspace_request hides non-destructive workspace records", async 
     | { payload: Record<string, unknown> }
     | undefined;
   expect(response?.payload.error).toBeNull();
+});
+
+test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "session-worktree-kind-archive-"));
+  const repoDir = path.join(tempDir, "repo");
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+
+  const paseoHome = path.join(tempDir, ".paseo");
+  const worktree = await createWorktree({
+    cwd: repoDir,
+    worktreeSlug: "worktree-kind-archive",
+    source: {
+      kind: "branch-off",
+      baseBranch: "main",
+      branchName: "worktree-kind-archive",
+    },
+    runSetup: false,
+    paseoHome,
+  });
+
+  const workspaceId = "ws-worktree-kind-archive";
+  const projectId = "proj-worktree-kind-archive";
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId,
+    cwd: worktree.worktreePath,
+    kind: "worktree",
+    displayName: "worktree-kind-archive",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId,
+    rootPath: repoDir,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    workspaceGitService: createNoopWorkspaceGitService({
+      getSnapshot: async (): Promise<WorkspaceGitRuntimeSnapshot> => ({
+        cwd: worktree.worktreePath,
+        git: {
+          isGit: true,
+          repoRoot: repoDir,
+          mainRepoRoot: repoDir,
+          currentBranch: "worktree-kind-archive",
+          remoteUrl: null,
+          isPaseoOwnedWorktree: true,
+          isDirty: false,
+          baseRef: null,
+          aheadBehind: null,
+          aheadOfOrigin: null,
+          behindOfOrigin: null,
+          hasRemote: false,
+          diffStat: null,
+        },
+        github: {
+          featuresEnabled: false,
+          pullRequest: null,
+          error: null,
+        },
+      }),
+    }),
+  });
+  session.paseoHome = paseoHome;
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.workspaceRegistry.get = async () => workspace;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.archive = async (_id: string, archivedAt: string) => {
+    workspace.archivedAt = archivedAt;
+  };
+  session.projectRegistry.list = async () => [project];
+
+  try {
+    await session.handleMessage({
+      type: "archive_workspace_request",
+      workspaceId,
+      requestId: "req-worktree-kind-archive",
+    });
+
+    expect(workspace.archivedAt).toBeTruthy();
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    const response = emitted.find((message) => message.type === "archive_workspace_response") as
+      | { payload: Record<string, unknown> }
+      | undefined;
+    expect(response?.payload.error).toBeNull();
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test.skip("opening a new worktree reconciles older local workspaces into the remote project", async () => {

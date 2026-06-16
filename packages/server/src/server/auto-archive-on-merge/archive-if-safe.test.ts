@@ -11,7 +11,7 @@ import {
   type ArchiveIfSafeDependencies,
   type AutoArchiveArchiveOptions,
 } from "./archive-if-safe.js";
-import type { ArchiveResult, ActiveWorkspaceRef } from "../paseo-worktree-archive-service.js";
+import type { ArchiveResult, ActiveWorkspaceRef } from "../workspace-archive-service.js";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import { createWorktree, type WorktreeConfig } from "../../utils/worktree.js";
 import type { GitHubService } from "../../../services/github-service.js";
@@ -474,7 +474,7 @@ describe("archiveIfSafe", () => {
       {
         scope: { kind: "workspace", workspaceId: "ws-auto-archive" },
         repoRoot: "/tmp/repo",
-        worktreesBaseRoot: undefined,
+        paseoWorktreesBaseRoot: undefined,
         requestId: "auto-archive-on-merge",
       },
     );

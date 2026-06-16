@@ -7,16 +7,7 @@ export async function selectWorkspaceInSidebar(page: Page, workspaceId: string):
   await row.click();
 }
 
-export async function expectWorkspaceListed(page: Page, name: string): Promise<void> {
-  await expect(
-    page.locator('[data-testid^="sidebar-workspace-row-"]').filter({ hasText: name }).first(),
-  ).toBeVisible({ timeout: 30_000 });
-}
-
-// The workspace row kebab and its menu items carry no web ARIA role, so the sidebar
-// suite addresses them by the stable test ids the app assigns per workspace — the same
-// convention the rename flow uses. The kebab only reveals on hover.
-export async function archiveWorktreeFromSidebar(page: Page, workspaceId: string): Promise<void> {
+async function openWorkspaceSidebarKebab(page: Page, workspaceId: string) {
   const serverId = getServerId();
   const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
   await expect(row).toBeVisible({ timeout: 30_000 });
@@ -26,14 +17,34 @@ export async function archiveWorktreeFromSidebar(page: Page, workspaceId: string
   await expect(kebab).toBeVisible({ timeout: 10_000 });
   await kebab.click();
 
+  return serverId;
+}
+
+export async function expectWorkspaceListed(page: Page, name: string): Promise<void> {
+  await expect(
+    page.locator('[data-testid^="sidebar-workspace-row-"]').filter({ hasText: name }).first(),
+  ).toBeVisible({ timeout: 30_000 });
+}
+
+// The workspace row kebab and its menu items carry no web ARIA role, so the sidebar
+// suite addresses them by the stable test ids the app assigns per workspace — the same
+// convention the rename flow uses. The kebab only reveals on hover.
+export async function clickArchiveWorkspaceMenuItem(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const serverId = await openWorkspaceSidebarKebab(page, workspaceId);
+  const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
+  await expect(archiveItem).toBeVisible({ timeout: 10_000 });
+  await archiveItem.click();
+}
+
+export async function archiveWorktreeFromSidebar(page: Page, workspaceId: string): Promise<void> {
   // A clean worktree archives with no prompt; if the host reports unsynced work the app
   // raises a browser confirm. Accept it so the user-confirmed archive stays deterministic
   // either way.
   page.once("dialog", (dialog) => void dialog.accept());
-
-  const archiveItem = page.getByTestId(`sidebar-workspace-menu-archive-${serverId}:${workspaceId}`);
-  await expect(archiveItem).toBeVisible({ timeout: 10_000 });
-  await archiveItem.click();
+  await clickArchiveWorkspaceMenuItem(page, workspaceId);
 }
 
 export async function expectWorkspaceAbsentFromSidebar(

@@ -31,8 +31,8 @@ import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../persistence-hooks.js";
 import {
   killTerminalsForWorkspace,
-  type ArchivePaseoWorktreeDependencies,
-} from "../paseo-worktree-archive-service.js";
+  type ArchiveDependencies,
+} from "../workspace-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { createAgentCommand } from "./create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
@@ -74,8 +74,8 @@ import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import { WorktreeRequestError } from "../worktree-errors.js";
 import {
-  archivePaseoWorktreeCommand,
-  type ArchivePaseoWorktreeCommandDependencies,
+  archiveCommand,
+  type ArchiveCommandDependencies,
   createPaseoWorktreeCommand,
   type CreatePaseoWorktreeCommandInput,
   listPaseoWorktreesCommand,
@@ -93,12 +93,12 @@ export interface AgentMcpServerOptions {
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
-  findWorkspaceIdForCwd?: ArchivePaseoWorktreeDependencies["findWorkspaceIdForCwd"];
-  listActiveWorkspaces?: ArchivePaseoWorktreeDependencies["listActiveWorkspaces"];
-  archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
-  emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
-  clearWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["clearWorkspaceArchiving"];
+  findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
+  listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
+  archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
+  emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
+  markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
+  clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh workspace for a cwd and returns its id, used when an agent is
   // created with no parent and no worktree.
@@ -2236,7 +2236,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       }
       const repoRoot = await options.workspaceGitService.resolveRepoRoot(resolvedCwd);
 
-      const result = await archivePaseoWorktreeCommand(
+      const result = await archiveCommand(
         archiveWorktreeDependencies(options, {
           agentManager,
           agentStorage,
@@ -2430,7 +2430,7 @@ interface ArchiveWorktreeCommandContext {
 function archiveWorktreeDependencies(
   options: AgentMcpServerOptions,
   context: ArchiveWorktreeCommandContext,
-): ArchivePaseoWorktreeCommandDependencies {
+): ArchiveCommandDependencies {
   if (!options.github) {
     throw new Error("GitHub service is required to archive worktrees");
   }
@@ -2457,7 +2457,7 @@ function archiveWorktreeDependencies(
   }
   return {
     paseoHome: options.paseoHome,
-    worktreesRoot: options.worktreesRoot,
+    paseoWorktreesBaseRoot: options.worktreesRoot,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,

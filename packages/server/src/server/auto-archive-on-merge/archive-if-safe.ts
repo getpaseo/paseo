@@ -8,7 +8,7 @@ import {
   type ActiveWorkspaceRef,
   killTerminalsForWorkspace,
   resolveWorkspaceIdAtPath,
-} from "../paseo-worktree-archive-service.js";
+} from "../workspace-archive-service.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitServiceImpl,
@@ -19,7 +19,7 @@ import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
-  worktreesRoot?: string;
+  paseoWorktreesBaseRoot?: string;
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: GitHubService;
@@ -93,7 +93,7 @@ export async function archiveIfSafe(input: {
 
     const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
       paseoHome: options.paseoHome,
-      worktreesRoot: options.worktreesRoot,
+      worktreesRoot: options.paseoWorktreesBaseRoot,
     });
     if (!ownership.allowed) {
       return;
@@ -115,7 +115,7 @@ export async function archiveIfSafe(input: {
       await deps.archiveByScope(
         {
           paseoHome: options.paseoHome,
-          worktreesRoot: options.worktreesRoot,
+          paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
           github: options.github,
           workspaceGitService: options.workspaceGitService,
           agentManager: options.agentManager,
@@ -139,7 +139,7 @@ export async function archiveIfSafe(input: {
         {
           scope: { kind: "workspace", workspaceId },
           repoRoot: ownership.repoRoot ?? null,
-          worktreesBaseRoot: options.worktreesRoot,
+          paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
           requestId: "auto-archive-on-merge",
         },
       );

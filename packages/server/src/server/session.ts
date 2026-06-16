@@ -267,7 +267,7 @@ import {
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
-import { archiveByScope, type ActiveWorkspaceRef } from "./paseo-worktree-archive-service.js";
+import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
@@ -6015,7 +6015,7 @@ export class Session {
     return handleWorktreeArchiveRequest(
       {
         paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
+        paseoWorktreesBaseRoot: this.worktreesRoot,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
@@ -8043,7 +8043,7 @@ export class Session {
       await archiveByScope(
         {
           paseoHome: this.paseoHome,
-          worktreesRoot: this.worktreesRoot,
+          paseoWorktreesBaseRoot: this.worktreesRoot,
           github: this.github,
           workspaceGitService: this.workspaceGitService,
           agentManager: this.agentManager,
@@ -8063,14 +8063,13 @@ export class Session {
         {
           scope: { kind: "workspace", workspaceId: existing.workspaceId },
           repoRoot,
-          worktreesBaseRoot: this.worktreesRoot,
+          paseoWorktreesBaseRoot: this.worktreesRoot,
           requestId: request.requestId,
         },
       );
 
       const archivedWorkspace = await this.workspaceRegistry.get(request.workspaceId);
       const archivedAt = archivedWorkspace?.archivedAt ?? new Date().toISOString();
-      await this.emitWorkspaceUpdateForWorkspaceId(request.workspaceId);
       this.emit({
         type: "archive_workspace_response",
         payload: {

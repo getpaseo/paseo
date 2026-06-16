@@ -13,7 +13,7 @@ import type {
   UnsubscribeTerminalRequest,
   UnsubscribeTerminalsRequest,
 } from "../server/messages.js";
-import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/paseo-worktree-archive-service.js";
+import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/workspace-archive-service.js";
 import {
   TerminalStreamOpcode,
   decodeTerminalResizePayload,

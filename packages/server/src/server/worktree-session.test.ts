@@ -1902,4 +1902,95 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       },
     });
   });
+
+  test("ignores deleteWorktreeFromDisk:true and derives directory removal from remaining references", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "archive-delete-flag",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "archive-delete-flag",
+      runSetup: false,
+      paseoHome,
+    });
+    const sharedCwd = created.worktreePath;
+    const workspaceA = "ws-delete-flag-a";
+    const workspaceB = "ws-delete-flag-b";
+    const activeWorkspaces = [
+      { workspaceId: workspaceA, cwd: sharedCwd, kind: "worktree" as const },
+      { workspaceId: workspaceB, cwd: sharedCwd, kind: "worktree" as const },
+    ];
+    const archivedWorkspaceRecords: string[] = [];
+    const emitted: SessionOutboundMessage[] = [];
+    const listActiveWorkspaces = vi.fn(async () => activeWorkspaces);
+
+    const deps = {
+      paseoHome,
+      github: createGitHubServiceStub(),
+      workspaceGitService: {
+        getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
+      },
+      agentManager: {
+        listAgents: () => [],
+        archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+        archiveSnapshot: vi.fn(async () => {
+          throw new Error("not expected for empty agent list");
+        }),
+      },
+      agentStorage: createAgentStorageStub(),
+      findWorkspaceIdForCwd: vi.fn(async (cwd: string) => (cwd === sharedCwd ? workspaceA : null)),
+      listActiveWorkspaces,
+      archiveWorkspaceRecord: createArchiveWorkspaceRecordMutator(
+        activeWorkspaces,
+        archivedWorkspaceRecords,
+      ),
+      emit: (message: SessionOutboundMessage) => emitted.push(message),
+      emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
+      markWorkspaceArchiving: vi.fn(),
+      clearWorkspaceArchiving: vi.fn(),
+      killTerminalsForWorkspace: vi.fn(async () => {}),
+      sessionLogger: createLogger(),
+    };
+
+    // First archive: a sibling workspace still references the directory, so the
+    // retained deleteWorktreeFromDisk:true flag must NOT force removal.
+    await handlePaseoWorktreeArchiveRequest(deps, {
+      type: "paseo_worktree_archive_request",
+      requestId: "req-delete-flag-first",
+      worktreePath: sharedCwd,
+      repoRoot: repoDir,
+      workspaceId: workspaceA,
+      scope: "workspace",
+      deleteWorktreeFromDisk: true,
+    });
+
+    expect(archivedWorkspaceRecords).toEqual([workspaceA]);
+    expect(activeWorkspaces).toHaveLength(1);
+    expect(activeWorkspaces[0]?.workspaceId).toBe(workspaceB);
+    expect(existsSync(sharedCwd)).toBe(true);
+
+    archivedWorkspaceRecords.length = 0;
+
+    // Second archive: last reference, so removal is derived even though the flag
+    // is still ignored.
+    await handlePaseoWorktreeArchiveRequest(deps, {
+      type: "paseo_worktree_archive_request",
+      requestId: "req-delete-flag-second",
+      worktreePath: sharedCwd,
+      repoRoot: repoDir,
+      workspaceId: workspaceB,
+      scope: "workspace",
+      deleteWorktreeFromDisk: true,
+    });
+
+    expect(archivedWorkspaceRecords).toEqual([workspaceB]);
+    expect(existsSync(sharedCwd)).toBe(false);
+    expect(
+      emitted.filter((message) => message.type === "paseo_worktree_archive_response"),
+    ).toHaveLength(2);
+  });
 });

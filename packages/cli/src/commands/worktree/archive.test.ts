@@ -24,6 +24,10 @@ function createFakeDaemonClient(
   } as unknown as DaemonClient;
 }
 
+// NOTE: This file tests CLI routing/resolution only. The actual directory-removal
+// outcome is covered by composition: workspace-archive-service.test.ts and
+// worktree-session.test.ts prove real filesystem removal end-to-end.
+
 describe("runArchiveCommand", () => {
   it("sends scope worktree when archiving by worktree path", async () => {
     const worktreePath = "/tmp/paseo-home/worktrees/repo/feature";

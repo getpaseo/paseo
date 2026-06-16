@@ -8,6 +8,7 @@ import {
   DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 
@@ -15,7 +16,7 @@ export interface ArchiveWorkspaceInput {
   serverId: string;
   workspaceId: string;
   workspaceDirectory: string | null | undefined;
-  workspaceKind: "checkout" | "local_checkout" | "worktree" | "directory";
+  workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;

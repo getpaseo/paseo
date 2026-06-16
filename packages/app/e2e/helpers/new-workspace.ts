@@ -9,6 +9,7 @@ type NewWorkspaceDaemonClient = Pick<
   InternalDaemonClient,
   | "archivePaseoWorktree"
   | "archiveWorkspace"
+  | "checkoutRefresh"
   | "close"
   | "connect"
   | "createPaseoWorktree"

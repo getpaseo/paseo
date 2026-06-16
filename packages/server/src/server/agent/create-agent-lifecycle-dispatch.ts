@@ -7,7 +7,7 @@ import {
   archiveByScope,
   type ActiveWorkspaceRef,
   resolveWorkspaceIdAtPath,
-} from "../paseo-worktree-archive-service.js";
+} from "../workspace-archive-service.js";
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
@@ -221,7 +221,7 @@ export class CreateAgentLifecycleDispatch {
       await archiveByScope(
         {
           paseoHome: this.dependencies.paseoHome,
-          worktreesRoot: this.dependencies.worktreesRoot,
+          paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
           github: this.dependencies.github,
           workspaceGitService: this.dependencies.workspaceGitService,
           agentManager: this.dependencies.agentManager,
@@ -239,7 +239,7 @@ export class CreateAgentLifecycleDispatch {
         {
           scope: { kind: "workspace", workspaceId },
           repoRoot: options.repoRoot ?? ownership.repoRoot ?? null,
-          worktreesBaseRoot: this.dependencies.worktreesRoot,
+          paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
           requestId: randomUUID(),
         },
       );

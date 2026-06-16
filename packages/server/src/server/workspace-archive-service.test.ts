@@ -7,15 +7,16 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { GitHubService } from "../services/github-service.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
+import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
-  type ArchivePaseoWorktreeDependencies,
+  type ArchiveDependencies,
   type ArchiveResult,
   resolveWorkspaceIdAtPath,
-} from "./paseo-worktree-archive-service.js";
+} from "./workspace-archive-service.js";
 
 const cleanupPaths: string[] = [];
 
@@ -102,26 +103,38 @@ async function createPaseoOwnedWorktree(
 interface ArchiveDepsInput {
   paseoHome: string;
   activeWorkspaces: ActiveWorkspaceRef[];
-  worktreesRoot?: string;
+  paseoWorktreesBaseRoot?: string;
   findWorkspaceIdForCwd?: (cwd: string) => Promise<string | null>;
 }
 
-function createArchiveDeps(input: ArchiveDepsInput): ArchivePaseoWorktreeDependencies {
+interface ArchiveTestDependencies extends ArchiveDependencies {
+  activeWorkspaces: ActiveWorkspaceRef[];
+  archivedAgentIds: string[];
+  archivedSnapshotIds: string[];
+}
+
+function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
   const archivedWorkspaceIds = new Set<string>();
   const active = [...input.activeWorkspaces];
+  const archivedAgentIds: string[] = [];
+  const archivedSnapshotIds: string[] = [];
 
   return {
     paseoHome: input.paseoHome,
-    worktreesRoot: input.worktreesRoot,
+    paseoWorktreesBaseRoot: input.paseoWorktreesBaseRoot,
     github: createGitHubServiceStub(),
     workspaceGitService: {
       getSnapshot: vi.fn(async () => null),
     } as unknown as Pick<WorkspaceGitService, "getSnapshot">,
     agentManager: {
       listAgents: () => [],
-      archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
-      archiveSnapshot: vi.fn(async () => {
-        throw new Error("not expected without stored agents");
+      archiveAgent: vi.fn(async (agentId: string) => {
+        archivedAgentIds.push(agentId);
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async (agentId: string, _archivedAt: string) => {
+        archivedSnapshotIds.push(agentId);
+        return {};
       }),
     },
     agentStorage: {
@@ -142,6 +155,9 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchivePaseoWorktreeDepende
     clearWorkspaceArchiving: vi.fn(),
     killTerminalsForWorkspace: vi.fn(async () => {}),
     sessionLogger: createLogger(),
+    activeWorkspaces: active,
+    archivedAgentIds,
+    archivedSnapshotIds,
   };
 }
 
@@ -352,6 +368,175 @@ describe("archiveByScope", () => {
       archivedWorkspaceIds: [],
       removedDirectory: true,
     });
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("marks archiving, emits an upsert carrying the archiving state, then clears it and emits a remove", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "lifecycle");
+    const workspaceId = "ws-lifecycle";
+
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" }],
+    });
+
+    const archivingByWorkspaceId = new Map<string, string>();
+    type LifecycleEvent =
+      | { type: "mark"; workspaceIds: string[]; archivingAt: string }
+      | {
+          type: "emit";
+          workspaceIds: string[];
+          updates: Array<{
+            kind: "upsert" | "remove";
+            workspaceId: string;
+            archivingAt: string | null;
+          }>;
+        }
+      | { type: "archive"; workspaceId: string }
+      | { type: "clear"; workspaceIds: string[] };
+    const events: LifecycleEvent[] = [];
+
+    const originalArchiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    deps.archiveWorkspaceRecord = async (id: string) => {
+      await originalArchiveWorkspaceRecord(id);
+      events.push({ type: "archive", workspaceId: id });
+    };
+    deps.markWorkspaceArchiving = vi.fn((workspaceIds: Iterable<string>, archivingAt: string) => {
+      for (const id of workspaceIds) {
+        archivingByWorkspaceId.set(id, archivingAt);
+      }
+      events.push({ type: "mark", workspaceIds: Array.from(workspaceIds), archivingAt });
+    });
+    deps.clearWorkspaceArchiving = vi.fn((workspaceIds: Iterable<string>) => {
+      for (const id of workspaceIds) {
+        archivingByWorkspaceId.delete(id);
+      }
+      events.push({ type: "clear", workspaceIds: Array.from(workspaceIds) });
+    });
+    deps.emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async (workspaceIds: Iterable<string>) => {
+      const ids = Array.from(workspaceIds);
+      const activeIds = new Set<string>();
+      for (const workspace of deps.activeWorkspaces) {
+        activeIds.add(workspace.workspaceId);
+      }
+      const updates: Array<{
+        kind: "upsert" | "remove";
+        workspaceId: string;
+        archivingAt: string | null;
+      }> = [];
+      for (const id of ids) {
+        const archivingAt = archivingByWorkspaceId.get(id) ?? null;
+        if (archivingAt && activeIds.has(id)) {
+          updates.push({ kind: "upsert", workspaceId: id, archivingAt });
+        } else {
+          updates.push({ kind: "remove", workspaceId: id, archivingAt: null });
+        }
+      }
+      events.push({ type: "emit", workspaceIds: ids, updates });
+    });
+
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      repoRoot: repoDir,
+      requestId: "req-lifecycle",
+    });
+
+    expect(events.map((event) => event.type)).toEqual(["mark", "emit", "archive", "clear", "emit"]);
+
+    const firstEmit = events[1] as Extract<LifecycleEvent, { type: "emit" }>;
+    expect(firstEmit.workspaceIds).toEqual([workspaceId]);
+    expect(firstEmit.updates).toEqual([
+      { kind: "upsert", workspaceId, archivingAt: expect.any(String) },
+    ]);
+
+    const secondEmit = events[4] as Extract<LifecycleEvent, { type: "emit" }>;
+    expect(secondEmit.workspaceIds).toEqual([workspaceId]);
+    expect(secondEmit.updates).toEqual([{ kind: "remove", workspaceId, archivingAt: null }]);
+  });
+
+  test("archives stored snapshots only for the target workspace", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "snapshot-scope");
+    const targetWorkspaceId = "ws-snapshot-target";
+    const otherWorkspaceId = "ws-snapshot-other";
+    const liveAgentId = "agent-live";
+    const targetStoredAgentId = "agent-stored-target";
+    const otherStoredAgentId = "agent-stored-other";
+
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        { workspaceId: targetWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+      ],
+    });
+    deps.agentManager = {
+      listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
+      archiveAgent: vi.fn(async (agentId: string) => {
+        deps.archivedAgentIds.push(agentId);
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async (agentId: string, _archivedAt: string) => {
+        deps.archivedSnapshotIds.push(agentId);
+        return {};
+      }),
+    };
+    deps.agentStorage = {
+      list: async () =>
+        [
+          { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
+          { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
+        ] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: targetWorkspaceId },
+      repoRoot: repoDir,
+      requestId: "req-snapshot-scope",
+    });
+
+    assertArchiveResult(result, {
+      archivedWorkspaceIds: [targetWorkspaceId],
+      removedDirectory: true,
+    });
+    expect(result.archivedAgentIds).toContain(liveAgentId);
+    expect(result.archivedAgentIds).toContain(targetStoredAgentId);
+    expect(result.archivedAgentIds).not.toContain(otherStoredAgentId);
+    expect(deps.archivedSnapshotIds).toEqual([targetStoredAgentId]);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("worktree scope archives three workspaces on the directory and removes it", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "worktree-scope-n3");
+    const workspaceA = "ws-worktree-n3-a";
+    const workspaceB = "ws-worktree-n3-b";
+    const workspaceC = "ws-worktree-n3-c";
+
+    const result = await archiveByScope(
+      createArchiveDeps({
+        paseoHome,
+        activeWorkspaces: [
+          { workspaceId: workspaceA, cwd: worktree.worktreePath, kind: "worktree" },
+          { workspaceId: workspaceB, cwd: worktree.worktreePath, kind: "worktree" },
+          { workspaceId: workspaceC, cwd: worktree.worktreePath, kind: "local_checkout" },
+        ],
+      }),
+      {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        repoRoot: repoDir,
+        requestId: "req-worktree-scope-n3",
+      },
+    );
+
+    expect(result.archivedWorkspaceIds).toEqual(
+      expect.arrayContaining([workspaceA, workspaceB, workspaceC]),
+    );
+    expect(result.archivedWorkspaceIds).toHaveLength(3);
+    expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 });

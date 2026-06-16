@@ -1,4 +1,4 @@
-import { confirmRiskyWorktreeArchive } from "@/git/worktree-archive-warning";
+import { confirmRiskyWorktreeArchive, toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { WorkspaceArchiveTarget } from "@/workspace/workspace-archive";
 
@@ -25,9 +25,7 @@ export async function selectProjectWorkspacesToArchive(
     if (workspace.workspaceKind === "worktree") {
       const shouldArchive = await confirmWorktreeArchive({
         worktreeName: workspace.name,
-        isDirty: workspace.archiveHasUncommittedChanges,
-        aheadOfOrigin: workspace.archiveUnpushedCommitCount,
-        diffStat: workspace.diffStat,
+        ...toWorktreeArchiveRisk(workspace),
       });
       if (!shouldArchive) {
         continue;
