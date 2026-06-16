@@ -519,8 +519,11 @@ async function findSourceWorkspaceForWorktree(options: {
   const workspaces = await options.workspaceRegistry.list();
   const active = workspaces.filter((ws) => !ws.archivedAt && ws.kind !== "worktree");
   if (options.projectId) {
-    const byProject = active.find((ws) => ws.projectId === options.projectId);
-    if (byProject) return byProject;
+    const candidates = active.filter((ws) => ws.projectId === options.projectId);
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      return candidates.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b));
+    }
   }
   return (
     active.find((ws) => ws.cwd === options.inputCwd) ??
