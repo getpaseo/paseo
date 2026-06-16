@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Dialog, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import {
@@ -19,6 +20,21 @@ async function seedRiskyWorktree(
   client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>,
   worktreeDirectory: string,
 ): Promise<void> {
+  // The daemon only reports unpushed commits when the branch has a configured
+  // upstream (aheadOfOrigin is computed against `branch.<name>.merge`). Push the
+  // worktree branch at its current head first so it tracks origin with 0 ahead,
+  // then add the local commit below that becomes the single unpushed commit.
+  const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+    cwd: worktreeDirectory,
+    stdio: "pipe",
+  })
+    .toString()
+    .trim();
+  execSync(`git push -u origin ${JSON.stringify(branch)}`, {
+    cwd: worktreeDirectory,
+    stdio: "ignore",
+  });
+
   const committedFile = path.join(worktreeDirectory, "UNPUSHED.md");
   await writeFile(committedFile, "# unpushed\n");
   execSync(`git add ${JSON.stringify(path.basename(committedFile))}`, {
@@ -37,6 +53,27 @@ async function seedRiskyWorktree(
   if (!refreshed.success) {
     throw new Error(`Failed to refresh checkout for ${worktreeDirectory}`);
   }
+}
+
+// The archive confirmation is a synchronous web `window.confirm()`. The click that
+// opens it does not resolve until the dialog is answered, so the handler must
+// accept/dismiss inline — awaiting the dialog only *after* the click deadlocks, as
+// the click waits for an answer that is gated behind that same click.
+async function clickArchiveAndAnswerWarning(
+  page: Page,
+  workspaceId: string,
+  answer: "accept" | "dismiss",
+): Promise<Dialog> {
+  let warning: Dialog | undefined;
+  page.once("dialog", (dialog) => {
+    warning = dialog;
+    void (answer === "accept" ? dialog.accept() : dialog.dismiss());
+  });
+  await clickArchiveWorkspaceMenuItem(page, workspaceId);
+  if (!warning) {
+    throw new Error("Expected an archive confirmation dialog, but none was shown.");
+  }
+  return warning;
 }
 
 test.describe("Worktree archive risk warning", () => {
@@ -78,26 +115,20 @@ test.describe("Worktree archive risk warning", () => {
     await waitForSidebarHydration(page);
     await waitForWorkspaceInSidebar(page, { serverId, workspaceId: worktree.workspaceId });
 
-    const dismissedDialog = page.waitForEvent("dialog");
-    await clickArchiveWorkspaceMenuItem(page, worktree.workspaceId);
-    const firstWarning = await dismissedDialog;
+    const firstWarning = await clickArchiveAndAnswerWarning(page, worktree.workspaceId, "dismiss");
     expect(firstWarning.type()).toBe("confirm");
     expect(firstWarning.message()).toContain(`Archive "${worktree.workspaceName}"?`);
     expect(firstWarning.message()).toContain("Uncommitted changes");
     expect(firstWarning.message()).toContain("1 unpushed commit");
-    await firstWarning.dismiss();
 
     await expect(
       page.getByTestId(`sidebar-workspace-row-${serverId}:${worktree.workspaceId}`),
     ).toBeVisible({ timeout: 10_000 });
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
 
-    const acceptedDialog = page.waitForEvent("dialog");
-    await clickArchiveWorkspaceMenuItem(page, worktree.workspaceId);
-    const secondWarning = await acceptedDialog;
+    const secondWarning = await clickArchiveAndAnswerWarning(page, worktree.workspaceId, "accept");
     expect(secondWarning.message()).toContain("Uncommitted changes");
     expect(secondWarning.message()).toContain("1 unpushed commit");
-    await secondWarning.accept();
 
     await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
     await expect
