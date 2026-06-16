@@ -2371,7 +2371,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         return payload.pendingPermissions.map((request) => ({
           agentId: agent.id,
           status: payload.status,
-          request: sanitizePermissionRequest(request) ?? request,
+          request: sanitizePermissionRequest(request),
         }));
       });
 

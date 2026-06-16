@@ -159,6 +159,13 @@ export async function waitForAgentWithTimeout(
 }
 
 export function sanitizePermissionRequest(
+  permission: AgentPermissionRequest,
+): AgentPermissionRequest;
+export function sanitizePermissionRequest(permission: null | undefined): null;
+export function sanitizePermissionRequest(
+  permission: AgentPermissionRequest | null | undefined,
+): AgentPermissionRequest | null;
+export function sanitizePermissionRequest(
   permission: AgentPermissionRequest | null | undefined,
 ): AgentPermissionRequest | null {
   if (!permission) {
