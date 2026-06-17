@@ -53,6 +53,11 @@ export interface GhRepoFixture {
   cleanup(): Promise<void>;
 }
 
+export interface GhDefaultBranchClone {
+  path: string;
+  cleanup(): Promise<void>;
+}
+
 function gh(args: string[], opts?: { cwd?: string }): string {
   return execFileSync("gh", args, {
     cwd: opts?.cwd,
@@ -244,6 +249,30 @@ export async function createTempGithubRepo(options: {
         rm(basePath, { recursive: true, force: true }),
         ...localPaths.map((p) => rm(p, { recursive: true, force: true })),
       ]);
+    },
+  };
+}
+
+export async function cloneGithubRepoDefaultBranchOnly(
+  repo: Pick<GhRepoFixture, "fullName" | "name">,
+): Promise<GhDefaultBranchClone> {
+  const token = gh(["auth", "token"]);
+  const authedUrl = `https://x-access-token:${token}@github.com/${repo.fullName}.git`;
+  const clonePath = await mkdtemp(path.join("/tmp", `${repo.name}-main-only-`));
+
+  execFileSync(
+    "git",
+    ["clone", "--quiet", "--single-branch", "--branch", "main", authedUrl, clonePath],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  git(["config", "user.email", "e2e@paseo.test"], clonePath);
+  git(["config", "user.name", "Paseo E2E"], clonePath);
+  git(["config", "commit.gpgsign", "false"], clonePath);
+
+  return {
+    path: clonePath,
+    cleanup: async () => {
+      await rm(clonePath, { recursive: true, force: true });
     },
   };
 }

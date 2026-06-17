@@ -29,7 +29,11 @@ import {
   submitNewWorkspacePrompt,
 } from "./helpers/new-workspace";
 import { createTempGitRepo, readWorktreeBranchInfo } from "./helpers/workspace";
-import { createTempGithubRepo, hasGithubAuth } from "./helpers/github-fixtures";
+import {
+  cloneGithubRepoDefaultBranchOnly,
+  createTempGithubRepo,
+  hasGithubAuth,
+} from "./helpers/github-fixtures";
 import { getServerId } from "./helpers/server-id";
 import {
   expectSidebarWorkspaceSelected,
@@ -748,6 +752,52 @@ test.describe("New workspace flow", () => {
         title: pr.title,
       });
     } finally {
+      await ghRepo.cleanup();
+    }
+  });
+
+  test("selected GitHub PR creates the worktree from the PR head even when the head branch is not fetched", async ({
+    page,
+  }) => {
+    test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
+
+    const ghRepo = await createTempGithubRepo({
+      category: "new-workspace-pr-worktree",
+      prs: [{ title: "Checkout PR worktree", state: "open" }],
+    });
+    const pr = ghRepo.prs[0]!;
+    const mainCheckout = await cloneGithubRepoDefaultBranchOnly(ghRepo);
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, mainCheckout.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "worktree");
+      await openStartingRefPicker(page);
+      await selectGitHubPrInPicker(page, pr.number);
+      await submitNewWorkspaceWithoutPrompt(page);
+
+      const worktree = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      createdWorktreeDirectories.add(worktree.workspaceDirectory);
+
+      const branchInfo = await readWorktreeBranchInfo({
+        worktreePath: worktree.workspaceDirectory,
+      });
+      expect(branchInfo.currentBranch).toBe(pr.branch);
+      expect(existsSync(path.join(worktree.workspaceDirectory, "pr-1.txt"))).toBe(true);
+    } finally {
+      await mainCheckout.cleanup();
       await ghRepo.cleanup();
     }
   });

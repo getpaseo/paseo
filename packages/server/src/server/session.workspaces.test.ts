@@ -25,6 +25,7 @@ import type {
 import { createWorktree } from "../utils/worktree.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
+import type { GitHubService } from "../services/github-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import {
   asSessionLogger,
@@ -49,6 +50,8 @@ import {
   FileBackedWorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  type PersistedProjectRecord,
+  type PersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
@@ -486,6 +489,9 @@ function createSessionForWorkspaceTests(
     terminalManager?: TerminalManager | null;
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
+    github?: GitHubService;
+    paseoHome?: string;
+    worktreesRoot?: string;
     renameCurrentBranch?: (
       cwd: string,
       newName: string,
@@ -510,7 +516,8 @@ function createSessionForWorkspaceTests(
       logger: asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
       pushTokenStore: asPushTokenStore(),
-      paseoHome: "/tmp/paseo-test",
+      paseoHome: options.paseoHome ?? "/tmp/paseo-test",
+      worktreesRoot: options.worktreesRoot,
       agentManager: asAgentManager({
         subscribe: () => () => {},
         listAgents: () => [],
@@ -604,6 +611,7 @@ function createSessionForWorkspaceTests(
         }),
         dispose: () => {},
       }),
+      github: options.github,
       workspaceGitService: options.workspaceGitService ?? createNoopWorkspaceGitService(),
       renameCurrentBranch: options.renameCurrentBranch,
       generateWorkspaceName: options.generateWorkspaceName,
@@ -5986,11 +5994,195 @@ test("removing a contributing terminal clears workspace status", async () => {
   });
 });
 
-// Worktree-source forwarding (action/refName/githubPrNumber/worktreeSlug) is
-// covered end-to-end against a real git repo in
-// workspace-create-worktree-source.e2e.test.ts, where the created worktree's
-// observable branch proves the request fields reached createWorktreeCore. We do
-// not intercept the private workflow here.
+interface WorkspaceCreatePrRepoFixture {
+  tempDir: string;
+  repoDir: string;
+  paseoHome: string;
+  headRef: string;
+  prFileName: string;
+  prNumber: number;
+}
+
+function createWorkspaceCreatePrRepo(): WorkspaceCreatePrRepoFixture {
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "workspace-create-pr-")));
+  const repoDir = path.join(tempDir, "repo");
+  const remoteDir = path.join(tempDir, "origin.git");
+  const paseoHome = path.join(tempDir, ".paseo");
+  const prNumber = 123;
+  const headRef = "feature/review-pr";
+  const prFileName = "pr-123.txt";
+
+  execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: repoDir, stdio: "pipe" });
+  writeFileSync(path.join(repoDir, "README.md"), "main\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: repoDir, stdio: "pipe" });
+
+  execFileSync("git", ["checkout", "-b", headRef], { cwd: repoDir, stdio: "pipe" });
+  writeFileSync(path.join(repoDir, prFileName), "review branch\n");
+  execFileSync("git", ["add", prFileName], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "review branch"], { cwd: repoDir, stdio: "pipe" });
+  const prHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, stdio: "pipe" })
+    .toString()
+    .trim();
+
+  execFileSync("git", ["clone", "--bare", repoDir, remoteDir], { stdio: "pipe" });
+  execFileSync(
+    "git",
+    [`--git-dir=${remoteDir}`, "update-ref", `refs/pull/${prNumber}/head`, prHead],
+    {
+      stdio: "pipe",
+    },
+  );
+  execFileSync("git", [`--git-dir=${remoteDir}`, "update-ref", "-d", `refs/heads/${headRef}`], {
+    stdio: "pipe",
+  });
+  execFileSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-D", headRef], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+
+  return { tempDir, repoDir, paseoHome, headRef, prFileName, prNumber };
+}
+
+function createPrCheckoutGitHubService(params: { headRef: string }): GitHubService {
+  return {
+    listPullRequests: async () => [],
+    listIssues: async () => [],
+    getPullRequest: async ({ number }) => ({
+      number,
+      title: `PR ${number}`,
+      url: `https://github.com/acme/repo/pull/${number}`,
+      state: "OPEN",
+      body: null,
+      baseRefName: "main",
+      headRefName: params.headRef,
+      labels: [],
+      updatedAt: "2026-03-01T12:00:00Z",
+    }),
+    getPullRequestHeadRef: async () => params.headRef,
+    getPullRequestCheckoutTarget: async ({ number }) => ({
+      number,
+      baseRefName: "main",
+      headRefName: params.headRef,
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    }),
+    getCurrentPullRequestStatus: async () => null,
+    getPullRequestTimeline: async ({ prNumber }) => ({
+      prNumber,
+      repoOwner: "acme",
+      repoName: "repo",
+      items: [],
+      truncated: false,
+      error: null,
+    }),
+    getGitHubCheckDetails: async ({ checkRunId, workflowRunId }) => ({
+      checkRunId,
+      workflowRunId: workflowRunId ?? null,
+      name: "test",
+      status: null,
+      conclusion: null,
+      url: null,
+      detailsUrl: null,
+      output: null,
+      annotations: [],
+      failedJobs: [],
+      truncated: false,
+    }),
+    searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: true }),
+    createPullRequest: async () => ({ number: 1, url: "https://github.com/acme/repo/pull/1" }),
+    mergePullRequest: async () => ({ success: true }),
+    enablePullRequestAutoMerge: async () => ({ success: true }),
+    disablePullRequestAutoMerge: async () => ({ success: true }),
+    isAuthenticated: async () => true,
+    invalidate: () => {},
+  };
+}
+
+function readCurrentBranch(cwd: string): string {
+  return execFileSync("git", ["branch", "--show-current"], { cwd, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+test("workspace.create worktree source checks out a GitHub PR from githubPrNumber", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const fixture = createWorkspaceCreatePrRepo();
+  const projects = new Map<string, PersistedProjectRecord>();
+  const workspaces = new Map<string, PersistedWorkspaceRecord>();
+  const projectRegistry: SessionOptions["projectRegistry"] = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(projects.values()),
+    get: async (projectId: string) => projects.get(projectId) ?? null,
+    upsert: async (record) => {
+      projects.set(record.projectId, record);
+    },
+    archive: async () => {},
+    remove: async () => {},
+  };
+  const workspaceRegistry: SessionOptions["workspaceRegistry"] = {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => Array.from(workspaces.values()),
+    get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
+    upsert: async (record) => {
+      workspaces.set(record.workspaceId, record);
+    },
+    archive: async () => {},
+    remove: async () => {},
+  };
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    github: createPrCheckoutGitHubService({
+      headRef: fixture.headRef,
+    }),
+    paseoHome: fixture.paseoHome,
+    projectRegistry,
+    workspaceRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      resolveRepoRoot: async () => fixture.repoDir,
+      resolveDefaultBranch: async () => "main",
+    }),
+  });
+
+  try {
+    await session.handleMessage({
+      type: "workspace.create.request",
+      requestId: "req-workspace-create-pr",
+      source: {
+        kind: "worktree",
+        cwd: fixture.repoDir,
+        action: "checkout",
+        githubPrNumber: fixture.prNumber,
+        worktreeSlug: "review-pr-workspace",
+      },
+    });
+
+    const response = findByType(emitted, "workspace.create.response");
+    expect(response?.payload.error).toBeNull();
+    expect(response?.payload.workspace).toMatchObject({
+      workspaceDirectory: expect.any(String),
+      gitRuntime: { currentBranch: fixture.headRef },
+    });
+    const workspaceDirectory = response?.payload.workspace?.workspaceDirectory as string;
+    expect(readCurrentBranch(workspaceDirectory)).toBe(fixture.headRef);
+    expect(existsSync(path.join(workspaceDirectory, fixture.prFileName))).toBe(true);
+  } finally {
+    await flushTerminalContributionWork();
+    rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+// Worktree-source forwarding for action/refName/worktreeSlug is also covered
+// end-to-end against a daemon in workspace-create-worktree-source.e2e.test.ts.
 
 test("failed local create_agent_request does not schedule workspace title generation", async () => {
   vi.useFakeTimers();
