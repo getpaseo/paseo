@@ -34,7 +34,7 @@
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",
     "tree-kill": "^1.2.2",
-    "ws": "^8.14.2",
+    "ws": "^8.21.0",
     "yaml": "^2.8.4"
   },
   "devDependencies": {
