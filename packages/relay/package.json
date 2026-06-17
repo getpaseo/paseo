@@ -43,7 +43,7 @@
   "dependencies": {
     "base64-js": "^1.5.1",
     "tweetnacl": "^1.0.3",
-    "ws": "^8.14.2"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^20.9.0",
