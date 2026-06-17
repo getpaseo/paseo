@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   resolveNavigateToAgent,
   type AgentNavTarget,
@@ -10,24 +9,6 @@ import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-worksp
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "workspace-1";
 const AGENT_ID = "agent-1";
-
-function createWorkspace(): WorkspaceDescriptor {
-  return {
-    id: WORKSPACE_ID,
-    projectId: "project-1",
-    projectDisplayName: "Project",
-    projectRootPath: "/repo",
-    workspaceDirectory: "/repo/worktree",
-    projectKind: "git",
-    workspaceKind: "local_checkout",
-    name: "worktree",
-    status: "done",
-    archivingAt: null,
-    statusEnteredAt: null,
-    diffStat: null,
-    scripts: [],
-  };
-}
 
 interface RecordedHostNav {
   route: string;
@@ -59,10 +40,9 @@ function createFakeNavigators(target: AgentNavTarget): {
 }
 
 describe("resolveNavigateToAgent", () => {
-  it("opens the resolved workspace tab when the agent's cwd matches a workspace", () => {
+  it("opens the workspace tab carried by the agent's workspaceId", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
-      workspaces: [createWorkspace()],
-      agentCwd: "/repo/worktree",
+      agentWorkspaceId: WORKSPACE_ID,
     });
 
     const route = resolveNavigateToAgent(
@@ -83,10 +63,9 @@ describe("resolveNavigateToAgent", () => {
     ]);
   });
 
-  it("falls back to the host agent route when the workspace is unknown", () => {
+  it("falls back to the host agent route when the agent has no workspaceId", () => {
     const { deps, hostNavigations, tabNavigations } = createFakeNavigators({
-      workspaces: [],
-      agentCwd: null,
+      agentWorkspaceId: null,
     });
 
     const route = resolveNavigateToAgent({ serverId: SERVER_ID, agentId: "missing-agent" }, deps);

@@ -26,9 +26,7 @@ function projectNewWorktreeIcon(page: Page, projectKey: string) {
 
 async function seedSecondWorkspace(seeded: SeededWorkspace, title: string): Promise<string> {
   const created = await seeded.client.createWorkspace({
-    backing: "local",
-    cwd: seeded.repoPath,
-    projectId: seeded.projectId,
+    source: { kind: "directory", path: seeded.repoPath, projectId: seeded.projectId },
     title,
   });
   if (!created.workspace) {

@@ -336,6 +336,9 @@ export const en = {
     },
     hoverCard: {
       scriptsAccessibility: "Workspace scripts",
+      copyPath: "Copy path",
+      copyBranchName: "Copy branch name",
+      copied: "Copied",
     },
     fileExplorer: {
       sort: {
@@ -818,12 +821,6 @@ export const en = {
         hideConfirm: "Hide",
         cancel: "Cancel",
       },
-      deleteWorktreePrompt: {
-        title: "Archive workspace",
-        message: "Also remove the worktree from disk?",
-        keep: "Keep on disk",
-        delete: "Delete",
-      },
       rename: {
         title: "Rename workspace",
         submit: "Rename",
@@ -842,7 +839,7 @@ export const en = {
   newWorkspace: {
     title: "New workspace",
     create: "Create",
-    backing: {
+    isolation: {
       local: "Local",
       worktree: "New worktree",
       label: "Isolation",
@@ -1533,6 +1530,7 @@ export const en = {
       },
       help: {
         openProject: "Open project",
+        newWorkspace: "New workspace",
         newWorktree: "New worktree",
         archiveWorktree: "Archive worktree",
         newTab: "New tab",
@@ -1856,8 +1854,6 @@ export const en = {
       metadata: {
         title: "Metadata generation",
         info: "Project-specific instructions injected into the AI prompts Paseo uses to generate metadata - use them to enforce your team's conventions like branch naming, commit style, or PR format",
-        agentTitle: "Agent titles",
-        agentTitlePlaceholder: "Keep titles imperative and under 40 characters",
         branchName: "Branch names",
         branchNamePlaceholder: "Prefix branches with feat/ or fix/, mb/ for personal branches",
         commitMessage: "Commit messages",

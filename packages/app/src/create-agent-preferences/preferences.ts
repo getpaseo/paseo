@@ -33,6 +33,7 @@ const formPreferencesSchema = z.object({
       }),
     )
     .optional(),
+  isolation: z.enum(["local", "worktree"]).optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;

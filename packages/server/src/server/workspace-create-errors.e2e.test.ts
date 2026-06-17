@@ -21,31 +21,25 @@ test("workspace.create surfaces each early-reject error branch", async () => {
   try {
     await client.connect();
 
-    // local backing without a cwd -> cwd_required
-    const cwdRequired = await client.createWorkspace({ backing: "local" });
-    expect(cwdRequired.workspace).toBeNull();
-    expect(cwdRequired.errorCode).toBe("cwd_required");
-
-    // local backing pointed at a path that does not exist -> directory_not_found
+    // directory source pointed at a path that does not exist -> directory_not_found
     const directoryNotFound = await client.createWorkspace({
-      backing: "local",
-      cwd: missingDir,
+      source: { kind: "directory", path: missingDir },
     });
     expect(directoryNotFound.workspace).toBeNull();
     expect(directoryNotFound.errorCode).toBe("directory_not_found");
     expect(directoryNotFound.error).toContain(missingDir);
 
-    // worktree backing without a cwd or projectId -> source_required
-    const sourceRequired = await client.createWorkspace({ backing: "worktree", branch: "feat" });
+    // worktree source without a cwd or projectId -> source_required
+    const sourceRequired = await client.createWorkspace({
+      source: { kind: "worktree", worktreeSlug: "feat" },
+    });
     expect(sourceRequired.workspace).toBeNull();
     expect(sourceRequired.errorCode).toBe("source_required");
 
-    // worktree backing with an unknown projectId -> project-not-found message
+    // worktree source with an unknown projectId -> project-not-found message
     // (surfaced via the generic catch, so it carries an error but no errorCode)
     const projectNotFound = await client.createWorkspace({
-      backing: "worktree",
-      projectId: "proj-does-not-exist",
-      branch: "feat",
+      source: { kind: "worktree", projectId: "proj-does-not-exist", worktreeSlug: "feat" },
     });
     expect(projectNotFound.workspace).toBeNull();
     expect(projectNotFound.error).toContain("Project not found: proj-does-not-exist");

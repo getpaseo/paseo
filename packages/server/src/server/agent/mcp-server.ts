@@ -31,8 +31,8 @@ import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../persistence-hooks.js";
 import {
   killTerminalsForWorkspace,
-  type ArchivePaseoWorktreeDependencies,
-} from "../paseo-worktree-archive-service.js";
+  type ArchiveDependencies,
+} from "../workspace-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { createAgentCommand } from "./create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
@@ -74,8 +74,8 @@ import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import { WorktreeRequestError } from "../worktree-errors.js";
 import {
-  archivePaseoWorktreeCommand,
-  type ArchivePaseoWorktreeCommandDependencies,
+  archiveCommand,
+  type ArchiveCommandDependencies,
   createPaseoWorktreeCommand,
   type CreatePaseoWorktreeCommandInput,
   listPaseoWorktreesCommand,
@@ -93,13 +93,16 @@ export interface AgentMcpServerOptions {
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
-  resolveWorkspaceIdForCwd?: ArchivePaseoWorktreeDependencies["resolveWorkspaceIdForCwd"];
-  listActiveWorkspaces?: ArchivePaseoWorktreeDependencies["listActiveWorkspaces"];
-  archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
-  emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
-  clearWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["clearWorkspaceArchiving"];
+  findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
+  listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
+  archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
+  emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
+  markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
+  clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
+  // Mints a fresh workspace for a cwd and returns its id, used when an agent is
+  // created with no parent and no worktree.
+  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -572,6 +575,25 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return expandUserPath(trimmedCwd);
   };
 
+  async function resolveTerminalWorkspaceId(resolvedCwd: string): Promise<string> {
+    // An MCP-spawned terminal belongs to the caller agent's workspace. Only if
+    // the caller has no workspace do we mint one for the cwd.
+    const callerAgent = callerAgentId ? agentManager.getAgent(callerAgentId) : null;
+    if (callerAgent?.workspaceId) {
+      return callerAgent.workspaceId;
+    }
+
+    if (!options.ensureWorkspaceForCreate) {
+      throw new Error(
+        callerAgentId
+          ? `Caller agent ${callerAgentId} has no workspace and workspace minting is not configured`
+          : "workspaceId is required outside an agent-scoped session",
+      );
+    }
+
+    return options.ensureWorkspaceForCreate(resolvedCwd);
+  }
+
   const buildCallerAgentScheduleConfigExtras = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
   ): Record<string, unknown> => {
@@ -922,10 +944,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           logger: childLogger,
           paseoHome: options.paseoHome,
           worktreesRoot: options.worktreesRoot,
-          workspaceGitService: options.workspaceGitService,
           terminalManager,
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,
+          ...(options.ensureWorkspaceForCreate
+            ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
+            : {}),
         },
         {
           kind: "mcp",
@@ -1261,7 +1285,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const structuredSnapshot = buildStoredAgentPayload(
         record,
-        providerSnapshotManager.listRegisteredProviderIds(),
+        new Set(providerSnapshotManager.listRegisteredProviderIds()),
       );
       return {
         content: [],
@@ -1308,7 +1332,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       );
       const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
       const storedRecords = await agentStorage.list();
-      const registeredProviderIds = providerSnapshotManager.listRegisteredProviderIds();
+      const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
         .filter((record) => includeArchived || !record.archivedAt)
@@ -1520,8 +1544,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         throw new Error("Terminal manager is not configured");
       }
 
+      const resolvedCwd = resolveScopedCwd(cwd, { required: true });
+      const workspaceId = await resolveTerminalWorkspaceId(resolvedCwd);
+
       const terminal = await terminalManager.createTerminal({
-        cwd: resolveScopedCwd(cwd, { required: true }),
+        cwd: resolvedCwd,
+        workspaceId,
         ...(name?.trim() ? { name: name.trim() } : {}),
       });
 
@@ -2207,7 +2235,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       }
       const repoRoot = await options.workspaceGitService.resolveRepoRoot(resolvedCwd);
 
-      const result = await archivePaseoWorktreeCommand(
+      const result = await archiveCommand(
         archiveWorktreeDependencies(options, {
           agentManager,
           agentStorage,
@@ -2219,9 +2247,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           repoRoot,
           worktreePath,
           worktreeSlug,
-          // This tool's contract is to delete the worktree; on-disk removal still
-          // only happens when no sibling workspace references the directory.
-          deleteWorktreeFromDisk: true,
+          // This tool archives every workspace on the directory, then removes the
+          // directory. Disk removal is derived from scope + last-reference.
+          scope: "worktree",
         },
       );
       if (!result.ok) {
@@ -2342,7 +2370,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         return payload.pendingPermissions.map((request) => ({
           agentId: agent.id,
           status: payload.status,
-          request,
+          request: sanitizePermissionRequest(request),
         }));
       });
 
@@ -2401,7 +2429,7 @@ interface ArchiveWorktreeCommandContext {
 function archiveWorktreeDependencies(
   options: AgentMcpServerOptions,
   context: ArchiveWorktreeCommandContext,
-): ArchivePaseoWorktreeCommandDependencies {
+): ArchiveCommandDependencies {
   if (!options.github) {
     throw new Error("GitHub service is required to archive worktrees");
   }
@@ -2411,7 +2439,7 @@ function archiveWorktreeDependencies(
   if (!options.archiveWorkspaceRecord) {
     throw new Error("Workspace registry archiver is required to archive worktrees");
   }
-  if (!options.resolveWorkspaceIdForCwd) {
+  if (!options.findWorkspaceIdForCwd) {
     throw new Error("Workspace resolver is required to archive worktrees");
   }
   if (!options.listActiveWorkspaces) {
@@ -2428,12 +2456,12 @@ function archiveWorktreeDependencies(
   }
   return {
     paseoHome: options.paseoHome,
-    worktreesRoot: options.worktreesRoot,
+    paseoWorktreesBaseRoot: options.worktreesRoot,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
-    resolveWorkspaceIdForCwd: options.resolveWorkspaceIdForCwd,
+    findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
     listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,

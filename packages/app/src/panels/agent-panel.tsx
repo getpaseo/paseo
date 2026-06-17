@@ -93,6 +93,7 @@ interface ChatAgentStateShape {
   id: string | null;
   status: Agent["status"] | null;
   cwd: string | null;
+  workspaceId?: string;
   capabilities?: Agent["capabilities"];
   lastError?: Agent["lastError"] | null;
 }
@@ -136,6 +137,7 @@ function selectChatAgentState(
     id: agent.id,
     status: agent.status,
     cwd: agent.cwd,
+    workspaceId: agent.workspaceId,
     capabilities: agent.capabilities,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
@@ -156,6 +158,7 @@ function buildChatAgentFromState(
     id: state.id,
     status: state.status,
     cwd: state.cwd,
+    workspaceId: state.workspaceId,
     capabilities: state.capabilities,
     lastError: state.lastError ?? null,
     projectPlacement,
@@ -545,15 +548,13 @@ function AgentPanelBody({
   );
   const agentState = useSessionStore(
     useShallow((state) => {
-      const session = state.sessions[serverId];
-      const agent = agentId
-        ? (session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null)
-        : null;
+      const agent = resolveChatAgentFromSession(state, serverId, agentId);
       return {
         serverId: agent?.serverId ?? null,
         id: agent?.id ?? null,
         status: agent?.status ?? null,
         cwd: agent?.cwd ?? null,
+        workspaceId: agent?.workspaceId,
         lastError: agent?.lastError ?? null,
         archivedAt: agent?.archivedAt ?? null,
       };
@@ -646,6 +647,7 @@ function AgentPanelBody({
           id: agentState.id,
           status: agentState.status,
           cwd: agentState.cwd,
+          workspaceId: agentState.workspaceId,
           lastError: agentState.lastError ?? null,
           projectPlacement,
         }

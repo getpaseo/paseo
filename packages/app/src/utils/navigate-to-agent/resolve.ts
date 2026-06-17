@@ -1,6 +1,5 @@
-import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
-import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import type { NavigateToPreparedWorkspaceTabInput } from "@/utils/prepare-workspace-tab";
 
 export interface NavigateToAgentInput {
@@ -11,8 +10,7 @@ export interface NavigateToAgentInput {
 }
 
 export interface AgentNavTarget {
-  workspaces: Iterable<WorkspaceDescriptor> | null | undefined;
-  agentCwd: string | null | undefined;
+  agentWorkspaceId: string | null | undefined;
 }
 
 export interface NavigateToAgentDeps {
@@ -25,14 +23,11 @@ export function resolveNavigateToAgent(
   input: NavigateToAgentInput,
   deps: NavigateToAgentDeps,
 ): string {
-  const { workspaces, agentCwd } = deps.readAgentNavTarget({
+  const { agentWorkspaceId } = deps.readAgentNavTarget({
     serverId: input.serverId,
     agentId: input.agentId,
   });
-  const workspaceId = resolveWorkspaceIdByDirectory({
-    workspaces,
-    workspaceDirectory: agentCwd,
-  });
+  const workspaceId = normalizeWorkspaceOpaqueId(agentWorkspaceId);
 
   if (!workspaceId) {
     const route = buildHostAgentDetailRoute(input.serverId, input.agentId);

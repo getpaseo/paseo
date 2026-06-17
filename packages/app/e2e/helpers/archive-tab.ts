@@ -44,6 +44,7 @@ export interface IdleAgentSeedClient {
     model: string;
     modeId: string;
     cwd: string;
+    workspaceId: string;
     title: string;
   }): Promise<{ id: string }>;
   waitForAgentUpsert(
@@ -66,6 +67,7 @@ export async function createIdleAgent(
     model: "opencode/gpt-5-nano",
     modeId: "bypassPermissions",
     cwd: input.cwd,
+    workspaceId: opened.workspace.id,
     title: input.title,
   });
   const snapshot = await client.waitForAgentUpsert(

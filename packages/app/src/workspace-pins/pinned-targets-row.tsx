@@ -42,8 +42,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
   },
   pinButton: {
-    width: 28,
-    height: 28,
+    width: 22,
+    height: 22,
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",

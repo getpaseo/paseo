@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import type {
@@ -7,7 +6,6 @@ import type {
   ProjectPlacementPayload,
 } from "@getpaseo/protocol/messages";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { isSameOrDescendantPath } from "./path-utils.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 export type PersistedProjectKind = "git" | "non_git";
@@ -32,64 +30,6 @@ export interface DetectStaleWorkspacesInput {
 
 export function generateWorkspaceId(): string {
   return `wks_${randomBytes(8).toString("hex")}`;
-}
-
-// COMPAT(workspaceOwnership): added in v0.1.97, drop the gate when floor >= v0.1.97.
-// Resolves the owning workspace for a record (agent/terminal) that may predate
-// workspaceId stamping. New records always carry workspaceId and hit the first
-// branch; legacy records fall back to cwd matching. When several active
-// workspaces share the same cwd, duplicate-cwd disambiguation is impossible from
-// cwd alone, so we pick the deterministic oldest one.
-export function resolveWorkspaceIdForRecord(
-  record: { workspaceId?: string; cwd: string },
-  activeWorkspaces: Iterable<PersistedWorkspaceRecord>,
-): string | null {
-  const workspaces = Array.from(activeWorkspaces);
-  if (record.workspaceId) {
-    const exact = workspaces.find(
-      (workspace) => !workspace.archivedAt && workspace.workspaceId === record.workspaceId,
-    );
-    if (exact) {
-      return exact.workspaceId;
-    }
-  }
-
-  const resolvedCwd = resolve(record.cwd);
-  const cwdMatches = workspaces.filter(
-    (workspace) => !workspace.archivedAt && resolve(workspace.cwd) === resolvedCwd,
-  );
-  if (cwdMatches.length === 1) {
-    return cwdMatches[0].workspaceId;
-  }
-  if (cwdMatches.length > 1) {
-    return cwdMatches.reduce((oldest, candidate) =>
-      candidate.createdAt < oldest.createdAt ? candidate : oldest,
-    ).workspaceId;
-  }
-
-  return null;
-}
-
-export function resolveActiveWorkspaceRecordForCwd(
-  cwd: string,
-  workspaces: Iterable<PersistedWorkspaceRecord>,
-): PersistedWorkspaceRecord | null {
-  const resolvedCwd = resolve(cwd);
-  const userHome = resolve(homedir());
-  let bestMatch: { workspace: PersistedWorkspaceRecord; cwd: string } | null = null;
-
-  for (const workspace of workspaces) {
-    if (workspace.archivedAt) continue;
-
-    const workspaceCwd = resolve(workspace.cwd);
-    if (workspaceCwd === userHome && resolvedCwd !== workspaceCwd) continue;
-    if (!isSameOrDescendantPath(workspaceCwd, resolvedCwd)) continue;
-    if (!bestMatch || workspaceCwd.length > bestMatch.cwd.length) {
-      bestMatch = { workspace, cwd: workspaceCwd };
-    }
-  }
-
-  return bestMatch?.workspace ?? null;
 }
 
 // Path-derived grouping key for a workspace directory. This is NOT the opaque

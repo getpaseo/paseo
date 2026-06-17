@@ -116,11 +116,6 @@ export type TerminalWorkerEvent =
       state: TerminalState;
     }
   | {
-      type: "terminalRemoved";
-      terminalId: string;
-      cwd: string;
-    }
-  | {
       type: "terminalMessage";
       terminalId: string;
       message: ServerMessage;
@@ -141,11 +136,6 @@ export type TerminalWorkerEvent =
       info: {
         exitCode: number | null;
       };
-    }
-  | {
-      type: "terminalsChanged";
-      cwd: string;
-      terminals: WorkerTerminalInfo[];
     }
   | {
       type: "terminalActivityChange";

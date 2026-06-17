@@ -40,6 +40,7 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
 }
 
 const BranchNameSchema = z.object({
+  title: z.string().min(1).max(80),
   branch: z.string().min(1).max(100),
 });
 
@@ -56,17 +57,24 @@ async function buildPrompt(
     configKey: "branchName",
     before: [
       "Generate a git branch name for a coding agent based on the user prompt and attachments.",
+      "Title: a short human-readable sentence-case label for the task (no slug rules, max 80 characters).",
       "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
       "No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.",
+      "The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.",
     ].join("\n"),
-    after: "Return JSON only with a single field 'branch'.",
+    after: "Return JSON only with fields 'title' and 'branch'.",
     trailing: `User context:\n${seed}`,
   });
 }
 
+export interface GeneratedWorkspaceName {
+  title: string | null;
+  branch: string | null;
+}
+
 export async function generateBranchNameFromFirstAgentContext(
   options: GenerateBranchNameFromFirstAgentContextOptions,
-): Promise<string | null> {
+): Promise<GeneratedWorkspaceName | null> {
   const seed = buildAgentBranchNameSeed(options.firstAgentContext);
   if (!seed) {
     return null;
@@ -103,7 +111,10 @@ export async function generateBranchNameFromFirstAgentContext(
         internal: true,
       },
     });
-    return result.branch.trim() || null;
+    return {
+      title: result.title.trim() || null,
+      branch: result.branch.trim() || null,
+    };
   } catch (error) {
     const attempts = error instanceof StructuredAgentFallbackError ? error.attempts : undefined;
     options.logger.error(

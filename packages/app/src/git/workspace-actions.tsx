@@ -48,7 +48,7 @@ const ICONS = {
 };
 
 export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitActionsProps) {
-  const { gitActions, isGit, worktreeDeletePrompt } = useGitActions({
+  const { gitActions, isGit } = useGitActions({
     serverId,
     cwd,
     icons: ICONS,
@@ -58,10 +58,5 @@ export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitA
     return null;
   }
 
-  return (
-    <>
-      <GitActionsSplitButton gitActions={gitActions} hideLabels={hideLabels} />
-      {worktreeDeletePrompt}
-    </>
-  );
+  return <GitActionsSplitButton gitActions={gitActions} hideLabels={hideLabels} />;
 }

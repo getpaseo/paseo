@@ -45,6 +45,35 @@ describe("MockLoadTestAgentClient", () => {
     });
   });
 
+  test("returns schema-shaped JSON for structured branch-name generation", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+
+    const resultPromise = session.run(
+      [
+        "Generate a git branch name for a coding agent based on the user prompt and attachments.",
+        "Title: a short human-readable sentence-case label for the task (no slug rules, max 80 characters).",
+        "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
+        "Return JSON only with fields 'title' and 'branch'.",
+        "",
+        "User context:",
+        "Fix login bug",
+      ].join("\n"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      sessionId: session.id,
+      finalText: JSON.stringify({ title: "Fix login bug", branch: "fix-login-bug" }),
+      canceled: false,
+    });
+  });
+
   test("emits sub-word tokens, reasoning, and sequential tool calls during a foreground turn", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

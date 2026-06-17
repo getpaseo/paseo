@@ -4,10 +4,11 @@ import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
+  archiveByScope,
   type ActiveWorkspaceRef,
-  archivePaseoWorktree,
   killTerminalsForWorkspace,
-} from "../paseo-worktree-archive-service.js";
+  resolveWorkspaceIdAtPath,
+} from "../workspace-archive-service.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitServiceImpl,
@@ -18,14 +19,14 @@ import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
-  worktreesRoot?: string;
+  paseoWorktreesBaseRoot?: string;
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: GitHubService;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
-  resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
+  findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -34,13 +35,15 @@ export interface AutoArchiveArchiveOptions {
 }
 
 export interface ArchiveIfSafeDependencies {
-  archivePaseoWorktree: typeof archivePaseoWorktree;
+  archiveByScope: typeof archiveByScope;
+  resolveWorkspaceIdAtPath: typeof resolveWorkspaceIdAtPath;
   isPaseoOwnedWorktreeCwd: typeof isPaseoOwnedWorktreeCwd;
   killTerminalsForWorkspace: typeof killTerminalsForWorkspace;
 }
 
 const defaultDependencies: ArchiveIfSafeDependencies = {
-  archivePaseoWorktree,
+  archiveByScope,
+  resolveWorkspaceIdAtPath,
   isPaseoOwnedWorktreeCwd,
   killTerminalsForWorkspace,
 };
@@ -90,46 +93,53 @@ export async function archiveIfSafe(input: {
 
     const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
       paseoHome: options.paseoHome,
-      worktreesRoot: options.worktreesRoot,
+      worktreesRoot: options.paseoWorktreesBaseRoot,
     });
     if (!ownership.allowed) {
       return;
     }
 
     try {
-      await deps.archivePaseoWorktree(
+      const workspaceId = await deps.resolveWorkspaceIdAtPath(
+        {
+          findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+          listActiveWorkspaces: options.listActiveWorkspaces,
+        },
+        cwd,
+      );
+      if (!workspaceId) {
+        log.warn({ cwd }, "Auto-archive could not resolve a workspace for cwd; skipping");
+        return;
+      }
+
+      await deps.archiveByScope(
         {
           paseoHome: options.paseoHome,
-          worktreesRoot: options.worktreesRoot,
+          paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
           github: options.github,
           workspaceGitService: options.workspaceGitService,
           agentManager: options.agentManager,
           agentStorage: options.agentStorage,
-          resolveWorkspaceIdForCwd: options.resolveWorkspaceIdForCwd,
+          findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
           listActiveWorkspaces: options.listActiveWorkspaces,
           archiveWorkspaceRecord: options.archiveWorkspaceRecord,
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
           markWorkspaceArchiving: options.markWorkspaceArchiving,
           clearWorkspaceArchiving: options.clearWorkspaceArchiving,
-          killTerminalsForWorkspace: (workspaceId) =>
+          killTerminalsForWorkspace: (workspaceIdToKill) =>
             deps.killTerminalsForWorkspace(
               {
                 terminalManager: options.terminalManager,
                 sessionLogger: log,
               },
-              workspaceId,
+              workspaceIdToKill,
             ),
           sessionLogger: log,
         },
         {
-          targetPath: cwd,
+          scope: { kind: "workspace", workspaceId },
           repoRoot: ownership.repoRoot ?? null,
-          worktreesRoot: ownership.worktreeRoot,
-          worktreesBaseRoot: options.worktreesRoot,
-          // Last-reference + Paseo-ownership gated inside the service, so sibling
-          // workspaces sharing the directory stay protected. Removing the merged
-          // worktree off disk prevents merged worktrees from accumulating.
-          deleteWorktreeFromDisk: true,
+          paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
           requestId: "auto-archive-on-merge",
         },
       );

@@ -78,6 +78,7 @@ export function useAggregatedAgents(options?: {
           status: agent.status,
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
+          workspaceId: agent.workspaceId,
           provider: agent.provider,
           pendingPermissionCount: agent.pendingPermissions.length,
           requiresAttention: agent.requiresAttention,

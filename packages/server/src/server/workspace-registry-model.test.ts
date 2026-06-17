@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { basename, isAbsolute, resolve } from "node:path";
 
 import {
@@ -9,7 +9,6 @@ import {
   deriveWorkspaceKind,
   detectStaleWorkspaces,
   generateWorkspaceId,
-  resolveWorkspaceIdForRecord,
 } from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
@@ -62,18 +61,22 @@ describe("deriveProjectGroupingName", () => {
 
 describe("detectStaleWorkspaces", () => {
   test("returns workspace ids whose directories no longer exist", async () => {
-    const checkDirectoryExists = vi.fn(async (cwd: string) => cwd !== "/tmp/missing");
+    const checkedDirectories: string[] = [];
+    const existingDirectories = new Set(["/tmp/existing"]);
 
     const staleWorkspaceIds = await detectStaleWorkspaces({
       activeWorkspaces: [
         createWorkspaceRecord("/tmp/existing", "ws-existing"),
         createWorkspaceRecord("/tmp/missing", "ws-missing"),
       ],
-      checkDirectoryExists,
+      checkDirectoryExists: async (cwd) => {
+        checkedDirectories.push(cwd);
+        return existingDirectories.has(cwd);
+      },
     });
 
     expect(Array.from(staleWorkspaceIds)).toEqual(["ws-missing"]);
-    expect(checkDirectoryExists.mock.calls).toEqual([["/tmp/existing"], ["/tmp/missing"]]);
+    expect(checkedDirectories).toEqual(["/tmp/existing", "/tmp/missing"]);
   });
 
   test("keeps workspaces whose directories exist even when all agents are archived", async () => {
@@ -230,67 +233,5 @@ describe("git worktree grouping", () => {
         mainRepoRoot: "/tmp/repo",
       }),
     ).toBe("worktree");
-  });
-});
-
-describe("resolveWorkspaceIdForRecord", () => {
-  test("resolves a stamped record to its workspaceId, ignoring cwd matches", () => {
-    const workspaces = [
-      createWorkspaceRecord("/tmp/repo", "ws-a"),
-      createWorkspaceRecord("/tmp/repo", "ws-b"),
-    ];
-
-    const resolved = resolveWorkspaceIdForRecord(
-      { workspaceId: "ws-b", cwd: "/tmp/repo" },
-      workspaces,
-    );
-
-    expect(resolved).toBe("ws-b");
-  });
-
-  test("falls back to the single cwd match for a legacy record without workspaceId", () => {
-    const workspaces = [
-      createWorkspaceRecord("/tmp/repo", "ws-only"),
-      createWorkspaceRecord("/tmp/other", "ws-other"),
-    ];
-
-    const resolved = resolveWorkspaceIdForRecord({ cwd: "/tmp/repo" }, workspaces);
-
-    expect(resolved).toBe("ws-only");
-  });
-
-  test("resolves a legacy record with multiple cwd matches to the deterministic oldest", () => {
-    const workspaces = [
-      createWorkspaceRecord("/tmp/repo", "ws-newer", { createdAt: "2026-03-02T00:00:00.000Z" }),
-      createWorkspaceRecord("/tmp/repo", "ws-older", { createdAt: "2026-03-01T00:00:00.000Z" }),
-    ];
-
-    const resolved = resolveWorkspaceIdForRecord({ cwd: "/tmp/repo" }, workspaces);
-
-    expect(resolved).toBe("ws-older");
-  });
-
-  test("returns null for a legacy record with no cwd match", () => {
-    const workspaces = [createWorkspaceRecord("/tmp/other", "ws-other")];
-
-    const resolved = resolveWorkspaceIdForRecord({ cwd: "/tmp/repo" }, workspaces);
-
-    expect(resolved).toBeNull();
-  });
-
-  test("falls back to cwd when the stamped workspaceId points at an archived workspace", () => {
-    const workspaces = [
-      createWorkspaceRecord("/tmp/repo", "ws-archived", {
-        archivedAt: "2026-03-05T00:00:00.000Z",
-      }),
-      createWorkspaceRecord("/tmp/repo", "ws-live"),
-    ];
-
-    const resolved = resolveWorkspaceIdForRecord(
-      { workspaceId: "ws-archived", cwd: "/tmp/repo" },
-      workspaces,
-    );
-
-    expect(resolved).toBe("ws-live");
   });
 });

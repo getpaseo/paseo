@@ -70,11 +70,6 @@ import {
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store/state";
-import { usePinnedLaunchers } from "@/workspace-pins/launch";
-import { useLaunchIntentStore } from "@/workspace-pins/launch-intent-store";
-import { PinnedTargetsRow } from "@/workspace-pins/pinned-targets-row";
-import type { PinnedTabTarget } from "@/workspace-pins/target";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import {
@@ -86,6 +81,7 @@ import {
 import { SyncedLoader } from "@/components/synced-loader";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -119,8 +115,8 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { openExternalUrl } from "@/utils/open-external-url";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { archiveWorkspacesOptimistically } from "@/workspace/workspace-archive";
+import { selectProjectWorkspacesToArchive } from "@/workspace/project-workspace-archive";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
-import { WorktreeDeletePrompt } from "@/workspace/worktree-delete-prompt";
 import {
   isWeb as platformIsWeb,
   isNative as platformIsNative,
@@ -667,39 +663,15 @@ function WorkspaceRowRightGroup({
   onRename?: () => void;
 }) {
   const { t } = useTranslation();
-  const isMobileBreakpoint = useIsCompactFormFactor();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
   const showKebabInSlot = showKebab && !showShortcut;
   const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
-  const showPinnedTargets = (isHovered || platformIsNative || isMobileBreakpoint) && !showShortcut;
-
-  const onLaunch = useCallback(
-    (target: PinnedTabTarget) => {
-      const workspaceKey = buildWorkspaceTabPersistenceKey({
-        serverId: workspace.serverId,
-        workspaceId: workspace.workspaceId,
-      });
-      if (!workspaceKey) return;
-      navigateToWorkspace(workspace.serverId, workspace.workspaceId);
-      useLaunchIntentStore.getState().request({ workspaceKey, target });
-    },
-    [workspace.serverId, workspace.workspaceId],
-  );
-  const launchers = usePinnedLaunchers({ serverId: workspace.serverId, onLaunch });
 
   return (
     <>
       {isCreating ? (
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>
-      ) : null}
-      {launchers.length > 0 ? (
-        <View
-          style={showPinnedTargets ? undefined : styles.pinnedTargetsHidden}
-          pointerEvents={showPinnedTargets ? "auto" : "none"}
-        >
-          <PinnedTargetsRow launchers={launchers} testIdPrefix="sidebar-pinned-target" />
-        </View>
       ) : null}
       {shouldRenderActionSlot ? (
         <SidebarWorkspaceTrailingActionSlot>
@@ -1539,7 +1511,12 @@ function WorkspaceRowWithMenu({
   }, [selected, workspace]);
 
   const archiveController = useWorkspaceArchive({
-    workspace,
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    workspaceDirectory: workspace.workspaceDirectory,
+    workspaceKind: workspace.workspaceKind,
+    name: workspace.name,
+    ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
@@ -1548,7 +1525,7 @@ function WorkspaceRowWithMenu({
     if (isArchiving) {
       return;
     }
-    archiveController.beginArchive();
+    archiveController.archive();
   }, [archiveController, isArchiving]);
 
   const handleCopyPath = useCallback(() => {
@@ -1652,13 +1629,6 @@ function WorkspaceRowWithMenu({
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
-      />
-      <WorktreeDeletePrompt
-        visible={archiveController.deletePromptOpen}
-        workspaceName={workspace.name}
-        onKeep={archiveController.confirmKeepOnDisk}
-        onDelete={archiveController.confirmDeleteFromDisk}
-        onCancel={archiveController.cancelDeletePrompt}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
@@ -1956,16 +1926,22 @@ function ProjectBlock({
       }
 
       setIsRemovingProject(true);
-      void archiveWorkspacesOptimistically({
-        client,
-        workspaces: project.workspaces,
-      }).then((failures) => {
-        if (failures.length > 0) {
-          toast.error(t("sidebar.project.toasts.removeFailed"));
-        }
-        setIsRemovingProject(false);
-        return;
-      });
+      void selectProjectWorkspacesToArchive(project.workspaces)
+        .then((workspaces) => archiveWorkspacesOptimistically({ client, workspaces }))
+        .then((failures) => {
+          if (failures.length > 0) {
+            toast.error(t("sidebar.project.toasts.removeFailed"));
+          }
+          setIsRemovingProject(false);
+          return;
+        })
+        .catch((error) => {
+          toast.error(
+            error instanceof Error ? error.message : t("sidebar.project.toasts.removeFailed"),
+          );
+          setIsRemovingProject(false);
+          return;
+        });
     })();
   }, [isRemovingProject, serverId, displayName, t, toast, project.workspaces]);
 
@@ -2718,9 +2694,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     flexShrink: 0,
-  },
-  pinnedTargetsHidden: {
-    opacity: 0,
   },
   kebabButton: {
     padding: 2,

@@ -337,6 +337,9 @@ export const ar: TranslationResources = {
     },
     hoverCard: {
       scriptsAccessibility: "البرامج النصية Workspace",
+      copyPath: "نسخ المسار",
+      copyBranchName: "نسخ اسم الفرع",
+      copied: "تم النسخ",
     },
     fileExplorer: {
       sort: {
@@ -812,12 +815,6 @@ export const ar: TranslationResources = {
         hideConfirm: "يخفي",
         cancel: "يلغي",
       },
-      deleteWorktreePrompt: {
-        title: "أرشفة مساحة العمل",
-        message: "هل تريد أيضًا إزالة شجرة العمل من القرص؟",
-        keep: "الاحتفاظ على القرص",
-        delete: "حذف",
-      },
       rename: {
         title: "إعادة تسمية مساحة العمل",
         submit: "إعادة تسمية",
@@ -836,7 +833,7 @@ export const ar: TranslationResources = {
   newWorkspace: {
     title: "مساحة عمل جديدة",
     create: "يخلق",
-    backing: {
+    isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
       label: "العزل",
@@ -1528,6 +1525,7 @@ export const ar: TranslationResources = {
       },
       help: {
         openProject: "مشروع مفتوح",
+        newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",
         archiveWorktree: "أرشفة شجرة العمل",
         newTab: "علامة تبويب جديدة",
@@ -1848,8 +1846,6 @@ export const ar: TranslationResources = {
       metadata: {
         title: "توليد البيانات الوصفية",
         info: "تعليمات خاصة بالمشروع يتم إدخالها في الذكاء الاصطناعي الذي يستخدمه Paseo لإنشاء بيانات التعريف - استخدمها لفرض اصطلاحات فريقك مثل تسمية الفرع أو نمط الالتزام أو تنسيق PR",
-        agentTitle: "عناوين Agent",
-        agentTitlePlaceholder: "اجعل العناوين ضرورية وأقل من 40 حرفًا",
         branchName: "اسماء الفروع",
         branchNamePlaceholder: "بادئة الفروع بـ fet/ أو Fix/, mb/ للفروع الشخصية",
         commitMessage: "ارتكاب الرسائل",

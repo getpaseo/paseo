@@ -436,14 +436,18 @@ async function resolveRunWorkspace(
     return { id: explicit, cwd };
   }
 
+  // TODO: thread the run `prompt` as firstAgentContext so workspace-level
+  // title/branch generation picks up the task description (U8/U6 deferred).
   const result = options.worktree
     ? await client.createWorkspace({
-        backing: "worktree",
-        cwd,
-        branch: options.worktree,
-        baseBranch: options.base,
+        source: {
+          kind: "worktree",
+          cwd,
+          worktreeSlug: options.worktree,
+          baseBranch: options.base,
+        },
       })
-    : await client.createWorkspace({ backing: "local", cwd });
+    : await client.createWorkspace({ source: { kind: "directory", path: cwd } });
 
   if (!result.workspace) {
     throw {

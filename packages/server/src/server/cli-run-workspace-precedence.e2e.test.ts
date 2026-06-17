@@ -21,7 +21,7 @@ async function workspaceIds(client: DaemonClient): Promise<Set<string>> {
 }
 
 async function mintLocalWorkspace(client: DaemonClient, cwd: string): Promise<string> {
-  const result = await client.createWorkspace({ backing: "local", cwd });
+  const result = await client.createWorkspace({ source: { kind: "directory", path: cwd } });
   if (!result.workspace) {
     throw new Error(result.error ?? "Failed to create workspace");
   }

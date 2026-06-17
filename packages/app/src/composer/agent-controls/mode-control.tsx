@@ -8,18 +8,12 @@ import {
   type ReactElement,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import {
-  Bot,
-  ChevronDown,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldOff,
-  ShieldQuestionMark,
-} from "lucide-react-native";
+import { Bot, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestionMark } from "lucide-react-native";
+import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { useSessionStore } from "@/stores/session-store";
@@ -198,7 +192,7 @@ function AgentModeControlView({
 
   return (
     <>
-      <Pressable
+      <ComboboxTrigger
         ref={anchorRef}
         collapsable={false}
         disabled={disabled}
@@ -212,8 +206,7 @@ function AgentModeControlView({
       >
         {Icon ? <Icon size={theme.iconSize.md} color={iconColor} /> : null}
         <Text style={labelStyle}>{selectedModeLabel}</Text>
-        <ChevronDown size={theme.iconSize.sm} color={iconColor} />
-      </Pressable>
+      </ComboboxTrigger>
       <Combobox
         options={options}
         value={selectedMode.id}

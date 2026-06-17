@@ -10,8 +10,9 @@ import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/in
 // Model B archive is scoped to a single workspace RECORD (by workspaceId), not
 // to a directory on disk. A directory can back multiple workspaces, so archiving
 // one must never tear down a sibling's agents/terminals, and must never delete a
-// directory another workspace still references. On-disk worktree removal is an
-// explicit, last-reference-only opt-in (deleteWorktreeFromDisk).
+// directory another workspace still references. On-disk worktree removal is
+// derived from scope + last-reference + Paseo ownership; there is no caller-
+// supplied disk flag.
 
 let ctx: DaemonTestContext;
 const tempRoots: string[] = [];
@@ -50,7 +51,10 @@ function createGitRepo(): string {
 }
 
 async function createLocalWorkspace(cwd: string, title: string): Promise<string> {
-  const result = await ctx.client.createWorkspace({ backing: "local", cwd, title });
+  const result = await ctx.client.createWorkspace({
+    source: { kind: "directory", path: cwd },
+    title,
+  });
   if (!result.workspace) {
     throw new Error(result.error ?? "Failed to create local workspace");
   }
@@ -157,14 +161,11 @@ test("archiving one of two workspaces sharing a cwd spares the sibling and the d
   await ctx.client.killTerminal(terminalBId);
 }, 60000);
 
-test("archiving the last reference to a worktree honors deleteWorktreeFromDisk", async () => {
+test("archiving the last reference to a worktree removes it from disk regardless of the disk flag", async () => {
   const repoDir = createGitRepo();
 
   const keepResult = await ctx.client.createWorkspace({
-    backing: "worktree",
-    cwd: repoDir,
-    branch: "keep-on-disk",
-    baseBranch: "main",
+    source: { kind: "worktree", cwd: repoDir, worktreeSlug: "keep-on-disk", baseBranch: "main" },
   });
   const keepWorkspace = keepResult.workspace;
   if (!keepWorkspace?.workspaceDirectory) {
@@ -173,7 +174,7 @@ test("archiving the last reference to a worktree honors deleteWorktreeFromDisk",
   const keepDir = keepWorkspace.workspaceDirectory;
   expect(existsSync(keepDir)).toBe(true);
 
-  // Last reference, deleteWorktreeFromDisk omitted (defaults false) → dir stays.
+  // Last reference, deleteWorktreeFromDisk omitted (defaults ignored) → dir removed.
   const keepArchive = await ctx.client.archivePaseoWorktree({ worktreePath: keepDir });
   expect(keepArchive.success).toBe(true);
   await expect
@@ -182,13 +183,15 @@ test("archiving the last reference to a worktree honors deleteWorktreeFromDisk",
       interval: 100,
     })
     .toBe(false);
-  expect(existsSync(keepDir)).toBe(true);
+  await expect.poll(() => existsSync(keepDir), { timeout: 10000, interval: 100 }).toBe(false);
 
   const deleteResult = await ctx.client.createWorkspace({
-    backing: "worktree",
-    cwd: repoDir,
-    branch: "delete-from-disk",
-    baseBranch: "main",
+    source: {
+      kind: "worktree",
+      cwd: repoDir,
+      worktreeSlug: "delete-from-disk",
+      baseBranch: "main",
+    },
   });
   const deleteWorkspace = deleteResult.workspace;
   if (!deleteWorkspace?.workspaceDirectory) {
@@ -197,11 +200,9 @@ test("archiving the last reference to a worktree honors deleteWorktreeFromDisk",
   const deleteDir = deleteWorkspace.workspaceDirectory;
   expect(existsSync(deleteDir)).toBe(true);
 
-  // Last reference, deleteWorktreeFromDisk true → dir is removed from disk.
-  const deleteArchive = await ctx.client.archivePaseoWorktree({
-    worktreePath: deleteDir,
-    deleteWorktreeFromDisk: true,
-  });
+  // Last reference on a fresh worktree still removes the directory without any
+  // caller-supplied disk-deletion flag.
+  const deleteArchive = await ctx.client.archivePaseoWorktree({ worktreePath: deleteDir });
   expect(deleteArchive.success).toBe(true);
   await expect
     .poll(async () => (await activeWorkspaceIds()).has(deleteWorkspace.id), {
@@ -216,10 +217,12 @@ test("worktree archive targets the explicit workspaceId when a directory backs m
   const repoDir = createGitRepo();
 
   const worktreeResult = await ctx.client.createWorkspace({
-    backing: "worktree",
-    cwd: repoDir,
-    branch: "targeted-worktree",
-    baseBranch: "main",
+    source: {
+      kind: "worktree",
+      cwd: repoDir,
+      worktreeSlug: "targeted-worktree",
+      baseBranch: "main",
+    },
   });
   const worktreeWorkspace = worktreeResult.workspace;
   if (!worktreeWorkspace?.workspaceDirectory) {
@@ -256,14 +259,16 @@ test("worktree archive targets the explicit workspaceId when a directory backs m
   });
 }, 60000);
 
-test("deleteWorktreeFromDisk keeps the worktree when a sibling workspace still references it", async () => {
+test("keeps the worktree on disk when a sibling workspace still references it", async () => {
   const repoDir = createGitRepo();
 
   const worktreeResult = await ctx.client.createWorkspace({
-    backing: "worktree",
-    cwd: repoDir,
-    branch: "shared-worktree",
-    baseBranch: "main",
+    source: {
+      kind: "worktree",
+      cwd: repoDir,
+      worktreeSlug: "shared-worktree",
+      baseBranch: "main",
+    },
   });
   const worktreeWorkspace = worktreeResult.workspace;
   if (!worktreeWorkspace?.workspaceDirectory) {
@@ -276,11 +281,10 @@ test("deleteWorktreeFromDisk keeps the worktree when a sibling workspace still r
   const siblingWorkspaceId = await createLocalWorkspace(worktreeDir, "sibling");
   expect(siblingWorkspaceId).not.toBe(worktreeWorkspace.id);
 
-  // Archive the worktree-backed workspace with deleteWorktreeFromDisk true.
-  // It is NOT the last reference, so the directory must survive.
+  // Archive the worktree-backed workspace. It is NOT the last reference, so the
+  // directory must survive regardless of the legacy disk flag.
   const archive = await ctx.client.archivePaseoWorktree({
     worktreePath: worktreeDir,
-    deleteWorktreeFromDisk: true,
   });
   expect(archive.success).toBe(true);
 

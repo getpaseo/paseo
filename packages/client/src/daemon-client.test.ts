@@ -1102,6 +1102,73 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("sends first-agent prompt context with workspace.create.request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createWorkspace(
+    {
+      source: {
+        kind: "directory",
+        path: "/tmp/project",
+        projectId: "local:/tmp/project",
+      },
+      firstAgentContext: {
+        prompt: "Fix login bug",
+        attachments: [],
+      },
+    },
+    "req-local-title",
+  );
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.create.request",
+    requestId: "req-local-title",
+    source: {
+      kind: "directory",
+      path: "/tmp/project",
+      projectId: "local:/tmp/project",
+    },
+    firstAgentContext: {
+      prompt: "Fix login bug",
+      attachments: [],
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: "req-local-title",
+        workspace: null,
+        error: "local title sentinel",
+        setupTerminalId: null,
+      },
+    }),
+  );
+
+  await expect(createPromise).resolves.toEqual({
+    requestId: "req-local-title",
+    workspace: null,
+    error: "local title sentinel",
+    setupTerminalId: null,
+  });
+});
+
 test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

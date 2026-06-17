@@ -131,9 +131,9 @@ test.describe("New workspace entry points", () => {
       await nonGitOption.click();
       await expectNewWorkspaceProjectSelected(page, nonGitProject.projectDisplayName);
 
-      // No git checkout means no worktree backing choice: the Isolation row is
+      // No git checkout means no worktree isolation choice: the Isolation row is
       // absent entirely.
-      await expect(page.getByTestId("workspace-create-backing-trigger")).toHaveCount(0);
+      await expect(page.getByTestId("workspace-create-isolation-trigger")).toHaveCount(0);
 
       // Switching to the git project on the same screen reveals the Isolation row.
       await trigger.click();
@@ -144,7 +144,7 @@ test.describe("New workspace entry points", () => {
       await gitOption.click();
       await expectNewWorkspaceProjectSelected(page, gitProject.projectDisplayName);
 
-      await expect(page.getByTestId("workspace-create-backing-trigger")).toBeVisible({
+      await expect(page.getByTestId("workspace-create-isolation-trigger")).toBeVisible({
         timeout: 30_000,
       });
     } finally {

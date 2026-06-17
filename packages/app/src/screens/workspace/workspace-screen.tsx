@@ -185,8 +185,6 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getProviderIcon } from "@/components/provider-icons";
-import { useLaunchIntentStore } from "@/workspace-pins/launch-intent-store";
-import { runPinnedTabTarget, type TabTargetHandlers } from "@/workspace-pins/run";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -1720,37 +1718,6 @@ function useWorkspaceCheckoutStatus(input: {
   return { checkoutQuery, isCheckoutStatusLoading };
 }
 
-interface PinnedTabLaunchConsumerInput {
-  serverId: string;
-  persistenceKey: string | null;
-  isRouteFocused: boolean;
-  handlers: TabTargetHandlers;
-}
-
-function usePinnedTabLaunchConsumer({
-  serverId,
-  persistenceKey,
-  isRouteFocused,
-  handlers,
-}: PinnedTabLaunchConsumerInput) {
-  const { config } = useDaemonConfig(serverId);
-  const profiles = useMemo(
-    () => resolveTerminalProfiles(config?.terminalProfiles),
-    [config?.terminalProfiles],
-  );
-  const pending = useLaunchIntentStore((state) => state.pending);
-
-  useEffect(() => {
-    if (!persistenceKey || !isRouteFocused || pending?.workspaceKey !== persistenceKey) {
-      return;
-    }
-    const target = useLaunchIntentStore.getState().consume(persistenceKey);
-    if (target) {
-      runPinnedTabTarget(target, profiles, handlers);
-    }
-  }, [handlers, isRouteFocused, pending, persistenceKey, profiles]);
-}
-
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1824,7 +1791,6 @@ function WorkspaceScreenContent({
         sessionAgents: state.sessions[normalizedServerId]?.agents,
         agentDetails: state.sessions[normalizedServerId]?.agentDetails,
         workspaceId: normalizedWorkspaceId,
-        workspaceDirectory,
       }),
     workspaceAgentVisibilityEqual,
   );
@@ -2596,28 +2562,6 @@ function WorkspaceScreenContent({
     },
     [openWorkspaceTabFocused, persistenceKey],
   );
-
-  const pinnedTabHandlers = useMemo<TabTargetHandlers>(
-    () => ({
-      createDraft: handleCreateDraftTab,
-      createTerminal: handleCreateTerminal,
-      createBrowser: handleCreateBrowserTab,
-      createTerminalWithProfile: handleCreateTerminalWithProfile,
-    }),
-    [
-      handleCreateBrowserTab,
-      handleCreateDraftTab,
-      handleCreateTerminal,
-      handleCreateTerminalWithProfile,
-    ],
-  );
-
-  usePinnedTabLaunchConsumer({
-    serverId: normalizedServerId,
-    persistenceKey,
-    isRouteFocused,
-    handlers: pinnedTabHandlers,
-  });
 
   useDesktopBrowserNewTabRequests({
     enabled: Boolean(persistenceKey),

@@ -172,6 +172,44 @@ function PinnableProfileMenuItem({ profile, disabled, onLaunch }: PinnableProfil
 interface WorkspaceInlineAddTabButtonProps {
   shortcutKeys: ShortcutKey[][] | null;
   onCreateAgentTab: () => void;
+  onLayout: (event: LayoutChangeEvent) => void;
+}
+
+function WorkspaceInlineAddTabButton({
+  shortcutKeys,
+  onCreateAgentTab,
+  onLayout,
+}: WorkspaceInlineAddTabButtonProps) {
+  const { t } = useTranslation();
+  const tooltipText = t("workspace.tabs.actions.newAgent");
+
+  return (
+    <View style={styles.inlineAddButton} onLayout={onLayout}>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger
+          testID="workspace-new-agent-tab-inline"
+          onPress={onCreateAgentTab}
+          accessibilityRole="button"
+          accessibilityLabel={tooltipText}
+          style={inlineAddActionButtonStyle}
+        >
+          <ThemedPlus size={14} uniProps={mutedColorMapping} />
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <View style={styles.newTabTooltipRow}>
+            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
+            {shortcutKeys ? (
+              <Shortcut chord={shortcutKeys} style={styles.newTabTooltipShortcut} />
+            ) : null}
+          </View>
+        </TooltipContent>
+      </Tooltip>
+    </View>
+  );
+}
+
+interface WorkspaceTabRowExtrasProps {
+  onCreateAgentTab: () => void;
   onCreateTerminal: () => void;
   onCreateBrowser: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
@@ -179,11 +217,9 @@ interface WorkspaceInlineAddTabButtonProps {
   normalizedServerId: string;
   showCreateBrowserTab: boolean;
   terminalDisabled: boolean;
-  onLayout: (event: LayoutChangeEvent) => void;
 }
 
-function WorkspaceInlineAddTabButton({
-  shortcutKeys,
+function WorkspaceTabRowExtras({
   onCreateAgentTab,
   onCreateTerminal,
   onCreateBrowser,
@@ -192,8 +228,7 @@ function WorkspaceInlineAddTabButton({
   normalizedServerId,
   showCreateBrowserTab,
   terminalDisabled,
-  onLayout,
-}: WorkspaceInlineAddTabButtonProps) {
+}: WorkspaceTabRowExtrasProps) {
   const { t } = useTranslation();
   const { config } = useDaemonConfig(normalizedServerId);
   const profiles = useMemo(
@@ -220,30 +255,8 @@ function WorkspaceInlineAddTabButton({
 
   const launchers = usePinnedLaunchers({ serverId: normalizedServerId, onLaunch });
 
-  const tooltipText = t("workspace.tabs.actions.newAgent");
-
   return (
-    <View style={styles.inlineAddButton} onLayout={onLayout}>
-      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger
-          testID="workspace-new-agent-tab-inline"
-          onPress={onCreateAgentTab}
-          accessibilityRole="button"
-          accessibilityLabel={tooltipText}
-          style={inlineAddActionButtonStyle}
-        >
-          <ThemedPlus size={14} uniProps={mutedColorMapping} />
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <View style={styles.newTabTooltipRow}>
-            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
-            {shortcutKeys ? (
-              <Shortcut chord={shortcutKeys} style={styles.newTabTooltipShortcut} />
-            ) : null}
-          </View>
-        </TooltipContent>
-      </Tooltip>
-      <PinnedTargetsRow launchers={launchers} testIdPrefix="workspace-pinned-target" />
+    <>
       <DropdownMenu>
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="triggerRef">
@@ -251,7 +264,7 @@ function WorkspaceInlineAddTabButton({
               testID="workspace-new-tab-menu-trigger"
               accessibilityRole="button"
               accessibilityLabel={t("workspace.tabs.actions.moreActions")}
-              style={inlineAddActionButtonStyle}
+              style={newTabActionButtonStyle}
             >
               <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
             </DropdownMenuTrigger>
@@ -301,7 +314,8 @@ function WorkspaceInlineAddTabButton({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </View>
+      <PinnedTargetsRow launchers={launchers} testIdPrefix="workspace-pinned-target" />
+    </>
   );
 }
 
@@ -976,6 +990,12 @@ export function WorkspaceDesktopTabsRow({
         <WorkspaceInlineAddTabButton
           shortcutKeys={newTabKeys}
           onCreateAgentTab={handleCreateAgentTab}
+          onLayout={handleInlineAddButtonLayout}
+        />
+      </ScrollView>
+      <View style={styles.tabsActions} onLayout={handleTabsActionsLayout}>
+        <WorkspaceTabRowExtras
+          onCreateAgentTab={handleCreateAgentTab}
           onCreateTerminal={handleCreateTerminal}
           onCreateBrowser={handleCreateBrowser}
           onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
@@ -983,10 +1003,7 @@ export function WorkspaceDesktopTabsRow({
           normalizedServerId={normalizedServerId}
           showCreateBrowserTab={showCreateBrowserTab}
           terminalDisabled={terminalDisabled}
-          onLayout={handleInlineAddButtonLayout}
         />
-      </ScrollView>
-      <View style={styles.tabsActions} onLayout={handleTabsActionsLayout}>
         {showPaneSplitActions ? (
           <>
             <SplitActionButton

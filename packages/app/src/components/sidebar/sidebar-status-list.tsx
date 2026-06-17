@@ -41,8 +41,8 @@ import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
-import { WorktreeDeletePrompt } from "@/workspace/worktree-delete-prompt";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import * as Clipboard from "expo-clipboard";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -376,14 +376,19 @@ function StatusWorkspaceRowWithMenu({
   }, [selected, workspace]);
 
   const archiveController = useWorkspaceArchive({
-    workspace,
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+    workspaceDirectory: workspace.workspaceDirectory,
+    workspaceKind: workspace.workspaceKind,
+    name: workspace.name,
+    ...toWorktreeArchiveRisk(workspace),
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
 
   const handleArchive = useCallback(() => {
     if (isArchiving) return;
-    archiveController.beginArchive();
+    archiveController.archive();
   }, [archiveController, isArchiving]);
 
   const handleCopyPath = useCallback(() => {
@@ -471,13 +476,6 @@ function StatusWorkspaceRowWithMenu({
         onRename={handleOpenRename}
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
-      />
-      <WorktreeDeletePrompt
-        visible={archiveController.deletePromptOpen}
-        workspaceName={workspace.name}
-        onKeep={archiveController.confirmKeepOnDisk}
-        onDelete={archiveController.confirmDeleteFromDisk}
-        onCancel={archiveController.cancelDeletePrompt}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}

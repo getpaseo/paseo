@@ -101,6 +101,7 @@ function createWorkspaceGitServiceStub(
       projectDisplayName: string;
       workspaceDisplayName: string;
       gitRemote?: string | null;
+      currentBranch?: string | null;
     }
   >,
 ) {
@@ -580,7 +581,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")!.customName).toBe("My Fork");
   });
 
-  test("updates workspace display name when branch changes", async () => {
+  test("updates workspace branch metadata without clobbering the workspace name", async () => {
     const dir = createTempGitRepo("reconcile-branch-");
     tempDirs.push(dir);
 
@@ -606,7 +607,8 @@ describe("WorkspaceReconciliationService", () => {
         projectId: "p1",
         cwd: dir,
         kind: "local_checkout",
-        displayName: "main",
+        displayName: "Human workspace title",
+        branch: "main",
         createdAt: timestamp,
         updatedAt: timestamp,
       }),
@@ -621,6 +623,7 @@ describe("WorkspaceReconciliationService", () => {
           projectKind: "git",
           projectDisplayName: path.basename(dir),
           workspaceDisplayName: "feature-branch",
+          currentBranch: "feature-branch",
         },
       }),
     });
@@ -629,7 +632,12 @@ describe("WorkspaceReconciliationService", () => {
 
     const wsUpdate = result.changesApplied.find((c) => c.kind === "workspace_updated");
     expect(wsUpdate).toBeDefined();
-    expect(workspaces.get("w1")!.displayName).toBe("feature-branch");
+    expect(wsUpdate).toMatchObject({
+      kind: "workspace_updated",
+      fields: { branch: "feature-branch" },
+    });
+    expect(workspaces.get("w1")!.displayName).toBe("Human workspace title");
+    expect(workspaces.get("w1")!.branch).toBe("feature-branch");
   });
 
   test("does not modify already-archived records", async () => {

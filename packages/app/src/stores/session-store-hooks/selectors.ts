@@ -5,10 +5,7 @@ import {
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
-import {
-  resolveWorkspaceIdByDirectory,
-  resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-identity";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
@@ -248,21 +245,6 @@ export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | 
     return false;
   }
   return (state.sessions[serverId]?.workspaces?.size ?? 0) > 0;
-}
-
-export function selectResolveWorkspaceIdByCwd(
-  state: SessionsSnapshot,
-  serverId: string | null,
-  cwd: string | null | undefined,
-): string | null {
-  if (!serverId || !cwd) {
-    return null;
-  }
-  const workspaces = state.sessions[serverId]?.workspaces;
-  return resolveWorkspaceIdByDirectory({
-    workspaces: workspaces?.values(),
-    workspaceDirectory: cwd,
-  });
 }
 
 export function selectWorkspaceStatusesForBadges(

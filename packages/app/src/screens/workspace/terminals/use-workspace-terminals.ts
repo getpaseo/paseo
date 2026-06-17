@@ -186,17 +186,18 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     const paneWorkspaceId = normalizedWorkspaceId || undefined;
 
     const unsubscribeChanged = client.on("terminals_changed", (message) => {
+      // The terminal subscription is keyed by cwd at the protocol level, so this
+      // gate only routes the event to the pane watching that cwd; it is not an
+      // ownership decision.
       if (message.payload.cwd !== workspaceDirectory) {
         return;
       }
 
       // Two workspaces can share a cwd, so the push can carry terminals from a
-      // sibling workspace. Keep only the ones whose workspaceId matches this
-      // pane; terminals without a workspaceId predate Model B and belong to
-      // whichever pane is watching the cwd.
+      // sibling workspace. A terminal belongs to a workspace only by its
+      // workspaceId, so keep only the ones whose workspaceId matches this pane.
       const matchingTerminals = message.payload.terminals.filter(
-        (terminal) =>
-          terminal.workspaceId === undefined || terminal.workspaceId === paneWorkspaceId,
+        (terminal) => terminal.workspaceId === paneWorkspaceId,
       );
 
       queryClient.setQueryData<ListTerminalsPayload>(queryKey, (current) => ({

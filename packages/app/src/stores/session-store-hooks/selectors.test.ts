@@ -6,7 +6,6 @@ import {
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
-  selectResolveWorkspaceIdByCwd,
   selectWorkspace,
   selectWorkspaceDirectory,
   selectWorkspaceFields,
@@ -379,33 +378,6 @@ describe("selectHasWorkspaces", () => {
     const before = tracked.current;
 
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspaceB]);
-    expect(tracked.current).toBe(before);
-
-    tracked.stop();
-  });
-});
-
-describe("selectResolveWorkspaceIdByCwd", () => {
-  it("resolves by cwd and stays stable under unrelated updates", () => {
-    const workspaceA = createWorkspace({
-      id: "workspace-a",
-      workspaceDirectory: "/repo/a",
-    });
-    const workspaceB = createWorkspace({
-      id: "workspace-b",
-      workspaceDirectory: "/repo/b",
-    });
-    initializeWorkspaces([workspaceA, workspaceB]);
-
-    const tracked = trackSelector(
-      useSessionStore,
-      (state) => selectResolveWorkspaceIdByCwd(state, SERVER_ID, "/repo/a"),
-      workspaceEqualityFns.identity,
-    );
-    const before = tracked.current;
-    expect(before).toBe("workspace-a");
-
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceB, status: "running" }]);
     expect(tracked.current).toBe(before);
 
     tracked.stop();

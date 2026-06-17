@@ -2,9 +2,11 @@ import { join } from "node:path";
 
 import { getPaseoWorktreesRoot, isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import {
-  archivePaseoWorktree,
-  type ArchivePaseoWorktreeDependencies,
-} from "../paseo-worktree-archive-service.js";
+  archiveByScope,
+  resolveWorkspaceIdAtPath,
+  type ArchiveDependencies,
+  type ArchiveScope,
+} from "../workspace-archive-service.js";
 import type {
   CreatePaseoWorktreeInput,
   CreatePaseoWorktreeResult,
@@ -87,24 +89,24 @@ export async function createPaseoWorktreeCommand<Result extends CreatePaseoWorkt
   }
 }
 
-export interface ArchivePaseoWorktreeCommandDependencies extends Omit<
-  ArchivePaseoWorktreeDependencies,
+export interface ArchiveCommandDependencies extends Omit<
+  ArchiveDependencies,
   "workspaceGitService"
 > {
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
 }
 
-export interface ArchivePaseoWorktreeCommandInput {
+export interface ArchiveCommandInput {
   requestId: string;
   repoRoot?: string | null;
   worktreePath?: string;
   worktreeSlug?: string;
   branchName?: string;
   workspaceId?: string;
-  deleteWorktreeFromDisk?: boolean;
+  scope?: ArchiveScope["kind"];
 }
 
-export type ArchivePaseoWorktreeCommandResult =
+export type ArchiveCommandResult =
   | {
       ok: true;
       removedAgents: string[];
@@ -116,39 +118,66 @@ export type ArchivePaseoWorktreeCommandResult =
       removedAgents: [];
     };
 
-export async function archivePaseoWorktreeCommand(
-  dependencies: ArchivePaseoWorktreeCommandDependencies,
-  input: ArchivePaseoWorktreeCommandInput,
-): Promise<ArchivePaseoWorktreeCommandResult> {
+export async function archiveCommand(
+  dependencies: ArchiveCommandDependencies,
+  input: ArchiveCommandInput,
+): Promise<ArchiveCommandResult> {
   const resolvedTarget = await resolveArchiveTarget(dependencies, input);
-  const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
-    paseoHome: dependencies.paseoHome,
-    worktreesRoot: dependencies.worktreesRoot,
-  });
+  const scope = input.scope ?? "workspace";
 
-  if (!ownership.allowed) {
+  if (scope === "worktree") {
+    const ownership = await isPaseoOwnedWorktreeCwd(resolvedTarget.targetPath, {
+      paseoHome: dependencies.paseoHome,
+      worktreesRoot: dependencies.paseoWorktreesBaseRoot,
+    });
+
+    if (!ownership.allowed) {
+      return {
+        ok: false,
+        code: "NOT_ALLOWED",
+        message: "Worktree is not a Paseo-owned worktree",
+        removedAgents: [],
+      };
+    }
+
+    const result = await archiveByScope(dependencies, {
+      scope: { kind: "worktree", targetPath: resolvedTarget.targetPath },
+      repoRoot: ownership.repoRoot ?? resolvedTarget.repoRoot ?? null,
+      repoWorktreesRoot: ownership.worktreeRoot,
+      paseoWorktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
+      requestId: input.requestId,
+    });
+
     return {
-      ok: false,
-      code: "NOT_ALLOWED",
-      message: "Worktree is not a Paseo-owned worktree",
+      ok: true,
+      removedAgents: result.archivedAgentIds,
+    };
+  }
+
+  const workspaceId =
+    input.workspaceId ?? (await resolveWorkspaceIdAtPath(dependencies, resolvedTarget.targetPath));
+
+  if (!workspaceId) {
+    dependencies.sessionLogger?.warn(
+      { targetPath: resolvedTarget.targetPath },
+      "Could not resolve workspace for archive; skipping",
+    );
+    return {
+      ok: true,
       removedAgents: [],
     };
   }
 
-  const repoRoot = ownership.repoRoot ?? resolvedTarget.repoRoot ?? null;
-  const removedAgents = await archivePaseoWorktree(dependencies, {
-    targetPath: resolvedTarget.targetPath,
-    repoRoot,
-    worktreesRoot: ownership.worktreeRoot,
-    worktreesBaseRoot: dependencies.worktreesRoot,
-    workspaceId: input.workspaceId,
-    deleteWorktreeFromDisk: input.deleteWorktreeFromDisk,
+  const result = await archiveByScope(dependencies, {
+    scope: { kind: "workspace", workspaceId },
+    repoRoot: resolvedTarget.repoRoot,
+    paseoWorktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
     requestId: input.requestId,
   });
 
   return {
     ok: true,
-    removedAgents,
+    removedAgents: result.archivedAgentIds,
   };
 }
 
@@ -158,8 +187,8 @@ interface ResolvedArchiveTarget {
 }
 
 async function resolveArchiveTarget(
-  dependencies: ArchivePaseoWorktreeCommandDependencies,
-  input: ArchivePaseoWorktreeCommandInput,
+  dependencies: ArchiveCommandDependencies,
+  input: ArchiveCommandInput,
 ): Promise<ResolvedArchiveTarget> {
   const repoRoot = input.repoRoot ?? null;
   if (input.worktreePath) {
@@ -189,14 +218,14 @@ async function resolveArchiveTarget(
 }
 
 async function resolveWorktreeSlugPath(
-  dependencies: ArchivePaseoWorktreeCommandDependencies,
+  dependencies: ArchiveCommandDependencies,
   repoRoot: string,
   worktreeSlug: string,
 ): Promise<string> {
   const worktreesRoot = await getPaseoWorktreesRoot(
     repoRoot,
     dependencies.paseoHome,
-    dependencies.worktreesRoot,
+    dependencies.paseoWorktreesBaseRoot,
   );
   return join(worktreesRoot, worktreeSlug);
 }

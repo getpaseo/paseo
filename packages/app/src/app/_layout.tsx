@@ -63,6 +63,7 @@ import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
+import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
@@ -461,6 +462,7 @@ function AppContainer({
   });
 
   useActiveWorktreeNewAction();
+  useGlobalNewWorkspaceAction();
 
   const content = (
     <View style={layoutStyles.surfaceFill}>

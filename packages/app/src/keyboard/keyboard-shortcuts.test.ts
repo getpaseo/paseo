@@ -129,6 +129,18 @@ describe("keyboard-shortcuts", () => {
       action: "agent.new",
     },
     {
+      name: "matches Cmd+N to create new workspace on mac",
+      event: { key: "n", code: "KeyN", metaKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "workspace.new",
+    },
+    {
+      name: "matches Ctrl+N to create new workspace on non-mac",
+      event: { key: "n", code: "KeyN", ctrlKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "workspace.new",
+    },
+    {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",
       event: { key: "?", code: "Slash", shiftKey: true },
       context: { focusScope: "other" },
@@ -564,6 +576,7 @@ describe("keyboard-shortcut help sections", () => {
       context: { isMac: true, isDesktop: true },
       expectedKeys: {
         "new-agent": ["mod", "shift", "O"],
+        "new-workspace": ["mod", "N"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],

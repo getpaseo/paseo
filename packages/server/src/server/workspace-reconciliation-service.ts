@@ -50,7 +50,7 @@ export type ReconciliationChange =
       kind: "workspace_updated";
       workspaceId: string;
       directory: string;
-      fields: Partial<Pick<PersistedWorkspaceRecord, "projectId" | "displayName" | "kind">>;
+      fields: Partial<Pick<PersistedWorkspaceRecord, "projectId" | "branch" | "kind">>;
     };
 
 export interface ReconciliationResult {
@@ -343,11 +343,10 @@ export class WorkspaceReconciliationService {
 
         const expectedKind = deriveWorkspaceKindFromMetadata(wsGit);
 
-        const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "displayName" | "kind">> =
-          {};
+        const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "branch" | "kind">> = {};
 
-        if (wsGit.projectKind === "git" && workspace.displayName !== wsGit.workspaceDisplayName) {
-          workspaceUpdates.displayName = wsGit.workspaceDisplayName;
+        if (wsGit.projectKind === "git" && workspace.branch !== wsGit.currentBranch) {
+          workspaceUpdates.branch = wsGit.currentBranch;
         }
 
         if (workspace.kind !== expectedKind) {

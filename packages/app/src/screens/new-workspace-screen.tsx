@@ -8,7 +8,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, Folder, GitBranch, GitPullRequest, X } from "lucide-react-native";
+import { Check, Folder, GitBranch, GitPullRequest, X } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
@@ -16,6 +16,7 @@ import { FileDropZone } from "@/components/file-drop-zone";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
+import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
@@ -36,6 +37,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
@@ -72,6 +74,21 @@ function resolveCheckoutRequest(
   return {
     action: "branch-off",
     refName: currentBranch,
+  };
+}
+
+function buildFirstAgentContext(input: {
+  prompt: string;
+  attachments: AgentAttachment[];
+}): { prompt?: string; attachments?: AgentAttachment[] } | undefined {
+  const trimmedPrompt = input.prompt.trim();
+  if (!trimmedPrompt && input.attachments.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+    attachments: input.attachments,
   };
 }
 
@@ -151,7 +168,6 @@ function RefPickerBadgeContent({
       <Text style={styles.badgeText} numberOfLines={1}>
         {triggerLabel}
       </Text>
-      <ChevronDown size={iconSize} color={iconColor} />
     </>
   );
 }
@@ -182,7 +198,7 @@ function RefPickerTrigger({
   return (
     <Tooltip>
       <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
+        <ComboboxTrigger
           ref={pickerAnchorRef}
           testID="new-workspace-ref-picker-trigger"
           onPress={onPress}
@@ -197,7 +213,7 @@ function RefPickerTrigger({
             iconColor={iconColor}
             iconSize={iconSize}
           />
-        </Pressable>
+        </ComboboxTrigger>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <Text style={styles.tooltipText}>{tooltipLabel}</Text>
@@ -232,7 +248,7 @@ function ProjectPickerTrigger({
   return (
     <Tooltip>
       <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
+        <ComboboxTrigger
           ref={pickerAnchorRef}
           testID="new-workspace-project-picker-trigger"
           onPress={onPress}
@@ -258,8 +274,7 @@ function ProjectPickerTrigger({
           <Text style={styles.badgeText} numberOfLines={1}>
             {label}
           </Text>
-          <ChevronDown size={iconSize} color={iconColor} />
-        </Pressable>
+        </ComboboxTrigger>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <Text style={styles.tooltipText}>Choose project</Text>
@@ -361,7 +376,7 @@ function PickerOptionItem({
   );
 }
 
-function BackingOptionItem({
+function IsolationOptionItem({
   optionId,
   label,
   selected,
@@ -394,7 +409,7 @@ function BackingOptionItem({
   );
   return (
     <ComboboxItem
-      testID={`workspace-create-backing-${optionId}`}
+      testID={`workspace-create-isolation-${optionId}`}
       label={label}
       selected={selected}
       active={active}
@@ -622,7 +637,7 @@ function IsolationPickerTrigger({
   onPress,
   disabled,
   badgePressableStyle,
-  backing,
+  isolation,
   label,
   iconColor,
   iconSize,
@@ -631,15 +646,15 @@ function IsolationPickerTrigger({
   onPress: () => void;
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  backing: "local" | "worktree";
+  isolation: "local" | "worktree";
   label: string;
   iconColor: string;
   iconSize: number;
 }) {
   return (
-    <Pressable
+    <ComboboxTrigger
       ref={pickerAnchorRef}
-      testID="workspace-create-backing-trigger"
+      testID="workspace-create-isolation-trigger"
       onPress={onPress}
       disabled={disabled}
       style={badgePressableStyle}
@@ -647,7 +662,7 @@ function IsolationPickerTrigger({
       accessibilityLabel="Workspace isolation"
     >
       <View style={styles.badgeIconBox}>
-        {backing === "worktree" ? (
+        {isolation === "worktree" ? (
           <GitBranch size={iconSize} color={iconColor} />
         ) : (
           <Folder size={iconSize} color={iconColor} />
@@ -656,62 +671,62 @@ function IsolationPickerTrigger({
       <Text style={styles.badgeText} numberOfLines={1}>
         {label}
       </Text>
-      <ChevronDown size={iconSize} color={iconColor} />
-    </Pressable>
+    </ComboboxTrigger>
   );
 }
 
-// Each row aligns its label glyph with the screen heading glyph and lets the
-// label's natural width push the control. The label and control sit side by
-// side with no held horizontal space.
-function LabeledRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      {children}
-    </View>
-  );
+// Wraps a single argument control in the mobile vertical stack. On desktop the
+// controls are laid out in one horizontal row, so no per-control wrapper is used.
+function FormRow({ children }: { children: React.ReactNode }) {
+  return <View style={styles.row}>{children}</View>;
 }
 
-interface WorkspaceBackingState {
-  backing: "local" | "worktree";
-  setBacking: (value: "local" | "worktree") => void;
-  effectiveBacking: "local" | "worktree";
+interface WorkspaceIsolationState {
+  isolation: "local" | "worktree";
+  setIsolation: (value: "local" | "worktree") => void;
+  effectiveIsolation: "local" | "worktree";
   canCreateWorktree: boolean;
   showRefPicker: boolean;
 }
 
-// Worktree backing only makes sense for a git checkout. The effective backing
+// Worktree isolation only makes sense for a git checkout. The effective isolation
 // falls back to local whenever the selected directory isn't git so the flow
 // never submits an impossible request.
-function useWorkspaceBacking(input: {
+function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   selectedIsGit: boolean;
-}): WorkspaceBackingState {
+}): WorkspaceIsolationState {
   const { supportsMultiplicity, selectedIsGit } = input;
-  const [backing, setBacking] = useState<"local" | "worktree">("local");
+  // The last isolation choice is remembered alongside the other New Workspace
+  // form preferences (provider, model, mode). A manual in-screen pick overrides
+  // the remembered default until the screen remounts.
+  const { preferences, updatePreferences } = useFormPreferences();
+  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
+  const isolation = manualIsolation ?? preferences.isolation ?? "local";
   const canCreateWorktree = supportsMultiplicity && selectedIsGit;
-  const isWorktree = backing === "worktree" && canCreateWorktree;
+  const isWorktree = isolation === "worktree" && canCreateWorktree;
 
-  useEffect(() => {
-    if (backing === "worktree" && !canCreateWorktree) {
-      setBacking("local");
-    }
-  }, [backing, canCreateWorktree]);
+  const setIsolation = useCallback(
+    (value: "local" | "worktree") => {
+      setManualIsolation(value);
+      void updatePreferences({ isolation: value });
+    },
+    [updatePreferences],
+  );
 
   return {
-    backing,
-    setBacking,
-    effectiveBacking: isWorktree ? "worktree" : "local",
+    isolation,
+    setIsolation,
+    effectiveIsolation: isWorktree ? "worktree" : "local",
     canCreateWorktree,
     showRefPicker: !supportsMultiplicity || isWorktree,
   };
 }
 
-function backingLabel(t: TFunction, backing: "local" | "worktree"): string {
-  return backing === "worktree"
-    ? t("newWorkspace.backing.worktree")
-    : t("newWorkspace.backing.local");
+function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
+  return isolation === "worktree"
+    ? t("newWorkspace.isolation.worktree")
+    : t("newWorkspace.isolation.local");
 }
 
 function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
@@ -774,11 +789,13 @@ async function createAndMergeWorkspace(input: {
 
 async function createMultiplicityWorkspace(input: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
-  backing: "local" | "worktree";
+  isolation: "local" | "worktree";
   project: HostProjectListItem;
   selectedItem: PickerItem | null;
   currentBranch: string | null;
   withInitialAgent: boolean;
+  prompt: string;
+  attachments: AgentAttachment[];
   mergeWorkspaces: (
     serverId: string,
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
@@ -786,16 +803,29 @@ async function createMultiplicityWorkspace(input: {
   serverId: string;
   createFailedMessage: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
-  const isWorktree = input.backing === "worktree";
-  const baseBranch = isWorktree
-    ? (resolveCheckoutRequest(input.selectedItem, input.currentBranch)?.refName ?? undefined)
+  const isWorktree = input.isolation === "worktree";
+  const checkoutRequest = isWorktree
+    ? resolveCheckoutRequest(input.selectedItem, input.currentBranch)
     : undefined;
+  const firstAgentContext = buildFirstAgentContext({
+    prompt: input.prompt,
+    attachments: input.attachments,
+  });
   const payload = await input.client.createWorkspace({
-    backing: input.backing,
-    cwd: input.project.iconWorkingDir,
-    projectId: input.project.projectKey,
-    ...(isWorktree ? { branch: createNameId() } : {}),
-    ...(baseBranch ? { baseBranch } : {}),
+    source: isWorktree
+      ? {
+          kind: "worktree",
+          cwd: input.project.iconWorkingDir,
+          projectId: input.project.projectKey,
+          worktreeSlug: createNameId(),
+          ...checkoutRequest,
+        }
+      : {
+          kind: "directory",
+          path: input.project.iconWorkingDir,
+          projectId: input.project.projectKey,
+        },
+    ...(firstAgentContext ? { firstAgentContext } : {}),
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -988,12 +1018,12 @@ export function NewWorkspaceScreen({
   const [manualPickerSelection, setManualPickerSelection] = useState<PickerSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
-  const [backingPickerOpen, setBackingPickerOpen] = useState(false);
+  const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
-  const backingPickerAnchorRef = useRef<View>(null);
+  const isolationPickerAnchorRef = useRef<View>(null);
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -1066,10 +1096,11 @@ export function NewWorkspaceScreen({
   });
 
   const currentBranch = checkoutStatusQuery.data?.currentBranch ?? null;
-  const { effectiveBacking, setBacking, canCreateWorktree, showRefPicker } = useWorkspaceBacking({
-    supportsMultiplicity: supportsWorkspaceMultiplicity,
-    selectedIsGit: checkoutStatusQuery.data?.isGit === true,
-  });
+  const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
+    useWorkspaceIsolation({
+      supportsMultiplicity: supportsWorkspaceMultiplicity,
+      selectedIsGit: checkoutStatusQuery.data?.isGit === true,
+    });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: ["branch-suggestions", serverId, selectedSourceDirectory, debouncedPickerSearchQuery],
@@ -1197,31 +1228,31 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(true);
   }, []);
 
-  const openBackingPicker = useCallback(() => {
-    setBackingPickerOpen(true);
+  const openIsolationPicker = useCallback(() => {
+    setIsolationPickerOpen(true);
   }, []);
 
-  const handleBackingPickerOpenChange = useCallback((nextOpen: boolean) => {
-    setBackingPickerOpen(nextOpen);
+  const handleIsolationPickerOpenChange = useCallback((nextOpen: boolean) => {
+    setIsolationPickerOpen(nextOpen);
   }, []);
 
   // "New worktree" is omitted entirely (not disabled) when the project isn't a
-  // git checkout, since worktree backing is impossible there.
-  const backingOptions = useMemo<ComboboxOptionType[]>(() => {
-    const localOption = { id: "local", label: backingLabel(t, "local") };
+  // git checkout, since worktree isolation is impossible there.
+  const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
+    const localOption = { id: "local", label: isolationLabel(t, "local") };
     if (!canCreateWorktree) return [localOption];
-    return [localOption, { id: "worktree", label: backingLabel(t, "worktree") }];
+    return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }];
   }, [canCreateWorktree, t]);
 
-  const handleSelectBackingOption = useCallback(
+  const handleSelectIsolationOption = useCallback(
     (id: string) => {
-      setBacking(id === "worktree" ? "worktree" : "local");
-      setBackingPickerOpen(false);
+      setIsolation(id === "worktree" ? "worktree" : "local");
+      setIsolationPickerOpen(false);
     },
-    [setBacking],
+    [setIsolation],
   );
 
-  const renderBackingOption = useCallback(
+  const renderIsolationOption = useCallback(
     ({
       option,
       selected,
@@ -1234,7 +1265,7 @@ export function NewWorkspaceScreen({
       onPress: () => void;
     }) => {
       return (
-        <BackingOptionItem
+        <IsolationOptionItem
           optionId={option.id}
           label={option.label}
           selected={selected}
@@ -1284,21 +1315,13 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a project");
       }
       const checkoutRequest = resolveCheckoutRequest(selectedItem, currentBranch);
-      const trimmedPrompt = input.prompt.trim();
-      const hasFirstAgentContext = trimmedPrompt.length > 0 || input.attachments.length > 0;
+      const firstAgentContext = buildFirstAgentContext(input);
 
       return {
         cwd: selectedProject.iconWorkingDir,
         projectId: selectedProject.projectKey,
         worktreeSlug: createNameId(),
-        ...(hasFirstAgentContext
-          ? {
-              firstAgentContext: {
-                ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
-                ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
-              },
-            }
-          : {}),
+        ...(firstAgentContext ? { firstAgentContext } : {}),
         ...checkoutRequest,
       };
     },
@@ -1321,11 +1344,13 @@ export function NewWorkspaceScreen({
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({
             client: withConnectedClient(),
-            backing: effectiveBacking,
+            isolation: effectiveIsolation,
             project: selectedProject,
             selectedItem,
             currentBranch,
             withInitialAgent: input.withInitialAgent,
+            prompt: input.prompt,
+            attachments: input.attachments,
             mergeWorkspaces,
             serverId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
@@ -1344,7 +1369,7 @@ export function NewWorkspaceScreen({
       buildCreateWorktreeInput,
       createdWorkspace,
       currentBranch,
-      effectiveBacking,
+      effectiveIsolation,
       mergeWorkspaces,
       selectedItem,
       selectedProject,
@@ -1507,157 +1532,169 @@ export function NewWorkspaceScreen({
       ? t("newWorkspace.refPicker.searching")
       : t("newWorkspace.refPicker.noMatchingRefs");
 
-  const backingTriggerLabel = backingLabel(t, effectiveBacking);
+  const isolationTriggerLabel = isolationLabel(t, effectiveIsolation);
 
-  const formStack = useMemo(
-    () => (
-      <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
-        <LabeledRow label={t("newWorkspace.fields.project")}>
-          <View>
-            <ProjectPickerTrigger
-              pickerAnchorRef={projectPickerAnchorRef}
-              onPress={openProjectPicker}
-              disabled={isPending || projectPickerOptions.length === 0}
-              badgePressableStyle={badgePressableStyle}
-              label={projectTriggerLabel}
-              projectKey={selectedProject?.projectKey ?? null}
-              iconDataUri={
-                selectedProject
-                  ? (projectIconDataByProjectKey.get(selectedProject.projectKey) ?? null)
-                  : null
-              }
-              iconColor={theme.colors.foregroundMuted}
-              iconSize={theme.iconSize.sm}
-            />
-            <Combobox
-              options={projectPickerOptions}
-              value={selectedProjectOptionId}
-              onSelect={handleSelectProjectOption}
-              searchable
-              searchPlaceholder="Search projects"
-              title="Project"
-              open={projectPickerOpen}
-              onOpenChange={handleProjectPickerOpenChange}
-              desktopPlacement="bottom-start"
-              anchorRef={projectPickerAnchorRef}
-              emptyText="No projects available."
-              renderOption={renderProjectOption}
-            />
-          </View>
-        </LabeledRow>
-        {/* The Isolation row keeps its height for non-git projects so switching
-            projects never shifts the form; worktree backing is git-only, so a
-            non-git project renders an invisible spacer matching the trigger
-            height exactly. */}
-        {canCreateWorktree ? (
-          <LabeledRow label={t("newWorkspace.backing.label")}>
-            <View>
-              <IsolationPickerTrigger
-                pickerAnchorRef={backingPickerAnchorRef}
-                onPress={openBackingPicker}
-                disabled={isPending}
-                badgePressableStyle={badgePressableStyle}
-                backing={effectiveBacking}
-                label={backingTriggerLabel}
-                iconColor={theme.colors.foregroundMuted}
-                iconSize={theme.iconSize.sm}
-              />
-              <Combobox
-                options={backingOptions}
-                value={effectiveBacking}
-                onSelect={handleSelectBackingOption}
-                title={t("newWorkspace.backing.label")}
-                open={backingPickerOpen}
-                onOpenChange={handleBackingPickerOpenChange}
-                desktopPlacement="bottom-start"
-                anchorRef={backingPickerAnchorRef}
-                renderOption={renderBackingOption}
-              />
-            </View>
-          </LabeledRow>
-        ) : (
-          <View style={styles.baseSpacer} />
-        )}
-        {/* The Base row keeps its height so toggling Isolation never shifts the
-            form; on Local backing it renders an invisible spacer with no label
-            or control, matching the trigger height exactly. */}
-        {showRefPicker ? (
-          <LabeledRow label={t("newWorkspace.fields.base")}>
-            <View>
-              <RefPickerTrigger
-                pickerAnchorRef={pickerAnchorRef}
-                onPress={openPicker}
-                disabled={isPending || !selectedSourceDirectory}
-                badgePressableStyle={badgePressableStyle}
-                selectedItem={selectedItem}
-                triggerLabel={triggerLabel}
-                accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
-                tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
-                iconColor={theme.colors.foregroundMuted}
-                iconSize={theme.iconSize.sm}
-              />
-              <Combobox
-                options={options}
-                value={selectedOptionId}
-                onSelect={handleSelectOption}
-                searchable
-                searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
-                title={t("newWorkspace.refPicker.title")}
-                open={pickerOpen}
-                onOpenChange={handlePickerOpenChange}
-                onSearchQueryChange={setPickerSearchQuery}
-                desktopPlacement="bottom-start"
-                anchorRef={pickerAnchorRef}
-                emptyText={pickerEmptyText}
-                renderOption={renderPickerOption}
-              />
-            </View>
-          </LabeledRow>
-        ) : (
-          <View style={styles.baseSpacer} />
-        )}
+  const formStack = useMemo(() => {
+    const projectControl = (
+      <View>
+        <ProjectPickerTrigger
+          pickerAnchorRef={projectPickerAnchorRef}
+          onPress={openProjectPicker}
+          disabled={isPending || projectPickerOptions.length === 0}
+          badgePressableStyle={badgePressableStyle}
+          label={projectTriggerLabel}
+          projectKey={selectedProject?.projectKey ?? null}
+          iconDataUri={
+            selectedProject
+              ? (projectIconDataByProjectKey.get(selectedProject.projectKey) ?? null)
+              : null
+          }
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+        <Combobox
+          options={projectPickerOptions}
+          value={selectedProjectOptionId}
+          onSelect={handleSelectProjectOption}
+          searchable
+          searchPlaceholder="Search projects"
+          title="Project"
+          open={projectPickerOpen}
+          onOpenChange={handleProjectPickerOpenChange}
+          desktopPlacement="bottom-start"
+          anchorRef={projectPickerAnchorRef}
+          emptyText="No projects available."
+          renderOption={renderProjectOption}
+        />
       </View>
-    ),
-    [
-      backingOptions,
-      backingPickerOpen,
-      backingTriggerLabel,
-      badgePressableStyle,
-      canCreateWorktree,
-      effectiveBacking,
-      handleBackingPickerOpenChange,
-      handlePickerOpenChange,
-      handleProjectPickerOpenChange,
-      handleSelectBackingOption,
-      handleSelectOption,
-      handleSelectProjectOption,
-      isPending,
-      openBackingPicker,
-      openPicker,
-      openProjectPicker,
-      options,
-      pickerEmptyText,
-      pickerOpen,
-      projectPickerOpen,
-      projectPickerOptions,
-      projectTriggerLabel,
-      projectIconDataByProjectKey,
-      renderBackingOption,
-      renderPickerOption,
-      renderProjectOption,
-      selectedItem,
-      selectedOptionId,
-      selectedProject,
-      selectedProjectOptionId,
-      selectedSourceDirectory,
-      setPickerSearchQuery,
-      showRefPicker,
-      t,
-      theme.colors.foregroundMuted,
-      theme.iconSize.sm,
-      triggerLabel,
-    ],
-  );
+    );
+
+    const isolationControl = canCreateWorktree ? (
+      <View>
+        <IsolationPickerTrigger
+          pickerAnchorRef={isolationPickerAnchorRef}
+          onPress={openIsolationPicker}
+          disabled={isPending}
+          badgePressableStyle={badgePressableStyle}
+          isolation={effectiveIsolation}
+          label={isolationTriggerLabel}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+        <Combobox
+          options={isolationOptions}
+          value={effectiveIsolation}
+          onSelect={handleSelectIsolationOption}
+          title={t("newWorkspace.isolation.label")}
+          open={isolationPickerOpen}
+          onOpenChange={handleIsolationPickerOpenChange}
+          desktopPlacement="bottom-start"
+          anchorRef={isolationPickerAnchorRef}
+          renderOption={renderIsolationOption}
+        />
+      </View>
+    ) : null;
+
+    const baseControl = showRefPicker ? (
+      <View>
+        <RefPickerTrigger
+          pickerAnchorRef={pickerAnchorRef}
+          onPress={openPicker}
+          disabled={isPending || !selectedSourceDirectory}
+          badgePressableStyle={badgePressableStyle}
+          selectedItem={selectedItem}
+          triggerLabel={triggerLabel}
+          accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
+          tooltipLabel={t("newWorkspace.refPicker.chooseStart")}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+        <Combobox
+          options={options}
+          value={selectedOptionId}
+          onSelect={handleSelectOption}
+          searchable
+          searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
+          title={t("newWorkspace.refPicker.title")}
+          open={pickerOpen}
+          onOpenChange={handlePickerOpenChange}
+          onSearchQueryChange={setPickerSearchQuery}
+          desktopPlacement="bottom-start"
+          anchorRef={pickerAnchorRef}
+          emptyText={pickerEmptyText}
+          renderOption={renderPickerOption}
+        />
+      </View>
+    ) : null;
+
+    if (isCompact) {
+      return (
+        <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
+          <FormRow>{projectControl}</FormRow>
+          {/* The Isolation row keeps its height for non-git projects so switching
+              projects never shifts the form; worktree isolation is git-only, so a
+              non-git project renders an invisible spacer matching the trigger
+              height exactly. */}
+          {isolationControl ? (
+            <FormRow>{isolationControl}</FormRow>
+          ) : (
+            <View style={styles.baseSpacer} />
+          )}
+          {/* The Base row keeps its height so toggling Isolation never shifts the
+              form; on Local isolation it renders an invisible spacer with no label
+              or control, matching the trigger height exactly. */}
+          {baseControl ? <FormRow>{baseControl}</FormRow> : <View style={styles.baseSpacer} />}
+        </View>
+      );
+    }
+
+    return (
+      <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
+        {projectControl}
+        {isolationControl}
+        {baseControl}
+      </View>
+    );
+  }, [
+    isolationOptions,
+    isolationPickerOpen,
+    isolationTriggerLabel,
+    badgePressableStyle,
+    canCreateWorktree,
+    effectiveIsolation,
+    handleIsolationPickerOpenChange,
+    handlePickerOpenChange,
+    handleProjectPickerOpenChange,
+    handleSelectIsolationOption,
+    handleSelectOption,
+    handleSelectProjectOption,
+    isCompact,
+    isPending,
+    openIsolationPicker,
+    openPicker,
+    openProjectPicker,
+    options,
+    pickerEmptyText,
+    pickerOpen,
+    projectIconDataByProjectKey,
+    projectPickerOpen,
+    projectPickerOptions,
+    projectTriggerLabel,
+    renderIsolationOption,
+    renderPickerOption,
+    renderProjectOption,
+    selectedItem,
+    selectedOptionId,
+    selectedProject,
+    selectedProjectOptionId,
+    selectedSourceDirectory,
+    setPickerSearchQuery,
+    showRefPicker,
+    t,
+    theme.colors.foregroundMuted,
+    theme.iconSize.sm,
+    triggerLabel,
+  ]);
 
   const composerFooter = useMemo(
     () => (
@@ -1780,18 +1817,23 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[8],
     gap: theme.spacing[2],
   },
+  formStackDesktop: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: theme.spacing[8],
+    // The badge adds its own left padding; offset it so the project icon's left
+    // edge lands exactly on the "New workspace" title's left edge.
+    paddingLeft: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
   // The row's left inset matches the heading's text x (composerTitleContainer
-  // paddingLeft) so each label glyph aligns with the "New workspace" glyph. The
-  // label keeps its natural width and the control sits immediately beside it.
+  // paddingLeft) so the control aligns with the "New workspace" glyph. The badge
+  // adds its own left padding, so the row inset is reduced by that amount.
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingLeft: theme.spacing[6],
+    paddingLeft: theme.spacing[4],
     gap: theme.spacing[1],
-  },
-  rowLabel: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
   },
   baseSpacer: {
     height: BADGE_HEIGHT,

@@ -202,7 +202,7 @@ function WorkspaceStatusIndicator({
 
   if (bucket === "needs_input") {
     return (
-      <View style={styles.workspaceStatusDot}>
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-needs_input">
         <ThemedCircleAlert size={14} uniProps={amberColorMapping} />
       </View>
     );
@@ -222,7 +222,7 @@ function WorkspaceStatusIndicator({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
   return (
-    <View style={styles.workspaceStatusDot}>
+    <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
       <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
       {dotColorStyle ? (
         <StatusDotOverlay

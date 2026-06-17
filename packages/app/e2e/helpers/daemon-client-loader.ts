@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { getE2EDaemonPort } from "./daemon-port";
@@ -47,9 +48,18 @@ export async function connectDaemonClient<ClientInstance extends { connect(): Pr
     url: resolveDaemonWsUrl(),
     clientId: `${options.clientIdPrefix}-${randomUUID()}`,
     clientType: "cli",
-    appVersion: options.appVersion,
+    appVersion: options.appVersion ?? loadAppVersion(),
     webSocketFactory: createNodeWebSocketFactory(),
   });
   await client.connect();
   return client;
+}
+
+function loadAppVersion(): string {
+  const packageJsonPath = path.resolve(__dirname, "../../package.json");
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error(`Missing app version in ${packageJsonPath}`);
+  }
+  return packageJson.version;
 }

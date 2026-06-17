@@ -70,7 +70,6 @@ test("session create forwards clientMessageId to the initial prompt run options"
     clientMessageId: "msg-create-1",
     labels: {},
     provisionalTitle: null,
-    explicitTitle: "Explicit title",
     firstAgentContext: { attachments: [] },
     buildSessionConfig: async (config) => ({ sessionConfig: config }),
   });
@@ -99,7 +98,6 @@ test("session create stamps the requested workspaceId when no worktree setup run
         workspaceId: "ws-source",
         labels: {},
         provisionalTitle: null,
-        explicitTitle: null,
         firstAgentContext: { attachments: [] },
         buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
@@ -131,7 +129,6 @@ test("session create stamps the new worktree's workspaceId when a setup continua
         workspaceId: "ws-source",
         labels: {},
         provisionalTitle: null,
-        explicitTitle: null,
         firstAgentContext: { attachments: [] },
         buildSessionConfig: async (config) => ({
           sessionConfig: config,
@@ -163,7 +160,6 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
         workspaceId: "ws-parent",
         labels: {},
         provisionalTitle: null,
-        explicitTitle: null,
         firstAgentContext: { attachments: [] },
         buildSessionConfig: async (config) => ({ sessionConfig: config }),
       },
@@ -194,6 +190,80 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
 
     const storedChild = await storage.get(child.id);
     expect(storedChild?.workspaceId).toBe("ws-new-worktree");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("session create keeps the prompt title after the initial prompt settles", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-title-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const title = "Implement auth retries with backoff";
+
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir },
+        initialPrompt: `${title}\n\ninclude tests`,
+        labels: {},
+        provisionalTitle: title,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+
+    const created = await storage.get(snapshot.id);
+    expect(created?.title).toBe(title);
+
+    await agentManager.waitForAgentEvent(snapshot.id, { waitForActive: true });
+
+    const settled = await storage.get(snapshot.id);
+    expect(settled?.title).toBe(title);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("session create keeps an explicit title after the initial prompt settles", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-explicit-title-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const title = "Explicit override";
+
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "codex", cwd: workdir, title },
+        initialPrompt: "Implement auth retries with backoff",
+        labels: {},
+        provisionalTitle: title,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+
+    const created = await storage.get(snapshot.id);
+    expect(created?.title).toBe(title);
+
+    await agentManager.waitForAgentEvent(snapshot.id, { waitForActive: true });
+
+    const settled = await storage.get(snapshot.id);
+    expect(settled?.title).toBe(title);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

@@ -79,6 +79,7 @@ import type {
   SendAgentMessageRequest,
   PaseoConfigRaw,
   PaseoConfigRevision,
+  WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -3211,7 +3212,7 @@ export class DaemonClient {
       repoRoot?: string;
       branchName?: string;
       workspaceId?: string;
-      deleteWorktreeFromDisk?: boolean;
+      scope?: "workspace" | "worktree";
     },
     requestId?: string,
   ): Promise<PaseoWorktreeArchivePayload> {
@@ -3223,9 +3224,7 @@ export class DaemonClient {
         repoRoot: input.repoRoot,
         branchName: input.branchName,
         ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId } : {}),
-        ...(input.deleteWorktreeFromDisk !== undefined
-          ? { deleteWorktreeFromDisk: input.deleteWorktreeFromDisk }
-          : {}),
+        ...(input.scope !== undefined ? { scope: input.scope } : {}),
       },
       responseType: "paseo_worktree_archive_response",
       timeout: 60000,
@@ -3257,12 +3256,9 @@ export class DaemonClient {
 
   async createWorkspace(
     input: {
-      backing: "local" | "worktree";
-      cwd?: string;
-      projectId?: string;
-      branch?: string;
-      baseBranch?: string;
+      source: WorkspaceCreateRequest["source"];
       title?: string;
+      firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
@@ -3270,12 +3266,11 @@ export class DaemonClient {
       requestId,
       message: {
         type: "workspace.create.request",
-        backing: input.backing,
-        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
-        ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
-        ...(input.branch !== undefined ? { branch: input.branch } : {}),
-        ...(input.baseBranch !== undefined ? { baseBranch: input.baseBranch } : {}),
+        source: input.source,
         ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.firstAgentContext !== undefined
+          ? { firstAgentContext: input.firstAgentContext }
+          : {}),
       },
       responseType: "workspace.create.response",
       timeout: 60000,

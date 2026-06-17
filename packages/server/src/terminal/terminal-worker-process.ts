@@ -66,7 +66,7 @@ function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
     id: session.id,
     name: session.name,
     cwd: session.cwd,
-    ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+    workspaceId: session.workspaceId,
     ...(session.getTitle() ? { title: session.getTitle() } : {}),
     activity: session.getActivity(),
   };
@@ -188,14 +188,6 @@ function watchTerminal(session: TerminalSession): void {
   ]);
 }
 
-manager.subscribeTerminalsChanged((event) => {
-  sendToParent({
-    type: "terminalsChanged",
-    cwd: event.cwd,
-    terminals: event.terminals,
-  });
-});
-
 function enqueueCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
   const nextRequest = createTerminalQueue.then(() => handleCreateTerminalRequest(message));
   createTerminalQueue = nextRequest.catch(() => {});
@@ -209,7 +201,11 @@ async function handleCreateTerminalRequest(message: TerminalCreateRequest): Prom
   };
   inFlightTerminalCreateRequest = request;
   try {
-    const session = await manager.createTerminal(message.options);
+    const { workspaceId } = message.options;
+    if (!workspaceId) {
+      throw new Error("workspaceId is required");
+    }
+    const session = await manager.createTerminal({ ...message.options, workspaceId });
     if (request.errorReported) {
       session.kill();
       return;
@@ -265,33 +261,17 @@ async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     }
 
     case "killTerminal": {
-      const session = manager.getTerminal(message.terminalId);
-      const cwd = session?.cwd;
       manager.killTerminal(message.terminalId);
+      // Removal is owned by session.onExit -> terminalExit; the parent mirror
+      // clears contribution and emits terminalsChanged from that single path.
       clearTerminalSubscriptions(message.terminalId);
-      if (cwd) {
-        sendToParent({
-          type: "terminalRemoved",
-          terminalId: message.terminalId,
-          cwd,
-        });
-      }
       sendToParent({ type: "response", requestId: message.requestId, ok: true });
       return;
     }
 
     case "killTerminalAndWait": {
-      const session = manager.getTerminal(message.terminalId);
-      const cwd = session?.cwd;
       await manager.killTerminalAndWait(message.terminalId, message.options);
       clearTerminalSubscriptions(message.terminalId);
-      if (cwd) {
-        sendToParent({
-          type: "terminalRemoved",
-          terminalId: message.terminalId,
-          cwd,
-        });
-      }
       sendToParent({ type: "response", requestId: message.requestId, ok: true });
       return;
     }

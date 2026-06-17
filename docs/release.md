@@ -33,7 +33,7 @@ Rules that apply to both steps:
 There are two supported ways to ship from `main`:
 
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
-2. **Beta flow**: silent release candidates. Betas don't touch the changelog, don't move the website, and publish npm only on the explicit `beta` dist-tag.
+2. **Beta flow**: release candidates on the `beta` channel. Betas carry an in-place changelog entry (beta users check it), publish npm only on the explicit `beta` dist-tag, and never move the website download target off the latest stable.
 
 ## Standard release (patch)
 
@@ -78,7 +78,7 @@ npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
-- **Betas don't touch `CHANGELOG.md`.** Beta GitHub releases ship with empty notes — that's intentional. The changelog entry is written once, at promotion time, covering the full stable-to-stable diff. The release-notes sync script skips betas cleanly because no matching section exists.
+- **Betas carry a changelog entry.** Beta users read release notes, so each beta updates an in-place `CHANGELOG.md` entry (`## X.Y.Z-beta.N`) that `Release Notes Sync` mirrors into the prerelease body on the tag push. The entry is intermediary: promotion overwrites it in place with the final stable entry, so no `-beta.N` heading is ever left behind. See the Changelog policy section.
 
 Use the beta path when you need to:
 
@@ -260,7 +260,8 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 
 - The website download page points to GitHub's latest published **stable** release.
 - Published beta prereleases are public on GitHub Releases, but they do **not** become the website download target.
-- The website only moves when you publish the final stable release tag like `v0.1.41`.
+- The download target only moves when you publish the final stable release tag like `v0.1.41`.
+- The public `/changelog` page renders `CHANGELOG.md` as-is, so the in-flight `-beta.N` entry shows there once it lands on `main` — that's intended, it's where beta users check what's coming. Only the **download target** stays pinned to the latest stable; the download links read GitHub's releases API, not the changelog, so a `-beta.N` heading on top never affects them.
 - The website itself is deployed by `Deploy Website` (Cloudflare Workers), which redeploys on `release: published` for non-prerelease releases and on pushes to `main` that touch `CHANGELOG.md` or `packages/website/**`.
 
 ## Fixing a failed release build
@@ -313,20 +314,24 @@ Release notes depend on the changelog heading format. The heading **must** be st
 
 ```
 ## X.Y.Z - YYYY-MM-DD
+## X.Y.Z-beta.N - YYYY-MM-DD
 ```
 
-No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to extract the version. A malformed heading will break download links on the homepage.
+No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
 
 ## Changelog policy
 
-- `CHANGELOG.md` only lists stable releases. Betas are silent.
-- The changelog entry is authored once, at stable promotion time, with the date set to the promotion day.
-- It covers the full diff from the previous stable tag, regardless of how many betas were cut in between.
+- `CHANGELOG.md` includes stable releases and the current beta line.
+- The first beta of a version inserts a top entry like `## 0.1.60-beta.1 - YYYY-MM-DD`.
+- Each subsequent beta updates that same top entry in place — bump the heading (`0.1.60-beta.1` → `0.1.60-beta.2`) and fold in whatever else landed.
+- Stable promotion updates that same entry in place one last time: heading to `0.1.60`, date to the promotion day.
+- One entry per version line. The `-beta.N` heading is intermediary — overwrite it, never append. Don't leave stale `-beta.N` entries behind and don't create a duplicate entry per beta.
+- It always covers the full diff from the previous stable tag, regardless of how many betas were cut in between.
 
 ## Changelog ownership
 
-- **The agent running the stable release writes the changelog entry.** Do not hand the changelog to another model or agent. The release agent has the release context and owns the final wording.
-- Draft the entry from the stable-to-stable diff, review it against the changelog policy below, show it to the user, and wait for approval before committing it.
+- **The agent running the release writes the changelog entry — beta or stable.** Do not hand the changelog to another model or agent. The release agent has the release context and owns the final wording.
+- Draft the entry from the previous-stable-to-`HEAD` diff, review it against the changelog policy below, show it to the user, and wait for approval before committing it. Each beta refreshes the same entry; promotion refreshes it one last time from the full previous-stable-to-`HEAD` diff.
 
 ## Changelog voice
 
@@ -417,24 +422,31 @@ Use `git diff <latest-release-tag>..HEAD` as the review input. This is a deep sa
 
 ## Changelog scope
 
-The changelog covers **stable-to-stable**. Betas are not represented. When you promote, draft the entry from the diff between the previous stable tag and `HEAD`, ignoring beta tag boundaries — they're just checkpoints along the way.
+The changelog always covers **previous-stable-to-`HEAD`**, beta and stable alike:
+
+- **Beta release**: the entry covers `previous stable tag → HEAD`. Update the current in-place beta entry; don't start a fresh one per beta.
+- **Stable promotion**: the same entry is promoted in place. It still captures the full delta from the previous stable release, not just what changed since the last beta.
+
+Betas are checkpoints along the way; the entry is the single record for the jump from one stable version to the next, and beta users read it in the meantime.
 
 ## Completion checklist
 
 ### Beta release
 
 - [ ] Working tree is clean and the intended commit is on `main`
+- [ ] Update the in-place beta entry in `CHANGELOG.md` (heading `## X.Y.Z-beta.N - YYYY-MM-DD`), review it against the changelog policy, get approval, and commit it before cutting the release
 - [ ] `npm run release:beta:patch` (or `:next`) completes successfully
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
+- [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
 
 ### Stable release (or promotion)
 
 - [ ] Run the pre-release sanity check (see above) and address any findings
 - [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any `release:*` patch/promote command
 - [ ] Ensure local `npm run typecheck` passes on that exact commit before running any `release:*` patch/promote command
-- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors)
+- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). When promoting from beta, overwrite the existing `## X.Y.Z-beta.N` heading in place (heading → `X.Y.Z`, date → promotion day) — do not add a new entry on top of the beta one
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green

@@ -9,12 +9,15 @@ type NewWorkspaceDaemonClient = Pick<
   InternalDaemonClient,
   | "archivePaseoWorktree"
   | "archiveWorkspace"
+  | "checkoutRefresh"
   | "close"
   | "connect"
   | "createPaseoWorktree"
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"
+  | "getDaemonConfig"
   | "openProject"
+  | "patchDaemonConfig"
 >;
 
 type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
@@ -206,18 +209,34 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-export async function selectWorkspaceBacking(
+// The isolation trigger renders the active isolation's label ("Local" / "New
+// worktree"), so asserting its text proves what the screen currently remembers.
+const ISOLATION_TRIGGER_LABEL: Record<"local" | "worktree", string> = {
+  local: "Local",
+  worktree: "New worktree",
+};
+
+export async function expectWorkspaceIsolationSelected(
   page: Page,
-  backing: "local" | "worktree",
+  isolation: "local" | "worktree",
 ): Promise<void> {
-  const trigger = page.getByTestId("workspace-create-backing-trigger");
+  const trigger = page.getByRole("button", { name: "Workspace isolation" });
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await expect(trigger).toContainText(ISOLATION_TRIGGER_LABEL[isolation]);
+}
+
+export async function selectWorkspaceIsolation(
+  page: Page,
+  isolation: "local" | "worktree",
+): Promise<void> {
+  const trigger = page.getByTestId("workspace-create-isolation-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
   // "New worktree" is only listed once the checkout status query confirms the
   // selected project is a git repo, so wait for the option to appear before
   // clicking it.
-  const option = page.getByTestId(`workspace-create-backing-${backing}`);
+  const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
 }
@@ -314,18 +333,18 @@ export async function assertNewWorkspaceSidebarAndHeader(
     assertHeader?: boolean;
   },
 ): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
-  // Wait for URL to redirect to the newly created workspace.
-  // Uses URL as source of truth to avoid picking up sidebar rows from concurrent tests.
-  let workspaceId: string | null = null;
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    workspaceId = parseWorkspaceIdFromPageUrl(page, input.serverId);
-    if (workspaceId && workspaceId !== input.previousWorkspaceId) {
-      break;
-    }
-    await page.waitForTimeout(250);
-  }
+  // URL is the source of truth so concurrent sidebar rows cannot satisfy this.
+  await expect
+    .poll(
+      () => {
+        const workspaceId = parseWorkspaceIdFromPageUrl(page, input.serverId);
+        return workspaceId && workspaceId !== input.previousWorkspaceId ? workspaceId : null;
+      },
+      { timeout: 60_000 },
+    )
+    .not.toBeNull();
 
+  const workspaceId = parseWorkspaceIdFromPageUrl(page, input.serverId);
   if (!workspaceId || workspaceId === input.previousWorkspaceId) {
     throw new Error(`Expected URL to redirect to a new workspace.\nCurrent URL: ${page.url()}`);
   }

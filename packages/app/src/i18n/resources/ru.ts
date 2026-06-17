@@ -339,6 +339,9 @@ export const ru: TranslationResources = {
     },
     hoverCard: {
       scriptsAccessibility: "Скрипты Workspace",
+      copyPath: "Копировать путь",
+      copyBranchName: "Копировать имя ветки",
+      copied: "Скопировано",
     },
     fileExplorer: {
       sort: {
@@ -830,12 +833,6 @@ export const ru: TranslationResources = {
         hideConfirm: "Скрывать",
         cancel: "Отмена",
       },
-      deleteWorktreePrompt: {
-        title: "Архивировать рабочее пространство",
-        message: "Также удалить рабочее дерево с диска?",
-        keep: "Оставить на диске",
-        delete: "Удалить",
-      },
       rename: {
         title: "Переименовать рабочую область",
         submit: "Переименовать",
@@ -854,7 +851,7 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
-    backing: {
+    isolation: {
       local: "Локально",
       worktree: "Новый worktree",
       label: "Изоляция",
@@ -1557,6 +1554,7 @@ export const ru: TranslationResources = {
       },
       help: {
         openProject: "Открыть проект",
+        newWorkspace: "Новое рабочее пространство",
         newWorktree: "Новое рабочее дерево",
         archiveWorktree: "Архив рабочего дерева",
         newTab: "Новая вкладка",
@@ -1881,8 +1879,6 @@ export const ru: TranslationResources = {
       metadata: {
         title: "Генерация метаданных",
         info: "Инструкции для конкретного проекта, внедренные в подсказки ИИ, которые Paseo использует для генерации метаданных. Используйте их для обеспечения соблюдения соглашений вашей команды, таких как наименование ветвей, стиль фиксации или формат PR.",
-        agentTitle: "Agent заголовки",
-        agentTitlePlaceholder: "Сохраняйте заголовки обязательными и длиной не более 40 символов.",
         branchName: "Названия ветвей",
         branchNamePlaceholder: "Префиксные ветки с feat/ или fix/, mb/ для личных веток",
         commitMessage: "Фиксировать сообщения",

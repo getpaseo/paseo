@@ -17,6 +17,7 @@ import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sd
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
+  AgentPermissionRequestPayloadSchema,
   AgentSnapshotPayloadSchema,
 } from "@getpaseo/protocol/messages";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../workspace-registry.js";
@@ -212,6 +213,7 @@ function createTerminalManagerStub(overrides: Partial<TerminalManager> = {}): Te
     listDirectories: vi.fn().mockReturnValue([]),
     killAll: vi.fn(),
     subscribeTerminalsChanged: vi.fn().mockReturnValue(() => {}),
+    subscribeTerminalWorkspaceContributionChanged: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as TerminalManager;
 }
@@ -498,6 +500,23 @@ function createStoredSchedule(input: CreateScheduleInput): StoredSchedule {
     expiresAt: input.expiresAt ?? null,
     maxRuns: input.maxRuns ?? null,
     runs: [],
+  };
+}
+
+function createArchiveWorkspaceRecordMutator(
+  activeWorkspaces: Array<{
+    workspaceId: string;
+    cwd: string;
+    kind: "worktree" | "local_checkout" | "directory";
+  }>,
+  archivedWorkspaceIds: string[],
+) {
+  return async (workspaceId: string) => {
+    archivedWorkspaceIds.push(workspaceId);
+    const index = activeWorkspaces.findIndex((workspace) => workspace.workspaceId === workspaceId);
+    if (index !== -1) {
+      activeWorkspaces.splice(index, 1);
+    }
   };
 }
 
@@ -1437,6 +1456,7 @@ describe("create_agent MCP tool", () => {
       const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => undefined);
       const markWorkspaceArchiving = vi.fn();
       const clearWorkspaceArchiving = vi.fn();
+      const listActiveWorkspaces = vi.fn(async () => []);
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -1447,8 +1467,8 @@ describe("create_agent MCP tool", () => {
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
-        resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-tool-worktree"),
-        listActiveWorkspaces: vi.fn(async () => []),
+        findWorkspaceIdForCwd: vi.fn(async () => "ws-archive-tool-worktree"),
+        listActiveWorkspaces,
         archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving,
@@ -1461,6 +1481,13 @@ describe("create_agent MCP tool", () => {
       const created = await createTool.handler({
         cwd: repoDir,
         target: { mode: "branch-off", newBranch: "archive-tool-worktree", base: "main" },
+      });
+      const createdWorktreePath = z.string().parse(created.structuredContent.worktreePath);
+      listActiveWorkspaces.mockImplementation(async () => [
+        { workspaceId: "ws-archive-tool-worktree", cwd: createdWorktreePath, kind: "worktree" },
+      ]);
+      archiveWorkspaceRecord.mockImplementation(async () => {
+        listActiveWorkspaces.mockResolvedValueOnce([]);
       });
       workspaceGitService.getSnapshot.mockClear();
 
@@ -1487,6 +1514,93 @@ describe("create_agent MCP tool", () => {
       expect(Array.from(emitWorkspaceUpdatesForWorkspaceIds.mock.calls[0]?.[0] ?? [])).toEqual([
         "ws-archive-tool-worktree",
       ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("archives every workspace on a directory and removes the directory", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const tempDir = realpathSync.native(
+      await mkdtemp(join(tmpdir(), "paseo-mcp-archive-worktree-multi-")),
+    );
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+
+    try {
+      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      await writeFile(join(repoDir, "README.md"), "hello\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+
+      const workspaceGitService = {
+        getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
+        resolveRepoRoot: vi.fn(async () => repoDir),
+      };
+      const archivedWorkspaceIds: string[] = [];
+      let activeWorkspaces: Array<{
+        workspaceId: string;
+        cwd: string;
+        kind: "worktree" | "local_checkout" | "directory";
+      }> = [];
+      const listActiveWorkspaces = vi.fn(async () => activeWorkspaces);
+      const archiveWorkspaceRecord = createArchiveWorkspaceRecordMutator(
+        activeWorkspaces,
+        archivedWorkspaceIds,
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        paseoHome,
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
+        workspaceGitService: workspaceGitService as unknown as Pick<
+          WorkspaceGitService,
+          "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
+        >,
+        findWorkspaceIdForCwd: vi.fn(async () => "ws-mcp-A"),
+        listActiveWorkspaces,
+        archiveWorkspaceRecord,
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        github: createGitHubServiceStub(),
+        logger,
+      });
+      const createTool = registeredTool(server, "create_worktree");
+      const archiveTool = registeredTool(server, "archive_worktree");
+      const created = await createTool.handler({
+        cwd: repoDir,
+        target: { mode: "branch-off", newBranch: "archive-multi-worktree", base: "main" },
+      });
+      const worktreePath = z.string().parse(created.structuredContent.worktreePath);
+
+      // Populate the active workspaces with the real created path so archiveByScope
+      // matches it against the worktree directory.
+      activeWorkspaces = [
+        { workspaceId: "ws-mcp-A", cwd: worktreePath, kind: "worktree" as const },
+        { workspaceId: "ws-mcp-B", cwd: worktreePath, kind: "worktree" as const },
+      ];
+
+      await archiveTool.handler({
+        cwd: repoDir,
+        worktreePath,
+      });
+
+      expect(archivedWorkspaceIds).toContain("ws-mcp-A");
+      expect(archivedWorkspaceIds).toContain("ws-mcp-B");
+      await expect(access(worktreePath)).rejects.toThrow();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1531,7 +1645,7 @@ describe("create_agent MCP tool", () => {
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
         >,
-        resolveWorkspaceIdForCwd: vi.fn(async () => "ws-archive-mcp"),
+        findWorkspaceIdForCwd: vi.fn(async () => "ws-archive-mcp"),
         listActiveWorkspaces: vi.fn(async () => []),
         archiveWorkspaceRecord: vi.fn(async () => undefined),
         emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
@@ -3736,6 +3850,66 @@ describe("agent snapshot MCP serialization", () => {
         `list_agents response failed AgentListItemPayloadSchema: ${JSON.stringify(parsed.error.issues, null, 2)}`,
       );
     }
+  });
+
+  it("emits list_pending_permissions payloads that satisfy the declared output schema", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.listAgents.mockReturnValue([
+      createManagedAgent({
+        id: "agent-with-permission",
+        provider: "codex",
+        pendingPermissions: new Map([
+          [
+            "perm-minimal",
+            {
+              id: "perm-minimal",
+              provider: "codex",
+              name: "request_user_input",
+              kind: "question",
+              title: "Need input",
+              input: { prompt: "Pick one" },
+              detail: undefined,
+              metadata: { source: "test" },
+            },
+          ],
+        ]),
+      }),
+    ]);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "list_pending_permissions");
+    const response = await tool.handler({});
+
+    const permissions = z
+      .array(
+        z.object({
+          agentId: z.string(),
+          status: z.string(),
+          request: AgentPermissionRequestPayloadSchema,
+        }),
+      )
+      .parse(response.structuredContent.permissions);
+    expect(permissions).toEqual([
+      {
+        agentId: "agent-with-permission",
+        status: "idle",
+        request: {
+          id: "perm-minimal",
+          provider: "codex",
+          name: "request_user_input",
+          kind: "question",
+          title: "Need input",
+          input: { prompt: "Pick one" },
+          metadata: { source: "test" },
+        },
+      },
+    ]);
+    expectOutputSchemaAccepts(tool, response.structuredContent);
   });
 
   it("loads archived agents before reading get_agent_activity", async () => {

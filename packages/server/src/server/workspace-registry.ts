@@ -37,6 +37,14 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // The worktree's git branch. Decoupled from displayName/title by construction:
+  // displayName holds the human name (title), branch holds the git branch. Only
+  // worktree workspaces carry a branch; directory/local_checkout leave it null.
+  branch: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -236,6 +244,7 @@ export function createPersistedWorkspaceRecord(input: {
   kind: PersistedWorkspaceKind;
   displayName: string;
   title?: string | null;
+  branch?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -243,13 +252,14 @@ export function createPersistedWorkspaceRecord(input: {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
     title: input.title ?? null,
+    branch: input.branch ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }
 
-// The single workspace-name rule: the user-set title always wins; otherwise fall
-// back to the freshest available derived display name (a live branch snapshot when
-// the caller has one, the persisted displayName otherwise).
+// The single workspace-name rule: the title always wins; otherwise fall back to
+// the freshest available derived display name (a live branch snapshot when the
+// caller has one, the persisted displayName otherwise).
 export function resolveWorkspaceName(input: {
   title: string | null;
   derivedDisplayName: string;

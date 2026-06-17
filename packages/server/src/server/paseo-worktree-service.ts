@@ -25,6 +25,7 @@ import {
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
 } from "../utils/worktree-metadata.js";
 import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.js";
+import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
@@ -70,6 +71,7 @@ export async function createPaseoWorktree(
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
     worktree: createdWorktree.worktree,
+    title: resolveFirstAgentPromptTitle(input.firstAgentContext),
     deps,
   });
 
@@ -200,6 +202,7 @@ async function upsertWorkspaceForWorktree(options: {
   projectId?: string;
   repoRoot: string;
   worktree: WorktreeConfig;
+  title?: string | null;
   deps: Pick<
     CreatePaseoWorktreeDeps,
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
@@ -240,6 +243,8 @@ async function upsertWorkspaceForWorktree(options: {
     cwd: normalizedCwd,
     kind: "worktree",
     displayName: options.worktree.branchName || normalizedCwd,
+    branch: options.worktree.branchName || null,
+    title: options.title ?? null,
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
@@ -274,12 +279,19 @@ export async function createLocalCheckoutWorkspace(
   await deps.projectRegistry.upsert(projectRecord);
 
   const trimmedTitle = options.title?.trim();
+  // Persist the live git branch into the dedicated `branch` field so
+  // buildWorkspaceCheckout reports the real branch for directory/local_checkout
+  // workspaces too (it reads workspace.branch). Same source deriveWorkspaceDisplayName
+  // reads. HEAD/detached resolves to null — there is no branch to report.
+  const currentBranch = checkout.currentBranch?.trim() ?? null;
+  const branch = currentBranch && currentBranch.toUpperCase() !== "HEAD" ? currentBranch : null;
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: generateWorkspaceId(),
     projectId: projectRecord.projectId,
     cwd: normalizedCwd,
     kind: membership.workspaceKind,
     displayName: membership.workspaceDisplayName,
+    branch,
     title: trimmedTitle ? trimmedTitle : null,
     createdAt: now,
     updatedAt: now,

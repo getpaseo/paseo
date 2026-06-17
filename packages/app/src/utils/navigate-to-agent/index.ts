@@ -11,8 +11,7 @@ export function navigateToAgent(input: NavigateToAgentInput): string {
       const session = useSessionStore.getState().sessions[serverId];
       const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
       return {
-        workspaces: session?.workspaces.values(),
-        agentCwd: agent?.cwd,
+        agentWorkspaceId: agent?.workspaceId,
       };
     },
     navigateToHostAgent: (route) => {

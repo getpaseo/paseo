@@ -25,11 +25,18 @@ export interface SeedDaemonClient {
     error: string | null;
   }>;
   createWorkspace(input: {
-    backing: "local" | "worktree";
-    cwd?: string;
-    projectId?: string;
-    branch?: string;
-    baseBranch?: string;
+    source:
+      | { kind: "directory"; path: string; projectId?: string }
+      | {
+          kind: "worktree";
+          cwd?: string;
+          projectId?: string;
+          action?: "branch-off" | "checkout";
+          refName?: string;
+          baseBranch?: string;
+          githubPrNumber?: number;
+          worktreeSlug?: string;
+        };
     title?: string;
   }): Promise<{
     workspace: { id: string; name: string } | null;
@@ -46,12 +53,16 @@ export interface SeedDaemonClient {
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[] },
+    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
   ): Promise<{
     terminal: { id: string; name: string; cwd: string; activity?: TerminalActivity | null } | null;
     error: string | null;
   }>;
-  listTerminals(cwd?: string): Promise<{
+  listTerminals(
+    cwd?: string,
+    requestId?: string,
+    options?: { workspaceId?: string },
+  ): Promise<{
     terminals: Array<{
       id: string;
       name: string;
@@ -64,6 +75,7 @@ export interface SeedDaemonClient {
   createAgent(options: {
     provider: string;
     cwd: string;
+    workspaceId?: string;
     title?: string;
     modeId?: string;
     model?: string;
@@ -72,7 +84,18 @@ export interface SeedDaemonClient {
     initialPrompt?: string;
   }): Promise<{ id: string; status: string }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
-    entries: Array<{ agent: { id: string; cwd: string; title?: string | null } }>;
+    entries: Array<{
+      agent: {
+        id: string;
+        provider: string;
+        cwd: string;
+        workspaceId?: string;
+        model: string | null;
+        currentModeId: string | null;
+        status: string;
+        title?: string | null;
+      };
+    }>;
   }>;
   fetchRecentProviderSessions(options: {
     cwd: string;

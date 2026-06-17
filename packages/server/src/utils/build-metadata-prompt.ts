@@ -2,7 +2,7 @@ import { readPaseoConfigJson } from "./paseo-config-file.js";
 import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
 import { wrapWithUserInstructions } from "./wrap-user-instructions.js";
 
-export type MetadataConfigKey = "agentTitle" | "branchName" | "commitMessage" | "pullRequest";
+export type MetadataConfigKey = "branchName" | "commitMessage" | "pullRequest";
 
 export interface RepoRootResolver {
   resolveRepoRoot: (cwd: string) => Promise<string>;

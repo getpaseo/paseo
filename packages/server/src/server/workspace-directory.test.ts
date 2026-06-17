@@ -91,7 +91,13 @@ class WorkspaceStatus {
   });
 
   hasRootAgent(input: AgentState): void {
-    this.agents.push(createAgent({ ...input, cwd: this.workspace.cwd }));
+    this.agents.push(
+      createAgent({
+        ...input,
+        cwd: this.workspace.cwd,
+        workspaceId: this.workspace.workspaceId,
+      }),
+    );
   }
 
   hasSiblingWorkspaceSameCwd(): void {
@@ -99,7 +105,8 @@ class WorkspaceStatus {
   }
 
   // A root agent owned by a specific workspace, even though both same-cwd
-  // workspaces share the directory. Attribution must follow workspaceId.
+  // workspaces share the directory. Ownership follows workspaceId, and status is
+  // computed per id: only the owning workspace reflects this agent's bucket.
   hasStampedRootAgent(input: AgentState & { workspaceId: string }): void {
     this.agents.push(
       createAgent({ ...input, cwd: this.workspace.cwd, workspaceId: input.workspaceId }),
@@ -111,6 +118,7 @@ class WorkspaceStatus {
       createAgent({
         ...input,
         cwd: this.workspace.cwd,
+        workspaceId: this.workspace.workspaceId,
         labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
       }),
     );
@@ -125,6 +133,7 @@ class WorkspaceStatus {
       createAgent({
         ...input,
         cwd: this.worktreeWorkspace.cwd,
+        workspaceId: this.worktreeWorkspace.workspaceId,
         labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
       }),
     );
@@ -149,12 +158,14 @@ class WorkspaceStatus {
   hasWorkingTerminal(changedAt: number): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "working", changedAt },
     });
   }
 
-  // A working terminal owned by a specific same-cwd workspace. Attribution must
-  // follow workspaceId, not the deterministic-oldest cwd fallback.
+  // A working terminal owned by a specific same-cwd workspace. Ownership follows
+  // workspaceId, and status is computed per id: only the owning workspace
+  // reflects this terminal's activity.
   hasStampedWorkingTerminal(input: { workspaceId: string; changedAt: number }): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
@@ -163,9 +174,12 @@ class WorkspaceStatus {
     });
   }
 
+  // A terminal opened in a subdirectory still carries the owning workspace's id
+  // (stamped at creation); the subdir cwd is cosmetic, ownership is the id.
   hasWorkingTerminalInSubdirectory(changedAt: number): void {
     this.terminals.push({
       cwd: `${this.workspace.cwd}/packages/app`,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "working", changedAt },
     });
   }
@@ -173,6 +187,7 @@ class WorkspaceStatus {
   hasIdleTerminal(changedAt: number): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "idle", changedAt },
     });
   }
@@ -180,6 +195,7 @@ class WorkspaceStatus {
   hasFinishedTerminal(changedAt: number): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "idle", attentionReason: "finished", changedAt },
     });
   }
@@ -187,6 +203,7 @@ class WorkspaceStatus {
   hasUnknownTerminal(): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: null,
     });
   }
@@ -278,13 +295,45 @@ describe("WorkspaceDirectory", () => {
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
   });
 
-  test("two same-cwd workspaces keep independent status, attributed by workspaceId", async () => {
+  test("same-cwd workspaces attribute agent status only to the owner", async () => {
     const workspace = new WorkspaceStatus();
 
     workspace.hasSiblingWorkspaceSameCwd();
-    // The running agent is stamped to the SIBLING. A cwd-only fallback would
-    // attribute it to the older `workspace-1` and leave the sibling "done", so
-    // this asserts the running status follows workspaceId, not directory.
+    workspace.hasStampedRootAgent({
+      id: "agent-a",
+      status: "running",
+      workspaceId: "workspace-1-sibling",
+    });
+
+    // The running agent belongs to the sibling; workspace-1 owns nothing active
+    // and stays done. Status never fans out across same-cwd workspaces.
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-1-sibling": "running",
+    });
+  });
+
+  test("same-cwd workspaces attribute agent attention only to the owner", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasStampedRootAgent({
+      id: "agent-a",
+      status: "idle",
+      pendingPermissionCount: 1,
+      workspaceId: "workspace-1-sibling",
+    });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-1-sibling": "needs_input",
+    });
+  });
+
+  test("each same-cwd workspace reflects only its own agent", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasSiblingWorkspaceSameCwd();
     workspace.hasStampedRootAgent({
       id: "agent-a",
       status: "running",
@@ -293,23 +342,21 @@ describe("WorkspaceDirectory", () => {
     workspace.hasStampedRootAgent({
       id: "agent-b",
       status: "idle",
+      pendingPermissionCount: 1,
       workspaceId: "workspace-1",
     });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "needs_input",
       "workspace-1-sibling": "running",
     });
   });
 
-  test("two same-cwd workspaces keep independent terminal status, attributed by workspaceId", async () => {
+  test("terminal status attributes only to the owning workspace", async () => {
     const workspace = new WorkspaceStatus();
     const changedAt = new Date(NOW).getTime();
 
     workspace.hasSiblingWorkspaceSameCwd();
-    // The working terminal is owned by the SIBLING. A cwd-only resolver would
-    // attribute it to the older `workspace-1`, so this asserts the running
-    // status follows the terminal's workspaceId, not the directory.
     workspace.hasStampedWorkingTerminal({ workspaceId: "workspace-1-sibling", changedAt });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({

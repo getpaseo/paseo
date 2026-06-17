@@ -13,7 +13,7 @@ import type {
   UnsubscribeTerminalRequest,
   UnsubscribeTerminalsRequest,
 } from "../server/messages.js";
-import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/paseo-worktree-archive-service.js";
+import { killTerminalsForWorkspace as killWorkspaceTerminals } from "../server/workspace-archive-service.js";
 import {
   TerminalStreamOpcode,
   decodeTerminalResizePayload,
@@ -298,7 +298,7 @@ export class TerminalSessionController {
     terminals: Array<{
       id: string;
       name: string;
-      workspaceId?: string;
+      workspaceId: string;
       title?: string;
       activity: TerminalActivity | null;
     }>;
@@ -317,7 +317,7 @@ export class TerminalSessionController {
   ): {
     id: string;
     name: string;
-    workspaceId?: string;
+    workspaceId: string;
     title?: string;
     activity: TerminalActivity | null;
   } {
@@ -326,7 +326,7 @@ export class TerminalSessionController {
     return {
       id: terminal.id,
       name: terminal.name,
-      ...(terminal.workspaceId ? { workspaceId: terminal.workspaceId } : {}),
+      workspaceId: terminal.workspaceId,
       ...(title ? { title } : {}),
       activity,
     };
@@ -520,9 +520,21 @@ export class TerminalSessionController {
         return;
       }
 
+      if (!msg.workspaceId) {
+        this.emit({
+          type: "create_terminal_response",
+          payload: {
+            terminal: null,
+            error: "workspaceId is required",
+            requestId: msg.requestId,
+          },
+        });
+        return;
+      }
+
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
-        ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
+        workspaceId: msg.workspaceId,
         name: msg.name,
         command: msg.command,
         args: msg.args,
@@ -535,7 +547,7 @@ export class TerminalSessionController {
             id: session.id,
             name: session.name,
             cwd: session.cwd,
-            ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+            workspaceId: session.workspaceId,
             ...(session.getTitle() ? { title: session.getTitle() } : {}),
             activity: session.getActivity(),
           },

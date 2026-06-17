@@ -340,6 +340,9 @@ export const es: TranslationResources = {
     },
     hoverCard: {
       scriptsAccessibility: "GuionesWorkspace",
+      copyPath: "Copiar ruta",
+      copyBranchName: "Copiar nombre de rama",
+      copied: "Copiado",
     },
     fileExplorer: {
       sort: {
@@ -838,12 +841,6 @@ export const es: TranslationResources = {
         hideConfirm: "Esconder",
         cancel: "Cancelar",
       },
-      deleteWorktreePrompt: {
-        title: "Archivar espacio de trabajo",
-        message: "¿También eliminar el worktree del disco?",
-        keep: "Conservar en disco",
-        delete: "Eliminar",
-      },
       rename: {
         title: "Cambiar nombre del espacio de trabajo",
         submit: "Rebautizar",
@@ -862,7 +859,7 @@ export const es: TranslationResources = {
   newWorkspace: {
     title: "Nuevo espacio de trabajo",
     create: "Crear",
-    backing: {
+    isolation: {
       local: "Local",
       worktree: "Nuevo worktree",
       label: "Aislamiento",
@@ -1565,6 +1562,7 @@ export const es: TranslationResources = {
       },
       help: {
         openProject: "Abrir proyecto",
+        newWorkspace: "Nuevo espacio de trabajo",
         newWorktree: "Nuevo árbol de trabajo",
         archiveWorktree: "Árbol de trabajo de archivo",
         newTab: "Nueva pestaña",
@@ -1889,8 +1887,6 @@ export const es: TranslationResources = {
       metadata: {
         title: "Generación de metadatos",
         info: "Instrucciones específicas del proyecto inyectadas en los mensajes de IA quePaseoutiliza para generar metadatos; úselas para hacer cumplir las convenciones de su equipo, como la denominación de ramas, el estilo de confirmación o el formatoPR.",
-        agentTitle: "TítulosAgent",
-        agentTitlePlaceholder: "Mantenga los títulos imperativos y de menos de 40 caracteres",
         branchName: "Nombres de sucursales",
         branchNamePlaceholder: "Prefijo ramas con feat/ o fix/, mb/ para ramas personales",
         commitMessage: "Confirmar mensajes",

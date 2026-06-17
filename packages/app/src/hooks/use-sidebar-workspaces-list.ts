@@ -5,7 +5,6 @@ import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-f
 import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { selectWorkspace, workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
-import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
 import { useHostProjects } from "@/projects/host-projects";
 import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
@@ -132,15 +131,10 @@ function getRootAgentWorkspaceActivity(input: {
   workspace: WorkspaceDescriptor;
   agents: Map<string, Agent> | undefined;
 }): WorkspaceAgentActivity | null {
-  const workspaceDirectory = normalizeWorkspacePath(input.workspace.workspaceDirectory);
-  if (!workspaceDirectory) {
-    return null;
-  }
-
   let latest: WorkspaceAgentActivity | null = null;
   for (const agent of input.agents?.values() ?? []) {
     if (agent.archivedAt || agent.parentAgentId) continue;
-    if (normalizeWorkspacePath(agent.cwd) !== workspaceDirectory) continue;
+    if (agent.workspaceId !== input.workspace.id) continue;
     const status = deriveSidebarStateBucket({
       status: agent.status,
       pendingPermissionCount: agent.pendingPermissions.length,

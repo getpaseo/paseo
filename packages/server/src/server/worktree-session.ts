@@ -40,10 +40,10 @@ import type {
   CreatePaseoWorktreeInput,
   CreatePaseoWorktreeResult,
 } from "./paseo-worktree-service.js";
-import type { ArchivePaseoWorktreeDependencies } from "./paseo-worktree-archive-service.js";
+import type { ArchiveDependencies } from "./workspace-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 import {
-  archivePaseoWorktreeCommand,
+  archiveCommand,
   createPaseoWorktreeCommand,
   listPaseoWorktreesCommand,
 } from "./worktree/commands.js";
@@ -97,7 +97,7 @@ interface BuildAgentSessionConfigDependencies {
 interface CreatePaseoWorktreeInBackgroundDependencies {
   paseoHome?: string;
   worktreesRoot?: string;
-  emitWorkspaceUpdateForCwd: (cwd: string, options?: { dedupeGitState?: boolean }) => Promise<void>;
+  emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
   emit: EmitSessionMessage;
   sessionLogger: Logger;
@@ -436,7 +436,7 @@ export async function handlePaseoWorktreeListRequest(
 
 export async function handlePaseoWorktreeArchiveRequest(
   dependencies: Omit<
-    ArchivePaseoWorktreeDependencies,
+    ArchiveDependencies,
     "emitWorkspaceUpdatesForWorkspaceIds" | "workspaceGitService"
   > & {
     emit: EmitSessionMessage;
@@ -448,13 +448,13 @@ export async function handlePaseoWorktreeArchiveRequest(
   const { requestId } = msg;
 
   try {
-    const result = await archivePaseoWorktreeCommand(dependencies, {
+    const result = await archiveCommand(dependencies, {
       requestId,
       worktreePath: msg.worktreePath,
       repoRoot: msg.repoRoot,
       branchName: msg.branchName,
       workspaceId: msg.workspaceId,
-      deleteWorktreeFromDisk: msg.deleteWorktreeFromDisk,
+      scope: msg.scope,
     });
     if (!result.ok) {
       dependencies.emit({
@@ -764,6 +764,6 @@ export async function runWorktreeSetupInBackground(
       return;
     }
   } finally {
-    await dependencies.emitWorkspaceUpdateForCwd(worktree.worktreePath);
+    await dependencies.emitWorkspaceUpdateForWorkspaceId(options.workspaceId);
   }
 }

@@ -60,6 +60,7 @@ describe("terminal-session-controller restore", () => {
       id: "term-1",
       name: "Terminal",
       cwd: "/tmp",
+      workspaceId: "ws-test",
       send: vi.fn(),
       subscribe: (listener) => {
         terminalListener = listener;
@@ -98,6 +99,7 @@ describe("terminal-session-controller restore", () => {
       killAll: vi.fn(),
       subscribeTerminalsChanged: vi.fn(() => vi.fn()),
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
     const controller = new TerminalSessionController({
       terminalManager,
@@ -153,6 +155,7 @@ function listSession(input: { id: string; name: string; cwd: string }): Terminal
     id: input.id,
     name: input.name,
     cwd: input.cwd,
+    workspaceId: "ws-test",
     send: vi.fn(),
     subscribe: () => vi.fn(),
     onExit: () => vi.fn(),
@@ -192,6 +195,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
       id: "term-1",
       name: "Terminal",
       cwd: "/tmp",
+      workspaceId: "ws-test",
       send: vi.fn(),
       subscribe: (listener) => {
         queueMicrotask(() => listener({ type: "snapshotReady", revision: 1 }));
@@ -232,6 +236,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
       killAll: vi.fn(),
       subscribeTerminalsChanged: vi.fn(() => vi.fn()),
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     } as unknown as TerminalManager;
     const controller = new TerminalSessionController({
       terminalManager,
@@ -307,6 +312,7 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         return vi.fn();
       }),
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
 
     const outboundMessages: SessionOutboundMessage[] = [];
@@ -326,7 +332,7 @@ describe("terminal-session-controller subdirectory aggregation", () => {
 
     changedListener?.({
       cwd: subdirCwd,
-      terminals: [{ id: "subdir-term", name: "Mobile", cwd: subdirCwd }],
+      terminals: [{ id: "subdir-term", name: "Mobile", cwd: subdirCwd, workspaceId: "ws-test" }],
     });
     await flushMicrotasks();
 
@@ -336,8 +342,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: rootCwd,
           terminals: [
-            { id: "root-term", name: "Terminal 1", activity: null },
-            { id: "subdir-term", name: "Mobile", activity: null },
+            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
+            { id: "subdir-term", name: "Mobile", workspaceId: "ws-test", activity: null },
           ],
         },
       },
@@ -371,6 +377,7 @@ describe("terminal-session-controller subdirectory aggregation", () => {
       killAll: vi.fn(),
       subscribeTerminalsChanged: vi.fn(() => vi.fn()),
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
     const outboundMessages: SessionOutboundMessage[] = [];
     const controller = new TerminalSessionController({
@@ -399,7 +406,9 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         type: "list_terminals_response",
         payload: {
           cwd: rootCwd,
-          terminals: [{ id: "root-term", name: "Terminal 1", activity: null }],
+          terminals: [
+            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
+          ],
           requestId: "req-root",
         },
       },
@@ -407,7 +416,9 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         type: "list_terminals_response",
         payload: {
           cwd: worktreeCwd,
-          terminals: [{ id: "worktree-term", name: "Feature", activity: null }],
+          terminals: [
+            { id: "worktree-term", name: "Feature", workspaceId: "ws-test", activity: null },
+          ],
           requestId: "req-worktree",
         },
       },
@@ -449,6 +460,7 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
         return vi.fn();
       }),
       subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
     };
 
     const outboundMessages: SessionOutboundMessage[] = [];
@@ -495,6 +507,7 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
       id: "term-1",
       name: "Terminal",
       cwd: "/tmp",
+      workspaceId: "ws-test",
       send: vi.fn(),
       subscribe: (listener) => {
         terminalListener = listener;

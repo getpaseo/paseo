@@ -120,6 +120,7 @@ const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
 
 const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
+  "new-workspace": "settings.shortcuts.help.newWorkspace",
   "new-worktree": "settings.shortcuts.help.newWorktree",
   "archive-worktree": "settings.shortcuts.help.archiveWorktree",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
@@ -187,6 +188,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "projects",
       label: "Open project",
       keys: ["mod", "shift", "O"],
+    },
+  },
+
+  // --- New workspace ---
+  {
+    id: "workspace-new-cmd-n-mac",
+    action: "workspace.new",
+    combo: "Cmd+N",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "new-workspace",
+      section: "projects",
+      label: "New workspace",
+      keys: ["mod", "N"],
+    },
+  },
+  {
+    id: "workspace-new-ctrl-n-non-mac",
+    action: "workspace.new",
+    combo: "Ctrl+N",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "new-workspace",
+      section: "projects",
+      label: "New workspace",
+      keys: ["mod", "N"],
     },
   },
 

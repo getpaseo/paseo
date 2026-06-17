@@ -6,7 +6,7 @@ import {
   connectNewWorkspaceDaemonClient,
   openGlobalNewWorkspaceComposer,
   selectNewWorkspaceProject,
-  selectWorkspaceBacking,
+  selectWorkspaceIsolation,
   submitNewWorkspaceEmpty,
 } from "./helpers/new-workspace";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
@@ -14,8 +14,8 @@ import { expectExplorerEntryVisible } from "./helpers/file-explorer";
 import { getServerId } from "./helpers/server-id";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
-// Model B reshape: a workspace is the unit, its backing directory (local
-// checkout or worktree) is a CHOICE at creation, and creation NEVER dedupes by
+// Model B reshape: a workspace is the unit, its isolation (local checkout or
+// worktree) is a CHOICE at creation, and creation NEVER dedupes by
 // directory. These specs drive the real creation UI (workspace-create-* test
 // IDs) to prove a single directory can back any number of workspaces.
 
@@ -39,16 +39,16 @@ async function createWorkspaceViaUi(
   input: {
     project: { projectKey: string; projectDisplayName: string };
     // null when the project has no git checkout: there is no Isolation control to
-    // touch, the backing is implicitly local.
-    backing: "local" | "worktree" | null;
+    // touch, the isolation is implicitly local.
+    isolation: "local" | "worktree" | null;
     previousWorkspaceId: string;
     client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   },
 ): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
   await openGlobalNewWorkspaceComposer(page);
   await selectNewWorkspaceProject(page, input.project);
-  if (input.backing !== null) {
-    await selectWorkspaceBacking(page, input.backing);
+  if (input.isolation !== null) {
+    await selectWorkspaceIsolation(page, input.isolation);
   }
   await submitNewWorkspaceEmpty(page);
 
@@ -96,7 +96,7 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const second = await createWorkspaceViaUi(page, {
         project,
-        backing: "local",
+        isolation: "local",
         previousWorkspaceId: seeded.workspaceId,
         client,
       });
@@ -127,7 +127,7 @@ test.describe("Workspace multiplicity creation flow", () => {
     }
   });
 
-  test("New worktree backing creates a worktree-backed workspace in a distinct directory", async ({
+  test("New worktree isolation creates a worktree-backed workspace in a distinct directory", async ({
     page,
   }) => {
     const seeded: SeededWorkspace = await seedWorkspace({
@@ -148,13 +148,13 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const worktree = await createWorkspaceViaUi(page, {
         project,
-        backing: "worktree",
+        isolation: "worktree",
         previousWorkspaceId: seeded.workspaceId,
         client,
       });
 
       // The worktree row appears, pointing at a directory distinct from the
-      // backing checkout.
+      // local checkout.
       const worktreeRow = page.getByTestId(workspaceRowTestId(worktree.workspaceId));
       await expect(worktreeRow).toBeVisible({ timeout: 30_000 });
       expect(worktree.workspaceId).not.toBe(seeded.workspaceId);
@@ -199,8 +199,8 @@ test.describe("Workspace multiplicity creation flow", () => {
 
       const second = await createWorkspaceViaUi(page, {
         project,
-        // Non-git project: no Isolation control, backing is implicitly local.
-        backing: null,
+        // Non-git project: no Isolation control, isolation is implicitly local.
+        isolation: null,
         previousWorkspaceId: seeded.workspaceId,
         client,
       });

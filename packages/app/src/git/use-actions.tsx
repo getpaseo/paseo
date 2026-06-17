@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
-import { router, type Href } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTranslation } from "react-i18next";
 import { type CheckoutGitActionStatus, useCheckoutGitActionsStore } from "@/git/actions-store";
@@ -14,15 +13,14 @@ import {
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useToast } from "@/contexts/toast-context";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
-import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
-import { buildHostRootRoute } from "@/utils/host-routes";
+import { useSessionStore } from "@/stores/session-store";
 import {
-  confirmRiskyWorktreeArchive,
-  type WorktreeArchiveWarningLabels,
-} from "@/git/worktree-archive-warning";
-import { WorktreeDeletePrompt } from "@/workspace/worktree-delete-prompt";
+  useActiveWorkspaceSelection,
+  type ActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
+import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
+import { type WorktreeArchiveWarningLabels } from "@/git/worktree-archive-warning";
+import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -53,62 +51,6 @@ function formatBaseRefLabel(baseRef: string | undefined, fallbackLabel: string):
   if (!baseRef) return fallbackLabel;
   const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
   return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
-}
-
-// The header archive only appears for Paseo-owned worktrees. When this is the
-// last active workspace referencing the worktree directory, offer to remove it
-// from disk; otherwise a sibling workspace still needs the directory.
-function isLastWorktreeReference(workspaces: WorkspaceDescriptor[], worktreePath: string): boolean {
-  let references = 0;
-  for (const candidate of workspaces) {
-    if (candidate.workspaceDirectory === worktreePath) {
-      references += 1;
-    }
-  }
-  return references <= 1;
-}
-
-// Owns the inline keep/delete prompt for the last-reference worktree case so the
-// archive flow stays a single decision point and `useGitActions` keeps a flat
-// shape.
-function useWorktreeDeletePrompt(
-  runArchive: (worktreePath: string, deleteWorktreeFromDisk: boolean) => void,
-): {
-  open: (input: { worktreePath: string; workspaceName: string }) => void;
-  element: ReactElement;
-} {
-  const [state, setState] = useState<{ worktreePath: string; workspaceName: string } | null>(null);
-
-  const resolve = useCallback(
-    (deleteWorktreeFromDisk: boolean) => {
-      const prompt = state;
-      setState(null);
-      if (prompt) {
-        runArchive(prompt.worktreePath, deleteWorktreeFromDisk);
-      }
-    },
-    [runArchive, state],
-  );
-
-  const onKeep = useCallback(() => resolve(false), [resolve]);
-  const onDelete = useCallback(() => resolve(true), [resolve]);
-  const onCancel = useCallback(() => setState(null), []);
-  const open = useCallback(
-    (input: { worktreePath: string; workspaceName: string }) => setState(input),
-    [],
-  );
-
-  const element = (
-    <WorktreeDeletePrompt
-      visible={state !== null}
-      workspaceName={state?.workspaceName ?? ""}
-      onKeep={onKeep}
-      onDelete={onDelete}
-      onCancel={onCancel}
-    />
-  );
-
-  return { open, element };
 }
 
 type PrStatusValue = NonNullable<CheckoutPrStatusPayload["status"]> | null;
@@ -219,14 +161,65 @@ interface UseGitActionsResult {
   gitActions: GitActions;
   branchLabel: string;
   isGit: boolean;
-  // Inline keep/delete confirmation for archiving the last reference to a
-  // Paseo-owned worktree. Consumers must render this so the prompt is visible.
-  worktreeDeletePrompt: ReactElement | null;
+}
+
+interface UseWorkspaceScreenArchiveControllerInput {
+  serverId: string;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  workspaceDirectory: string | null | undefined;
+  branchLabel: string;
+  gitStatus: CheckoutStatusPayload | null;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}
+
+function useWorkspaceScreenArchiveController({
+  serverId,
+  activeWorkspaceSelection,
+  workspaceDirectory,
+  branchLabel,
+  gitStatus,
+  t,
+}: UseWorkspaceScreenArchiveControllerInput) {
+  const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
+  const archiveWorkspaceRecord = useMemo(() => {
+    if (!workspaceDirectory) {
+      return null;
+    }
+    for (const candidate of sessionWorkspaces?.values() ?? []) {
+      if (candidate.workspaceDirectory === workspaceDirectory) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [sessionWorkspaces, workspaceDirectory]);
+
+  return useWorkspaceArchive({
+    serverId,
+    workspaceId: activeWorkspaceSelection?.workspaceId ?? archiveWorkspaceRecord?.id ?? "",
+    workspaceDirectory,
+    workspaceKind: gitStatus?.isPaseoOwnedWorktree ? "worktree" : "local_checkout",
+    name: archiveWorkspaceRecord?.name ?? branchLabel,
+    isDirty: gitStatus?.isDirty,
+    aheadOfOrigin: gitStatus?.aheadOfOrigin,
+    diffStat: archiveWorkspaceRecord?.diffStat ?? null,
+    warningLabels: getWorktreeArchiveWarningLabels(t),
+    onArchiveStarted: () => {
+      if (!activeWorkspaceSelection) {
+        return;
+      }
+      redirectIfArchivingActiveWorkspace({
+        serverId,
+        workspaceId: activeWorkspaceSelection.workspaceId,
+        activeWorkspaceSelection,
+      });
+    },
+  });
 }
 
 export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): UseGitActionsResult {
   const { t } = useTranslation();
   const toast = useToast();
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
 
@@ -362,7 +355,6 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const runDisablePrAutoMerge = useCheckoutGitActionsStore((s) => s.disablePrAutoMerge);
   const runMergeBranch = useCheckoutGitActionsStore((s) => s.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((s) => s.mergeFromBase);
-  const runArchiveWorktree = useCheckoutGitActionsStore((s) => s.archiveWorktree);
   const githubAutoMergeActionsEnabled = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutGithubSetAutoMerge === true,
   );
@@ -531,78 +523,18 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       });
   }, [baseRef, cwd, runMergeFromBase, serverId, t, toast, toastActionError, toastActionSuccess]);
 
-  const runArchiveWorktreeRecord = useCallback(
-    (worktreePath: string, deleteWorktreeFromDisk: boolean) => {
-      const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
-      const workspaceList = Array.from(workspaces?.values() ?? []);
-      const archivedWorkspaceId = resolveWorkspaceIdByDirectory({
-        workspaces: workspaceList,
-        workspaceDirectory: worktreePath,
-      });
-      const redirectRoute = archivedWorkspaceId
-        ? buildWorkspaceArchiveRedirectRoute({
-            serverId,
-            archivedWorkspaceId,
-            workspaces: workspaceList,
-          })
-        : buildHostRootRoute(serverId);
-      router.replace(redirectRoute as Href);
-      void runArchiveWorktree({ serverId, cwd, worktreePath, deleteWorktreeFromDisk }).catch(
-        (err) => {
-          toastActionError(err, t("workspace.git.actions.toasts.failedArchive"));
-        },
-      );
-    },
-    [cwd, runArchiveWorktree, serverId, t, toastActionError],
-  );
-
-  const worktreeDeletePrompt = useWorktreeDeletePrompt(runArchiveWorktreeRecord);
-
-  const archiveWorktreeAfterConfirmation = useCallback(async () => {
-    const worktreePath = status?.cwd;
-    if (!worktreePath) {
-      toast.error(t("workspace.git.actions.toasts.worktreePathUnavailable"));
-      return;
-    }
-
-    const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
-    const workspaceList = Array.from(workspaces?.values() ?? []);
-    const workspace = workspaceList.find(
-      (candidate) => candidate.workspaceDirectory === worktreePath,
-    );
-    const confirmed = await confirmRiskyWorktreeArchive(
-      {
-        worktreeName: workspace?.name ?? branchLabel,
-        isDirty: gitStatus?.isDirty,
-        aheadOfOrigin: gitStatus?.aheadOfOrigin,
-        diffStat: workspace?.diffStat ?? null,
-      },
-      getWorktreeArchiveWarningLabels(t),
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    if (isLastWorktreeReference(workspaceList, worktreePath)) {
-      worktreeDeletePrompt.open({ worktreePath, workspaceName: workspace?.name ?? branchLabel });
-      return;
-    }
-    runArchiveWorktreeRecord(worktreePath, false);
-  }, [
-    branchLabel,
-    gitStatus?.aheadOfOrigin,
-    gitStatus?.isDirty,
-    runArchiveWorktreeRecord,
+  const archiveController = useWorkspaceScreenArchiveController({
     serverId,
-    status?.cwd,
+    activeWorkspaceSelection,
+    workspaceDirectory: status?.cwd,
+    branchLabel,
+    gitStatus,
     t,
-    toast,
-    worktreeDeletePrompt,
-  ]);
+  });
 
   const handleArchiveWorktree = useCallback(() => {
-    void archiveWorktreeAfterConfirmation();
-  }, [archiveWorktreeAfterConfirmation]);
+    archiveController.archive();
+  }, [archiveController]);
 
   const derived = deriveGitActionsState({
     isGit,
@@ -808,7 +740,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     baseRef,
   ]);
 
-  return { gitActions, branchLabel, isGit, worktreeDeletePrompt: worktreeDeletePrompt.element };
+  return { gitActions, branchLabel, isGit };
 }
 
 function translateGitActions(

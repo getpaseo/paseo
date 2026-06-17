@@ -5,6 +5,8 @@ import type { LucideIcon } from "lucide-react-native";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
+import { Shortcut } from "@/components/ui/shortcut";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -26,6 +28,7 @@ interface SidebarHeaderRowProps {
    * sit in a header group whose wrapper owns the single divider.
    */
   variant?: SidebarHeaderRowVariant;
+  shortcutKeys?: ShortcutKey[][] | null;
 }
 
 export function SidebarHeaderRow({
@@ -37,6 +40,7 @@ export function SidebarHeaderRow({
   nativeID,
   accessibilityLabel,
   variant = "header",
+  shortcutKeys = null,
 }: SidebarHeaderRowProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
 
@@ -63,10 +67,13 @@ export function SidebarHeaderRow({
             uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
           />
           <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
+          {shortcutKeys && Boolean(state.hovered) ? (
+            <Shortcut chord={shortcutKeys} style={styles.shortcut} />
+          ) : null}
         </>
       );
     },
-    [ThemedIcon, isActive, label],
+    [ThemedIcon, isActive, label, shortcutKeys],
   );
 
   return (
@@ -138,5 +145,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   labelHighlighted: {
     color: theme.colors.foreground,
+  },
+  shortcut: {
+    marginLeft: "auto",
   },
 }));

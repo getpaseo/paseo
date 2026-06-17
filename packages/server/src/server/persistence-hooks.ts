@@ -24,6 +24,19 @@ interface BuildSessionConfigOptions {
   validProviders?: Iterable<AgentProvider>;
 }
 
+function isProviderRegistered(
+  validProviders: Iterable<AgentProvider> | undefined,
+  provider: AgentProvider,
+): boolean {
+  if (!validProviders) {
+    return true;
+  }
+  if (validProviders instanceof Set) {
+    return validProviders.has(provider);
+  }
+  return new Set(validProviders).has(provider);
+}
+
 /**
  * Attach AgentStorage persistence to an AgentManager instance so every
  * agent_state snapshot is flushed to disk.
@@ -67,9 +80,7 @@ export function buildSessionConfig(
   record: StoredAgentRecord,
   options?: BuildSessionConfigOptions,
 ): AgentSessionConfig | null {
-  const validProviders = options?.validProviders;
-  const isValidProvider = validProviders ? new Set(validProviders).has(record.provider) : true;
-  if (!isValidProvider) {
+  if (!isProviderRegistered(options?.validProviders, record.provider)) {
     return null;
   }
   const overrides = buildConfigOverrides(record);
@@ -90,7 +101,7 @@ export function isStoredAgentProviderAvailable(
   record: StoredAgentRecord,
   validProviders?: Iterable<AgentProvider>,
 ): boolean {
-  return buildSessionConfig(record, { validProviders }) !== null;
+  return isProviderRegistered(validProviders, record.provider);
 }
 
 export function extractTimestamps(record: StoredAgentRecord): {
@@ -117,7 +128,7 @@ export function toAgentPersistenceHandle(
     return null;
   }
   const provider = handle.provider;
-  if (!new Set(registeredProviders).has(provider)) {
+  if (!isProviderRegistered(registeredProviders, provider)) {
     return null;
   }
   if (!handle.sessionId) {

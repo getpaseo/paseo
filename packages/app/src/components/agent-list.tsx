@@ -77,6 +77,7 @@ function buildHistoricalAgentDetail(agent: AggregatedAgent): Agent {
     },
     title: agent.title,
     cwd: agent.cwd,
+    workspaceId: agent.workspaceId,
     model: null,
     thinkingOptionId: null,
     requiresAttention: agent.requiresAttention,
@@ -101,6 +102,7 @@ function rememberArchivedAgentDetail(agent: AggregatedAgent) {
       ...existing,
       archivedAt: existing?.archivedAt ?? agent.archivedAt,
       cwd: existing?.cwd ?? agent.cwd,
+      workspaceId: existing?.workspaceId ?? agent.workspaceId,
     });
     return next;
   });

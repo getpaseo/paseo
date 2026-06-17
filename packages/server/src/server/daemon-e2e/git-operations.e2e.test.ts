@@ -519,7 +519,18 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
     const setupPort = readFileSync(path.join(agent.cwd, "setup-port.txt"), "utf8").trim();
     expect(setupPort.length).toBeGreaterThan(0);
 
-    const createdTerminal = await ctx.client.createTerminal(agent.cwd, "Manual Port Check");
+    const openedWorktree = await ctx.client.openProject(agent.cwd);
+    if (!openedWorktree.workspace) {
+      throw new Error(openedWorktree.error ?? `Failed to open worktree workspace for ${agent.cwd}`);
+    }
+    const createdTerminal = await ctx.client.createTerminal(
+      agent.cwd,
+      "Manual Port Check",
+      undefined,
+      {
+        workspaceId: openedWorktree.workspace.id,
+      },
+    );
     expect(createdTerminal.error).toBeNull();
     expect(createdTerminal.terminal).toBeTruthy();
     const manualTerminalId = createdTerminal.terminal?.id;
