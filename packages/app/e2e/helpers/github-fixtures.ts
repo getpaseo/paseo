@@ -48,6 +48,7 @@ export interface GhRepoFixture {
   owner: string;
   name: string;
   fullName: string;
+  defaultBranch: string;
   prs: GhPrFixture[];
   issues: GhIssueFixture[];
   cleanup(): Promise<void>;
@@ -82,8 +83,9 @@ async function seedPr(args: {
   authedUrl: string;
   fullName: string;
   repoName: string;
+  defaultBranch: string;
 }): Promise<{ fixture: GhPrFixture; localPath: string }> {
-  const { spec, branch, index, basePath, authedUrl, fullName, repoName } = args;
+  const { spec, branch, index, basePath, authedUrl, fullName, repoName, defaultBranch } = args;
 
   const createArgs = [
     "pr",
@@ -91,7 +93,7 @@ async function seedPr(args: {
     "--title",
     spec.title,
     "--base",
-    "main",
+    defaultBranch,
     "--head",
     branch,
     "--body",
@@ -171,10 +173,11 @@ export async function createTempGithubRepo(options: {
   const { category, prs = [], issues = [] } = options;
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const repoName = `${TEMP_GITHUB_REPO_PREFIX}${category}-${uniqueSuffix}`;
+  const defaultBranch = "main";
 
   // Bootstrap local git repo
   const basePath = await mkdtemp(path.join("/tmp", `${repoName}-base-`));
-  git(["init", "-b", "main"], basePath);
+  git(["init", "-b", defaultBranch], basePath);
   git(["config", "user.email", "e2e@paseo.test"], basePath);
   git(["config", "user.name", "Paseo E2E"], basePath);
   git(["config", "commit.gpgsign", "false"], basePath);
@@ -202,7 +205,7 @@ export async function createTempGithubRepo(options: {
     await writeFile(path.join(basePath, `pr-${i + 1}.txt`), `PR ${i + 1}\n`);
     git(["add", `pr-${i + 1}.txt`], basePath);
     git(["commit", "-m", `Add PR ${i + 1}`], basePath);
-    git(["checkout", "main"], basePath);
+    git(["checkout", defaultBranch], basePath);
   }
 
   if (branches.length > 0) {
@@ -222,6 +225,7 @@ export async function createTempGithubRepo(options: {
       authedUrl,
       fullName,
       repoName,
+      defaultBranch,
     });
     localPaths.push(localPath);
     prFixtures.push(fixture);
@@ -237,6 +241,7 @@ export async function createTempGithubRepo(options: {
     owner,
     name: repoName,
     fullName,
+    defaultBranch,
     prs: prFixtures,
     issues: issueFixtures,
     cleanup: async () => {
@@ -254,15 +259,15 @@ export async function createTempGithubRepo(options: {
 }
 
 export async function cloneGithubRepoDefaultBranchOnly(
-  repo: Pick<GhRepoFixture, "fullName" | "name">,
+  repo: Pick<GhRepoFixture, "fullName" | "name" | "defaultBranch">,
 ): Promise<GhDefaultBranchClone> {
   const token = gh(["auth", "token"]);
   const authedUrl = `https://x-access-token:${token}@github.com/${repo.fullName}.git`;
-  const clonePath = await mkdtemp(path.join("/tmp", `${repo.name}-main-only-`));
+  const clonePath = await mkdtemp(path.join("/tmp", `${repo.name}-${repo.defaultBranch}-only-`));
 
   execFileSync(
     "git",
-    ["clone", "--quiet", "--single-branch", "--branch", "main", authedUrl, clonePath],
+    ["clone", "--quiet", "--single-branch", "--branch", repo.defaultBranch, authedUrl, clonePath],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   git(["config", "user.email", "e2e@paseo.test"], clonePath);
