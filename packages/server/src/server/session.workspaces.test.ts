@@ -783,6 +783,122 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
   }
 });
 
+test("create_agent_request writes the first prompt title onto an untitled existing workspace", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
+  try {
+    const cwd = path.join(workdir, "repo");
+    mkdirSync(cwd, { recursive: true });
+
+    const logger = {
+      child: () => logger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    const agentManager = new AgentManager({
+      clients: { codex: new CreateAgentTestClient() },
+      registry: agentStorage,
+      logger: asSessionLogger(logger),
+      idFactory: () => "00000000-0000-4000-8000-000000000552",
+    });
+    const projectRegistry = new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    );
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    );
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "proj-existing",
+        rootPath: cwd,
+        kind: "git",
+        displayName: "repo",
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-existing",
+        projectId: "proj-existing",
+        cwd,
+        kind: "local_checkout",
+        displayName: "repo",
+        title: null,
+        createdAt: "2026-05-07T00:00:00.000Z",
+        updatedAt: "2026-05-07T00:00:00.000Z",
+      }),
+    );
+
+    const session = asTestSession(
+      new Session({
+        clientId: "test-client",
+        appVersion: null,
+        onMessage: vi.fn(),
+        logger: asSessionLogger(logger),
+        downloadTokenStore: asDownloadTokenStore(),
+        pushTokenStore: asPushTokenStore(),
+        paseoHome: path.join(workdir, "paseo-home"),
+        agentManager,
+        agentStorage,
+        projectRegistry,
+        workspaceRegistry,
+        chatService: asChatService(),
+        scheduleService: asScheduleService(),
+        loopService: asLoopService(),
+        checkoutDiffManager: asCheckoutDiffManager({
+          subscribe: async () => ({
+            initial: { cwd, files: [], error: null },
+            unsubscribe: () => {},
+          }),
+          scheduleRefreshForCwd: () => {},
+          onWorkspaceStateMayHaveChanged: () => {},
+          getMetrics: () => ({
+            checkoutDiffTargetCount: 0,
+            checkoutDiffSubscriptionCount: 0,
+            checkoutDiffWatcherCount: 0,
+            checkoutDiffFallbackRefreshTargetCount: 0,
+          }),
+          dispose: () => {},
+        }),
+        workspaceGitService: createNoopWorkspaceGitService(),
+        daemonConfigStore: asDaemonConfigStore({
+          get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+          onChange: () => () => {},
+        }),
+        mcpBaseUrl: null,
+        stt: null,
+        tts: null,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        terminalManager: null,
+      }),
+    );
+
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-existing-title",
+      workspaceId: "ws-existing",
+      config: { provider: "codex", cwd },
+      initialPrompt: "Fix login bug\nwith better validation",
+      attachments: [],
+    });
+
+    const [createdAgent] = agentManager.listAgents();
+    expect(createdAgent?.workspaceId).toBe("ws-existing");
+    await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
+      title: "Fix login bug",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("unsupported persisted agents are excluded from active lists but preserved in history payloads", async () => {
   const session = createSessionForWorkspaceTests({ appVersion: "0.1.45" });
   const storedRecord = {

@@ -73,7 +73,10 @@ import {
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
-import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
+import {
+  resolveCreateAgentTitles,
+  resolveFirstAgentPromptTitle,
+} from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -3234,7 +3237,7 @@ export class Session {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
-      const workspacePromptTitle = this.firstAgentPromptTitle(firstAgentContext);
+      const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,
         target: worktree,
@@ -3714,7 +3717,7 @@ export class Session {
     await this.applyGeneratedWorkspaceTitle(input.workspace.workspaceId, {
       title: generatedTitle,
       branch: result.branchName,
-      promptTitle: this.firstAgentPromptTitle(input.firstAgentContext),
+      promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     await this.notifyGitMutation(input.workspace.cwd, "rename-branch");
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
@@ -3760,14 +3763,6 @@ export class Session {
     });
   }
 
-  private firstAgentPromptTitle(firstAgentContext?: FirstAgentContext): string | null {
-    return (
-      resolveCreateAgentTitles({
-        initialPrompt: firstAgentContext?.prompt,
-      }).provisionalTitle ?? null
-    );
-  }
-
   // Wraps the injected workspace-name generator for a directory workspace.
   private async generateWorkspaceTitleFromContext(input: {
     cwd: string;
@@ -3805,7 +3800,7 @@ export class Session {
     // Directory workspaces have no branch — write only the title.
     await this.applyGeneratedWorkspaceTitle(input.workspaceId, {
       title,
-      promptTitle: this.firstAgentPromptTitle(input.firstAgentContext),
+      promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     await this.emitWorkspaceUpdateForWorkspaceId(input.workspaceId);
   }
@@ -7644,7 +7639,7 @@ export class Session {
     }
 
     const explicitTitle = request.title?.trim() || null;
-    const promptTitle = this.firstAgentPromptTitle(request.firstAgentContext);
+    const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
     const workspace = await createLocalCheckoutWorkspace(
       { cwd, title: explicitTitle ?? promptTitle },
       {
