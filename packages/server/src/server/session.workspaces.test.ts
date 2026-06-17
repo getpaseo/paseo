@@ -129,7 +129,7 @@ interface SessionTestAccess {
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
   applyGeneratedWorkspaceTitle(
     workspaceId: string,
-    input: { title: string; branch?: string | null },
+    input: { title: string; branch?: string | null; promptTitle?: string | null },
   ): Promise<void>;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
@@ -6074,6 +6074,46 @@ test("applyGeneratedWorkspaceTitle writes branch metadata and does not clobber c
   expect(saved?.title).toBe("User-set title");
 });
 
+test("applyGeneratedWorkspaceTitle replaces the unchanged prompt title", async () => {
+  const session = createSessionForWorkspaceTests();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-prompt-title",
+    projectId: "proj-prompt-title",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    title: "Fix login bug",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const stored = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.get = async (id: string) => stored.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    stored.set(parsed.workspaceId, parsed);
+  };
+
+  await session.applyGeneratedWorkspaceTitle(workspace.workspaceId, {
+    title: "Generated login fix",
+    promptTitle: "Fix login bug",
+  });
+
+  expect(stored.get(workspace.workspaceId)?.title).toBe("Generated login fix");
+
+  stored.set(workspace.workspaceId, {
+    ...workspace,
+    title: "User rename",
+    updatedAt: "2026-03-01T12:01:00.000Z",
+  });
+
+  await session.applyGeneratedWorkspaceTitle(workspace.workspaceId, {
+    title: "Generated login fix",
+    promptTitle: "Fix login bug",
+  });
+
+  expect(stored.get(workspace.workspaceId)?.title).toBe("User rename");
+});
+
 // Phase 7: branch is a git fact derived per-descriptor from each workspace's own
 // live git snapshot, and reconciliation re-persists `branch` per workspace from
 // its own cwd. handleCheckoutRenameBranchRequest renames the git branch and
@@ -6134,4 +6174,43 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   const persisted = workspaces.get(workspace.workspaceId);
   expect(persisted?.displayName).toBe("Refactor auth flow");
   expect(persisted?.title).toBe("Refactor auth flow");
+});
+
+test("workspace.create.response persists the first prompt as the initial title", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => Array.from(workspaces.values()),
+      get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
+      upsert: async (workspace) => {
+        workspaces.set(workspace.workspaceId, workspace);
+      },
+      archive: async () => {},
+      remove: async () => {},
+    },
+  });
+  session.listAgentPayloads = async () => [];
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-first-prompt",
+    source: { kind: "directory", path: REPO_CWD },
+    firstAgentContext: {
+      prompt: "Add retries to the payments flow\nwith exponential backoff",
+    },
+  });
+
+  const response = findByType(emitted, "workspace.create.response");
+  expect(response?.payload.error).toBeNull();
+  expect(response?.payload.workspace?.title).toBe("Add retries to the payments flow");
+  expect(response?.payload.workspace?.name).toBe("Add retries to the payments flow");
+
+  const workspaceId = response?.payload.workspace?.id;
+  expect(workspaceId).toBeDefined();
+  const persisted = await session.workspaceRegistry.get(workspaceId as string);
+  expect(persisted?.title).toBe("Add retries to the payments flow");
 });

@@ -25,6 +25,7 @@ import {
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
 } from "../utils/worktree-metadata.js";
 import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.js";
+import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
@@ -70,6 +71,7 @@ export async function createPaseoWorktree(
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
     worktree: createdWorktree.worktree,
+    title: firstAgentPromptTitle(input.firstAgentContext),
     deps,
   });
 
@@ -200,6 +202,7 @@ async function upsertWorkspaceForWorktree(options: {
   projectId?: string;
   repoRoot: string;
   worktree: WorktreeConfig;
+  title?: string | null;
   deps: Pick<
     CreatePaseoWorktreeDeps,
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
@@ -241,6 +244,7 @@ async function upsertWorkspaceForWorktree(options: {
     kind: "worktree",
     displayName: options.worktree.branchName || normalizedCwd,
     branch: options.worktree.branchName || null,
+    title: options.title ?? null,
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
@@ -294,6 +298,14 @@ export async function createLocalCheckoutWorkspace(
   });
   await deps.workspaceRegistry.upsert(workspace);
   return workspace;
+}
+
+function firstAgentPromptTitle(firstAgentContext?: FirstAgentContext): string | null {
+  return (
+    resolveCreateAgentTitles({
+      initialPrompt: firstAgentContext?.prompt,
+    }).provisionalTitle ?? null
+  );
 }
 
 async function resolveProjectRecordForMembership(options: {

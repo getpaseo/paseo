@@ -257,9 +257,9 @@ export function createPersistedWorkspaceRecord(input: {
   });
 }
 
-// The single workspace-name rule: the user-set title always wins; otherwise fall
-// back to the freshest available derived display name (a live branch snapshot when
-// the caller has one, the persisted displayName otherwise).
+// The single workspace-name rule: the title always wins; otherwise fall back to
+// the freshest available derived display name (a live branch snapshot when the
+// caller has one, the persisted displayName otherwise).
 export function resolveWorkspaceName(input: {
   title: string | null;
   derivedDisplayName: string;

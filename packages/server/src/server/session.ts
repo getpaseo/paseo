@@ -3234,6 +3234,7 @@ export class Session {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
+      const workspacePromptTitle = this.firstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,
         target: worktree,
@@ -3244,13 +3245,12 @@ export class Session {
       const createAgentConfig: AgentSessionConfig = createdWorktree
         ? { ...config, cwd: createdWorktree.worktree.worktreePath }
         : config;
-      // Ownership comes from an explicit id (worktree or request). An agent
-      // created with no explicit workspace mints a fresh one — we never resolve
-      // an existing workspace by cwd, because many workspaces may share a cwd.
-      const workspaceId =
-        createdWorktree?.workspace.workspaceId ??
-        msg.workspaceId ??
-        (await this.createWorkspaceForDirectory(createAgentConfig.cwd)).workspaceId;
+      const workspaceId = await this.resolveOrCreateWorkspaceIdForCreateAgent({
+        createdWorktree,
+        requestedWorkspaceId: msg.workspaceId,
+        cwd: createAgentConfig.cwd,
+        initialTitle: workspacePromptTitle,
+      });
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
@@ -3281,6 +3281,9 @@ export class Session {
         },
       );
       createdAgentId = snapshot.id;
+      if (!createdWorktree && msg.workspaceId) {
+        await this.writeInitialWorkspaceTitleIfUntitled(workspaceId, workspacePromptTitle);
+      }
       await this.forwardAgentUpdate(snapshot);
       if (!createdWorktree && trimmedPrompt) {
         await this.scheduleAutoNameLocalWorkspaceTitleForFirstAgent({
@@ -3711,29 +3714,58 @@ export class Session {
     await this.applyGeneratedWorkspaceTitle(input.workspace.workspaceId, {
       title: generatedTitle,
       branch: result.branchName,
+      promptTitle: this.firstAgentPromptTitle(input.firstAgentContext),
     });
     await this.notifyGitMutation(input.workspace.cwd, "rename-branch");
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }
 
-  // applyGeneratedWorkspaceTitle fills the generated title only while the
-  // workspace is still untitled. It re-reads the current record from the
-  // registry so concurrent upserts that happened after workspace creation are
-  // not clobbered, while still persisting branch metadata from the rename path.
+  // Generated names may replace the prompt title set at creation, but not a user
+  // rename that landed while the async generator was running.
   private async applyGeneratedWorkspaceTitle(
     workspaceId: string,
-    input: { title: string; branch?: string | null },
+    input: { title: string; branch?: string | null; promptTitle?: string | null },
   ): Promise<void> {
     const current = await this.workspaceRegistry.get(workspaceId);
     if (!current) {
       return;
     }
+    let title = current.title;
+    if (!title || (input.promptTitle && title === input.promptTitle)) {
+      title = input.title;
+    }
     await this.workspaceRegistry.upsert({
       ...current,
-      title: current.title || input.title,
+      title,
       ...(input.branch ? { branch: input.branch } : {}),
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  private async writeInitialWorkspaceTitleIfUntitled(
+    workspaceId: string,
+    title: string | null,
+  ): Promise<void> {
+    if (!title) {
+      return;
+    }
+    const current = await this.workspaceRegistry.get(workspaceId);
+    if (!current || current.title) {
+      return;
+    }
+    await this.workspaceRegistry.upsert({
+      ...current,
+      title,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  private firstAgentPromptTitle(firstAgentContext?: FirstAgentContext): string | null {
+    return (
+      resolveCreateAgentTitles({
+        initialPrompt: firstAgentContext?.prompt,
+      }).provisionalTitle ?? null
+    );
   }
 
   // Wraps the injected workspace-name generator for a directory workspace.
@@ -3754,8 +3786,7 @@ export class Session {
   }
 
   // Generates a human title for a directory workspace from the firstAgentContext
-  // prompt and writes it as displayName. No branch rename — directory workspaces
-  // have no worktree git state.
+  // prompt. No branch rename — directory workspaces have no worktree git state.
   // TODO(K7): same-dir directory-workspace display disambiguation not yet implemented.
   private async maybeAutoNameDirectoryWorkspaceTitle(input: {
     workspaceId: string;
@@ -3772,7 +3803,10 @@ export class Session {
     }
     // K4: applyGeneratedWorkspaceTitle re-reads from the registry before writing.
     // Directory workspaces have no branch — write only the title.
-    await this.applyGeneratedWorkspaceTitle(input.workspaceId, { title });
+    await this.applyGeneratedWorkspaceTitle(input.workspaceId, {
+      title,
+      promptTitle: this.firstAgentPromptTitle(input.firstAgentContext),
+    });
     await this.emitWorkspaceUpdateForWorkspaceId(input.workspaceId);
   }
 
@@ -6910,7 +6944,27 @@ export class Session {
     return this.createWorkspaceForDirectory(normalizedCwd);
   }
 
-  private async createWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
+  private async resolveOrCreateWorkspaceIdForCreateAgent(input: {
+    createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
+    requestedWorkspaceId?: string;
+    cwd: string;
+    initialTitle: string | null;
+  }): Promise<string> {
+    if (input.createdWorktree) {
+      return input.createdWorktree.workspace.workspaceId;
+    }
+
+    if (input.requestedWorkspaceId) {
+      return input.requestedWorkspaceId;
+    }
+
+    return (await this.createWorkspaceForDirectory(input.cwd, input.initialTitle)).workspaceId;
+  }
+
+  private async createWorkspaceForDirectory(
+    cwd: string,
+    title?: string | null,
+  ): Promise<PersistedWorkspaceRecord> {
     const checkout = await this.workspaceGitService.getCheckout(cwd);
     const membership = classifyDirectoryForProjectMembership({ cwd, checkout });
     const timestamp = new Date().toISOString();
@@ -6927,6 +6981,7 @@ export class Session {
       cwd,
       kind: membership.workspaceKind,
       displayName: membership.workspaceDisplayName,
+      title: title ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -7588,8 +7643,10 @@ export class Session {
       return;
     }
 
+    const explicitTitle = request.title?.trim() || null;
+    const promptTitle = this.firstAgentPromptTitle(request.firstAgentContext);
     const workspace = await createLocalCheckoutWorkspace(
-      { cwd, title: request.title ?? null },
+      { cwd, title: explicitTitle ?? promptTitle },
       {
         projectRegistry: this.projectRegistry,
         workspaceRegistry: this.workspaceRegistry,
