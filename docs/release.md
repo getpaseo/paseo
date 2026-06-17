@@ -446,7 +446,7 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] Run the pre-release sanity check (see above) and address any findings
 - [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any `release:*` patch/promote command
 - [ ] Ensure local `npm run typecheck` passes on that exact commit before running any `release:*` patch/promote command
-- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors)
+- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). When promoting from beta, overwrite the existing `## X.Y.Z-beta.N` heading in place (heading → `X.Y.Z`, date → promotion day) — do not add a new entry on top of the beta one
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
