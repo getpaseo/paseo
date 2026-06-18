@@ -695,6 +695,34 @@ test("two candidate latency timeouts do not tear down the live connection", asyn
   expect(session.pingTimestamps()).toEqual(["0s", "1s"]);
 });
 
+test("a candidate measurement that times out under a heartbeat tick does not count toward teardown", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonGoesSilent();
+
+  await session.connect();
+
+  // A candidate measurement is still in flight when the +10s heartbeat tick lands,
+  // so the heartbeat shares the in-flight ping. Let the measurement time out.
+  await session.advance(9_000);
+  const measurement = session.measureLatency({ timeoutMs: 5_000 });
+  const measurementError = measurement.then(
+    () => null,
+    (error) => error,
+  );
+  await session.advance(5_500);
+  await expect(measurementError).resolves.toEqual(
+    expect.objectContaining({ message: "Latency measurement timed out (5000ms)" }),
+  );
+
+  // The measurement timeout must not have been recorded as a liveness failure: a
+  // single genuine heartbeat miss after it must still leave the connection up.
+  await session.advance(25_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.teardownCount()).toBe(0);
+});
+
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

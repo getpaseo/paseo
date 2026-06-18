@@ -870,6 +870,10 @@ interface PingProbe {
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
+  // Whether a timeout on this ping should be recorded as a liveness failure. Only the
+  // heartbeat sets this; a latency measurement never drives teardown, even when a
+  // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
+  drivesLivenessFailure: boolean;
 }
 
 export class DaemonClient {
@@ -1651,7 +1655,7 @@ export class DaemonClient {
 
   measureLatency(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
-    return this.sendPingAwaitRtt({ timeoutMs }).catch((error) => {
+    return this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: false }).catch((error) => {
       throw toTimeoutError(error, "Latency measurement", timeoutMs);
     });
   }
@@ -1659,17 +1663,18 @@ export class DaemonClient {
   private async livenessPing(params?: { timeoutMs?: number }): Promise<number> {
     const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
     try {
-      const rttMs = await this.sendPingAwaitRtt({ timeoutMs });
+      const rttMs = await this.sendPingAwaitRtt({ timeoutMs, drivesLivenessFailure: true });
       this.lastLivenessRttMs = rttMs;
       return rttMs;
     } catch (error) {
-      const livenessError = toTimeoutError(error, "Liveness check", timeoutMs);
-      this.recordLivenessFailure(livenessError);
-      throw livenessError;
+      throw toTimeoutError(error, "Liveness check", timeoutMs);
     }
   }
 
-  private sendPingAwaitRtt(params: { timeoutMs: number }): Promise<number> {
+  private sendPingAwaitRtt(params: {
+    timeoutMs: number;
+    drivesLivenessFailure: boolean;
+  }): Promise<number> {
     if (this.connectionState.status !== "connected" || !this.transport) {
       return Promise.reject(
         new Error(`Transport not connected (status: ${this.connectionState.status})`),
@@ -1697,9 +1702,14 @@ export class DaemonClient {
           return;
         }
         this.pingProbe = null;
-        probe.reject(new PingTimeoutError(timeoutMs));
+        const error = new PingTimeoutError(timeoutMs);
+        probe.reject(error);
+        if (probe.drivesLivenessFailure) {
+          this.recordLivenessFailure(toTimeoutError(error, "Liveness check", timeoutMs));
+        }
       }, timeoutMs),
       startedAt,
+      drivesLivenessFailure: params.drivesLivenessFailure,
     };
     this.pingProbe = probe;
 
@@ -1707,7 +1717,11 @@ export class DaemonClient {
       this.transport.send(JSON.stringify({ type: "ping" }));
     } catch (error) {
       this.clearPingProbe();
-      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      const sendError = error instanceof Error ? error : new Error(String(error));
+      if (probe.drivesLivenessFailure) {
+        this.recordLivenessFailure(sendError);
+      }
+      return Promise.reject(sendError);
     }
 
     return promise;
