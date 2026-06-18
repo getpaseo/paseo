@@ -1083,6 +1083,10 @@ export const es: TranslationResources = {
   },
   projectPicker: {
     placeholder: "Escriba una ruta de directorio...",
+    browsing: "Explorando {{path}}",
+    browseHostFolders: "Explorar carpetas del host",
+    selectCurrentFolder: "Seleccionar carpeta actual",
+    parentFolder: "Carpeta superior",
     opening: "Proyecto de apertura...",
     empty: "Comience a escribir una ruta",
     errors: {
