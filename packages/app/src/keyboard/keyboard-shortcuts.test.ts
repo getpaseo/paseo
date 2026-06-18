@@ -3,6 +3,7 @@ import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
   getBindingIdForAction,
+  getWorkspaceIndexJumpModifierKey,
   resolveKeyboardShortcut,
   type ChordState,
   type KeyboardShortcutContext,
@@ -636,5 +637,20 @@ describe("keyboard-shortcut help sections", () => {
     expect(
       getBindingIdForAction("message-input-queue", { isMac: true, isDesktop: true }),
     ).toBeNull();
+  });
+});
+
+describe("getWorkspaceIndexJumpModifierKey", () => {
+  it("uses Alt on web, regardless of OS", () => {
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: true, isDesktop: false })).toBe("Alt");
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: false, isDesktop: false })).toBe("Alt");
+  });
+
+  it("uses Cmd (Meta) on desktop Mac, not Control or Alt", () => {
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: true, isDesktop: true })).toBe("Meta");
+  });
+
+  it("uses Ctrl on desktop non-Mac, not Meta or Alt", () => {
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: false, isDesktop: true })).toBe("Control");
   });
 });

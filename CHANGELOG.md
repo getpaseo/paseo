@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.1.97-beta.3 - 2026-06-18
+## 0.1.97 - 2026-06-18
 
 ### Added
 
 - **Simplify workspace model** — run multiple workspaces on the same code without a worktree, each with its own agents, terminals, and status ([#1539](https://github.com/getpaseo/paseo/pull/1539))
+- **Reopen archived workspaces from History** — restore a past workspace even after its worktree was removed
 - **Terminals show when their agent is working, idle, or waiting for input** ([#1507](https://github.com/getpaseo/paseo/pull/1507))
 - **Attach files to agents on mobile** ([#1501](https://github.com/getpaseo/paseo/pull/1501))
 - **Hide dotfiles in the file explorer** ([#1516](https://github.com/getpaseo/paseo/pull/1516) by [@yuruiz](https://github.com/yuruiz))
@@ -23,6 +24,7 @@
 
 ### Fixed
 
+- Brief daemon slowdowns no longer drop your connection
 - Linux AppImage updates no longer hang on quit or delete the app ([#1485](https://github.com/getpaseo/paseo/pull/1485) by [@xpufx](https://github.com/xpufx))
 - Opening Providers settings no longer crashes on Android ([#1537](https://github.com/getpaseo/paseo/pull/1537))
 - Coding-agent terminal shortcuts work on Windows ([#1509](https://github.com/getpaseo/paseo/pull/1509))

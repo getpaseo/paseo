@@ -335,7 +335,7 @@ export function PrBadge({ hint }: { hint: PrHint }) {
         <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
       )}
       <Text style={textStyle} numberOfLines={1}>
-        #{hint.number}
+        {hint.number}
       </Text>
     </Pressable>
   );

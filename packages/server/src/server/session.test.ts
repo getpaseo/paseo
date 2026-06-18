@@ -2749,10 +2749,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
-            project: {
+            project: expect.objectContaining({
               projectKey: "remote:github.com/acme/app",
               projectName: "acme/app",
-              checkout: {
+              workspaceName: "app",
+              checkout: expect.objectContaining({
                 cwd: "/repo/app",
                 isGit: true,
                 currentBranch: "app",
@@ -2760,8 +2761,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/app",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -2820,10 +2821,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-local",
-            project: {
+            project: expect.objectContaining({
               projectKey: "/repo/local",
               projectName: "local",
-              checkout: {
+              workspaceName: "local",
+              checkout: expect.objectContaining({
                 cwd: "/repo/local",
                 isGit: true,
                 currentBranch: "local",
@@ -2831,8 +2833,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/local",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),

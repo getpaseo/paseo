@@ -1344,6 +1344,21 @@ export function getDefaultKeysForAction(
   return null;
 }
 
+/**
+ * The `KeyboardEvent.key` whose hold reveals the sidebar workspace-jump number
+ * badges. It must match the modifier of the active `workspace.navigate.index`
+ * binding for this runtime, otherwise the badges appear for a modifier that
+ * does not actually jump: Alt on web, Cmd (Meta) on desktop Mac, Ctrl on
+ * desktop non-Mac.
+ */
+export function getWorkspaceIndexJumpModifierKey(platform: {
+  isMac: boolean;
+  isDesktop: boolean;
+}): "Alt" | "Meta" | "Control" {
+  if (!platform.isDesktop) return "Alt";
+  return platform.isMac ? "Meta" : "Control";
+}
+
 export function buildKeyboardShortcutHelpSections(
   input: KeyboardShortcutPlatformContext,
   bindings: readonly ParsedShortcutBinding[] = DEFAULT_BINDINGS,

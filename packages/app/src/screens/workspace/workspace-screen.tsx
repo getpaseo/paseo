@@ -3390,7 +3390,7 @@ function WorkspaceScreenContent({
             onScriptTerminalStarted={handleScriptTerminalStarted}
             onViewTerminal={handleViewScriptTerminal}
             onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
-            hideLabels={showCompactButtonLabels}
+            hideLabels
           />
         ) : null}
         {!isMobile && workspaceDirectory ? (
@@ -3398,7 +3398,7 @@ function WorkspaceScreenContent({
             serverId={normalizedServerId}
             cwd={workspaceDirectory}
             activeFile={activeFileLocation}
-            hideLabels={showCompactButtonLabels}
+            hideLabels
           />
         ) : null}
         {!isMobile && isGitCheckout ? (

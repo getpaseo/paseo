@@ -1264,6 +1264,83 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("bootstraps legacy daemons from unscoped agents and creates path-backed workspaces", async () => {
+    const host = makeHost({
+      serverId: "srv_legacy_workspace_daemon",
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    fakeClient.fetchAgentsResponses.push(
+      makeFetchAgentsPayload({
+        entries: [
+          makeFetchAgentsEntry({
+            id: "agent-legacy",
+            cwd: "/repo/legacy-app",
+            updatedAt: "2026-06-18T12:00:00.000Z",
+            title: "Legacy daemon agent",
+          }),
+        ],
+        subscriptionId: "app:srv_legacy_workspace_daemon",
+      }),
+    );
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient);
+    sessionStore.updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "0.1.96",
+    });
+    store.syncHosts([host]);
+
+    const timeoutAt = Date.now() + 300;
+    while (
+      (fakeClient.fetchAgentsCalls.length === 0 ||
+        !useSessionStore.getState().sessions[host.serverId]?.workspaces.has("/repo/legacy-app")) &&
+      Date.now() < timeoutAt
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(fakeClient.fetchAgentsCalls).toEqual([
+      {
+        sort: [{ key: "updated_at", direction: "desc" }],
+        subscribe: { subscriptionId: "app:srv_legacy_workspace_daemon" },
+        page: { limit: 200 },
+      },
+    ]);
+    const session = useSessionStore.getState().sessions[host.serverId];
+    expect(session?.agents.get("agent-legacy")?.workspaceId).toBe("/repo/legacy-app");
+    expect(Array.from(session?.workspaces.values() ?? [])).toEqual([
+      expect.objectContaining({
+        id: "/repo/legacy-app",
+        workspaceDirectory: "/repo/legacy-app",
+        name: "legacy-app",
+      }),
+    ]);
+
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("fetches all pages during bootstrap within the active agent scope", async () => {
     const host = makeHost({
       serverId: "srv_paged",
