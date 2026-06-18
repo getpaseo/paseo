@@ -169,9 +169,11 @@ function formatStructuredContentForModel(structuredContent: unknown): string {
   return summary.length > 0 ? `${summary.join("\n")}\n\n${json}` : json;
 }
 
-function isZodSchema(value: unknown): value is z.ZodTypeAny {
+function isZodSchema(value: unknown): value is z.ZodType {
   return (
-    typeof value === "object" && value !== null && "_def" in value && "safeParseAsync" in value
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { safeParseAsync?: unknown }).safeParseAsync === "function"
   );
 }
 
@@ -714,7 +716,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       modeId: z.string().optional().describe("Session mode to configure before the first run."),
       thinkingOptionId: z.string().optional().describe("Thinking option ID."),
       features: z
-        .record(z.unknown())
+        .record(z.string(), z.unknown())
         .optional()
         .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
     })
@@ -729,7 +731,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         .optional()
         .describe("Thinking option ID. Pass null to clear."),
       features: z
-        .record(z.unknown())
+        .record(z.string(), z.unknown())
         .optional()
         .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
     })
@@ -739,7 +741,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       modeId: z.string().optional().describe("Draft session mode ID."),
       model: z.string().optional().describe("Draft model ID."),
       thinkingOptionId: z.string().optional().describe("Draft thinking option ID."),
-      features: z.record(z.unknown()).optional().describe("Draft provider feature values."),
+      features: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Draft provider feature values."),
     })
     .strict();
   const agentToAgentInputSchema = {

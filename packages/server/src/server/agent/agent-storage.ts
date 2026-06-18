@@ -14,10 +14,10 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
-    featureValues: z.record(z.unknown()).nullable().optional(),
-    extra: z.record(z.any()).nullable().optional(),
+    featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
+    extra: z.record(z.string(), z.any()).nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
-    mcpServers: z.record(z.any()).nullable().optional(),
+    mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
   .nullable()
   .optional();
@@ -27,7 +27,7 @@ const PERSISTENCE_HANDLE_SCHEMA = z
     provider: z.string(),
     sessionId: z.string(),
     nativeHandle: z.any().optional(),
-    metadata: z.record(z.any()).optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
   })
   .nullable()
   .optional();
@@ -42,7 +42,7 @@ const STORED_AGENT_SCHEMA = z.object({
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
-  labels: z.record(z.string()).default({}),
+  labels: z.record(z.string(), z.string()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
@@ -53,7 +53,7 @@ const STORED_AGENT_SCHEMA = z.object({
       model: z.string().nullable().optional(),
       thinkingOptionId: z.string().nullable().optional(),
       modeId: z.string().nullable().optional(),
-      extra: z.record(z.unknown()).optional(),
+      extra: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
   features: z.array(AgentFeatureSchema).optional(),

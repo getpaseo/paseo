@@ -78,7 +78,7 @@ type RegistryRecord = PersistedProjectRecord | PersistedWorkspaceRecord;
 class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly filePath: string;
   private readonly logger: Logger;
-  private readonly schema: z.ZodType<TRecord, z.ZodTypeDef, unknown>;
+  private readonly schema: z.ZodType<TRecord, unknown>;
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
   private readonly cache = new Map<string, TRecord>();
@@ -87,7 +87,7 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   constructor(options: {
     filePath: string;
     logger: Logger;
-    schema: z.ZodType<TRecord, z.ZodTypeDef, unknown>;
+    schema: z.ZodType<TRecord, unknown>;
     getId: (record: TRecord) => string;
     component: string;
   }) {

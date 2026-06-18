@@ -13,8 +13,8 @@
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.29.1",
     "@cloudflare/workers-types": "^4.20260317.1",
-    "@tanstack/react-router": "^1.166.4",
-    "@tanstack/react-start": "^1.166.4",
+    "@tanstack/react-router": "^1.170.16",
+    "@tanstack/react-start": "^1.168.26",
     "framer-motion": "^12.35.2",
     "github-slugger": "^2.0.0",
     "lucide-react": "^1.7.0",

@@ -544,7 +544,7 @@ const MIN_STREAMING_SEGMENT_DURATION_MS = 1000;
 const MIN_STREAMING_SEGMENT_BYTES = Math.round(
   PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
 );
-const AgentIdSchema = z.string().uuid();
+const AgentIdSchema = z.guid();
 interface VoiceModeBaseConfig {
   systemPrompt?: string;
 }

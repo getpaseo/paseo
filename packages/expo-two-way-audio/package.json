@@ -31,8 +31,9 @@
     "open:android": "open -a \"Android Studio\" examples/basic-usage/android"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/react": "^18.0.25",
-    "expo-module-scripts": "^3.5.2",
+    "expo-module-scripts": "^5.0.8",
     "expo-modules-core": "^2.0.4"
   },
   "peerDependencies": {

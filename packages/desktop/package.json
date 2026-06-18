@@ -28,7 +28,7 @@
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
     "ws": "^8.14.2",
-    "zod": "^3.23.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.6.0",
