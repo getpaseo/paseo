@@ -4,6 +4,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DesktopDir = (Resolve-Path "$ScriptDir\..").Path
 $AppDir = (Resolve-Path "$DesktopDir\..\app").Path
 $RootDir = (Resolve-Path "$DesktopDir\..\..").Path
+$env:PATH = "$RootDir\node_modules\.bin;$env:PATH"
 
 # Build the Electron main process
 npm run build:main
@@ -112,7 +113,7 @@ Write-Host @"
 "@
 
 # Launch Metro + Electron together, kill both on exit
-& "$RootDir\node_modules\.bin\concurrently" `
+concurrently `
     --kill-others `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
