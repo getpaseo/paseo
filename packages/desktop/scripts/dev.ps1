@@ -78,7 +78,23 @@ if (-not $env:PASEO_LISTEN) { $env:PASEO_LISTEN = "127.0.0.1:$DevDaemonPort" }
 # ONLY seed the script-managed home: never rewrite a user-supplied PASEO_HOME
 # (that could clobber a production config.json with the dev port + wildcard CORS).
 if ($PaseoHomeManaged) {
-    node -e "const fs = require('fs'); const [path, port] = [process.argv[1], process.argv[2]]; let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) {} cfg.version = cfg.version || 1; cfg.daemon = cfg.daemon || {}; cfg.daemon.listen = '127.0.0.1:' + port; cfg.daemon.cors = cfg.daemon.cors || {}; cfg.daemon.cors.allowedOrigins = ['*']; fs.writeFileSync(path, JSON.stringify(cfg, null, 2));" "$($env:PASEO_HOME)/config.json" $DevDaemonPort
+    $TmpScript = [System.IO.Path]::GetTempFileName() + ".js"
+    $ScriptContent = @"
+const fs = require('fs');
+const path = "$($env:PASEO_HOME)/config.json".replace(/\\/g, '/');
+const port = "$DevDaemonPort";
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) {}
+cfg.version = cfg.version || 1;
+cfg.daemon = cfg.daemon || {};
+cfg.daemon.listen = '127.0.0.1:' + port;
+cfg.daemon.cors = cfg.daemon.cors || {};
+cfg.daemon.cors.allowedOrigins = ['*'];
+fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
+"@
+    Set-Content -Path $TmpScript -Value $ScriptContent
+    node $TmpScript
+    Remove-Item $TmpScript -ErrorAction SilentlyContinue
 } else {
     Write-Host "  (custom PASEO_HOME - leaving its config.json untouched)"
 }
