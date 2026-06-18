@@ -478,6 +478,7 @@ export const es: TranslationResources = {
         splitDown: "Dividir panel hacia abajo",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        verticalTabs: "Vertical tabs",
         pinTarget: "Fijar",
         unpinTarget: "Desfijar",
       },

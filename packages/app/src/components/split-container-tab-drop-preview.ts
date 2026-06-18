@@ -7,6 +7,7 @@ export interface TabDropPreview {
 }
 
 interface ComputeTabDropPreviewInput {
+  orientation?: "horizontal" | "vertical";
   activePaneId: string;
   activeTabId: string;
   overPaneId: string;
@@ -14,23 +15,35 @@ interface ComputeTabDropPreviewInput {
   targetTabs: WorkspaceTabDescriptor[];
   activeRect: {
     left: number;
+    top: number;
     width: number;
+    height: number;
   };
   overRect: {
     left: number;
+    top: number;
     width: number;
+    height: number;
   };
 }
 
 export function computeTabDropPreview(input: ComputeTabDropPreviewInput): TabDropPreview | null {
   const targetIndex = input.targetTabs.findIndex((tab) => tab.tabId === input.overTabId);
-  if (targetIndex < 0 || input.overRect.width <= 0) {
+  const orientation = input.orientation ?? "horizontal";
+  const overSize = orientation === "vertical" ? input.overRect.height : input.overRect.width;
+  if (targetIndex < 0 || overSize <= 0) {
     return null;
   }
 
-  const activeCenterX = input.activeRect.left + input.activeRect.width / 2;
-  const overCenterX = input.overRect.left + input.overRect.width / 2;
-  const insertAfterTarget = activeCenterX >= overCenterX;
+  const activeCenter =
+    orientation === "vertical"
+      ? input.activeRect.top + input.activeRect.height / 2
+      : input.activeRect.left + input.activeRect.width / 2;
+  const overCenter =
+    orientation === "vertical"
+      ? input.overRect.top + input.overRect.height / 2
+      : input.overRect.left + input.overRect.width / 2;
+  const insertAfterTarget = activeCenter >= overCenter;
 
   const indicatorIndex = targetIndex + (insertAfterTarget ? 1 : 0);
   let insertionIndex = indicatorIndex;

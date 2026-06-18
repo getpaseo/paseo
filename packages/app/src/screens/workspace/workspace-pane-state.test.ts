@@ -36,6 +36,7 @@ describe("workspace-pane-state", () => {
                 id: "left",
                 tabIds: ["file_/repo/README.md", "agent_agent-a"],
                 focusedTabId: "agent_agent-a",
+                tabBarOrientation: "horizontal",
               },
             },
             {
@@ -44,6 +45,7 @@ describe("workspace-pane-state", () => {
                 id: "right",
                 tabIds: ["terminal_term-1"],
                 focusedTabId: "terminal_term-1",
+                tabBarOrientation: "horizontal",
               },
             },
           ],
@@ -67,6 +69,7 @@ describe("workspace-pane-state", () => {
       id: "main",
       tabIds: ["draft_1", "draft_2"],
       focusedTabId: " ",
+      tabBarOrientation: "horizontal" as const,
     };
     const tabs: WorkspaceTab[] = [
       createTab("draft_2", { kind: "draft", draftId: "draft_2" }),
@@ -87,6 +90,7 @@ describe("workspace-pane-state", () => {
       id: "main",
       tabIds: ["agent_agent-a", "file_/repo/README.md"],
       focusedTabId: "agent_agent-a",
+      tabBarOrientation: "horizontal" as const,
     };
     const tabs: WorkspaceTab[] = [
       createTab("agent_agent-a", { kind: "agent", agentId: "agent-a" }),
@@ -114,6 +118,7 @@ describe("workspace-pane-state", () => {
           id: "main",
           tabIds: ["file_/repo/README.md"],
           focusedTabId: "file_/repo/README.md",
+          tabBarOrientation: "horizontal",
         },
       },
       focusedPaneId: "main",
@@ -138,6 +143,7 @@ describe("workspace-pane-state", () => {
           id: "main",
           tabIds: ["file_/repo/README.md"],
           focusedTabId: "file_/repo/README.md",
+          tabBarOrientation: "horizontal",
         },
       },
       focusedPaneId: "main",
@@ -165,11 +171,21 @@ describe("workspace-pane-state", () => {
           children: [
             {
               kind: "pane",
-              pane: { id: "left", tabIds: ["agent_agent-a"], focusedTabId: "agent_agent-a" },
+              pane: {
+                id: "left",
+                tabIds: ["agent_agent-a"],
+                focusedTabId: "agent_agent-a",
+                tabBarOrientation: "horizontal",
+              },
             },
             {
               kind: "pane",
-              pane: { id: "right", tabIds: [], focusedTabId: null },
+              pane: {
+                id: "right",
+                tabIds: [],
+                focusedTabId: null,
+                tabBarOrientation: "horizontal",
+              },
             },
           ],
         },
@@ -191,7 +207,12 @@ describe("workspace-pane-state", () => {
     const layout: WorkspaceLayout = {
       root: {
         kind: "pane",
-        pane: { id: "main", tabIds: ["agent_agent-a"], focusedTabId: "agent_agent-a" },
+        pane: {
+          id: "main",
+          tabIds: ["agent_agent-a"],
+          focusedTabId: "agent_agent-a",
+          tabBarOrientation: "horizontal",
+        },
       },
       focusedPaneId: "main",
     };

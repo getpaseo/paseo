@@ -13,7 +13,10 @@ export interface SplitPane {
   id: string;
   tabIds: string[];
   focusedTabId: string | null;
+  tabBarOrientation: WorkspaceTabBarOrientation;
 }
+
+export type WorkspaceTabBarOrientation = "horizontal" | "vertical";
 
 export interface SplitGroup {
   id: string;
@@ -191,6 +194,12 @@ interface ReorderPaneTabsInLayoutInput {
   tabIds: string[];
 }
 
+interface SetPaneTabBarOrientationInLayoutInput {
+  layout: WorkspaceLayout;
+  paneId: string;
+  orientation: WorkspaceTabBarOrientation;
+}
+
 export interface WorkspaceTabReconcileState {
   layout: WorkspaceLayout;
   pinnedAgentIds?: ReadonlySet<string> | null;
@@ -239,6 +248,7 @@ function createPaneNode(input: {
   id: string;
   tabs?: WorkspaceTab[];
   focusedTabId?: string | null;
+  tabBarOrientation?: WorkspaceTabBarOrientation;
 }): SplitNodeInternal {
   const normalizedTabs = normalizeWorkspaceTabs(input.tabs ?? []);
   const tabIds = normalizedTabs.map((tab) => tab.tabId);
@@ -253,8 +263,13 @@ function createPaneNode(input: {
       tabs: normalizedTabs,
       tabIds,
       focusedTabId,
+      tabBarOrientation: input.tabBarOrientation ?? "horizontal",
     },
   };
+}
+
+function normalizeTabBarOrientation(value: unknown): WorkspaceTabBarOrientation {
+  return value === "vertical" ? "vertical" : "horizontal";
 }
 
 function createGroupNode(input: {
@@ -556,6 +571,7 @@ function normalizePaneAfterTabChange(pane: SplitPaneInternal): SplitPaneInternal
     tabs,
     tabIds,
     focusedTabId,
+    tabBarOrientation: pane.tabBarOrientation,
   };
 }
 
@@ -578,6 +594,7 @@ function normalizePaneNode(rawPane: SplitPaneInternal | undefined): SplitNodeInt
     id: paneId,
     tabs: mergedTabs,
     focusedTabId: trimNonEmpty(rawPane?.focusedTabId) ?? null,
+    tabBarOrientation: normalizeTabBarOrientation(rawPane?.tabBarOrientation),
   });
 }
 
@@ -969,6 +986,20 @@ export function collectAllPanes(root: SplitNode): SplitPane[] {
     return [internalRoot.pane];
   }
   return internalRoot.group.children.flatMap((child) => collectAllPanes(child));
+}
+
+export function findTopLeftPaneId(root: SplitNode): string | null {
+  const internalRoot = asInternalNode(root);
+  if (internalRoot.kind === "pane") {
+    return internalRoot.pane.id;
+  }
+  for (const child of internalRoot.group.children) {
+    const paneId = findTopLeftPaneId(child);
+    if (paneId) {
+      return paneId;
+    }
+  }
+  return null;
 }
 
 export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined): string | null {
@@ -1457,6 +1488,31 @@ export function reorderPaneTabsInLayout(
     root: updatePaneInTree(layout.root, {
       paneId: input.paneId,
       updater: (pane) => reorderTabsForPane({ pane, tabIds: input.tabIds }),
+    }),
+    focusedPaneId: layout.focusedPaneId,
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
+}
+
+export function setPaneTabBarOrientationInLayout(
+  input: SetPaneTabBarOrientationInLayoutInput,
+): WorkspaceLayout | null {
+  const layout = asInternalLayout(input.layout);
+  const pane = findPaneById(layout.root, input.paneId);
+  if (!pane) {
+    return null;
+  }
+  if (pane.tabBarOrientation === input.orientation) {
+    return null;
+  }
+
+  return withNormalizedParentTabMap({
+    root: updatePaneInTree(layout.root, {
+      paneId: input.paneId,
+      updater: (currentPane) => ({
+        ...currentPane,
+        tabBarOrientation: input.orientation,
+      }),
     }),
     focusedPaneId: layout.focusedPaneId,
     parentTabIdByTabId: input.layout.parentTabIdByTabId,

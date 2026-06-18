@@ -9,6 +9,7 @@ function createPaneNode(id: string): SplitNode {
       id,
       tabIds: [],
       focusedTabId: null,
+      tabBarOrientation: "horizontal",
     },
   };
 }

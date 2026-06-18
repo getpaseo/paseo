@@ -477,6 +477,7 @@ export const ru: TranslationResources = {
         splitDown: "Разделить панель вниз",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        verticalTabs: "Vertical tabs",
         pinTarget: "Закрепить",
         unpinTarget: "Открепить",
       },

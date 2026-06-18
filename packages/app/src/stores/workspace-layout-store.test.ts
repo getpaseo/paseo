@@ -24,13 +24,16 @@ import {
   createDefaultLayout,
   findPaneById,
   findPaneContainingTab,
+  findTopLeftPaneId,
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
+  normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
   type SplitNode,
   type SplitPane,
+  type WorkspaceTabBarOrientation,
 } from "@/stores/workspace-layout-store";
 
 const SERVER_ID = "server-1";
@@ -82,6 +85,7 @@ function createPane(input: {
   id: string;
   tabIds: string[];
   focusedTabId?: string | null;
+  tabBarOrientation?: WorkspaceTabBarOrientation;
   targetsByTabId?: Record<string, WorkspaceTab["target"]>;
 }): SplitNode {
   const tabs = input.tabIds.map((tabId) => createTab(tabId, input.targetsByTabId?.[tabId]));
@@ -91,6 +95,7 @@ function createPane(input: {
       id: input.id,
       tabIds: input.tabIds,
       focusedTabId: input.focusedTabId ?? input.tabIds[input.tabIds.length - 1] ?? null,
+      tabBarOrientation: input.tabBarOrientation ?? "horizontal",
       tabs,
     } as SplitPane,
   };
@@ -150,6 +155,35 @@ describe("workspace-layout-store helpers", () => {
       "tab-c",
       "tab-d",
     ]);
+    expect(findTopLeftPaneId(root)).toBe("left");
+  });
+
+  it("finds the top-left pane through nested split groups", () => {
+    const root: SplitNode = {
+      kind: "group",
+      group: {
+        id: "group-root",
+        direction: "vertical",
+        sizes: [0.5, 0.5],
+        children: [
+          {
+            kind: "group",
+            group: {
+              id: "group-top",
+              direction: "horizontal",
+              sizes: [0.4, 0.6],
+              children: [
+                createPane({ id: "top-left", tabIds: ["tab-a"] }),
+                createPane({ id: "top-right", tabIds: ["tab-b"] }),
+              ],
+            },
+          },
+          createPane({ id: "bottom", tabIds: ["tab-c"] }),
+        ],
+      },
+    };
+
+    expect(findTopLeftPaneId(root)).toBe("top-left");
   });
 
   it("derives the focused browser id from the focused pane active tab", () => {
@@ -309,6 +343,7 @@ describe("workspace-layout-store actions", () => {
     workspaceLayoutStore.setState({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      topLeftPaneTabBarOrientation: "horizontal",
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
@@ -829,6 +864,7 @@ describe("workspace-layout-store actions", () => {
       id: "main",
       tabIds: [thirdTabId!, firstTabId!, secondTabId!],
       focusedTabId: thirdTabId,
+      tabBarOrientation: "horizontal",
       tabs: [
         {
           tabId: thirdTabId,
@@ -884,6 +920,7 @@ describe("workspace-layout-store actions", () => {
       id: splitPaneId,
       tabIds: [fourthTabId!, thirdTabId!],
       focusedTabId: fourthTabId,
+      tabBarOrientation: "horizontal",
       tabs: [
         {
           tabId: fourthTabId,
@@ -1182,6 +1219,79 @@ describe("workspace-layout-store actions", () => {
     expect(layout).toEqual(createDefaultLayout());
   });
 
+  it("defaults legacy persisted panes to horizontal tabs", () => {
+    const legacyLayout = {
+      root: {
+        kind: "pane",
+        pane: {
+          id: "legacy-pane",
+          tabIds: [],
+          focusedTabId: null,
+        },
+      },
+      focusedPaneId: "legacy-pane",
+    } as unknown as Parameters<typeof normalizeLayout>[0];
+
+    const layout = normalizeLayout(legacyLayout);
+
+    expect(findPaneById(layout.root, "legacy-pane")?.tabBarOrientation).toBe("horizontal");
+  });
+
+  it("persists vertical tabs per non-top-left pane", () => {
+    useWorkspaceLayoutIds("12121212-1212-1212-1212-121212121212");
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    const tabId = store.openTabFocused(workspaceKey, { kind: "draft", draftId: "draft-1" });
+    const rightPaneId = store.splitPane(workspaceKey, {
+      tabId: tabId!,
+      targetPaneId: "main",
+      position: "right",
+    });
+
+    store.setPaneTabBarOrientation(workspaceKey, rightPaneId!, "vertical");
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "main")?.tabBarOrientation).toBe("horizontal");
+    expect(findPaneById(layout.root, rightPaneId!)?.tabBarOrientation).toBe("vertical");
+    expect(workspaceLayoutStore.getState().topLeftPaneTabBarOrientation).toBe("horizontal");
+  });
+
+  it("shares vertical tabs for the top-left pane across workspaces", () => {
+    const workspaceKey = createWorkspaceKey();
+    const otherWorkspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: "ws-other-worktree",
+    });
+
+    expect(otherWorkspaceKey).toBeTruthy();
+
+    const store = workspaceLayoutStore.getState();
+    store.setPaneTabBarOrientation(workspaceKey, "main", "vertical");
+
+    expect(workspaceLayoutStore.getState().topLeftPaneTabBarOrientation).toBe("vertical");
+    expect(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]).toBeUndefined();
+
+    store.openTabFocused(otherWorkspaceKey as string, { kind: "draft", draftId: "other-draft" });
+    const otherLayout =
+      workspaceLayoutStore.getState().layoutByWorkspace[otherWorkspaceKey as string];
+
+    expect(findTopLeftPaneId(otherLayout.root)).toBe("main");
+    expect(workspaceLayoutStore.getState().topLeftPaneTabBarOrientation).toBe("vertical");
+  });
+
+  it("does not clear the shared top-left tab orientation when purging a workspace", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.setPaneTabBarOrientation(workspaceKey, "main", "vertical");
+    store.openTabFocused(workspaceKey, { kind: "draft", draftId: "draft-1" });
+    store.purgeWorkspace(workspaceKey);
+
+    expect(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]).toBeUndefined();
+    expect(workspaceLayoutStore.getState().topLeftPaneTabBarOrientation).toBe("vertical");
+  });
+
   it("keeps pinned archived agents in memory per workspace without persisting them", () => {
     const workspaceKey = createWorkspaceKey();
     const otherWorkspaceKey = buildWorkspaceTabPersistenceKey({
@@ -1215,6 +1325,7 @@ describe("workspace-layout-store actions", () => {
     expect(partialize?.(state)).toEqual({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      topLeftPaneTabBarOrientation: "horizontal",
     });
   });
 
@@ -1251,6 +1362,7 @@ describe("workspace-layout-store actions", () => {
     expect(partialize?.(state)).toEqual({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      topLeftPaneTabBarOrientation: "horizontal",
     });
   });
 
@@ -1294,6 +1406,7 @@ describe("workspace-layout-store actions", () => {
               id: "main",
               tabIds: ["draft_agent", "agent_agent-1", "terminal_orphan", "draft-1"],
               focusedTabId: "draft_agent",
+              tabBarOrientation: "horizontal",
               tabs: [
                 {
                   tabId: "draft_agent",
@@ -1368,6 +1481,7 @@ describe("workspace-layout-store actions", () => {
               id: "main",
               tabIds: ["draft-agent"],
               focusedTabId: "draft-agent",
+              tabBarOrientation: "horizontal",
               tabs: [
                 {
                   tabId: "draft-agent",

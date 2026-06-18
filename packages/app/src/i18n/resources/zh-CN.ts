@@ -473,6 +473,7 @@ export const zhCN: TranslationResources = {
         splitDown: "向下拆分窗格",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        verticalTabs: "Vertical tabs",
         pinTarget: "固定",
         unpinTarget: "取消固定",
       },

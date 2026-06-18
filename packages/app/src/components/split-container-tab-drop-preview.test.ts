@@ -25,8 +25,8 @@ describe("computeTabDropPreview", () => {
         overPaneId: "target",
         overTabId: "c",
         targetTabs,
-        activeRect: { left: 180, width: 40 },
-        overRect: { left: 200, width: 100 },
+        activeRect: { left: 180, top: 0, width: 40, height: 30 },
+        overRect: { left: 200, top: 0, width: 100, height: 30 },
       }),
     ).toEqual({
       paneId: "target",
@@ -43,8 +43,8 @@ describe("computeTabDropPreview", () => {
         overPaneId: "target",
         overTabId: "c",
         targetTabs,
-        activeRect: { left: 280, width: 40 },
-        overRect: { left: 200, width: 100 },
+        activeRect: { left: 280, top: 0, width: 40, height: 30 },
+        overRect: { left: 200, top: 0, width: 100, height: 30 },
       }),
     ).toEqual({
       paneId: "target",
@@ -61,13 +61,51 @@ describe("computeTabDropPreview", () => {
         overPaneId: "pane",
         overTabId: "d",
         targetTabs,
-        activeRect: { left: 460, width: 40 },
-        overRect: { left: 400, width: 100 },
+        activeRect: { left: 460, top: 0, width: 40, height: 30 },
+        overRect: { left: 400, top: 0, width: 100, height: 30 },
       }),
     ).toEqual({
       paneId: "pane",
       insertionIndex: 3,
       indicatorIndex: 4,
+    });
+  });
+
+  it("returns a before-target insertion index for vertical drops on the top half", () => {
+    expect(
+      computeTabDropPreview({
+        orientation: "vertical",
+        activePaneId: "source",
+        activeTabId: "x",
+        overPaneId: "target",
+        overTabId: "c",
+        targetTabs,
+        activeRect: { left: 0, top: 180, width: 180, height: 40 },
+        overRect: { left: 0, top: 200, width: 180, height: 100 },
+      }),
+    ).toEqual({
+      paneId: "target",
+      insertionIndex: 2,
+      indicatorIndex: 2,
+    });
+  });
+
+  it("returns an after-target insertion index for vertical drops on the bottom half", () => {
+    expect(
+      computeTabDropPreview({
+        orientation: "vertical",
+        activePaneId: "source",
+        activeTabId: "x",
+        overPaneId: "target",
+        overTabId: "c",
+        targetTabs,
+        activeRect: { left: 0, top: 280, width: 180, height: 40 },
+        overRect: { left: 0, top: 200, width: 180, height: 100 },
+      }),
+    ).toEqual({
+      paneId: "target",
+      insertionIndex: 3,
+      indicatorIndex: 3,
     });
   });
 });

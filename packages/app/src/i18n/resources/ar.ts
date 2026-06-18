@@ -473,6 +473,7 @@ export const ar: TranslationResources = {
         splitDown: "تقسيم الجزء لأسفل",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        verticalTabs: "Vertical tabs",
         pinTarget: "تثبيت",
         unpinTarget: "إلغاء التثبيت",
       },
