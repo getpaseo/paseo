@@ -657,7 +657,7 @@ function getInlineCodeRanges(
       // Unmatched backtick run — skip past it so the loop doesn't restart from 0.
       // findClosingBacktickRun exhausts the global regex, which resets lastIndex
       // to 0 when exec() returns null (ECMAScript §22.2.7.2).
-      BACKTICK_RUN_RE.lastIndex = open.index + marker.length;
+      BACKTICK_RUN_RE.lastIndex = afterOpen;
       continue;
     }
 
