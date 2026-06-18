@@ -340,4 +340,18 @@ describe("checkout PR schemas", () => {
       githubCheckDetails: true,
     });
   });
+
+  test("accepts the project removal server_info feature flag", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "srv_test",
+        features: {
+          projectRemove: true,
+        },
+      }).features,
+    ).toEqual({
+      projectRemove: true,
+    });
+  });
 });

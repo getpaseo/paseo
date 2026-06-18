@@ -45,6 +45,7 @@ const NONE: ShortcutAction = { kind: "none" };
 const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "agent.interrupt": { id: "agent.interrupt", scope: "global" },
   "workspace.tab.new": { id: "workspace.tab.new", scope: "workspace" },
+  "workspace.new": { id: "workspace.new", scope: "sidebar" },
   "worktree.archive": { id: "worktree.archive", scope: "sidebar" },
   "worktree.new": { id: "worktree.new", scope: "sidebar" },
   "workspace.terminal.new": { id: "workspace.terminal.new", scope: "workspace" },

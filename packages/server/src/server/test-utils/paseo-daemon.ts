@@ -18,10 +18,13 @@ interface TestPaseoDaemonOptions {
   corsAllowedOrigins?: string[];
   listen?: string;
   logger?: Parameters<typeof createPaseoDaemon>[1];
+  mcpEnabled?: boolean;
   mcpDebug?: boolean;
+  isDev?: boolean;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
+  providerOverrides?: PaseoDaemonConfig["providerOverrides"];
   paseoHomeRoot?: string;
   staticDir?: string;
   cleanup?: boolean;
@@ -152,10 +155,12 @@ async function prepareTestDaemonConfig(
     paseoHome,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
-    mcpEnabled: true,
+    mcpEnabled: options.mcpEnabled ?? true,
     staticDir,
     mcpDebug: options.mcpDebug ?? false,
+    isDev: options.isDev,
     agentClients: options.agentClients ?? createTestAgentClients(),
+    providerOverrides: options.providerOverrides,
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",

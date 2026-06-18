@@ -252,6 +252,22 @@ export interface SetupFinishNotificationParams {
   logger: Logger;
 }
 
+interface FinishNotificationBodyInput {
+  childAgentId: string;
+  title: string;
+  reason: "finished" | "errored" | "needs permission";
+  lastAssistantMessage: string | null;
+}
+
+function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
+  const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
+  const lastAssistantMessage = params.lastAssistantMessage?.trim();
+  if (!lastAssistantMessage) {
+    return statusLine;
+  }
+  return `${statusLine}\n\n<agent-response>\n${lastAssistantMessage}\n</agent-response>`;
+}
+
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
   const { agentManager, agentStorage, childAgentId, callerAgentId, logger } = params;
   let hasSeenRunning = false;
@@ -265,9 +281,20 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     fired = true;
     unsubscribe?.();
 
+    const callerRecord = await agentStorage.get(callerAgentId);
+    if (callerRecord?.archivedAt) {
+      return;
+    }
+
     const record = await agentStorage.get(childAgentId);
     const title = record?.title ?? childAgentId;
-    const body = `Agent ${childAgentId} (${title}) ${reason}.`;
+    const lastAssistantMessage = await agentManager.getLastAssistantMessage(childAgentId);
+    const body = formatFinishNotificationBody({
+      childAgentId,
+      title,
+      reason,
+      lastAssistantMessage,
+    });
 
     await sendPromptToAgent({
       agentManager,

@@ -75,6 +75,7 @@ export interface PanelState {
   sidebarWidth: number;
   explorerWidth: number;
   explorerSortOption: SortOption;
+  explorerShowHiddenFiles: boolean;
   explorerFilesSplitRatio: number;
 
   // Actions
@@ -101,6 +102,7 @@ export interface PanelState {
   setSidebarWidth: (width: number) => void;
   setExplorerWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
+  toggleExplorerShowHiddenFiles: () => void;
   setExplorerFilesSplitRatio: (ratio: number) => void;
 }
 
@@ -127,6 +129,7 @@ export const usePanelStore = create<PanelState>()(
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       explorerWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
       explorerSortOption: "name",
+      explorerShowHiddenFiles: true,
       explorerFilesSplitRatio: DEFAULT_EXPLORER_FILES_SPLIT_RATIO,
 
       toggleFocusMode: () =>
@@ -262,6 +265,8 @@ export const usePanelStore = create<PanelState>()(
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setExplorerWidth: (width) => set({ explorerWidth: clampExplorerWidth(width) }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
+      toggleExplorerShowHiddenFiles: () =>
+        set((state) => ({ explorerShowHiddenFiles: !state.explorerShowHiddenFiles })),
       setExplorerFilesSplitRatio: (ratio) =>
         set({
           explorerFilesSplitRatio: Number.isFinite(ratio)
@@ -271,7 +276,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 10,
+      version: 11,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) =>
         migratePanelState(persistedState, version, { isWeb }) as unknown as PanelState,
@@ -285,6 +290,7 @@ export const usePanelStore = create<PanelState>()(
         sidebarWidth: state.sidebarWidth,
         explorerWidth: state.explorerWidth,
         explorerSortOption: state.explorerSortOption,
+        explorerShowHiddenFiles: state.explorerShowHiddenFiles,
         explorerFilesSplitRatio: state.explorerFilesSplitRatio,
       }),
     },

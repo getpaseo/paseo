@@ -5,6 +5,7 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
+import type { ProcessTerminator } from "../../../utils/tree-kill.js";
 import type {
   ReadableStream as NodeReadableStream,
   WritableStream as NodeWritableStream,
@@ -331,6 +332,7 @@ interface ACPAgentClientOptions {
   capabilities?: AgentCapabilityFlags;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  terminateProcess?: ProcessTerminator;
 }
 
 interface ACPAgentSessionOptions {
@@ -359,6 +361,7 @@ interface ACPAgentSessionOptions {
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  terminateProcess?: ProcessTerminator;
 }
 
 export interface SpawnedACPProcess {
@@ -606,9 +609,11 @@ export class ACPAgentClient implements AgentClient {
   ) => Promise<void>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
+  protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
     this.provider = options.provider;
+    this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities ?? DEFAULT_ACP_CAPABILITIES;
     this.logger = options.logger.child({
       module: "agent",
@@ -868,7 +873,7 @@ export class ACPAgentClient implements AgentClient {
         ]),
       );
     } catch (error) {
-      await terminateChildProcess(child, 2_000);
+      await terminateChildProcess(child, 2_000, this.terminateProcess);
       throw error;
     } finally {
       if (timeout) {
@@ -906,7 +911,7 @@ export class ACPAgentClient implements AgentClient {
         // No active session to close here; ignore capability.
       }
     } finally {
-      await terminateChildProcess(probe.child, 2_000);
+      await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
     }
   }
 
@@ -1016,9 +1021,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private historyPending = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
+  private readonly terminateProcess: ProcessTerminator;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
+    this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
@@ -1667,7 +1674,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
-      terminateWithTreeKill(terminal.child, {
+      this.terminateProcess(terminal.child, {
         gracefulTimeoutMs: 2_000,
         forceTimeoutMs: 2_000,
       }),
@@ -1676,7 +1683,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.terminalEntries.clear();
 
     if (this.child) {
-      await terminateWithTreeKill(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+      await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
 
     this.subscribers.clear();
@@ -1858,7 +1865,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async releaseTerminal(params: { sessionId: string; terminalId: string }): Promise<void> {
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
-      await terminateWithTreeKill(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+      await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     this.terminalEntries.delete(params.terminalId);
   }
@@ -1866,7 +1873,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async killTerminal(params: KillTerminalRequest): Promise<Record<string, never>> {
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
-      await terminateWithTreeKill(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+      await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     return {};
   }
@@ -2892,9 +2899,10 @@ function coerceSessionConfigMetadata(
 async function terminateChildProcess(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number,
+  terminate: ProcessTerminator,
 ): Promise<void> {
   try {
-    await terminateWithTreeKill(child, { gracefulTimeoutMs: timeoutMs, forceTimeoutMs: timeoutMs });
+    await terminate(child, { gracefulTimeoutMs: timeoutMs, forceTimeoutMs: timeoutMs });
   } finally {
     child.stdin.destroy();
     child.stdout.destroy();

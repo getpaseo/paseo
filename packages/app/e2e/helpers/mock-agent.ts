@@ -33,6 +33,7 @@ export async function seedMockAgentWorkspace(
     const agent = await workspace.client.createAgent({
       provider: "mock",
       cwd: workspace.repoPath,
+      workspaceId: workspace.workspaceId,
       title: options.title,
       modeId: options.modeId ?? "load-test",
       model: options.model ?? "ten-second-stream",

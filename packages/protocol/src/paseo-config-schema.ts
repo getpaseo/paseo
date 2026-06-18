@@ -39,11 +39,13 @@ export const PaseoMetadataGenerationEntrySchema = z
 
 export const PaseoMetadataGenerationSchema = z
   .object({
-    agentTitle: PaseoMetadataGenerationEntrySchema.optional(),
+    title: PaseoMetadataGenerationEntrySchema.optional(),
     branchName: PaseoMetadataGenerationEntrySchema.optional(),
     commitMessage: PaseoMetadataGenerationEntrySchema.optional(),
     pullRequest: PaseoMetadataGenerationEntrySchema.optional(),
   })
+  // COMPAT(projectMetadataAgentTitle): `agentTitle` project metadata prompts were removed
+  // in v0.1.96; keep legacy paseo.json parseable until 2026-12-16.
   .passthrough()
   .catch({});
 
@@ -56,8 +58,8 @@ export const PaseoConfigRawSchema = z
   .passthrough();
 
 export const WorktreeConfigSchema = PaseoWorktreeConfigRawSchema.extend({
-  setup: z.unknown().transform(normalizeLifecycleCommands),
-  teardown: z.unknown().transform(normalizeLifecycleCommands),
+  setup: z.unknown().optional().transform(normalizeLifecycleCommands),
+  teardown: z.unknown().optional().transform(normalizeLifecycleCommands),
 })
   .passthrough()
   .catch({ setup: [], teardown: [] });

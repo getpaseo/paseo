@@ -139,6 +139,7 @@ async function measureAppBurstEcho(input: {
         : await input.harness.client.createAgent({
             provider: "mock",
             cwd: input.harness.tempRepo.path,
+            workspaceId: input.harness.workspaceId,
             title: "Large WebSocket payload",
             modeId: "load-test",
           });

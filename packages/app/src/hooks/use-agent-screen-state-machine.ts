@@ -6,6 +6,7 @@ export interface AgentScreenAgent {
   id: string;
   status: "initializing" | "idle" | "running" | "error" | "closed";
   cwd: string;
+  workspaceId?: string;
   capabilities?: AgentCapabilityFlags;
   lastError?: string | null;
   projectPlacement?: {

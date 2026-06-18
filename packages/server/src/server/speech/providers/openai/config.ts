@@ -21,7 +21,9 @@ const OpenAiTtsModelSchema = z.enum(["tts-1", "tts-1-hd"]);
 
 const NumberLikeSchema = z.union([z.number(), z.string().trim().min(1)]);
 
-const OptionalFiniteNumberSchema = NumberLikeSchema.pipe(z.coerce.number().finite()).optional();
+const OptionalFiniteNumberSchema = NumberLikeSchema.pipe(
+  z.coerce.number<string | number>().finite(),
+).optional();
 
 const OptionalTrimmedStringSchema = z
   .string()

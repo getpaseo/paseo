@@ -33,11 +33,39 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("normalizes partial worktree lifecycle config without dropping present commands", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        worktree: {
+          setup: 'echo "setup ran" > setup.log',
+        },
+      }),
+    ).toEqual({
+      worktree: {
+        setup: ['echo "setup ran" > setup.log'],
+        teardown: [],
+      },
+    });
+
+    expect(
+      PaseoConfigSchema.parse({
+        worktree: {
+          teardown: ["npm run clean"],
+        },
+      }),
+    ).toEqual({
+      worktree: {
+        setup: [],
+        teardown: ["npm run clean"],
+      },
+    });
+  });
+
   it("parses all metadata generation instruction entries", () => {
     expect(
       PaseoConfigSchema.parse({
         metadataGeneration: {
-          agentTitle: { instructions: "Use concise titles." },
+          title: { instructions: "Keep titles to a few words." },
           branchName: { instructions: "Prefix branches with feat/." },
           commitMessage: { instructions: "Use imperative mood." },
           pullRequest: { instructions: "Include risk notes." },
@@ -45,7 +73,7 @@ describe("paseo config schema", () => {
       }),
     ).toEqual({
       metadataGeneration: {
-        agentTitle: { instructions: "Use concise titles." },
+        title: { instructions: "Keep titles to a few words." },
         branchName: { instructions: "Prefix branches with feat/." },
         commitMessage: { instructions: "Use imperative mood." },
         pullRequest: { instructions: "Include risk notes." },
@@ -56,29 +84,40 @@ describe("paseo config schema", () => {
   it("parses partial metadata generation instructions with missing entries undefined", () => {
     const parsed = PaseoConfigSchema.parse({
       metadataGeneration: {
-        agentTitle: { instructions: "Keep it short." },
+        branchName: { instructions: "Keep it short." },
       },
     });
 
     expect(parsed.metadataGeneration).toEqual({
-      agentTitle: { instructions: "Keep it short." },
+      branchName: { instructions: "Keep it short." },
     });
-    expect(parsed.metadataGeneration?.branchName).toBeUndefined();
     expect(parsed.metadataGeneration?.commitMessage).toBeUndefined();
     expect(parsed.metadataGeneration?.pullRequest).toBeUndefined();
+  });
+
+  it("preserves legacy agentTitle metadata instructions as passthrough", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        metadataGeneration: {
+          agentTitle: { instructions: "Use concise titles." },
+        },
+      }),
+    ).toEqual({
+      metadataGeneration: {
+        agentTitle: { instructions: "Use concise titles." },
+      },
+    });
   });
 
   it("passes through unknown metadata generation fields", () => {
     expect(
       PaseoConfigSchema.parse({
         metadataGeneration: {
-          agentTitle: { instructions: "Use concise titles." },
           futureField: 42,
         },
       }),
     ).toEqual({
       metadataGeneration: {
-        agentTitle: { instructions: "Use concise titles." },
         futureField: 42,
       },
     });
@@ -88,7 +127,7 @@ describe("paseo config schema", () => {
     expect(
       PaseoConfigSchema.parse({
         metadataGeneration: {
-          agentTitle: {
+          branchName: {
             instructions: "Use concise titles.",
             model: "haiku",
           },
@@ -96,7 +135,7 @@ describe("paseo config schema", () => {
       }),
     ).toEqual({
       metadataGeneration: {
-        agentTitle: {
+        branchName: {
           instructions: "Use concise titles.",
           model: "haiku",
         },
@@ -108,17 +147,17 @@ describe("paseo config schema", () => {
     expect(
       PaseoConfigSchema.parse({
         metadataGeneration: {
-          agentTitle: { instructions: 42 },
+          branchName: { instructions: 42 },
         },
       }),
     ).toEqual({
       metadataGeneration: {
-        agentTitle: {},
+        branchName: {},
       },
     });
   });
 
-  it("raw schema preserves old-style config while accepting metadata generation", () => {
+  it("raw schema preserves old-style config while accepting legacy agentTitle", () => {
     const config = {
       worktree: {
         setup: "npm install",
@@ -132,6 +171,7 @@ describe("paseo config schema", () => {
       },
       metadataGeneration: {
         agentTitle: { instructions: "Use concise titles." },
+        branchName: { instructions: "Use concise branches." },
       },
     };
 
@@ -142,12 +182,12 @@ describe("paseo config schema", () => {
     expect(
       PaseoConfigRawSchema.parse({
         metadataGeneration: {
-          agentTitle: { instructions: 42 },
+          branchName: { instructions: 42 },
         },
       }),
     ).toEqual({
       metadataGeneration: {
-        agentTitle: {},
+        branchName: {},
       },
     });
   });

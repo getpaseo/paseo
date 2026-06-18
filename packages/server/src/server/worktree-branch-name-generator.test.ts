@@ -17,10 +17,22 @@ import {
 } from "../utils/worktree-metadata.js";
 
 const cleanupPaths: string[] = [];
-const PRE_CHANGE_BRANCH_PROMPT = `Generate a git branch name for a coding agent based on the user prompt and attachments.
-Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.
-No spaces, no uppercase, no leading or trailing hyphen, no consecutive hyphens.
-Return JSON only with a single field 'branch'.
+const BRANCH_PROMPT_BASELINE = `Generate a title and a git branch name for a coding agent from the user prompt and attachments.
+The branch must be a valid git ref: lowercase letters, numbers, hyphens, and slashes only, with no spaces, no uppercase, no leading or trailing hyphen, and no consecutive hyphens.
+The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.
+
+Title style:
+A terse, task-shaped label naming what the task is about (sentence case, max 80 characters).
+Aim for about 4 words. Go longer only when the task genuinely needs it; most titles must stay short.
+Do not start with a generic 'do' verb (Fix, Add, Implement, Diagnose, Update, Change, Create, Set, Make) — every task is implicitly one of these, so the verb is noise. Name the thing instead.
+Keep a verb only when it states the specific operation (Swap, Split, Extract, Rename, Merge, Inline).
+Good titles: "Swap sidebar history icon", "Composer keyboard shift", "Agent auto-titling", "Worktree selection memory", "Split browser pane".
+Bad titles: "Fix composer pushed up by keyboard in workspace", "Diagnose auto-titling still happening for agents", "Change sidebar history icon from clock to history icon".
+
+Branch style:
+A short, descriptive slug — a few lowercase words joined by hyphens.
+
+Return JSON only with fields 'title' and 'branch'.
 
 User context:
 Fix the login flow`;
@@ -39,7 +51,7 @@ function createLogger() {
   };
 }
 
-function createStructuredGenerator(result: { branch: string }) {
+function createStructuredGenerator(result: { title: string; branch: string }) {
   const calls: StructuredAgentGenerationWithFallbackOptions<unknown>[] = [];
 
   async function generateStructured<T>(
@@ -53,10 +65,35 @@ function createStructuredGenerator(result: { branch: string }) {
 }
 
 describe("generateBranchNameFromFirstAgentContext", () => {
-  test("calls the structured generator with first-agent prompt text", async () => {
-    const structured = createStructuredGenerator({ branch: "fix-login-flow" });
+  test("returns title and branch independently — branch is not a slug of the title", async () => {
+    const structured = createStructuredGenerator({
+      title: "Add payments flow",
+      branch: "pay/checkout",
+    });
 
-    const branch = await generateBranchNameFromFirstAgentContext({
+    const result = await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      firstAgentContext: { prompt: "Add a payments flow with Stripe checkout" },
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.title).toBe("Add payments flow");
+    expect(result?.branch).toBe("pay/checkout");
+    // Branch is not a kebab-slug of the title — they are independently generated
+    expect(result?.branch).not.toBe("add-payments-flow");
+    expect(structured.calls).toHaveLength(1);
+  });
+
+  test("calls the structured generator with first-agent prompt text", async () => {
+    const structured = createStructuredGenerator({
+      title: "Fix login flow",
+      branch: "fix-login-flow",
+    });
+
+    const result = await generateBranchNameFromFirstAgentContext({
       agentManager: {} as AgentManager,
       cwd: "/tmp/repo",
       firstAgentContext: { prompt: "Fix the login flow" },
@@ -64,7 +101,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
       deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
     });
 
-    expect(branch).toBe("fix-login-flow");
+    expect(result?.branch).toBe("fix-login-flow");
     expect(structured.calls).toHaveLength(1);
     const firstCall = structured.calls[0];
     if (!firstCall) {
@@ -83,9 +120,12 @@ describe("generateBranchNameFromFirstAgentContext", () => {
   });
 
   test("uses attachment-only context", async () => {
-    const structured = createStructuredGenerator({ branch: "review-flaky-checkout" });
+    const structured = createStructuredGenerator({
+      title: "Review flaky checkout",
+      branch: "review-flaky-checkout",
+    });
 
-    const branch = await generateBranchNameFromFirstAgentContext({
+    const result = await generateBranchNameFromFirstAgentContext({
       agentManager: {} as AgentManager,
       cwd: "/tmp/repo",
       firstAgentContext: {
@@ -103,7 +143,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
       deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
     });
 
-    expect(branch).toBe("review-flaky-checkout");
+    expect(result?.branch).toBe("review-flaky-checkout");
     const firstCall = structured.calls[0];
     if (!firstCall) {
       throw new Error("expected structured generation call");
@@ -112,9 +152,12 @@ describe("generateBranchNameFromFirstAgentContext", () => {
   });
 
   test("uses the current selection as the final provider fallback", async () => {
-    const structured = createStructuredGenerator({ branch: "focused-branch" });
+    const structured = createStructuredGenerator({
+      title: "Focused task",
+      branch: "focused-branch",
+    });
 
-    const branch = await generateBranchNameFromFirstAgentContext({
+    const result = await generateBranchNameFromFirstAgentContext({
       agentManager: {} as AgentManager,
       cwd: "/tmp/repo",
       providerSnapshotManager: {
@@ -144,7 +187,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
       deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
     });
 
-    expect(branch).toBe("focused-branch");
+    expect(result?.branch).toBe("focused-branch");
     const firstCall = structured.calls[0];
     if (!firstCall) {
       throw new Error("expected structured generation call");
@@ -160,7 +203,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     ["paseo.json valid but missing metadataGeneration", {}],
     [
       "metadataGeneration exists but missing branchName",
-      { metadataGeneration: { agentTitle: { instructions: "Use mb/." } } },
+      { metadataGeneration: { commitMessage: { instructions: "Use Conventional Commits." } } },
     ],
     ["branchName exists but instructions is undefined", { metadataGeneration: { branchName: {} } }],
     [
@@ -171,36 +214,50 @@ describe("generateBranchNameFromFirstAgentContext", () => {
       "branchName exists but instructions is whitespace-only",
       { metadataGeneration: { branchName: { instructions: "   \n\t " } } },
     ],
-  ])("keeps the pre-change prompt byte-identical when %s", async (_name, config) => {
+    [
+      "title exists but instructions is empty",
+      { metadataGeneration: { title: { instructions: "" } } },
+    ],
+  ])("renders the default styles when no overrides apply (%s)", async (_name, config) => {
     const { prompt } = await generateBranchPromptWithConfig(config);
 
-    expect(prompt).toBe(PRE_CHANGE_BRANCH_PROMPT);
+    expect(prompt).toBe(BRANCH_PROMPT_BASELINE);
   });
 
-  test("injects project instructions between the default rules and JSON contract", async () => {
+  test("title instructions replace the default title style, leaving the rest intact", async () => {
+    const { prompt } = await generateBranchPromptWithConfig({
+      metadataGeneration: { title: { instructions: "Title in Spanish." } },
+    });
+
+    expect(prompt).toContain("Title style:\nTitle in Spanish.");
+    expect(prompt).not.toContain("Aim for about 4 words");
+    // Contract and branch style are not part of the title override.
+    expect(prompt).toContain("Generate a title and a git branch name");
+    expect(prompt).toContain("Branch style:\nA short, descriptive slug");
+    expect(prompt).toContain("Return JSON only with fields 'title' and 'branch'.");
+  });
+
+  test("branch instructions replace the default branch style, leaving the title style intact", async () => {
+    const { prompt } = await generateBranchPromptWithConfig({
+      metadataGeneration: { branchName: { instructions: "Use the prefix mb/." } },
+    });
+
+    expect(prompt).toContain("Branch style:\nUse the prefix mb/.");
+    expect(prompt).not.toContain("A short, descriptive slug");
+    expect(prompt).toContain("Aim for about 4 words");
+  });
+
+  test("the contract is never overridable by user instructions", async () => {
     const { prompt } = await generateBranchPromptWithConfig({
       metadataGeneration: {
-        branchName: {
-          instructions: "Use the prefix mb/.",
-        },
+        title: { instructions: "anything" },
+        branchName: { instructions: "anything" },
       },
     });
 
-    const defaultRuleIndex = prompt.indexOf("No spaces, no uppercase");
-    const noticeIndex = prompt.indexOf("override the guidelines above");
-    const openTagIndex = prompt.indexOf("<user-instructions>");
-    const userInstructionIndex = prompt.indexOf("Use the prefix mb/.");
-    const closeTagIndex = prompt.indexOf("</user-instructions>");
-    const jsonContractIndex = prompt.indexOf("Return JSON only");
-    const payloadIndex = prompt.indexOf("User context:");
-
-    expect(defaultRuleIndex).toBeGreaterThanOrEqual(0);
-    expect(defaultRuleIndex).toBeLessThan(openTagIndex);
-    expect(openTagIndex).toBeLessThan(noticeIndex);
-    expect(noticeIndex).toBeLessThan(userInstructionIndex);
-    expect(userInstructionIndex).toBeLessThan(closeTagIndex);
-    expect(closeTagIndex).toBeLessThan(jsonContractIndex);
-    expect(jsonContractIndex).toBeLessThan(payloadIndex);
+    expect(prompt).toContain(
+      "The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.",
+    );
   });
 
   test("keeps the branch slug validator fallback when instructions are present", async () => {
@@ -218,7 +275,10 @@ describe("generateBranchNameFromFirstAgentContext", () => {
         },
       },
     });
-    const structured = createStructuredGenerator({ branch: "Invalid Branch Name" });
+    const structured = createStructuredGenerator({
+      title: "Invalid title",
+      branch: "Invalid Branch Name",
+    });
     const renameCurrentBranch = vi.fn(async () => ({
       previousBranch: "dazzling-yak",
       currentBranch: "Invalid Branch Name",
@@ -237,7 +297,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
           firstAgentContext,
           logger: createLogger(),
           deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
-        }),
+        }).then((r) => r?.branch ?? null),
       getCurrentBranch: async () => "dazzling-yak",
       renameCurrentBranch,
     });
@@ -255,7 +315,10 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     writeConfig(repoRoot, config);
   }
 
-  const structured = createStructuredGenerator({ branch: "fix-login-flow" });
+  const structured = createStructuredGenerator({
+    title: "Fix login flow",
+    branch: "fix-login-flow",
+  });
 
   await generateBranchNameFromFirstAgentContext({
     agentManager: {} as AgentManager,

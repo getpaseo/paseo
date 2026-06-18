@@ -140,6 +140,7 @@ function parseLineFragment(value: string): Pick<InlinePathTarget, "lineStart" | 
  *
  * Supported:
  * - `filename:linenumber`
+ * - `filename:linenumber:columnnumber` as a line target
  * - `filename:lineStart-lineEnd`
  *
  * Not supported (by design):

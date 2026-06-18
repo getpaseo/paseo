@@ -89,9 +89,13 @@ export interface MessageInputProps {
   allowEmptySubmit?: boolean;
   /** Optional accessibility label for the primary submit button. */
   submitButtonAccessibilityLabel?: string;
+  /** Optional testID for the primary submit button. */
+  submitButtonTestID?: string;
   submitIcon?: "arrow" | "return";
   isSubmitDisabled?: boolean;
   isSubmitLoading?: boolean;
+  /** When true, keep the grown input height after submit (text is preserved, not cleared). */
+  preserveHeightOnSubmit?: boolean;
   attachments: ComposerAttachment[];
   cwd: string;
   attachmentMenuItems: AttachmentMenuItem[];
@@ -784,6 +788,7 @@ function SendButtonTooltip({
   sendButtonCombinedStyle,
   isSubmitLoading,
   submitIcon,
+  submitButtonTestID,
   buttonIconSize,
   sendKeys,
   sendTooltipLabel,
@@ -797,6 +802,7 @@ function SendButtonTooltip({
   sendButtonCombinedStyle: React.ComponentProps<typeof TooltipTrigger>["style"];
   isSubmitLoading: boolean;
   submitIcon: "arrow" | "return";
+  submitButtonTestID: string | undefined;
   buttonIconSize: number;
   sendKeys: ShortcutChord | null | undefined;
   sendTooltipLabel: string;
@@ -809,6 +815,7 @@ function SendButtonTooltip({
         disabled={isSendButtonDisabled}
         accessibilityLabel={submitAccessibilityLabel}
         accessibilityRole="button"
+        testID={submitButtonTestID}
         style={sendButtonCombinedStyle}
       >
         <SendButtonContent
@@ -977,6 +984,7 @@ interface SendMessageContext {
   isAgentRunning: boolean;
   onSubmit: (payload: MessagePayload) => void;
   onMinimizeHeight: () => void;
+  preserveHeightOnSubmit: boolean;
 }
 
 function sendMessageImpl(ctx: SendMessageContext): void {
@@ -995,7 +1003,11 @@ function sendMessageImpl(ctx: SendMessageContext): void {
     cwd: ctx.cwd,
     forceSend: ctx.isAgentRunning || undefined,
   });
-  ctx.onMinimizeHeight();
+  // When the host preserves and locks the composer (e.g. new-workspace creation),
+  // the text stays put — collapsing the height would clip it. Keep it grown.
+  if (!ctx.preserveHeightOnSubmit) {
+    ctx.onMinimizeHeight();
+  }
 }
 
 interface QueueMessageContext {
@@ -1132,9 +1144,11 @@ interface ResolvedMessageInputProps {
   hasExternalContent: boolean;
   allowEmptySubmit: boolean;
   submitButtonAccessibilityLabel: string | undefined;
+  submitButtonTestID: string | undefined;
   submitIcon: "arrow" | "return";
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
+  preserveHeightOnSubmit: boolean;
   attachments: ComposerAttachment[];
   cwd: string;
   attachmentMenuItems: AttachmentMenuItem[];
@@ -1172,9 +1186,11 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     hasExternalContent: props.hasExternalContent ?? false,
     allowEmptySubmit: props.allowEmptySubmit ?? false,
     submitButtonAccessibilityLabel: props.submitButtonAccessibilityLabel,
+    submitButtonTestID: props.submitButtonTestID,
     submitIcon: props.submitIcon ?? "arrow",
     isSubmitDisabled: props.isSubmitDisabled ?? false,
     isSubmitLoading: props.isSubmitLoading ?? false,
+    preserveHeightOnSubmit: props.preserveHeightOnSubmit ?? false,
     attachments: props.attachments,
     cwd: props.cwd,
     attachmentMenuItems: props.attachmentMenuItems,
@@ -1220,9 +1236,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       hasExternalContent,
       allowEmptySubmit,
       submitButtonAccessibilityLabel,
+      submitButtonTestID,
       submitIcon,
       isSubmitDisabled,
       isSubmitLoading,
+      preserveHeightOnSubmit,
       attachments,
       cwd,
       attachmentMenuItems,
@@ -1538,6 +1556,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           isAgentRunning,
           onSubmit,
           onMinimizeHeight: minimizeInputHeight,
+          preserveHeightOnSubmit,
         }),
       [
         allowEmptySubmit,
@@ -1547,6 +1566,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isAgentRunning,
         hasExternalContent,
         minimizeInputHeight,
+        preserveHeightOnSubmit,
       ],
     );
 
@@ -1872,6 +1892,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 sendButtonCombinedStyle={sendButtonCombinedStyle}
                 isSubmitLoading={isSubmitLoading}
                 submitIcon={submitIcon}
+                submitButtonTestID={submitButtonTestID}
                 buttonIconSize={buttonIconSize}
                 sendKeys={DEFAULT_SEND_KEYS}
                 sendTooltipLabel={sendTooltipLabel}

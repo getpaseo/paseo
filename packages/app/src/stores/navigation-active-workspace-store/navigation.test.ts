@@ -77,6 +77,7 @@ describe("workspace navigation", () => {
     const agent = {
       id: "agent-1",
       cwd: "/repo/workspace-a",
+      workspaceId: "workspace-a",
       requiresAttention: true,
       attentionReason: "permission",
     } as unknown as Agent;

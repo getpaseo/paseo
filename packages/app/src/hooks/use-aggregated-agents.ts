@@ -78,6 +78,7 @@ export function useAggregatedAgents(options?: {
           status: agent.status,
           lastActivityAt: agent.lastActivityAt,
           cwd: agent.cwd,
+          workspaceId: agent.workspaceId,
           provider: agent.provider,
           pendingPermissionCount: agent.pendingPermissions.length,
           requiresAttention: agent.requiresAttention,
@@ -86,6 +87,7 @@ export function useAggregatedAgents(options?: {
           archivedAt: agent.archivedAt,
           createdAt: agent.createdAt,
           labels: agent.labels,
+          projectPlacement: agent.projectPlacement,
         };
         const cacheKey = `${serverId}:${agent.id}`;
         const prev = prevAgentsRef.current.get(cacheKey);

@@ -13,6 +13,7 @@ export interface WorkerTerminalInfo {
   id: string;
   name: string;
   cwd: string;
+  workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
 }
@@ -20,6 +21,7 @@ export interface WorkerTerminalInfo {
 export interface WorkerCreateTerminalOptions {
   id?: string;
   cwd: string;
+  workspaceId?: string;
   name?: string;
   title?: string;
   env?: Record<string, string>;
@@ -36,11 +38,6 @@ export interface WorkerKillAndWaitOptions {
 
 export type TerminalWorkerRequest =
   | {
-      type: "getTerminals";
-      requestId: string;
-      cwd: string;
-    }
-  | {
       type: "createTerminal";
       requestId: string;
       options: WorkerCreateTerminalOptions;
@@ -56,6 +53,11 @@ export type TerminalWorkerRequest =
       requestId: string;
       terminalId: string;
       state: TerminalActivityState;
+    }
+  | {
+      type: "clearAttention";
+      requestId: string;
+      terminalId: string;
     }
   | {
       type: "killTerminal";
@@ -114,11 +116,6 @@ export type TerminalWorkerEvent =
       state: TerminalState;
     }
   | {
-      type: "terminalRemoved";
-      terminalId: string;
-      cwd: string;
-    }
-  | {
       type: "terminalMessage";
       terminalId: string;
       message: ServerMessage;
@@ -139,11 +136,6 @@ export type TerminalWorkerEvent =
       info: {
         exitCode: number | null;
       };
-    }
-  | {
-      type: "terminalsChanged";
-      cwd: string;
-      terminals: WorkerTerminalInfo[];
     }
   | {
       type: "terminalActivityChange";

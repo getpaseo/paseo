@@ -13,10 +13,7 @@ import {
   clearWorkspaceArchivePending,
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
-import {
-  resolveWorkspaceIdByDirectory,
-  resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-identity";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { i18n } from "@/i18n/i18next";
 
@@ -155,15 +152,11 @@ function isWorktreeListQuery(input: { queryKey: QueryKey; serverId: string }): b
 
 function snapshotWorktreeArchiveState(input: {
   serverId: string;
-  worktreePath: string;
+  workspaceId: string | undefined;
 }): WorktreeArchiveSnapshot {
   const workspaces = useSessionStore.getState().sessions[input.serverId]?.workspaces;
-  const workspaceId = resolveWorkspaceIdByDirectory({
-    workspaces: workspaces?.values(),
-    workspaceDirectory: input.worktreePath,
-  });
-  const workspaceKey = workspaceId
-    ? resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId })
+  const workspaceKey = input.workspaceId
+    ? resolveWorkspaceMapKeyByIdentity({ workspaces, workspaceId: input.workspaceId })
     : null;
   return {
     workspace: workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null,
@@ -258,6 +251,7 @@ interface CheckoutGitActionsStoreState {
     serverId: string;
     cwd: string;
     worktreePath: string;
+    workspaceId?: string;
   }) => Promise<void>;
 }
 
@@ -497,29 +491,32 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
     });
   },
 
-  archiveWorktree: async ({ serverId, cwd, worktreePath }) => {
+  archiveWorktree: async ({ serverId, cwd, worktreePath, workspaceId }) => {
     await runCheckoutAction({
       serverId,
       cwd,
       actionId: "archive-worktree",
       run: async () => {
         const client = resolveClient(serverId);
-        const snapshot = snapshotWorktreeArchiveState({ serverId, worktreePath });
+        const snapshot = snapshotWorktreeArchiveState({ serverId, workspaceId });
         // The server archive is keyed by worktreePath and must always run. The
         // optimistic client-side updates are keyed by workspace id, so they only
-        // apply when the workspace is resolved in the local store.
+        // apply when the caller passes the workspace id and it resolves in the
+        // local store.
         const workspace = snapshot.workspace;
         if (workspace) {
           markWorkspaceArchivePending({
             serverId,
             workspaceId: workspace.id,
-            workspaceDirectory: workspace.workspaceDirectory,
           });
           removeWorktreeFromSessionStore({ serverId, workspaceId: workspace.id });
         }
         removeWorktreeFromCachedLists({ serverId, worktreePath });
         try {
-          const payload = await client.archivePaseoWorktree({ worktreePath });
+          const payload = await client.archivePaseoWorktree({
+            worktreePath,
+            ...(workspaceId !== undefined ? { workspaceId } : {}),
+          });
           if (payload.error) {
             throw new Error(payload.error.message);
           }

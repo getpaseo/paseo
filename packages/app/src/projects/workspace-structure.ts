@@ -1,4 +1,4 @@
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 
 export interface WorkspaceStructureProject {
@@ -45,9 +45,11 @@ function compareWorkspaceStructureProjects(
 export function buildWorkspaceStructureProjects(input: {
   serverId: string;
   workspaces: Iterable<WorkspaceDescriptor>;
+  emptyProjects?: Iterable<EmptyProjectDescriptor>;
 }): WorkspaceStructureProject[] {
   const workspaceList = Array.from(input.workspaces);
-  if (workspaceList.length === 0) {
+  const emptyProjectList = Array.from(input.emptyProjects ?? []);
+  if (workspaceList.length === 0 && emptyProjectList.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
@@ -57,6 +59,18 @@ export function buildWorkspaceStructureProjects(input: {
       workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
     }
   >();
+
+  for (const emptyProject of emptyProjectList) {
+    byProject.set(emptyProject.projectId, {
+      projectKey: emptyProject.projectId,
+      projectName:
+        emptyProject.projectDisplayName || projectDisplayNameFromProjectId(emptyProject.projectId),
+      projectKind: emptyProject.projectKind,
+      iconWorkingDir: emptyProject.projectRootPath,
+      workspaceKeys: [],
+      workspaces: [],
+    });
+  }
 
   for (const workspace of workspaceList) {
     const project =

@@ -51,7 +51,6 @@ function target(input?: Partial<WorkspaceArchiveTarget>): WorkspaceArchiveTarget
   return {
     serverId: SERVER_ID,
     workspaceId: base.id,
-    workspaceDirectory: base.workspaceDirectory,
     ...input,
   };
 }
@@ -107,7 +106,6 @@ describe("archiveWorkspaceOptimistically", () => {
       isWorkspaceArchivePending({
         serverId: SERVER_ID,
         workspaceId: archived.id,
-        workspaceDirectory: archived.workspaceDirectory,
       }),
     ).toBe(true);
 
@@ -178,10 +176,7 @@ describe("archiveWorkspacesOptimistically", () => {
 
     const failures = await archiveWorkspacesOptimistically({
       client,
-      workspaces: [
-        target({ workspaceId: first.id, workspaceDirectory: first.workspaceDirectory }),
-        target({ workspaceId: second.id, workspaceDirectory: second.workspaceDirectory }),
-      ],
+      workspaces: [target({ workspaceId: first.id }), target({ workspaceId: second.id })],
     });
 
     expect(failures).toHaveLength(1);

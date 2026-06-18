@@ -37,6 +37,7 @@ describe("runCreateEmptyWorkspace", () => {
       cwd: "/sample/repo",
       prompt: "",
       attachments: [],
+      withInitialAgent: false,
     });
     expect(recorded).toEqual([{ serverId: "server-abc", workspaceId: "workspace-123" }]);
   });

@@ -14,6 +14,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
@@ -322,7 +323,13 @@ export function WorkspaceSetupDialog() {
 
         setAgents(serverId, (previous) => {
           const next = new Map(previous);
-          next.set(agent.id, normalizeAgentSnapshot(agent, serverId));
+          next.set(
+            agent.id,
+            applyLegacyDaemonWorkspaceOwnership({
+              serverId,
+              agent: normalizeAgentSnapshot(agent, serverId),
+            }),
+          );
           return next;
         });
         navigateAfterCreation(ensuredWorkspace.id, { kind: "agent", agentId: agent.id });

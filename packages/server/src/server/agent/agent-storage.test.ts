@@ -320,30 +320,6 @@ describe("AgentStorage", () => {
     );
   });
 
-  test("setGeneratedTitle with concurrent writes does not corrupt state", async () => {
-    const agentId = "agent-generated-title-concurrent";
-    await storage.applySnapshot(createManagedAgent({ id: agentId }));
-
-    await Promise.all([
-      storage.setGeneratedTitle(agentId, "Title A"),
-      storage.setGeneratedTitle(agentId, "Title B"),
-    ]);
-
-    const record = await storage.get(agentId);
-    expect(["Title A", "Title B"]).toContain(record?.title);
-  });
-
-  test("setGeneratedTitle writes the generated title", async () => {
-    const agentId = "agent-generated-title-empty";
-    await storage.applySnapshot(createManagedAgent({ id: agentId }));
-
-    const written = await storage.setGeneratedTitle(agentId, "Generated title");
-
-    expect(written.title).toBe("Generated title");
-    const record = await storage.get(agentId);
-    expect(record?.title).toBe("Generated title");
-  });
-
   test("applySnapshot accepts explicit title overrides", async () => {
     const agentId = "agent-override";
     await storage.applySnapshot(createManagedAgent({ id: agentId }), { title: "Provided Title" });

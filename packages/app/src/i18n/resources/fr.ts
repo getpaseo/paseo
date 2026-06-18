@@ -209,7 +209,7 @@ export const fr: TranslationResources = {
     },
   },
   sessions: {
-    title: "Séances",
+    title: "Historique",
     empty: "Aucune séance pour l'instant",
     actions: {
       loadMore: "Charger plus",
@@ -331,15 +331,22 @@ export const fr: TranslationResources = {
   workspace: {
     route: {
       loading: "Chargement de l'espace de travail",
+      restoring: "Restauration de l'espace de travail",
+      restoreFailed:
+        "Impossible de restaurer cet espace de travail — le répertoire a peut-être été déplacé ou supprimé",
       connecting: "De liaison",
       hostOffline: "{{hostName}}est hors ligne",
       cannotReachHost: "Impossible d'atteindre{{hostName}}",
       hostStatus: "StatutHost:{{status}}",
       missing: "Workspaceintrouvable",
+      needsHostUpgrade: "Mettez à jour votre hôte pour restaurer cet espace de travail",
       manageHost: "Gérer l'hôte",
     },
     hoverCard: {
       scriptsAccessibility: "ScriptsWorkspace",
+      copyPath: "Copier le chemin",
+      copyBranchName: "Copier le nom de la branche",
+      copied: "Copié",
     },
     fileExplorer: {
       sort: {
@@ -358,9 +365,12 @@ export const fr: TranslationResources = {
         retry: "Réessayer",
         refresh: "Actualiser les fichiers",
         refreshing: "Actualisation des fichiers",
+        hideHiddenFiles: "Masquer les fichiers cachés",
+        showHiddenFiles: "Afficher les fichiers cachés",
       },
       empty: {
         noFiles: "Aucun fichier",
+        noVisibleFiles: "Aucun fichier visible",
       },
       states: {
         unavailable: "Workspacen'est pas disponible",
@@ -468,6 +478,8 @@ export const fr: TranslationResources = {
         splitDown: "Diviser le volet vers le bas",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        pinTarget: "Épingler",
+        unpinTarget: "Détacher",
       },
       explorer: {
         open: "Ouvrir l'explorateur",
@@ -768,12 +780,13 @@ export const fr: TranslationResources = {
     },
     actions: {
       addProject: "Ajouter un projet",
+      newWorkspace: "Nouvel espace de travail",
       home: "Maison",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
     },
     sections: {
-      sessions: "Séances",
+      sessions: "Historique",
     },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
@@ -800,6 +813,7 @@ export const fr: TranslationResources = {
       toasts: {
         hostDisconnected: "Hostn'est pas connecté",
         removeFailed: "Échec de la suppression de certains espaces de travail",
+        updateHostToRemove: "Mettez à jour le host pour supprimer des projets.",
       },
       empty: {
         title: "Aucun projet pour l'instant",
@@ -849,6 +863,17 @@ export const fr: TranslationResources = {
   newWorkspace: {
     title: "Nouvel espace de travail",
     create: "Créer",
+    isolation: {
+      local: "Local",
+      worktree: "Nouveau worktree",
+      label: "Isolation",
+    },
+    fields: {
+      project: "Projet",
+      base: "Base",
+      baseNotApplicable: "Non applicable",
+    },
+    titlePlaceholder: "Titre (facultatif)",
     errors: {
       hostDisconnected: "Hostn'est pas connecté",
       createWorktreeFailed: "Échec de la création de l'arbre de travail",
@@ -1546,6 +1571,7 @@ export const fr: TranslationResources = {
       },
       help: {
         openProject: "Projet ouvert",
+        newWorkspace: "Nouvel espace de travail",
         newWorktree: "Nouvel arbre de travail",
         archiveWorktree: "Arbre de travail d'archivage",
         newTab: "Nouvel onglet",
@@ -1872,8 +1898,6 @@ export const fr: TranslationResources = {
       metadata: {
         title: "Génération de métadonnées",
         info: "Instructions spécifiques au projet injectées dans les invites de l'IA quePaseoutilise pour générer des métadonnées: utilisez-les pour appliquer les conventions de votre équipe telles que la dénomination des branches, le style de validation ou le formatPR.",
-        agentTitle: "TitresAgent",
-        agentTitlePlaceholder: "Gardez les titres impératifs et inférieurs à 40 caractères",
         branchName: "Noms des succursales",
         branchNamePlaceholder:
           "Préfixez les branches avec feat/ ou fix/, mb/ pour les branches personnelles",

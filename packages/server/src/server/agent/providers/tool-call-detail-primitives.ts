@@ -11,6 +11,61 @@ import {
 
 export const CommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
+type ToolDetailSchema = z.ZodType;
+// Zod 4 loses the generic output type when these branch helpers constrain
+// schemas through z.ZodType, so the paired shape/value interfaces preserve the
+// transform callback types without changing runtime parsing.
+interface ToolDetailNameShape<
+  Name extends string,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
+> {
+  name: z.ZodLiteral<Name>;
+  input: z.ZodNullable<InputSchema>;
+  output: z.ZodNullable<OutputSchema>;
+}
+interface ToolDetailToolNameShape<
+  Name extends string,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
+> {
+  toolName: z.ZodLiteral<Name>;
+  input: z.ZodNullable<InputSchema>;
+  output: z.ZodNullable<OutputSchema>;
+}
+interface ToolDetailNameWithCwdShape<
+  Name extends string,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
+> extends ToolDetailNameShape<Name, InputSchema, OutputSchema> {
+  cwd: z.ZodNullable<z.ZodOptional<z.ZodString>>;
+}
+interface ToolDetailNameValue<
+  Name extends string,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
+> {
+  name: Name;
+  input: z.output<InputSchema> | null;
+  output: z.output<OutputSchema> | null;
+}
+interface ToolDetailToolNameValue<
+  Name extends string,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
+> {
+  toolName: Name;
+  input: z.output<InputSchema> | null;
+  output: z.output<OutputSchema> | null;
+}
+interface ToolDetailNameWithCwdValue<
+  Name extends string,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
+> extends ToolDetailNameValue<Name, InputSchema, OutputSchema> {
+  cwd?: string | null;
+}
+
 export const ToolShellInputSchema = z
   .union([
     z
@@ -424,11 +479,13 @@ interface ToolReadOutputValue {
   content?: string;
 }
 
-export const ToolReadOutputSchema: z.ZodType<ToolReadOutputValue, z.ZodTypeDef, unknown> =
+export const ToolReadOutputSchema: z.ZodType<ToolReadOutputValue, unknown> =
   ToolReadOutputContentSchema;
 
-export const ToolReadOutputWithPathSchema: z.ZodType<ToolReadOutputValue, z.ZodTypeDef, unknown> =
-  z.union([ToolReadOutputContentSchema, ToolReadOutputPathSchema]);
+export const ToolReadOutputWithPathSchema: z.ZodType<ToolReadOutputValue, unknown> = z.union([
+  ToolReadOutputContentSchema,
+  ToolReadOutputPathSchema,
+]);
 
 export const ToolWriteContentSchema = z
   .object({
@@ -918,8 +975,8 @@ export function toFetchToolDetail(
 
 export function toolDetailBranchByName<
   Name extends string,
-  InputSchema extends z.ZodTypeAny,
-  OutputSchema extends z.ZodTypeAny,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
 >(
   name: Name,
   inputSchema: InputSchema,
@@ -929,20 +986,23 @@ export function toolDetailBranchByName<
     output: z.infer<OutputSchema> | null,
   ) => ToolCallDetail | undefined,
 ) {
-  const schema = z.object({
+  const shape: ToolDetailNameShape<Name, InputSchema, OutputSchema> = {
     name: z.literal(name),
-    input: inputSchema.nullable(),
-    output: outputSchema.nullable(),
-  });
+    input: z.nullable(inputSchema),
+    output: z.nullable(outputSchema),
+  };
+  const schema = z.object(shape);
   return schema.transform((value: z.infer<typeof schema>) => {
-    return mapper(value.input, value.output);
+    // Zod v4 drops generic unknown-valued shape fields from object output inference here.
+    const parsedValue = value as ToolDetailNameValue<Name, InputSchema, OutputSchema>;
+    return mapper(parsedValue.input, parsedValue.output);
   });
 }
 
 export function toolDetailBranchByToolName<
   Name extends string,
-  InputSchema extends z.ZodTypeAny,
-  OutputSchema extends z.ZodTypeAny,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
 >(
   toolName: Name,
   inputSchema: InputSchema,
@@ -952,20 +1012,22 @@ export function toolDetailBranchByToolName<
     output: z.infer<OutputSchema> | null,
   ) => ToolCallDetail | undefined,
 ) {
-  const schema = z.object({
+  const shape: ToolDetailToolNameShape<Name, InputSchema, OutputSchema> = {
     toolName: z.literal(toolName),
-    input: inputSchema.nullable(),
-    output: outputSchema.nullable(),
-  });
+    input: z.nullable(inputSchema),
+    output: z.nullable(outputSchema),
+  };
+  const schema = z.object(shape);
   return schema.transform((value: z.infer<typeof schema>) => {
-    return mapper(value.input, value.output);
+    const parsedValue = value as ToolDetailToolNameValue<Name, InputSchema, OutputSchema>;
+    return mapper(parsedValue.input, parsedValue.output);
   });
 }
 
 export function toolDetailBranchByNameWithCwd<
   Name extends string,
-  InputSchema extends z.ZodTypeAny,
-  OutputSchema extends z.ZodTypeAny,
+  InputSchema extends ToolDetailSchema,
+  OutputSchema extends ToolDetailSchema,
 >(
   name: Name,
   inputSchema: InputSchema,
@@ -976,13 +1038,15 @@ export function toolDetailBranchByNameWithCwd<
     cwd: string | null,
   ) => ToolCallDetail | undefined,
 ) {
-  const schema = z.object({
+  const shape: ToolDetailNameWithCwdShape<Name, InputSchema, OutputSchema> = {
     name: z.literal(name),
-    input: inputSchema.nullable(),
-    output: outputSchema.nullable(),
+    input: z.nullable(inputSchema),
+    output: z.nullable(outputSchema),
     cwd: z.string().optional().nullable(),
-  });
+  };
+  const schema = z.object(shape);
   return schema.transform((value: z.infer<typeof schema>) => {
-    return mapper(value.input, value.output, value.cwd ?? null);
+    const parsedValue = value as ToolDetailNameWithCwdValue<Name, InputSchema, OutputSchema>;
+    return mapper(parsedValue.input, parsedValue.output, parsedValue.cwd ?? null);
   });
 }

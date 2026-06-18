@@ -1,19 +1,14 @@
 import { useEffect, useMemo, useState, type ReactElement, type RefObject } from "react";
 import { Keyboard, View, useWindowDimensions } from "react-native";
 import { Portal } from "@gorhom/portal";
-import Animated, {
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-} from "react-native-reanimated";
-import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { Autocomplete, type AutocompleteOption } from "@/components/ui/autocomplete";
 import {
   measureFloatingPanelPortalHost,
   useFloatingPanelPortalHostName,
 } from "@/components/ui/floating-panel-portal";
+import { useKeyboardShift } from "@/hooks/use-keyboard-shift-style";
 import { SPACING } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
@@ -68,18 +63,8 @@ export function AutocompletePopover({
   // React Compiler memoizes effect captures by reading SharedValue.value during render.
   const [relativeAnchorRect, setRelativeAnchorRect] = useState<RelativeAnchorRect | null>(null);
   const windowDimensions = useWindowDimensions();
-  const insets = useSafeAreaInsets();
   const portalHostName = useFloatingPanelPortalHostName();
-
-  const { height: rawKeyboardHeight } = useReanimatedKeyboardAnimation();
-  const bottomInsetSV = useSharedValue(insets.bottom);
-  useEffect(() => {
-    bottomInsetSV.value = insets.bottom;
-  }, [bottomInsetSV, insets.bottom]);
-
-  const shift = useDerivedValue(() =>
-    Math.max(0, Math.abs(rawKeyboardHeight.value) - bottomInsetSV.value),
-  );
+  const { shift } = useKeyboardShift();
   const openShift = useSharedValue(0);
 
   useEffect(() => {
