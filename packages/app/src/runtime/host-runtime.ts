@@ -674,7 +674,7 @@ export class HostRuntimeController {
 
   async activateConnection(input: {
     connectionId: string;
-    existingClient: DaemonClient;
+    existingClient?: DaemonClient;
   }): Promise<void> {
     await this.switchToConnection(input);
   }
@@ -913,7 +913,22 @@ export class HostRuntimeController {
             const activated = await maybeActivateFirstAvailable(connection.id, connectedClient);
             shouldCloseClient = shouldCloseClient && !activated;
 
-            const { rttMs } = await connectedClient.checkLiveness({ timeoutMs: 5000 });
+            if (activeClient) {
+              const rttMs = activeClient.getLastLivenessRttMs();
+              if (!this.isCurrentProbeRequest(requestVersion)) {
+                return;
+              }
+              if (rttMs !== null) {
+                probeByConnectionId.set(connection.id, {
+                  status: "available",
+                  latencyMs: rttMs,
+                });
+                publishProbeState();
+              }
+              return;
+            }
+
+            const rttMs = await connectedClient.measureLatency({ timeoutMs: 5000 });
             if (!this.isCurrentProbeRequest(requestVersion)) {
               return;
             }
