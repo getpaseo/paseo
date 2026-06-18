@@ -28,8 +28,6 @@ import {
   Rows2,
   Globe,
   Plus,
-  Square,
-  SquareCheckBig,
   SquarePen,
   SquareTerminal,
   X,
@@ -111,8 +109,6 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
 const ThemedPlus = withUnistyles(Plus);
-const ThemedSquare = withUnistyles(Square);
-const ThemedSquareCheckBig = withUnistyles(SquareCheckBig);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -265,15 +261,6 @@ function WorkspaceTabRowExtras({
   const handleToggleVerticalTabs = useCallback(() => {
     onVerticalTabsChange(!verticalTabsSelected);
   }, [onVerticalTabsChange, verticalTabsSelected]);
-  const verticalTabsLeading = useMemo(
-    () =>
-      verticalTabsSelected ? (
-        <ThemedSquareCheckBig size={14} uniProps={mutedColorMapping} />
-      ) : (
-        <ThemedSquare size={14} uniProps={mutedColorMapping} />
-      ),
-    [verticalTabsSelected],
-  );
 
   return (
     <>
@@ -321,7 +308,8 @@ function WorkspaceTabRowExtras({
           <DropdownMenuSeparator />
           <DropdownMenuItem
             testID="workspace-new-tab-menu-vertical-tabs"
-            leading={verticalTabsLeading}
+            selected={verticalTabsSelected}
+            showSelectedCheck
             onSelect={handleToggleVerticalTabs}
           >
             {t("workspace.tabs.actions.verticalTabs")}
