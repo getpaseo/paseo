@@ -212,6 +212,10 @@ export type DaemonEvent =
       type: "providers_snapshot_update";
       payload: Extract<SessionOutboundMessage, { type: "providers_snapshot_update" }>["payload"];
     }
+  | {
+      type: "provider_quota";
+      payload: Extract<SessionOutboundMessage, { type: "provider_quota" }>["payload"];
+    }
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
@@ -5026,6 +5030,11 @@ export class DaemonClient {
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",
+          payload: msg.payload,
+        };
+      case "provider_quota":
+        return {
+          type: "provider_quota",
           payload: msg.payload,
         };
       default:
