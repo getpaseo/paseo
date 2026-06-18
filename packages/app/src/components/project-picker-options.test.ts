@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectPickerOptions, isOpenableProjectPath } from "./project-picker-options";
+import {
+  buildProjectPickerBrowseOptions,
+  buildProjectPickerOptions,
+  getProjectPickerBrowseParentPath,
+  isOpenableProjectPath,
+  joinProjectPickerBrowsePath,
+} from "./project-picker-options";
 
 describe("isOpenableProjectPath", () => {
   it("accepts POSIX, tilde, Windows drive-letter, and UNC paths", () => {
@@ -76,5 +82,63 @@ describe("buildProjectPickerOptions", () => {
     });
 
     expect(options).toEqual([{ kind: "suggestion", path: "/repo/app" }]);
+  });
+});
+
+describe("project picker browse options", () => {
+  it("starts home browsing with the current directory and child directories", () => {
+    const options = buildProjectPickerBrowseOptions({
+      cwd: "~",
+      childPaths: ["src", "Downloads"],
+    });
+
+    expect(options).toEqual([
+      { kind: "browse-current", path: "~" },
+      { kind: "browse-directory", path: "~/src" },
+      { kind: "browse-directory", path: "~/Downloads" },
+    ]);
+  });
+
+  it("adds a parent row outside the home root", () => {
+    const options = buildProjectPickerBrowseOptions({
+      cwd: "~/src/paseo",
+      childPaths: ["packages"],
+    });
+
+    expect(options).toEqual([
+      { kind: "browse-current", path: "~/src/paseo" },
+      { kind: "browse-parent", path: "~/src" },
+      { kind: "browse-directory", path: "~/src/paseo/packages" },
+    ]);
+  });
+
+  it("dedupes child paths that point at existing browse actions", () => {
+    const options = buildProjectPickerBrowseOptions({
+      cwd: "/workspace",
+      childPaths: [".", "/workspace/src", "workspace/src", "src"],
+    });
+
+    expect(options).toEqual([
+      { kind: "browse-current", path: "/workspace" },
+      { kind: "browse-parent", path: "/" },
+      { kind: "browse-directory", path: "/workspace/src" },
+    ]);
+  });
+
+  it("resolves parent paths for tilde, POSIX, and Windows-style directories", () => {
+    expect(getProjectPickerBrowseParentPath("~")).toBeNull();
+    expect(getProjectPickerBrowseParentPath("~/src/paseo")).toBe("~/src");
+    expect(getProjectPickerBrowseParentPath("/Users/mo/src")).toBe("/Users/mo");
+    expect(getProjectPickerBrowseParentPath("/")).toBeNull();
+    expect(getProjectPickerBrowseParentPath("C:\\Users\\mo")).toBe("C:\\Users");
+    expect(getProjectPickerBrowseParentPath("C:\\Users\\mo\\")).toBe("C:\\Users");
+  });
+
+  it("joins relative server child paths under the current browsed directory", () => {
+    expect(joinProjectPickerBrowsePath("~/src", "paseo")).toBe("~/src/paseo");
+    expect(joinProjectPickerBrowsePath("/workspace", "./packages/app")).toBe(
+      "/workspace/packages/app",
+    );
+    expect(joinProjectPickerBrowsePath("~/src", "/tmp/project")).toBe("/tmp/project");
   });
 });

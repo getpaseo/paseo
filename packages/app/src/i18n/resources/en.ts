@@ -1055,6 +1055,10 @@ export const en = {
   },
   projectPicker: {
     placeholder: "Type a directory path...",
+    browsing: "Browsing {{path}}",
+    browseHostFolders: "Browse host folders",
+    selectCurrentFolder: "Select current folder",
+    parentFolder: "Parent folder",
     opening: "Opening project...",
     empty: "Start typing a path",
     errors: {

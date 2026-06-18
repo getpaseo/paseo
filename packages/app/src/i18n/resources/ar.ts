@@ -1049,6 +1049,10 @@ export const ar: TranslationResources = {
   },
   projectPicker: {
     placeholder: "اكتب مسار الدليل...",
+    browsing: "تصفح {{path}}",
+    browseHostFolders: "تصفح مجلدات المضيف",
+    selectCurrentFolder: "اختيار المجلد الحالي",
+    parentFolder: "المجلد الأصل",
     opening: "افتتاح المشروع...",
     empty: "ابدأ بكتابة المسار",
     errors: {
