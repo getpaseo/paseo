@@ -63,8 +63,10 @@ import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
+import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -461,6 +463,7 @@ function AppContainer({
   });
 
   useActiveWorktreeNewAction();
+  useGlobalNewWorkspaceAction();
 
   const content = (
     <View style={layoutStyles.surfaceFill}>
@@ -943,9 +946,11 @@ function RootProviders({ children }: { children: ReactNode }) {
       <I18nProvider>
         <SafeAreaProvider>
           <KeyboardProvider>
-            <PortalProvider>
-              <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-            </PortalProvider>
+            <KeyboardShiftProvider>
+              <PortalProvider>
+                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+              </PortalProvider>
+            </KeyboardShiftProvider>
           </KeyboardProvider>
         </SafeAreaProvider>
       </I18nProvider>

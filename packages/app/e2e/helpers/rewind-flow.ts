@@ -178,6 +178,7 @@ export async function launchAgent(input: {
   const agent = await client.createAgent({
     ...fullAccessConfig(input.provider),
     cwd: input.cwd,
+    workspaceId: opened.workspace.id,
     title: `rewind-flow-${input.provider}-${randomUUID()}`,
   });
   const handle = {

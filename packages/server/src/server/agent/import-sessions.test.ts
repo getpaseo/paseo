@@ -379,7 +379,6 @@ test("importProviderSession imports a selected provider session without listing"
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
   } as unknown as AgentStorage;
-  const scheduleAgentMetadataGeneration = vi.fn();
 
   const result = await importProviderSession({
     request: {
@@ -388,27 +387,19 @@ test("importProviderSession imports a selected provider session without listing"
       providerHandleId: "provider-thread-imported",
       cwd,
     },
+    workspaceId: "ws-imported",
     agentManager,
     agentStorage,
     logger: { warn: vi.fn(), error: vi.fn() } as never,
-    deps: { scheduleAgentMetadataGeneration },
   });
 
   expect(agentManager.importProviderSession).toHaveBeenCalledWith({
     provider: "custom-codex",
     providerHandleId: "provider-thread-imported",
     cwd,
+    workspaceId: "ws-imported",
     labels: undefined,
   });
-  expect(scheduleAgentMetadataGeneration).toHaveBeenCalledWith(
-    expect.objectContaining({
-      agentManager,
-      agentId: snapshot.id,
-      cwd,
-      initialPrompt: "Trace recent provider sessions\n\nkeep it tight",
-      explicitTitle: null,
-    }),
-  );
   expect(result).toEqual({ snapshot, timelineSize: 2 });
 });
 
@@ -437,6 +428,7 @@ test("importProviderSession passes labels through the manager import operation",
       cwd,
       labels: { source: "import" },
     },
+    workspaceId: "ws-imported",
     agentManager,
     agentStorage,
     logger: { warn: vi.fn(), error: vi.fn() } as never,
@@ -446,6 +438,7 @@ test("importProviderSession passes labels through the manager import operation",
     provider: "codex",
     providerHandleId: "thread-imported",
     cwd,
+    workspaceId: "ws-imported",
     labels: { source: "import" },
   });
 });
@@ -460,6 +453,7 @@ test("importProviderSession requires cwd from the selected provider row", async 
         provider: "opencode",
         providerHandleId: "thread-imported",
       },
+      workspaceId: "ws-imported",
       agentManager,
       agentStorage: { list: vi.fn() } as unknown as AgentStorage,
       logger: { warn: vi.fn(), error: vi.fn() } as never,

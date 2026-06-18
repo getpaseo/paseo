@@ -57,6 +57,6 @@ export default defineConfig({
     ],
   },
   test: {
-    exclude: [...configDefaults.exclude, "**/.claude/**"],
+    exclude: [...configDefaults.exclude, "**/.claude/**", "**/.dev/**"],
   },
 });

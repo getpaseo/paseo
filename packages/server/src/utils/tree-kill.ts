@@ -8,7 +8,7 @@ export interface TreeKillTarget {
   once?(event: "exit", listener: () => void): unknown;
 }
 
-interface TerminateWithTreeKillOptions {
+export interface TerminateWithTreeKillOptions {
   gracefulSignal?: NodeJS.Signals;
   forceSignal?: NodeJS.Signals;
   gracefulTimeoutMs: number;
@@ -21,6 +21,13 @@ export type TerminateWithTreeKillResult =
   | "terminated"
   | "killed"
   | "kill-timeout";
+
+// Injection seam: production wires terminateWithTreeKill; tests wire a fake that
+// records which children were terminated as observable state.
+export type ProcessTerminator = (
+  child: TreeKillTarget,
+  options: TerminateWithTreeKillOptions,
+) => Promise<TerminateWithTreeKillResult>;
 
 export async function terminateWithTreeKill(
   child: TreeKillTarget,

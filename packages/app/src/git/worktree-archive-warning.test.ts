@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorktreeArchiveConfirmationMessage,
   buildWorktreeArchiveRiskReasons,
+  toWorktreeArchiveRisk,
 } from "@/git/worktree-archive-warning";
 
 describe("worktree archive warning", () => {
@@ -56,5 +57,19 @@ describe("worktree archive warning", () => {
         diffStat: { additions: 1, deletions: 3 },
       }),
     ).toBe("Uncommitted changes (1 added line, 3 deleted lines)\n1 unpushed commit");
+  });
+
+  it("maps archive workspace fields into the shared worktree risk shape", () => {
+    expect(
+      toWorktreeArchiveRisk({
+        archiveHasUncommittedChanges: true,
+        archiveUnpushedCommitCount: 3,
+        diffStat: { additions: 2, deletions: 1 },
+      }),
+    ).toEqual({
+      isDirty: true,
+      aheadOfOrigin: 3,
+      diffStat: { additions: 2, deletions: 1 },
+    });
   });
 });

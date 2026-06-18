@@ -10,6 +10,7 @@ import {
   buildServiceProxyLabel,
   createServiceProxySubsystem,
   findFreePort,
+  ServiceProxyRouteCollisionError,
   ServiceProxyRouteRegistry,
 } from "./service-proxy.js";
 
@@ -179,7 +180,7 @@ describe("service proxy subsystem shape", () => {
         scriptName: "api",
         port: 4000,
       }),
-    ).toThrow("Service proxy hostname collision");
+    ).toThrow(ServiceProxyRouteCollisionError);
 
     expect(serviceProxy.getHealthTargetForHostname("api--repo.localhost")).toMatchObject({
       workspaceId: "workspace-a",
@@ -207,7 +208,7 @@ describe("service proxy subsystem shape", () => {
         port: 4000,
         publicBaseUrl: "https://services.example.com",
       }),
-    ).toThrow("Service proxy hostname collision");
+    ).toThrow(ServiceProxyRouteCollisionError);
 
     expect(serviceProxy.getHealthTargetForHostname("api--repo.services.example.com")).toMatchObject(
       {
@@ -239,7 +240,7 @@ describe("service proxy subsystem shape", () => {
         projectSlug: "repo-b",
         scriptName: "api",
       }),
-    ).toThrow("Service proxy hostname collision");
+    ).toThrow(ServiceProxyRouteCollisionError);
 
     expect(serviceProxy.getRouteEntry("api--repo-a.localhost")).toMatchObject({ port: 3000 });
     expect(serviceProxy.getRouteEntry("api--repo-b.localhost")).toBeNull();
@@ -265,7 +266,7 @@ describe("service proxy subsystem shape", () => {
         projectSlug: "other",
         scriptName: "api",
       }),
-    ).toThrow("Service proxy hostname collision");
+    ).toThrow(ServiceProxyRouteCollisionError);
 
     expect(serviceProxy.getRouteEntry("api--repo.localhost")).toMatchObject({ port: 3000 });
     expect(serviceProxy.getRouteEntry("api.services.example.com")).toMatchObject({ port: 3000 });

@@ -18,6 +18,31 @@ describe("TerminalActivityTracker — set", () => {
 
     expect(tracker.getSnapshot().state).toBe("working");
   });
+
+  it("marks a working to idle transition as finished attention", () => {
+    const tracker = new TerminalActivityTracker();
+
+    tracker.set("working");
+    tracker.set("idle");
+
+    expect(tracker.getSnapshot()).toMatchObject({
+      state: "idle",
+      attentionReason: "finished",
+    });
+  });
+
+  it("keeps finished attention across repeated idle reports", () => {
+    const tracker = new TerminalActivityTracker();
+
+    tracker.set("working");
+    tracker.set("idle");
+    tracker.set("idle");
+
+    expect(tracker.getSnapshot()).toMatchObject({
+      state: "idle",
+      attentionReason: "finished",
+    });
+  });
 });
 
 describe("TerminalActivityTracker — clearAttention", () => {
@@ -27,7 +52,7 @@ describe("TerminalActivityTracker — clearAttention", () => {
     tracker.set("attention");
 
     expect(tracker.clearAttention()).toBe(true);
-    expect(tracker.getSnapshot().state).toBe("idle");
+    expect(tracker.getSnapshot()).toMatchObject({ state: "idle", attentionReason: null });
   });
 
   it("leaves non-attention states unchanged", () => {
@@ -102,7 +127,10 @@ describe("TerminalActivityTracker — onChange listener", () => {
     expect(transitions[0].previous.state).toBeNull();
     expect(transitions[0].snapshot.state).toBe("working");
     expect(transitions[1].previous).toEqual(transitions[0].snapshot);
-    expect(transitions[1].snapshot.state).toBe("idle");
+    expect(transitions[1].snapshot).toMatchObject({
+      state: "idle",
+      attentionReason: "finished",
+    });
   });
 });
 

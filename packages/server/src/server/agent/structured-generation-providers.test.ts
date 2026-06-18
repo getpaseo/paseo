@@ -1,13 +1,42 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { resolveStructuredGenerationProviders } from "./structured-generation-providers.js";
+import type { ProviderSnapshotEntry } from "./agent-sdk-types.js";
 
 const READY = "ready" as const;
 const ERROR = "error" as const;
 
+class ProviderSnapshots {
+  readonly calls: Array<{ cwd?: string; wait?: boolean }> = [];
+
+  constructor(private readonly entries: ProviderSnapshotEntry[]) {}
+
+  async listProviders(input: { cwd?: string; wait?: boolean } = {}) {
+    this.calls.push({ cwd: input.cwd, wait: input.wait });
+    return this.entries;
+  }
+}
+
 describe("resolveStructuredGenerationProviders", () => {
-  test("prefers configured providers, resolves dynamic defaults, and dedupes duplicates", async () => {
-    const listProviders = vi.fn(async () => [
+  test("uses explicit configured provider models without refreshing provider snapshots", async () => {
+    const snapshots = new ProviderSnapshots([]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "mock", model: "ten-second-stream" }],
+        },
+      },
+    });
+
+    expect(providers).toEqual([{ provider: "mock", model: "ten-second-stream" }]);
+    expect(snapshots.calls).toEqual([]);
+  });
+
+  test("falls back to dynamic defaults and current selection when no provider is configured", async () => {
+    const snapshots = new ProviderSnapshots([
       {
         provider: "work-claude",
         status: READY,
@@ -47,15 +76,7 @@ describe("resolveStructuredGenerationProviders", () => {
 
     const providers = await resolveStructuredGenerationProviders({
       cwd: "/tmp/repo",
-      providerSnapshotManager: { listProviders },
-      daemonConfig: {
-        metadataGeneration: {
-          providers: [
-            { provider: "stale-codex", model: "missing-model", thinkingOptionId: "low" },
-            { provider: "work-claude" },
-          ],
-        },
-      },
+      providerSnapshotManager: snapshots,
       currentSelection: {
         provider: "focused-provider",
         model: "focused-model",
@@ -64,36 +85,35 @@ describe("resolveStructuredGenerationProviders", () => {
     });
 
     expect(providers).toEqual([
-      { provider: "stale-codex", model: "missing-model", thinkingOptionId: "low" },
       { provider: "work-claude", model: "claude-haiku-2026" },
       { provider: "work-codex", model: "gpt-5.4-mini-2026", thinkingOptionId: "low" },
       { provider: "router", model: "minimax-m2.5-free" },
       { provider: "router", model: "nemotron-3-super-free" },
       { provider: "focused-provider", model: "focused-model", thinkingOptionId: "high" },
     ]);
-    expect(listProviders).toHaveBeenCalledWith({ cwd: "/tmp/repo", wait: true });
+    expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 
   test("falls back to the current selection when defaults do not match", async () => {
-    const providers = await resolveStructuredGenerationProviders({
-      cwd: "/tmp/repo",
-      providerSnapshotManager: {
-        listProviders: vi.fn(async () => [
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "current-provider",
+        status: READY,
+        enabled: true,
+        models: [
           {
             provider: "current-provider",
-            status: READY,
-            enabled: true,
-            models: [
-              {
-                provider: "current-provider",
-                id: "selected-model",
-                label: "Selected Model",
-                isDefault: true,
-              },
-            ],
+            id: "selected-model",
+            label: "Selected Model",
+            isDefault: true,
           },
-        ]),
+        ],
       },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
       currentSelection: {
         provider: "current-provider",
         model: "selected-model",
@@ -107,26 +127,26 @@ describe("resolveStructuredGenerationProviders", () => {
   });
 
   test("resolves a provider-only current selection to that provider's default model", async () => {
-    const providers = await resolveStructuredGenerationProviders({
-      cwd: "/tmp/repo",
-      providerSnapshotManager: {
-        listProviders: vi.fn(async () => [
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "focused-provider",
+        status: READY,
+        enabled: true,
+        models: [
           {
             provider: "focused-provider",
-            status: READY,
-            enabled: true,
-            models: [
-              {
-                provider: "focused-provider",
-                id: "focused-default",
-                label: "Focused Default",
-                isDefault: true,
-                defaultThinkingOptionId: "balanced",
-              },
-            ],
+            id: "focused-default",
+            label: "Focused Default",
+            isDefault: true,
+            defaultThinkingOptionId: "balanced",
           },
-        ]),
+        ],
       },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
       currentSelection: { provider: "focused-provider" },
     });
 
@@ -135,30 +155,30 @@ describe("resolveStructuredGenerationProviders", () => {
     ]);
   });
 
-  test("normalizes nested OpenCode provider entries to the top-level provider and full model id", async () => {
-    const providers = await resolveStructuredGenerationProviders({
-      cwd: "/tmp/repo",
-      providerSnapshotManager: {
-        listProviders: vi.fn(async () => [
+  test("uses explicit configured provider models as-is instead of waiting to normalize aliases", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "opencode",
+        status: READY,
+        enabled: true,
+        models: [
           {
             provider: "opencode",
-            status: READY,
-            enabled: true,
-            models: [
-              {
-                provider: "opencode",
-                id: "plexus/small-fast",
-                label: "Small Fast",
-                isDefault: true,
-                metadata: {
-                  providerId: "plexus",
-                  modelId: "small-fast",
-                },
-              },
-            ],
+            id: "plexus/small-fast",
+            label: "Small Fast",
+            isDefault: true,
+            metadata: {
+              providerId: "plexus",
+              modelId: "small-fast",
+            },
           },
-        ]),
+        ],
       },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
       daemonConfig: {
         metadataGeneration: {
           providers: [{ provider: "plexus", model: "small-fast" }],
@@ -166,22 +186,23 @@ describe("resolveStructuredGenerationProviders", () => {
       },
     });
 
-    expect(providers).toEqual([{ provider: "opencode", model: "plexus/small-fast" }]);
+    expect(providers).toEqual([{ provider: "plexus", model: "small-fast" }]);
+    expect(snapshots.calls).toEqual([]);
   });
 
   test("keeps explicit candidates when provider snapshots are in error state", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "current-provider",
+        status: ERROR,
+        enabled: true,
+        error: "timed out",
+      },
+    ]);
+
     const providers = await resolveStructuredGenerationProviders({
       cwd: "/tmp/repo",
-      providerSnapshotManager: {
-        listProviders: vi.fn(async () => [
-          {
-            provider: "current-provider",
-            status: ERROR,
-            enabled: true,
-            error: "timed out",
-          },
-        ]),
-      },
+      providerSnapshotManager: snapshots,
       daemonConfig: {
         metadataGeneration: {
           providers: [{ provider: "current-provider", model: "configured-model" }],
@@ -194,9 +215,7 @@ describe("resolveStructuredGenerationProviders", () => {
       },
     });
 
-    expect(providers).toEqual([
-      { provider: "current-provider", model: "configured-model" },
-      { provider: "current-provider", model: "selected-model", thinkingOptionId: "medium" },
-    ]);
+    expect(providers).toEqual([{ provider: "current-provider", model: "configured-model" }]);
+    expect(snapshots.calls).toEqual([]);
   });
 });

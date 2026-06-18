@@ -77,7 +77,10 @@ export function asDaemonConfigStore(stub: {
 export function asTerminalManager(stub: {
   [K in keyof NonNullable<SessionOptions["terminalManager"]>]?: unknown;
 }): NonNullable<SessionOptions["terminalManager"]> {
-  return createStub<NonNullable<SessionOptions["terminalManager"]>>(stub);
+  return createStub<NonNullable<SessionOptions["terminalManager"]>>({
+    subscribeTerminalWorkspaceContributionChanged: () => () => {},
+    ...stub,
+  });
 }
 
 export function asGitHubService(stub: {

@@ -20,11 +20,13 @@ export function pickerItemToCheckoutRequest(
   switch (item.kind) {
     case "branch":
       return { action: "branch-off", refName: item.name };
-    case "github-pr":
+    case "github-pr": {
+      const headRefName = item.item.headRefName?.trim();
       return {
         action: "checkout",
-        refName: item.item.headRefName ?? "",
+        ...(headRefName ? { refName: headRefName } : {}),
         githubPrNumber: item.item.number,
       };
+    }
   }
 }

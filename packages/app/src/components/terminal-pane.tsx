@@ -337,14 +337,14 @@ export function TerminalPane({
   }, [clearKeyboardRefitTimeouts]);
 
   useAnimatedReaction(
-    () => keyboardShift.value > 0,
+    () => isMobile && keyboardShift.value > 0,
     (next, prev) => {
       if (next === prev) {
         return;
       }
       runOnJS(pulseKeyboardRefits)();
     },
-    [pulseKeyboardRefits],
+    [isMobile, pulseKeyboardRefits],
   );
 
   useEffect(() => {

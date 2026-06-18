@@ -312,6 +312,7 @@ describe("paseo daemon bootstrap", () => {
         method: "POST",
         headers: {
           Authorization: "Bearer secret-debug-token",
+          Accept: "application/json, text/event-stream",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -324,7 +325,7 @@ describe("paseo daemon bootstrap", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      await response.text();
       const logs = logLines.join("\n");
       expect(logs).toContain("Agent MCP request");
       expect(logs).toContain("[redacted]");

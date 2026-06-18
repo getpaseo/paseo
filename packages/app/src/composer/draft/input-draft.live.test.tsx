@@ -215,6 +215,8 @@ describe("useAgentInputDraft live contract", () => {
       provider: "codex",
       cwd: "/repo",
       modeId: "auto",
+      model: "gpt-5.4",
+      thinkingOptionId: "high",
     });
 
     await act(async () => {

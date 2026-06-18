@@ -42,10 +42,27 @@ class WorkspaceStatus {
     archivedAt: null,
   };
 
+  // Second workspace sharing the SAME cwd as `workspace`. Created later so the
+  // deterministic-oldest fallback never attributes a stamped agent to it by cwd.
+  private readonly sameCwdWorkspace: PersistedWorkspaceRecord = {
+    workspaceId: "workspace-1-sibling",
+    projectId: this.project.projectId,
+    cwd: this.project.rootPath,
+    kind: "local_checkout",
+    displayName: "main-2",
+    createdAt: "2026-03-02T12:00:00.000Z",
+    updatedAt: "2026-03-02T12:00:00.000Z",
+    archivedAt: null,
+  };
+
   private readonly workspaces = [this.workspace];
 
   private readonly agents: AgentSnapshotPayload[] = [];
-  private readonly terminals: Array<{ cwd: string; activity: TerminalActivity | null }> = [];
+  private readonly terminals: Array<{
+    cwd: string;
+    workspaceId?: string;
+    activity: TerminalActivity | null;
+  }> = [];
   private readonly directory = new WorkspaceDirectory({
     logger: createTestLogger(),
     projectRegistry: { list: async () => [this.project] },
@@ -74,7 +91,26 @@ class WorkspaceStatus {
   });
 
   hasRootAgent(input: AgentState): void {
-    this.agents.push(createAgent({ ...input, cwd: this.workspace.cwd }));
+    this.agents.push(
+      createAgent({
+        ...input,
+        cwd: this.workspace.cwd,
+        workspaceId: this.workspace.workspaceId,
+      }),
+    );
+  }
+
+  hasSiblingWorkspaceSameCwd(): void {
+    this.workspaces.push(this.sameCwdWorkspace);
+  }
+
+  // A root agent owned by a specific workspace, even though both same-cwd
+  // workspaces share the directory. Ownership follows workspaceId, and status is
+  // computed per id: only the owning workspace reflects this agent's bucket.
+  hasStampedRootAgent(input: AgentState & { workspaceId: string }): void {
+    this.agents.push(
+      createAgent({ ...input, cwd: this.workspace.cwd, workspaceId: input.workspaceId }),
+    );
   }
 
   hasDelegatedAgent(input: AgentState): void {
@@ -82,6 +118,7 @@ class WorkspaceStatus {
       createAgent({
         ...input,
         cwd: this.workspace.cwd,
+        workspaceId: this.workspace.workspaceId,
         labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
       }),
     );
@@ -96,6 +133,7 @@ class WorkspaceStatus {
       createAgent({
         ...input,
         cwd: this.worktreeWorkspace.cwd,
+        workspaceId: this.worktreeWorkspace.workspaceId,
         labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
       }),
     );
@@ -120,13 +158,28 @@ class WorkspaceStatus {
   hasWorkingTerminal(changedAt: number): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "working", changedAt },
     });
   }
 
+  // A working terminal owned by a specific same-cwd workspace. Ownership follows
+  // workspaceId, and status is computed per id: only the owning workspace
+  // reflects this terminal's activity.
+  hasStampedWorkingTerminal(input: { workspaceId: string; changedAt: number }): void {
+    this.terminals.push({
+      cwd: this.workspace.cwd,
+      workspaceId: input.workspaceId,
+      activity: { state: "working", changedAt: input.changedAt },
+    });
+  }
+
+  // A terminal opened in a subdirectory still carries the owning workspace's id
+  // (stamped at creation); the subdir cwd is cosmetic, ownership is the id.
   hasWorkingTerminalInSubdirectory(changedAt: number): void {
     this.terminals.push({
       cwd: `${this.workspace.cwd}/packages/app`,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "working", changedAt },
     });
   }
@@ -134,13 +187,23 @@ class WorkspaceStatus {
   hasIdleTerminal(changedAt: number): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: { state: "idle", changedAt },
+    });
+  }
+
+  hasFinishedTerminal(changedAt: number): void {
+    this.terminals.push({
+      cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
+      activity: { state: "idle", attentionReason: "finished", changedAt },
     });
   }
 
   hasUnknownTerminal(): void {
     this.terminals.push({
       cwd: this.workspace.cwd,
+      workspaceId: this.workspace.workspaceId,
       activity: null,
     });
   }
@@ -166,12 +229,15 @@ interface AgentState {
   attentionReason?: AgentSnapshotPayload["attentionReason"];
 }
 
-function createAgent(input: AgentState & { cwd: string; labels?: Record<string, string> }) {
+function createAgent(
+  input: AgentState & { cwd: string; labels?: Record<string, string>; workspaceId?: string },
+) {
   const pendingPermissionCount = input.pendingPermissionCount ?? 0;
   return {
     id: input.id,
     provider: "codex",
     cwd: input.cwd,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     model: null,
     thinkingOptionId: null,
     effectiveThinkingOptionId: null,
@@ -229,6 +295,76 @@ describe("WorkspaceDirectory", () => {
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
   });
 
+  test("same-cwd workspaces attribute agent status only to the owner", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasStampedRootAgent({
+      id: "agent-a",
+      status: "running",
+      workspaceId: "workspace-1-sibling",
+    });
+
+    // The running agent belongs to the sibling; workspace-1 owns nothing active
+    // and stays done. Status never fans out across same-cwd workspaces.
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-1-sibling": "running",
+    });
+  });
+
+  test("same-cwd workspaces attribute agent attention only to the owner", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasStampedRootAgent({
+      id: "agent-a",
+      status: "idle",
+      pendingPermissionCount: 1,
+      workspaceId: "workspace-1-sibling",
+    });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-1-sibling": "needs_input",
+    });
+  });
+
+  test("each same-cwd workspace reflects only its own agent", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasStampedRootAgent({
+      id: "agent-a",
+      status: "running",
+      workspaceId: "workspace-1-sibling",
+    });
+    workspace.hasStampedRootAgent({
+      id: "agent-b",
+      status: "idle",
+      pendingPermissionCount: 1,
+      workspaceId: "workspace-1",
+    });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "needs_input",
+      "workspace-1-sibling": "running",
+    });
+  });
+
+  test("terminal status attributes only to the owning workspace", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.hasStampedWorkingTerminal({ workspaceId: "workspace-1-sibling", changedAt });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-1-sibling": "running",
+    });
+  });
+
   test("running delegated child contributes running to the parent workspace, not its worktree", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -258,6 +394,15 @@ describe("WorkspaceDirectory", () => {
     workspace.hasWorkingTerminalInSubdirectory(changedAt);
 
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("finished terminal contributes attention to workspace status", async () => {
+    const workspace = new WorkspaceStatus();
+    const changedAt = new Date(NOW).getTime();
+
+    workspace.hasFinishedTerminal(changedAt);
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("attention");
   });
 
   test("idle terminal contributes nothing to workspace status", async () => {
@@ -311,5 +456,99 @@ describe("WorkspaceDirectory", () => {
     expect(descriptor.status).toBe("running");
     // terminal timestamp (2027) is newer than agent updatedAt (NOW = 2026-03-01)
     expect(descriptor.statusEnteredAt).toBe("2027-01-01T00:00:00.000Z");
+  });
+});
+
+describe("WorkspaceDirectory empty projects", () => {
+  function makeDirectory(input: {
+    projects: PersistedProjectRecord[];
+    workspaces: PersistedWorkspaceRecord[];
+  }): WorkspaceDirectory {
+    return new WorkspaceDirectory({
+      logger: createTestLogger(),
+      projectRegistry: { list: async () => input.projects },
+      workspaceRegistry: { list: async () => input.workspaces },
+      listAgentPayloads: async () => [],
+      listTerminalActivityContributions: async () => [],
+      isProviderVisibleToClient: () => true,
+      buildWorkspaceDescriptor: async ({ workspace }) => ({
+        id: workspace.workspaceId,
+        projectId: workspace.projectId,
+        projectDisplayName: "project",
+        projectCustomName: null,
+        projectRootPath: "/workspace/project",
+        workspaceDirectory: workspace.cwd,
+        projectKind: "non_git",
+        workspaceKind: workspace.kind,
+        name: workspace.displayName,
+        archivingAt: null,
+        status: "done",
+        activityAt: null,
+        diffStat: null,
+        gitRuntime: null,
+        githubRuntime: null,
+      }),
+    });
+  }
+
+  function project(input: Partial<PersistedProjectRecord> & { projectId: string }) {
+    return {
+      rootPath: `/workspace/${input.projectId}`,
+      kind: "non_git",
+      displayName: input.projectId,
+      customName: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+      archivedAt: null,
+      ...input,
+    } satisfies PersistedProjectRecord;
+  }
+
+  test("surfaces a project with no active workspaces as an empty project", async () => {
+    const directory = makeDirectory({
+      projects: [project({ projectId: "empty", customName: "Renamed" })],
+      workspaces: [],
+    });
+
+    const result = await directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "r1",
+    });
+
+    expect(result.entries).toEqual([]);
+    expect(result.emptyProjects).toEqual([
+      {
+        projectId: "empty",
+        projectDisplayName: "Renamed",
+        projectCustomName: "Renamed",
+        projectRootPath: "/workspace/empty",
+        projectKind: "non_git",
+      },
+    ]);
+  });
+
+  test("excludes projects that still have an active workspace", async () => {
+    const directory = makeDirectory({
+      projects: [project({ projectId: "with-ws" }), project({ projectId: "empty" })],
+      workspaces: [
+        {
+          workspaceId: "ws-1",
+          projectId: "with-ws",
+          cwd: "/workspace/with-ws",
+          kind: "directory",
+          displayName: "main",
+          createdAt: NOW,
+          updatedAt: NOW,
+          archivedAt: null,
+        },
+      ],
+    });
+
+    const result = await directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "r1",
+    });
+
+    expect(result.emptyProjects.map((p) => p.projectId)).toEqual(["empty"]);
   });
 });

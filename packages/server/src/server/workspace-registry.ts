@@ -29,6 +29,30 @@ const PersistedWorkspaceRecordSchema = z.object({
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
   displayName: z.string(),
+  // User-set title layered over the derived displayName. In Model B the title is
+  // the workspace identity; branch/directory are backing metadata. Reconciliation
+  // never touches this. Null means "use the derived displayName".
+  title: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
+  // The worktree's git branch. Decoupled from displayName/title by construction:
+  // displayName holds the human name (title), branch holds the git branch. Only
+  // worktree workspaces carry a branch; directory/local_checkout leave it null.
+  branch: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
+  // The base branch the worktree was created from (normalized like worktree.json's
+  // baseRefName). Only worktree workspaces carry a base branch; checkout-branch
+  // worktrees and directory/local_checkout workspaces leave it null.
+  baseBranch: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -62,7 +86,7 @@ type RegistryRecord = PersistedProjectRecord | PersistedWorkspaceRecord;
 class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly filePath: string;
   private readonly logger: Logger;
-  private readonly schema: z.ZodType<TRecord, z.ZodTypeDef, unknown>;
+  private readonly schema: z.ZodType<TRecord, unknown>;
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
   private readonly cache = new Map<string, TRecord>();
@@ -71,7 +95,7 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   constructor(options: {
     filePath: string;
     logger: Logger;
-    schema: z.ZodType<TRecord, z.ZodTypeDef, unknown>;
+    schema: z.ZodType<TRecord, unknown>;
     getId: (record: TRecord) => string;
     component: string;
   }) {
@@ -227,12 +251,32 @@ export function createPersistedWorkspaceRecord(input: {
   cwd: string;
   kind: PersistedWorkspaceKind;
   displayName: string;
+  title?: string | null;
+  branch?: string | null;
+  baseBranch?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
+    title: input.title ?? null,
+    branch: input.branch ?? null,
+    baseBranch: input.baseBranch ?? null,
     archivedAt: input.archivedAt ?? null,
   });
+}
+
+// The single workspace-name rule: the title always wins; otherwise fall back to
+// the freshest available derived display name (a live branch snapshot when the
+// caller has one, the persisted displayName otherwise).
+export function resolveWorkspaceName(input: {
+  title: string | null;
+  derivedDisplayName: string;
+}): string {
+  return input.title ?? input.derivedDisplayName;
+}
+
+export function resolveWorkspaceDisplayName(record: PersistedWorkspaceRecord): string {
+  return resolveWorkspaceName({ title: record.title, derivedDisplayName: record.displayName });
 }

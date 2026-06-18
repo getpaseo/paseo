@@ -520,7 +520,6 @@ function SidebarContent({
             serverId={serverId}
             workspaceId={workspaceId}
             cwd={workspaceRoot}
-            hideHeaderRow={!isMobile}
             enabled={isOpen}
           />
         )}

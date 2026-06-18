@@ -7,7 +7,6 @@ import {
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
-  selectResolveWorkspaceIdByCwd,
   selectWorkspace,
   selectWorkspaceDirectory,
   selectWorkspaceExists,
@@ -131,17 +130,6 @@ export function useHasWorkspaces(serverId: string | null): boolean {
   return useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectHasWorkspaces(state, serverId),
-    workspaceEqualityFns.identity,
-  );
-}
-
-export function useResolveWorkspaceIdByCwd(
-  serverId: string | null,
-  cwd: string | null | undefined,
-): string | null {
-  return useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => selectResolveWorkspaceIdByCwd(state, serverId, cwd),
     workspaceEqualityFns.identity,
   );
 }

@@ -6,8 +6,8 @@ import { join } from "node:path";
 // Verbatim port of the Claude Agent SDK's project-directory encoding so
 // paseo computes the same `~/.claude/projects/<dir>` path the SDK does.
 // The SDK ships only as a precompiled bundle; grep the JS source at
-// node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs for `function f1`,
-// `function i4`, `function tB`, `S0=200`.
+// node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs for `function Ar`,
+// `function So`, `async function wn`, `function Dy`, `Ni=200`.
 
 const PROJECT_DIR_LENGTH_CAP = 200;
 
@@ -32,18 +32,22 @@ export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOpti
 
 async function canonicalize(input: string): Promise<string> {
   try {
-    return (await realpath(input)).normalize("NFC");
+    return normalizeProjectPath(await realpath(input));
   } catch {
-    return input.normalize("NFC");
+    return normalizeProjectPath(input);
   }
 }
 
 function canonicalizeSync(input: string): string {
   try {
-    return realpathSync.native(input).normalize("NFC");
+    return normalizeProjectPath(realpathSync.native(input));
   } catch {
-    return input.normalize("NFC");
+    return normalizeProjectPath(input);
   }
+}
+
+function normalizeProjectPath(input: string): string {
+  return process.platform === "darwin" ? input.normalize("NFC") : input;
 }
 
 function encode(input: string): string {

@@ -52,6 +52,22 @@ describe("resolveEffectiveComposerModelId", () => {
       }),
     ).toBe("");
   });
+
+  it("falls back to the provider default model when no model is selected", () => {
+    expect(
+      resolveEffectiveComposerModelId({
+        provider: "codex",
+        modelId: "",
+        modeId: "",
+        thinkingOptionId: "",
+        availableModels: [
+          { provider: "codex", id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+          { provider: "codex", id: "gpt-5.4", label: "gpt-5.4", isDefault: true },
+        ],
+        modeOptions: [],
+      }),
+    ).toBe("gpt-5.4");
+  });
 });
 
 describe("resolveEffectiveComposerThinkingOptionId", () => {

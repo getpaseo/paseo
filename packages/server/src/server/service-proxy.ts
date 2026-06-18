@@ -360,7 +360,7 @@ export class ServiceProxyRouteCollisionError extends Error {
     public readonly incoming: Pick<ServiceProxyRouteEntry, "workspaceId" | "scriptName">,
   ) {
     super(
-      `Service proxy hostname collision for ${hostname}: ${existing.workspaceId}/${existing.scriptName} already owns it`,
+      `Another workspace is already serving "${incoming.scriptName}" at ${hostname}. Stop that service or run this one on a different branch to free the address.`,
     );
     this.name = "ServiceProxyRouteCollisionError";
   }

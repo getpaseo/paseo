@@ -12,14 +12,8 @@ import { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb as platformIsWeb } from "@/constants/platform";
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Settings,
-  Star,
-} from "lucide-react-native";
+import { AlertTriangle, ChevronRight, Search, Settings, Star } from "lucide-react-native";
+import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { SheetHeader } from "@/components/adaptive-modal-sheet";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
@@ -784,35 +778,43 @@ export function CombinedModelSelector({
 
   return (
     <>
-      <Pressable
-        ref={anchorRef}
-        collapsable={false}
-        disabled={disabled}
-        onPress={handleTriggerPress}
-        style={triggerStyle}
-        accessibilityRole="button"
-        accessibilityLabel={t("modelSelector.selectedModel", { model: selectedModelLabel })}
-        testID="combined-model-selector"
-      >
-        {renderTrigger ? (
-          renderTrigger({
+      {renderTrigger ? (
+        <Pressable
+          ref={anchorRef}
+          collapsable={false}
+          disabled={disabled}
+          onPress={handleTriggerPress}
+          style={triggerStyle}
+          accessibilityRole="button"
+          accessibilityLabel={t("modelSelector.selectedModel", { model: selectedModelLabel })}
+          testID="combined-model-selector"
+        >
+          {renderTrigger({
             selectedModelLabel: triggerLabel,
             onPress: handleTriggerPress,
             disabled,
             isOpen,
-          })
-        ) : (
-          <>
-            {ProviderIcon ? (
-              <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-            ) : null}
-            <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-              {triggerLabel}
-            </Text>
-            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </>
-        )}
-      </Pressable>
+          })}
+        </Pressable>
+      ) : (
+        <ComboboxTrigger
+          ref={anchorRef}
+          collapsable={false}
+          disabled={disabled}
+          onPress={handleTriggerPress}
+          style={triggerStyle}
+          accessibilityRole="button"
+          accessibilityLabel={t("modelSelector.selectedModel", { model: selectedModelLabel })}
+          testID="combined-model-selector"
+        >
+          {ProviderIcon ? (
+            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          ) : null}
+          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+            {triggerLabel}
+          </Text>
+        </ComboboxTrigger>
+      )}
       <Combobox
         options={EMPTY_COMBOBOX_OPTIONS}
         value=""

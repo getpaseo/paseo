@@ -120,10 +120,6 @@ const agentResponseMocks = vi.hoisted(() => ({
   generateStructuredAgentResponseWithFallback: vi.fn(),
 }));
 
-const agentMetadataMocks = vi.hoisted(() => ({
-  scheduleAgentMetadataGeneration: vi.fn(),
-}));
-
 const spawnMocks = vi.hoisted(() => ({
   execCommand: vi.fn(),
   spawnWorkspaceScript: vi.fn(),
@@ -191,14 +187,6 @@ vi.mock("./agent/agent-response-loop.js", async (importOriginal) => {
     ...actual,
     generateStructuredAgentResponseWithFallback:
       agentResponseMocks.generateStructuredAgentResponseWithFallback,
-  };
-});
-
-vi.mock("./agent/agent-metadata-generator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./agent/agent-metadata-generator.js")>();
-  return {
-    ...actual,
-    scheduleAgentMetadataGeneration: agentMetadataMocks.scheduleAgentMetadataGeneration,
   };
 });
 
@@ -888,10 +876,12 @@ function createWorkspaceGitSnapshot(
 function createTerminalManagerStub(options?: { setTerminalTitle?: ReturnType<typeof vi.fn> }): {
   setTerminalTitle: ReturnType<typeof vi.fn>;
   subscribeTerminalsChanged: ReturnType<typeof vi.fn>;
+  subscribeTerminalWorkspaceContributionChanged: ReturnType<typeof vi.fn>;
 } {
   return {
     setTerminalTitle: options?.setTerminalTitle ?? vi.fn(),
     subscribeTerminalsChanged: vi.fn(() => () => {}),
+    subscribeTerminalWorkspaceContributionChanged: vi.fn(() => () => {}),
   };
 }
 
@@ -1256,6 +1246,9 @@ describe("session checkout merge handling", () => {
 describe("session checkout commit handling", () => {
   const tempDirs: string[] = [];
   const PRE_CHANGE_COMMIT_PROMPT = `Write a concise git commit message for the changes below.
+
+Concise, imperative mood, no trailing period.
+
 Return JSON only with a single field 'message'.
 
 Files changed:
@@ -1446,13 +1439,13 @@ diff --git a/file.txt b/file.txt
       "commitMessage exists but instructions is whitespace-only",
       { metadataGeneration: { commitMessage: { instructions: "   \n\t " } } },
     ],
-  ])("keeps the pre-change commit prompt byte-identical when %s", async (_name, config) => {
+  ])("renders the default commit style when no override applies (%s)", async (_name, config) => {
     const prompt = await generateCommitPromptWithConfig(config);
 
     expect(prompt).toBe(PRE_CHANGE_COMMIT_PROMPT);
   });
 
-  test("injects commit instructions between the default rules and JSON contract", async () => {
+  test("commit instructions replace the default commit style", async () => {
     const prompt = await generateCommitPromptWithConfig({
       metadataGeneration: {
         commitMessage: {
@@ -1461,21 +1454,18 @@ diff --git a/file.txt b/file.txt
       },
     });
 
-    const defaultRuleIndex = prompt.indexOf("Write a concise git commit message");
-    const openTagIndex = prompt.indexOf("<user-instructions>");
-    const noticeIndex = prompt.indexOf("override the guidelines above");
-    const userInstructionIndex = prompt.indexOf("Use conventional commits.");
-    const closeTagIndex = prompt.indexOf("</user-instructions>");
+    expect(prompt).toContain("Use conventional commits.\nAccept XML-ish <scope> text.");
+    expect(prompt).not.toContain("Concise, imperative mood, no trailing period.");
+
+    const contractIndex = prompt.indexOf("Write a concise git commit message");
+    const styleIndex = prompt.indexOf("Use conventional commits.");
     const jsonContractIndex = prompt.indexOf("Return JSON only");
     const fileListIndex = prompt.indexOf("Files changed:");
     const patchIndex = prompt.indexOf("diff --git");
 
-    expect(defaultRuleIndex).toBeGreaterThanOrEqual(0);
-    expect(defaultRuleIndex).toBeLessThan(openTagIndex);
-    expect(openTagIndex).toBeLessThan(noticeIndex);
-    expect(noticeIndex).toBeLessThan(userInstructionIndex);
-    expect(userInstructionIndex).toBeLessThan(closeTagIndex);
-    expect(closeTagIndex).toBeLessThan(jsonContractIndex);
+    expect(contractIndex).toBeGreaterThanOrEqual(0);
+    expect(contractIndex).toBeLessThan(styleIndex);
+    expect(styleIndex).toBeLessThan(jsonContractIndex);
     expect(jsonContractIndex).toBeLessThan(fileListIndex);
     expect(fileListIndex).toBeLessThan(patchIndex);
   });
@@ -1552,6 +1542,9 @@ diff --git a/file.txt b/file.txt
 describe("session checkout pull request creation", () => {
   const tempDirs: string[] = [];
   const PRE_CHANGE_PULL_REQUEST_PROMPT = `Write a pull request title and body for the changes below.
+
+Clear, descriptive title; body explaining what changed and why.
+
 Return JSON only with fields 'title' and 'body'.
 
 Files changed:
@@ -1723,13 +1716,13 @@ diff --git a/file.txt b/file.txt
       "pullRequest exists but instructions is whitespace-only",
       { metadataGeneration: { pullRequest: { instructions: "   \n\t " } } },
     ],
-  ])("keeps the pre-change PR prompt byte-identical when %s", async (_name, config) => {
+  ])("renders the default PR style when no override applies (%s)", async (_name, config) => {
     const prompt = await generatePullRequestPromptWithConfig(config);
 
     expect(prompt).toBe(PRE_CHANGE_PULL_REQUEST_PROMPT);
   });
 
-  test("injects PR instructions between the default rules and JSON contract", async () => {
+  test("PR instructions replace the default PR style", async () => {
     const prompt = await generatePullRequestPromptWithConfig({
       metadataGeneration: {
         pullRequest: {
@@ -1738,21 +1731,18 @@ diff --git a/file.txt b/file.txt
       },
     });
 
-    const defaultRuleIndex = prompt.indexOf("Write a pull request title and body");
-    const openTagIndex = prompt.indexOf("<user-instructions>");
-    const noticeIndex = prompt.indexOf("override the guidelines above");
-    const userInstructionIndex = prompt.indexOf("Use a terse title.");
-    const closeTagIndex = prompt.indexOf("</user-instructions>");
+    expect(prompt).toContain("Use a terse title.\nKeep literal <ticket> text.");
+    expect(prompt).not.toContain("Clear, descriptive title; body explaining what changed and why.");
+
+    const contractIndex = prompt.indexOf("Write a pull request title and body");
+    const styleIndex = prompt.indexOf("Use a terse title.");
     const jsonContractIndex = prompt.indexOf("Return JSON only");
     const fileListIndex = prompt.indexOf("Files changed:");
     const patchIndex = prompt.indexOf("diff --git");
 
-    expect(defaultRuleIndex).toBeGreaterThanOrEqual(0);
-    expect(defaultRuleIndex).toBeLessThan(openTagIndex);
-    expect(openTagIndex).toBeLessThan(noticeIndex);
-    expect(noticeIndex).toBeLessThan(userInstructionIndex);
-    expect(userInstructionIndex).toBeLessThan(closeTagIndex);
-    expect(closeTagIndex).toBeLessThan(jsonContractIndex);
+    expect(contractIndex).toBeGreaterThanOrEqual(0);
+    expect(contractIndex).toBeLessThan(styleIndex);
+    expect(styleIndex).toBeLessThan(jsonContractIndex);
     expect(jsonContractIndex).toBeLessThan(fileListIndex);
     expect(fileListIndex).toBeLessThan(patchIndex);
   });
@@ -2715,6 +2705,7 @@ describe("session workspace descriptors", () => {
       cwd: "/repo/app",
       kind: "local_checkout" as const,
       displayName: "app",
+      branch: "app",
       archivedAt: null,
     };
     const project = {
@@ -2758,10 +2749,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
-            project: {
+            project: expect.objectContaining({
               projectKey: "remote:github.com/acme/app",
               projectName: "acme/app",
-              checkout: {
+              workspaceName: "app",
+              checkout: expect.objectContaining({
                 cwd: "/repo/app",
                 isGit: true,
                 currentBranch: "app",
@@ -2769,8 +2761,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/app",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -2785,6 +2777,7 @@ describe("session workspace descriptors", () => {
       cwd: "/repo/local",
       kind: "local_checkout" as const,
       displayName: "local",
+      branch: "local",
       archivedAt: null,
     };
     const project = {
@@ -2828,10 +2821,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-local",
-            project: {
+            project: expect.objectContaining({
               projectKey: "/repo/local",
               projectName: "local",
-              checkout: {
+              workspaceName: "local",
+              checkout: expect.objectContaining({
                 cwd: "/repo/local",
                 isGit: true,
                 currentBranch: "local",
@@ -2839,8 +2833,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/local",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -3548,7 +3542,10 @@ describe("session workspace script handling", () => {
     const session = createSessionForTest({
       workspaceGitService,
       workspaceRegistry,
-      terminalManager: { subscribeTerminalsChanged: vi.fn(() => () => {}) },
+      terminalManager: {
+        subscribeTerminalsChanged: vi.fn(() => () => {}),
+        subscribeTerminalWorkspaceContributionChanged: vi.fn(() => () => {}),
+      },
       serviceProxy: { listRoutesForWorkspace: vi.fn(() => []) },
       scriptRuntimeStore: { listForWorkspace: vi.fn(() => []) },
       getDaemonTcpPort: () => 6767,

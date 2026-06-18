@@ -26,7 +26,6 @@ import type { TFunction } from "i18next";
 import { Buffer } from "buffer";
 import {
   ArrowLeft,
-  ChevronDown,
   Monitor,
   Settings,
   Palette,
@@ -43,6 +42,8 @@ import {
   FolderGit2,
   SquareTerminal,
 } from "lucide-react-native";
+import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
+import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { ScreenTitle } from "@/components/headers/screen-title";
@@ -78,12 +79,7 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
@@ -312,10 +308,8 @@ function GeneralSection({
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
 }: GeneralSectionProps) {
-  const { theme } = useUnistyles();
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
-  const iconColor = theme.colors.foregroundMuted;
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
   const sendBehaviorDescriptionKey =
     settings.sendBehavior === "interrupt"
@@ -377,14 +371,13 @@ function GeneralSection({
             <Text style={settingsStyles.rowHint}>{t("settings.general.language.description")}</Text>
           </View>
           <DropdownMenu>
-            <DropdownMenuTrigger
+            <DropdownTrigger
               accessibilityRole="button"
               accessibilityLabel={selectedLanguageLabel}
               style={themeTriggerStyle}
             >
               <Text style={styles.themeTriggerText}>{selectedLanguageLabel}</Text>
-              <ChevronDown size={theme.iconSize.sm} color={iconColor} />
-            </DropdownMenuTrigger>
+            </DropdownTrigger>
             <DropdownMenuContent side="bottom" align="end" width={220}>
               {LANGUAGE_OPTIONS.map((option) => (
                 <LanguageMenuItem
@@ -407,12 +400,11 @@ function GeneralSection({
               </Text>
             </View>
             <DropdownMenu>
-              <DropdownMenuTrigger style={themeTriggerStyle}>
+              <DropdownTrigger style={themeTriggerStyle}>
                 <Text style={styles.themeTriggerText}>
                   {getServiceUrlBehaviorLabel(t, settings.serviceUrlBehavior)}
                 </Text>
-                <ChevronDown size={theme.iconSize.sm} color={iconColor} />
-              </DropdownMenuTrigger>
+              </DropdownTrigger>
               <DropdownMenuContent side="bottom" align="end" width={200}>
                 {SERVICE_URL_BEHAVIOR_VALUES.map((value) => (
                   <ServiceUrlBehaviorMenuItem
@@ -1067,7 +1059,7 @@ function HostPicker({
 
   return (
     <>
-      <Pressable
+      <ComboboxTrigger
         ref={triggerRef}
         style={triggerStyle}
         onPress={handleOpen}
@@ -1079,8 +1071,7 @@ function HostPicker({
         <Text style={sidebarStyles.pickerTriggerLabel} numberOfLines={1}>
           {activeHost?.label ?? t("settings.groups.host")}
         </Text>
-        <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      </Pressable>
+      </ComboboxTrigger>
       <Combobox
         options={options}
         value={activeServerId ?? ""}

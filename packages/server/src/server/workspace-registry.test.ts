@@ -10,7 +10,38 @@ import {
   createPersistedWorkspaceRecord,
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
+  resolveWorkspaceDisplayName,
+  resolveWorkspaceName,
 } from "./workspace-registry.js";
+
+describe("resolveWorkspaceName", () => {
+  test("prefers the user-set title over the derived display name", () => {
+    expect(
+      resolveWorkspaceName({ title: "Payments work", derivedDisplayName: "feature/payments" }),
+    ).toBe("Payments work");
+  });
+
+  test("falls back to the derived display name when there is no title", () => {
+    expect(resolveWorkspaceName({ title: null, derivedDisplayName: "feature/payments" })).toBe(
+      "feature/payments",
+    );
+  });
+
+  test("resolveWorkspaceDisplayName applies the same rule over the persisted record", () => {
+    const record = createPersistedWorkspaceRecord({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      cwd: "/tmp/repo",
+      kind: "local_checkout",
+      displayName: "main",
+      title: "Renamed",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    expect(resolveWorkspaceDisplayName(record)).toBe("Renamed");
+    expect(resolveWorkspaceDisplayName({ ...record, title: null })).toBe("main");
+  });
+});
 
 describe("workspace registries", () => {
   let tmpDir: string;

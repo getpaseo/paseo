@@ -6,14 +6,21 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import type { GitHubService } from "../services/github-service.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
-import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+} from "./workspace-registry.js";
 import {
   attemptFirstAgentBranchAutoName,
+  createLocalCheckoutWorkspace,
   createPaseoWorktree,
   type CreatePaseoWorktreeDeps,
 } from "./paseo-worktree-service.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
+import { createWorktree } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
+import { existsSync } from "node:fs";
 
 const cleanupPaths: string[] = [];
 
@@ -60,6 +67,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
+  expect(result.workspace.baseBranch).toBe("main");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   expect(events).toEqual([
     "project:remote:github.com/acme/repo",
@@ -138,8 +146,24 @@ test.skipIf(isPlatform("win32"))(
     expect(second.created).toBe(false);
     expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
     expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
+    // Creation never dedupes by directory: the same worktree path yields a
+    // distinct workspace record on the second call.
+    expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
+
+test("creates a distinct local checkout workspace for the same cwd on every call", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const deps = createDeps();
+
+  const first = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
+  const second = await createLocalCheckoutWorkspace({ cwd: repoDir }, deps);
+
+  expect(first.cwd).toBe(second.cwd);
+  expect(first.workspaceId).not.toBe(second.workspaceId);
+  expect(deps.workspaces.size).toBe(2);
+});
 
 test("renames an eligible unnamed branch-off worktree once on first agent context", async () => {
   const { repoDir, tempDir } = createGitRepo();
@@ -404,6 +428,9 @@ test("does not mark checkout branch worktrees as eligible for first-agent rename
     version: 1,
     baseRefName: "dev",
   });
+  // A checkout-branch worktree has no distinct base, so the workspace records a
+  // null baseBranch even though worktree.json's baseRefName is the branch itself.
+  expect(created.workspace.baseBranch).toBe(null);
   await expect(
     attemptFirstAgentBranchAutoName({
       cwd: created.worktree.worktreePath,
@@ -478,7 +505,181 @@ test("does not mutate registries or broadcast when core worktree creation fails"
   expect(deps.workspaces.size).toBe(0);
 });
 
+// Worktree restore (Unit 3): recreate a deleted Paseo-owned worktree from its
+// kept branch via createWorktree's checkout-branch source.
+test.skipIf(isPlatform("win32"))(
+  "recreates a deleted worktree on the same kept branch without creating a suffixed branch",
+  async () => {
+    const { repoDir, tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+
+    execFileSync("git", ["branch", "restore-me"], { cwd: repoDir, stdio: "pipe" });
+
+    const created = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "restore-me",
+      source: { kind: "checkout-branch", branchName: "restore-me" },
+      runSetup: false,
+      paseoHome,
+    });
+    expect(existsSync(created.worktreePath)).toBe(true);
+
+    execFileSync("git", ["worktree", "remove", created.worktreePath, "--force"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    expect(existsSync(created.worktreePath)).toBe(false);
+
+    const recreated = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "restore-me",
+      source: { kind: "checkout-branch", branchName: "restore-me" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(recreated.worktreePath).toBe(created.worktreePath);
+    expect(existsSync(recreated.worktreePath)).toBe(true);
+    expect(
+      execFileSync("git", ["branch", "--show-current"], {
+        cwd: recreated.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim(),
+    ).toBe("restore-me");
+    const branches = execFileSync("git", ["branch", "--list", "restore-me*"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    })
+      .toString()
+      .split("\n")
+      .map((line) => line.replace(/^[*+ ]+/, "").trim())
+      .filter(Boolean);
+    expect(branches).toEqual(["restore-me"]);
+  },
+);
+
+// The default archive path (scope "workspace", worktreePath only) resolves
+// repoRoot=null, so deletePaseoWorktree's `git worktree remove`/`prune` is
+// skipped: the directory is rm-ed but the admin registration survives, pinning
+// the branch as "already checked out". Restore must self-heal by pruning the
+// stale registration before recreating, regardless of how it was archived.
+test.skipIf(isPlatform("win32"))(
+  "recreates a worktree whose dir was rm-ed without git worktree remove (stale registration)",
+  async () => {
+    const { repoDir, tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+
+    execFileSync("git", ["branch", "restore-me"], { cwd: repoDir, stdio: "pipe" });
+
+    const created = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "restore-me",
+      source: { kind: "checkout-branch", branchName: "restore-me" },
+      runSetup: false,
+      paseoHome,
+    });
+    expect(existsSync(created.worktreePath)).toBe(true);
+
+    // Simulate the default-archive teardown: remove the working directory but
+    // leave the git worktree registration intact.
+    rmSync(created.worktreePath, { recursive: true, force: true });
+    expect(existsSync(created.worktreePath)).toBe(false);
+
+    const worktreeList = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    }).toString();
+    expect(worktreeList).toContain(created.worktreePath);
+
+    // Recreating without pruning fails with the stale registration pinning the
+    // branch — this is the case restore must heal.
+    await expect(
+      createWorktree({
+        cwd: repoDir,
+        worktreeSlug: "restore-me",
+        source: { kind: "checkout-branch", branchName: "restore-me" },
+        runSetup: false,
+        paseoHome,
+      }),
+    ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
+
+    // The restore-side prune frees the stale registration; recreate then succeeds.
+    execFileSync("git", ["worktree", "prune"], { cwd: repoDir, stdio: "pipe" });
+
+    const recreated = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "restore-me",
+      source: { kind: "checkout-branch", branchName: "restore-me" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(recreated.worktreePath).toBe(created.worktreePath);
+    expect(existsSync(recreated.worktreePath)).toBe(true);
+    expect(
+      execFileSync("git", ["branch", "--show-current"], {
+        cwd: recreated.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim(),
+    ).toBe("restore-me");
+  },
+);
+
+test.skipIf(isPlatform("win32"))(
+  "rejects with UnknownBranchError when the kept branch no longer exists",
+  async () => {
+    const { repoDir, tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+
+    await expect(
+      createWorktree({
+        cwd: repoDir,
+        worktreeSlug: "gone-branch",
+        source: { kind: "checkout-branch", branchName: "gone-branch" },
+        runSetup: false,
+        paseoHome: path.join(tempDir, ".paseo"),
+      }),
+    ).rejects.toMatchObject({ name: "UnknownBranchError" });
+  },
+);
+
+test.skipIf(isPlatform("win32"))(
+  "rejects with BranchAlreadyCheckedOutError when the kept branch is checked out elsewhere",
+  async () => {
+    const { repoDir, tempDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+
+    execFileSync("git", ["branch", "busy-branch"], { cwd: repoDir, stdio: "pipe" });
+    const first = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "busy-branch",
+      source: { kind: "checkout-branch", branchName: "busy-branch" },
+      runSetup: false,
+      paseoHome,
+    });
+    expect(existsSync(first.worktreePath)).toBe(true);
+
+    await expect(
+      createWorktree({
+        cwd: repoDir,
+        worktreeSlug: "busy-branch-again",
+        source: { kind: "checkout-branch", branchName: "busy-branch" },
+        runSetup: false,
+        paseoHome,
+      }),
+    ).rejects.toMatchObject({ name: "BranchAlreadyCheckedOutError" });
+  },
+);
+
 interface TestDeps extends CreatePaseoWorktreeDeps {
+  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -498,6 +699,7 @@ function createDeps(options?: {
     workspaces,
     projectRegistry: {
       get: async (projectId) => projects.get(projectId) ?? null,
+      list: async () => Array.from(projects.values()),
       upsert: async (record) => {
         events.push(`project:${record.projectId}`);
         projects.set(record.projectId, record);
@@ -583,6 +785,15 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
       unsubscribe: () => {},
     }),
     peekSnapshot: (cwd) => createWorkspaceGitSnapshot(cwd),
+    getCheckout: async (cwd) => ({
+      cwd,
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    }),
     getSnapshot: async (cwd) => createWorkspaceGitSnapshot(cwd),
     resolveRepoRoot: async (cwd) => {
       try {

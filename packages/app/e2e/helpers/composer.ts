@@ -2,7 +2,8 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
-import { connectWorkspaceSetupClient, openHomeWithProject } from "./workspace-setup";
+import { gotoAppShell } from "./app";
+import { connectWorkspaceSetupClient } from "./workspace-setup";
 import { selectWorkspaceInSidebar } from "./sidebar";
 import { getServerId } from "./server-id";
 import { waitForTabBar } from "./launcher";
@@ -164,6 +165,7 @@ export async function startRunningMockAgent(
   const agent = await client.createAgent({
     provider: "mock",
     cwd: repo.path,
+    workspaceId: opened.workspace.id,
     model: opts.model,
   });
   const agentUrl = `${buildHostWorkspaceRoute(serverId, opened.workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
@@ -188,7 +190,7 @@ export async function openGithubWorkspace(
   const client = await connectWorkspaceSetupClient();
   const opened = await client.openProject(repoPath);
   if (!opened.workspace) throw new Error(opened.error ?? `Failed to open project ${repoPath}`);
-  await openHomeWithProject(page, repoPath);
+  await gotoAppShell(page);
   await selectWorkspaceInSidebar(page, opened.workspace.id);
   await waitForTabBar(page);
   return { cleanup: () => client.close().catch(() => undefined) };

@@ -7,14 +7,7 @@ import type {
   ManagedImportableProviderSession,
 } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
-import type {
-  AgentPersistenceHandle,
-  AgentProvider,
-  AgentTimelineItem,
-} from "./agent-sdk-types.js";
-import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
-import type { StructuredGenerationDaemonConfig } from "./structured-generation-providers.js";
-import { resolveCreateAgentTitles } from "./create-agent-title.js";
+import type { AgentPersistenceHandle, AgentProvider } from "./agent-sdk-types.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
 import type {
@@ -22,7 +15,6 @@ import type {
   ImportAgentRequestMessageSchema,
   RecentProviderSessionDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import type { WorkspaceGitService } from "../workspace-git-service.js";
 import { createRealpathAwarePathMatcher } from "../../utils/path.js";
 
 type ImportAgentRequestMessage = z.infer<typeof ImportAgentRequestMessageSchema>;
@@ -62,16 +54,10 @@ export interface ListImportableProviderSessionsResult {
 
 export interface ImportProviderSessionInput {
   request: NormalizedImportAgentRequest;
+  workspaceId: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
-  daemonConfig?: StructuredGenerationDaemonConfig | null;
-  paseoHome?: string;
   logger: Logger;
-  deps?: {
-    scheduleAgentMetadataGeneration?: typeof scheduleAgentMetadataGeneration;
-  };
 }
 
 export interface ImportProviderSessionResult {
@@ -163,20 +149,10 @@ export async function importProviderSession(
     provider,
     providerHandleId,
     cwd,
+    workspaceId: input.workspaceId,
     labels,
   });
   await unarchiveAgentState(input.agentStorage, input.agentManager, snapshot.id);
-  scheduleImportedAgentMetadata({
-    snapshot,
-    agentManager: input.agentManager,
-    workspaceGitService: input.workspaceGitService,
-    providerSnapshotManager: input.providerSnapshotManager,
-    daemonConfig: input.daemonConfig,
-    paseoHome: input.paseoHome,
-    logger: input.logger,
-    scheduleAgentMetadataGeneration:
-      input.deps?.scheduleAgentMetadataGeneration ?? scheduleAgentMetadataGeneration,
-  });
 
   return {
     snapshot,
@@ -200,48 +176,6 @@ async function unarchiveAgentByHandle(
     return;
   }
   await unarchiveAgentState(agentStorage, agentManager, matched.id);
-}
-
-function scheduleImportedAgentMetadata(input: {
-  snapshot: ManagedAgent;
-  agentManager: AgentManager;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
-  daemonConfig?: StructuredGenerationDaemonConfig | null;
-  paseoHome?: string;
-  logger: Logger;
-  scheduleAgentMetadataGeneration: typeof scheduleAgentMetadataGeneration;
-}): void {
-  const initialPrompt = getFirstUserMessageText(input.agentManager.getTimeline(input.snapshot.id));
-  if (!initialPrompt) {
-    return;
-  }
-
-  const { explicitTitle } = resolveCreateAgentTitles({
-    configTitle: input.snapshot.config.title,
-    initialPrompt,
-  });
-
-  input.scheduleAgentMetadataGeneration({
-    agentManager: input.agentManager,
-    agentId: input.snapshot.id,
-    cwd: input.snapshot.cwd,
-    workspaceGitService: input.workspaceGitService,
-    providerSnapshotManager: input.providerSnapshotManager,
-    daemonConfig: input.daemonConfig,
-    currentSelection: {
-      provider: input.snapshot.provider,
-      model: input.snapshot.runtimeInfo?.model ?? input.snapshot.config.model,
-      thinkingOptionId:
-        input.snapshot.runtimeInfo?.thinkingOptionId ??
-        input.snapshot.config.thinkingOptionId ??
-        null,
-    },
-    initialPrompt,
-    explicitTitle,
-    paseoHome: input.paseoHome,
-    logger: input.logger,
-  });
 }
 
 function parseRecentProviderSessionsSince(since: string | undefined): number | null {
@@ -269,19 +203,6 @@ function buildImportPersistenceHandle(input: {
       cwd: input.cwd,
     },
   };
-}
-
-function getFirstUserMessageText(timeline: readonly AgentTimelineItem[]): string | null {
-  for (const item of timeline) {
-    if (item.type !== "user_message") {
-      continue;
-    }
-    const text = item.text.trim();
-    if (text) {
-      return text;
-    }
-  }
-  return null;
 }
 
 async function collectImportedProviderSessionHandles(

@@ -52,6 +52,13 @@ linux:
     - deb
     - rpm
     - tar.gz
+appImage:
+  # Keep the AppImage filename stable across versions (no ${version}) so
+  # electron-updater overwrites the file in place instead of renaming it to a new
+  # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and
+  # dangles the ~/.local/bin/paseo CLI symlink, which points at $APPIMAGE. The
+  # version stays discoverable via the release tag and the in-app version.
+  artifactName: "Paseo-${arch}.${ext}"
 win:
   artifactName: "Paseo-Setup-${version}-${arch}.${ext}"
   icon: assets/icon.ico

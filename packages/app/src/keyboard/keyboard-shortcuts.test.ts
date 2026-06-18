@@ -3,6 +3,7 @@ import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
   getBindingIdForAction,
+  getWorkspaceIndexJumpModifierKey,
   resolveKeyboardShortcut,
   type ChordState,
   type KeyboardShortcutContext,
@@ -127,6 +128,18 @@ describe("keyboard-shortcuts", () => {
       event: { key: "O", code: "KeyO", metaKey: true, shiftKey: true },
       context: { isMac: true },
       action: "agent.new",
+    },
+    {
+      name: "matches Cmd+N to create new workspace on mac",
+      event: { key: "n", code: "KeyN", metaKey: true },
+      context: { isMac: true, commandCenterOpen: false },
+      action: "workspace.new",
+    },
+    {
+      name: "matches Ctrl+N to create new workspace on non-mac",
+      event: { key: "n", code: "KeyN", ctrlKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "workspace.new",
     },
     {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",
@@ -564,6 +577,7 @@ describe("keyboard-shortcut help sections", () => {
       context: { isMac: true, isDesktop: true },
       expectedKeys: {
         "new-agent": ["mod", "shift", "O"],
+        "new-workspace": ["mod", "N"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
@@ -623,5 +637,20 @@ describe("keyboard-shortcut help sections", () => {
     expect(
       getBindingIdForAction("message-input-queue", { isMac: true, isDesktop: true }),
     ).toBeNull();
+  });
+});
+
+describe("getWorkspaceIndexJumpModifierKey", () => {
+  it("uses Alt on web, regardless of OS", () => {
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: true, isDesktop: false })).toBe("Alt");
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: false, isDesktop: false })).toBe("Alt");
+  });
+
+  it("uses Cmd (Meta) on desktop Mac, not Control or Alt", () => {
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: true, isDesktop: true })).toBe("Meta");
+  });
+
+  it("uses Ctrl on desktop non-Mac, not Meta or Alt", () => {
+    expect(getWorkspaceIndexJumpModifierKey({ isMac: false, isDesktop: true })).toBe("Control");
   });
 });

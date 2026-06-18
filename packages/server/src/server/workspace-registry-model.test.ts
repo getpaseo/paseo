@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { basename, isAbsolute, resolve } from "node:path";
 
 import {
@@ -12,15 +12,20 @@ import {
 } from "./workspace-registry-model.js";
 import { createPersistedWorkspaceRecord } from "./workspace-registry.js";
 
-function createWorkspaceRecord(cwd: string, workspaceId: string) {
+function createWorkspaceRecord(
+  cwd: string,
+  workspaceId: string,
+  overrides?: { createdAt?: string; archivedAt?: string },
+) {
   return createPersistedWorkspaceRecord({
     workspaceId,
     projectId: workspaceId,
     cwd,
     kind: "directory",
     displayName: basename(cwd) || cwd,
-    createdAt: "2026-03-01T00:00:00.000Z",
-    updatedAt: "2026-03-01T00:00:00.000Z",
+    createdAt: overrides?.createdAt ?? "2026-03-01T00:00:00.000Z",
+    updatedAt: overrides?.createdAt ?? "2026-03-01T00:00:00.000Z",
+    archivedAt: overrides?.archivedAt ?? null,
   });
 }
 
@@ -56,18 +61,22 @@ describe("deriveProjectGroupingName", () => {
 
 describe("detectStaleWorkspaces", () => {
   test("returns workspace ids whose directories no longer exist", async () => {
-    const checkDirectoryExists = vi.fn(async (cwd: string) => cwd !== "/tmp/missing");
+    const checkedDirectories: string[] = [];
+    const existingDirectories = new Set(["/tmp/existing"]);
 
     const staleWorkspaceIds = await detectStaleWorkspaces({
       activeWorkspaces: [
         createWorkspaceRecord("/tmp/existing", "ws-existing"),
         createWorkspaceRecord("/tmp/missing", "ws-missing"),
       ],
-      checkDirectoryExists,
+      checkDirectoryExists: async (cwd) => {
+        checkedDirectories.push(cwd);
+        return existingDirectories.has(cwd);
+      },
     });
 
     expect(Array.from(staleWorkspaceIds)).toEqual(["ws-missing"]);
-    expect(checkDirectoryExists.mock.calls).toEqual([["/tmp/existing"], ["/tmp/missing"]]);
+    expect(checkedDirectories).toEqual(["/tmp/existing", "/tmp/missing"]);
   });
 
   test("keeps workspaces whose directories exist even when all agents are archived", async () => {

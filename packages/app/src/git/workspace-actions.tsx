@@ -48,7 +48,11 @@ const ICONS = {
 };
 
 export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitActionsProps) {
-  const { gitActions, isGit } = useGitActions({ serverId, cwd, icons: ICONS });
+  const { gitActions, isGit } = useGitActions({
+    serverId,
+    cwd,
+    icons: ICONS,
+  });
 
   if (!isGit) {
     return null;

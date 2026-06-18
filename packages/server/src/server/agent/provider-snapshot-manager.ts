@@ -150,31 +150,11 @@ export class ProviderSnapshotManager {
 
   getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
     const resolvedCwd = resolveSnapshotCwd(cwd);
-    const entries = this.snapshots.get(resolvedCwd);
-    if (!entries) {
-      const loadingEntries = this.resetSnapshotToLoading(resolvedCwd);
-      void this.warmUp(resolvedCwd);
-      return entriesToArray(loadingEntries);
+    const providersToWarm = this.resolveProvidersToWarm(resolvedCwd);
+    if (providersToWarm.length > 0) {
+      void this.warmUp(resolvedCwd, providersToWarm);
     }
-    const missingProviders = this.getProviderIds().filter((provider) => !entries.has(provider));
-    if (missingProviders.length > 0) {
-      const loadingEntries = this.createLoadingEntries();
-      for (const provider of missingProviders) {
-        const loadingEntry = loadingEntries.get(provider);
-        if (loadingEntry) {
-          entries.set(provider, loadingEntry);
-        }
-      }
-      void this.warmUp(resolvedCwd, missingProviders);
-    }
-    const providerLoads = this.providerLoads.get(resolvedCwd);
-    const loadingProviders = Array.from(entries.values())
-      .filter((entry) => entry.status === "loading" && !providerLoads?.has(entry.provider))
-      .map((entry) => entry.provider);
-    if (loadingProviders.length > 0) {
-      void this.warmUp(resolvedCwd, loadingProviders);
-    }
-    return entriesToArray(entries);
+    return entriesToArray(this.getOrCreateSnapshot(resolvedCwd));
   }
 
   async refreshSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {
@@ -205,17 +185,11 @@ export class ProviderSnapshotManager {
       return;
     }
 
-    const snapshot = this.snapshots.get(snapshotCwd);
-    if (!snapshot) {
-      this.resetSnapshotToLoading(snapshotCwd, providers);
-    } else if (providers) {
-      const missingProviders = providers.filter((provider) => !snapshot.has(provider));
-      if (missingProviders.length > 0) {
-        this.resetSnapshotToLoading(snapshotCwd, missingProviders);
-      }
+    const providersToWarm = this.resolveProvidersToWarm(snapshotCwd, providers);
+    if (providersToWarm.length === 0) {
+      return;
     }
-
-    await this.warmUp(snapshotCwd, providers);
+    await this.warmUp(snapshotCwd, providersToWarm);
   }
 
   async refresh(options: ProviderSnapshotRefreshOptions): Promise<void> {
@@ -520,6 +494,22 @@ export class ProviderSnapshotManager {
     await this.loadProviders({ cwd, providers, force: true });
   }
 
+  private resolveProvidersToWarm(cwd: string, providers?: AgentProvider[]): AgentProvider[] {
+    const providersToInspect = providers ?? this.getProviderIds();
+    const snapshot = this.snapshots.get(cwd);
+    if (!snapshot) {
+      this.resetSnapshotToLoading(cwd, providers);
+      return providersToInspect;
+    }
+
+    const missingProviders = providersToInspect.filter((provider) => !snapshot.has(provider));
+    if (missingProviders.length > 0) {
+      this.resetSnapshotToLoading(cwd, missingProviders);
+    }
+
+    return providersToInspect.filter((provider) => snapshot.get(provider)?.status === "loading");
+  }
+
   private clearCachedProviders(providers?: AgentProvider[]): void {
     const providerSet = providers ? new Set(providers) : null;
     const loadingEntries = this.createLoadingEntries();
@@ -576,6 +566,10 @@ export class ProviderSnapshotManager {
     const existingLoad = this.getProviderLoad(options.cwd, options.provider);
     if (existingLoad && !options.force) {
       return existingLoad.promise;
+    }
+    const existingEntry = this.snapshots.get(options.cwd)?.get(options.provider);
+    if (existingEntry && existingEntry.status !== "loading" && !options.force) {
+      return Promise.resolve();
     }
 
     const load: ProviderLoad = {
