@@ -15,13 +15,18 @@
 import { nodeFileTrace } from "@vercel/nft";
 import { glob } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
-function sherpaPlatformArch(platform = process.platform, arch = process.arch) {
-  const normalizedPlatform = platform === "win32" ? "win" : platform;
-  return `${normalizedPlatform}-${arch}`;
-}
+const { sherpaPlatformPackageName } = await import(
+  pathToFileURL(
+    path.join(
+      REPO_ROOT,
+      "packages/server/dist/server/server/speech/providers/local/sherpa/sherpa-runtime-env.js",
+    ),
+  ).href
+);
 
 // Daemon entry points. Workers forked into their own Node processes have
 // independent require trees; nft does not follow fork boundaries, so trace
@@ -53,7 +58,7 @@ const additionalInputs = [
   // sherpa-onnx-node dynamically resolves a platform-specific native package.
   // Copy the wrapper plus the host platform package explicitly.
   "node_modules/sherpa-onnx-node/**",
-  `node_modules/sherpa-onnx-${sherpaPlatformArch()}/**`,
+  `node_modules/${sherpaPlatformPackageName()}/**`,
 ];
 
 // Trace.
