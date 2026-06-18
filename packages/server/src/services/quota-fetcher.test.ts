@@ -213,6 +213,60 @@ describe("QuotaFetcherService", () => {
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0].payload.claude).toBeUndefined();
     });
+
+    it("does not refresh token on 401 when filePath is null (macOS Keychain)", async () => {
+      const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+
+      async function readKeychain() {
+        return {
+          claudeAiOauth: {
+            accessToken: "at_expired",
+            refreshToken: "rt_valid",
+          },
+        };
+      }
+      const keychainReader = vi.fn(readKeychain);
+
+      const testService = new QuotaFetcherService({
+        broadcast: (msg) => broadcasts.push(msg),
+        logger: {
+          child: () => ({ debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() }),
+        } as never,
+        claudeHome,
+        claudeKeychainReader: keychainReader,
+        codexHome,
+        pollIntervalMs: 999_999,
+      });
+
+      async function handleUsageFetch() {
+        return new Response(null, { status: 401 });
+      }
+      const usageFetch = vi.fn(handleUsageFetch);
+      globalThis.fetch = usageFetch as never;
+
+      await testService.triggerFetch();
+
+      expect(usageFetch).toHaveBeenCalledTimes(1);
+      expect(usageFetch).toHaveBeenCalledWith(
+        "https://api.anthropic.com/api/oauth/usage",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer at_expired",
+          }),
+        }),
+      );
+
+      function isTokenRefreshCall(call: [RequestInfo | URL, RequestInit | undefined]) {
+        return call[0] === "https://platform.claude.com/v1/oauth/token";
+      }
+      const refreshCall = usageFetch.mock.calls.find(isTokenRefreshCall);
+      expect(refreshCall).toBeUndefined();
+
+      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts[0].payload.claude).toBeUndefined();
+
+      platformSpy.mockRestore();
+    });
   });
 
   // ── Codex ──────────────────────────────────────────────────────────────
