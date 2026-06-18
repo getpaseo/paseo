@@ -79,11 +79,13 @@ if (-not $env:PASEO_LISTEN) { $env:PASEO_LISTEN = "127.0.0.1:$DevDaemonPort" }
 # ONLY seed the script-managed home: never rewrite a user-supplied PASEO_HOME
 # (that could clobber a production config.json with the dev port + wildcard CORS).
 if ($PaseoHomeManaged) {
+    $env:TMP_CFG_PATH = "$($env:PASEO_HOME)/config.json"
+    $env:TMP_CFG_PORT = $DevDaemonPort
     $TmpScript = [System.IO.Path]::GetTempFileName() + ".js"
     $ScriptContent = @"
 const fs = require('fs');
-const path = "$($env:PASEO_HOME)/config.json".replace(/\\/g, '/');
-const port = "$DevDaemonPort";
+const path = process.env.TMP_CFG_PATH;
+const port = process.env.TMP_CFG_PORT;
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) {}
 cfg.version = cfg.version || 1;
@@ -96,6 +98,8 @@ fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
     Set-Content -Path $TmpScript -Value $ScriptContent
     node $TmpScript
     Remove-Item $TmpScript -ErrorAction SilentlyContinue
+    Remove-Item Env:\TMP_CFG_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:\TMP_CFG_PORT -ErrorAction SilentlyContinue
 } else {
     Write-Host "  (custom PASEO_HOME - leaving its config.json untouched)"
 }
@@ -117,5 +121,5 @@ concurrently `
     --kill-others `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
-    "cd `"$AppDir`" && `$env:PASEO_WEB_PLATFORM = `"electron`"; npx expo start --port $($env:EXPO_PORT)" `
+    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --port $($env:EXPO_PORT)" `
     "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
