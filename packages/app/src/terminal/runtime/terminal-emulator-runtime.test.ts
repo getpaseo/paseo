@@ -78,7 +78,11 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
-import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import {
+  createTerminalResizeEvent,
+  encodeTerminalOutput,
+  TerminalEmulatorRuntime,
+} from "./terminal-emulator-runtime";
 
 interface StubTerminal {
   write: (data: string | Uint8Array, callback?: () => void) => void;
@@ -258,11 +262,19 @@ describe("terminal-emulator-runtime", () => {
 
   it("reports input mode changes from terminal output and resets them on snapshots", () => {
     const { runtime, writeCallbacks } = createRuntimeWithTerminal();
-    const inputModeChanges: Array<{ kittyKeyboardFlags: number; win32InputMode: boolean }> = [];
+    const inputModeChanges: Array<{
+      kittyKeyboardFlags: number;
+      win32InputMode: boolean;
+      bracketedPaste: boolean;
+    }> = [];
     runtime.setCallbacks({
       callbacks: {
         onInputModeChange: (state) => {
-          inputModeChanges.push(state);
+          inputModeChanges.push({
+            kittyKeyboardFlags: state.kittyKeyboardFlags,
+            win32InputMode: state.win32InputMode,
+            bracketedPaste: Boolean(state.bracketedPaste),
+          });
         },
       },
     });
@@ -282,15 +294,17 @@ describe("terminal-emulator-runtime", () => {
     });
     // The plain write reports kitty flags synchronously during drain; the snapshot resets
     // them only after its barrier gate (the sentinel write callback) resolves.
-    expect(inputModeChanges).toEqual([{ kittyKeyboardFlags: 7, win32InputMode: false }]);
+    expect(inputModeChanges).toEqual([
+      { kittyKeyboardFlags: 7, win32InputMode: false, bracketedPaste: false },
+    ]);
 
     // The plain write carries no onCommitted, so it registers no callback; writeCallbacks[0]
     // is the barrier gate sentinel.
     writeCallbacks[0]?.();
 
     expect(inputModeChanges).toEqual([
-      { kittyKeyboardFlags: 7, win32InputMode: false },
-      { kittyKeyboardFlags: 0, win32InputMode: false },
+      { kittyKeyboardFlags: 7, win32InputMode: false, bracketedPaste: false },
+      { kittyKeyboardFlags: 0, win32InputMode: false, bracketedPaste: false },
     ]);
   });
 
@@ -480,6 +494,22 @@ describe("terminal-emulator-runtime", () => {
 
     expect(fitAndEmitResize).toHaveBeenNthCalledWith(1, undefined);
     expect(fitAndEmitResize).toHaveBeenNthCalledWith(2, { force: true });
+  });
+
+  it("marks explicit resize claims as forced so another client can reclaim the same size", () => {
+    expect(
+      createTerminalResizeEvent({
+        rows: 34,
+        cols: 181,
+        shouldClaim: true,
+        force: true,
+      }),
+    ).toEqual({
+      rows: 34,
+      cols: 181,
+      shouldClaim: true,
+      forceClaim: true,
+    });
   });
 
   it("updates terminal theme without remounting", () => {

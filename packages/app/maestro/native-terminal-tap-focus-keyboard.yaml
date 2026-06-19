@@ -1,0 +1,31 @@
+appId: sh.paseo.debug
+---
+# Self-contained tap-focus flow.
+# Precondition: the harness has cleared the visible terminal.
+
+- assertVisible:
+    id: "terminal-virtual-keyboard"
+
+# First focus and hide the OS keyboard. The regression this covers was a hidden
+# keyboard with the native TextInput still focused, making the next focus() a
+# no-op.
+- tapOn:
+    id: "terminal-surface"
+- waitForAnimationToEnd
+- hideKeyboard
+- waitForAnimationToEnd
+
+# Tap terminal content again, then type through Maestro's OS-keyboard route.
+# Product Paste and CLI terminal input are deliberately not used here.
+- tapOn:
+    id: "terminal-surface"
+- waitForAnimationToEnd
+- inputText: "printf 'MAESTRO_TAP_FOCUS_OK\\n'"
+- tapOn:
+    id: "terminal-key-enter"
+
+- extendedWaitUntil:
+    visible: "MAESTRO_TAP_FOCUS_OK"
+    timeout: 15000
+
+- takeScreenshot: native-terminal-tap-focus

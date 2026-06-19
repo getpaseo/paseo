@@ -1,0 +1,29 @@
+appId: sh.paseo.debug
+---
+# Self-contained history/arrows flow.
+# Precondition: the harness has run `echo MAESTRO_HISTORY_OK-1` in the
+# terminal, so shell history contains the command.
+
+- assertVisible:
+    id: "terminal-virtual-keyboard"
+- hideKeyboard
+- waitForAnimationToEnd
+
+# The seeded command output should already be visible.
+- assertVisible:
+    text: "MAESTRO_HISTORY_OK-1"
+
+# Tap the virtual up arrow to recall the last command.
+- tapOn:
+    id: "terminal-key-up"
+
+# Submit it again.
+- tapOn:
+    id: "terminal-key-enter"
+
+# The command ran a second time, so the marker is still visible.
+- extendedWaitUntil:
+    visible: "MAESTRO_HISTORY_OK-1"
+    timeout: 15000
+
+- takeScreenshot: native-terminal-history-arrows

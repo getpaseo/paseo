@@ -1,0 +1,38 @@
+appId: sh.paseo.debug
+---
+# Self-contained scroll-no-focus flow.
+# Precondition: the harness has filled scrollback with a top marker, filler
+# lines, and a bottom marker.
+
+- assertVisible:
+    id: "terminal-virtual-keyboard"
+- hideKeyboard
+- waitForAnimationToEnd
+
+# The bottom marker should be visible before scrolling.
+- assertVisible:
+    text: "SCROLL_BOTTOM_MARKER"
+
+# Scroll up in history by dragging downward across the terminal surface.
+- swipe:
+    start: "50%,40%"
+    end: "50%,80%"
+    duration: 400
+- waitForAnimationToEnd
+- swipe:
+    start: "50%,40%"
+    end: "50%,80%"
+    duration: 400
+- waitForAnimationToEnd
+
+# Scrolling should reveal the older top marker without focusing the terminal.
+- assertVisible:
+    text: "SCROLL_TOP_MARKER"
+- assertVisible:
+    id: "terminal-follow-bottom"
+
+# The scroll gesture must not show the OS keyboard. The harness also probes with
+# Maestro inputText and fails if text reaches the terminal after this gesture.
+- assertNotVisible: "return"
+
+- takeScreenshot: native-terminal-scroll-no-focus

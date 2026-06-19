@@ -1,0 +1,45 @@
+appId: sh.paseo.debug
+---
+# Self-contained long-press selection flow.
+# Precondition: the harness has printed SELECT_DRAG_OK in the terminal.
+
+- assertVisible:
+    id: "terminal-virtual-keyboard"
+- hideKeyboard
+- waitForAnimationToEnd
+
+# Selection starts with long press.
+- longPressOn:
+    point: "1%,21%"
+- waitForAnimationToEnd
+- assertVisible:
+    id: "terminal-copy"
+    enabled: true
+
+# Once selection is active, horizontal drag extends selection instead of opening
+# navigation or focusing the OS keyboard.
+- swipe:
+    start: "1%,21%"
+    end: "100%,21%"
+    duration: 1200
+- waitForAnimationToEnd
+
+# The active-selection drag must not open the sidebar.
+- assertNotVisible:
+    id: "sidebar-sessions"
+
+# The active-selection drag must not show the OS keyboard. The harness also
+# probes with Maestro inputText and fails if text reaches the terminal after
+# this gesture.
+- assertNotVisible: "return"
+
+# Copy remains usable after extending the selection.
+- assertVisible:
+    id: "terminal-copy"
+    enabled: true
+
+- tapOn:
+    id: "terminal-copy"
+
+- takeScreenshot: native-terminal-selection-drag
+# The harness will read the simulator clipboard and verify SELECT_DRAG_OK.

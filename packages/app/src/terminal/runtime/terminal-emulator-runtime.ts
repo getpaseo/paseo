@@ -28,6 +28,7 @@ import {
   type TerminalLocalFileLinkSource,
   type TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
+import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -43,7 +44,7 @@ export interface TerminalEmulatorRuntimeMountInput {
 
 export interface TerminalEmulatorRuntimeCallbacks {
   onInput?: (data: string) => Promise<void> | void;
-  onResize?: (input: { rows: number; cols: number; shouldClaim: boolean }) => Promise<void> | void;
+  onResize?: (input: TerminalResizeEvent) => Promise<void> | void;
   onTerminalKey?: (input: {
     key: string;
     ctrl: boolean;
@@ -61,6 +62,27 @@ export interface TerminalEmulatorRuntimeCallbacks {
     disposition: "main" | "side",
   ) => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+}
+
+export interface TerminalResizeEvent {
+  rows: number;
+  cols: number;
+  shouldClaim: boolean;
+  forceClaim?: boolean;
+}
+
+export function createTerminalResizeEvent(input: {
+  rows: number;
+  cols: number;
+  shouldClaim: boolean;
+  force: boolean;
+}): TerminalResizeEvent {
+  return {
+    rows: input.rows,
+    cols: input.cols,
+    shouldClaim: input.shouldClaim,
+    forceClaim: input.shouldClaim && input.force,
+  };
 }
 
 interface TerminalEmulatorRuntimeDisposables {
@@ -109,7 +131,6 @@ const isAppleHandheld =
   });
 
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
-const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
@@ -128,37 +149,6 @@ function prependTerminalOutput(
   output.set(prefix, 0);
   output.set(data, prefix.length);
   return output;
-}
-
-const DEFAULT_TERMINAL_FONT_FAMILY = [
-  // Prefer common developer fonts, with Nerd Font variants for prompt/TUI glyphs.
-  "JetBrains Mono",
-  "JetBrainsMono Nerd Font",
-  "JetBrainsMono NF",
-  "MesloLGM Nerd Font",
-  "MesloLGM NF",
-  "Hack Nerd Font",
-  "FiraCode Nerd Font",
-  // PUA-only fallback (many Nerd glyphs live here on some systems).
-  "Symbols Nerd Font",
-  // System fallbacks.
-  "SF Mono",
-  "Menlo",
-  "Monaco",
-  "Consolas",
-  "'Liberation Mono'",
-  "monospace",
-].join(", ");
-
-function resolveTerminalFontFamily(fontFamily: string | undefined): string {
-  const trimmed = fontFamily?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : DEFAULT_TERMINAL_FONT_FAMILY;
-}
-
-function resolveTerminalFontSize(fontSize: number | undefined): number {
-  return typeof fontSize === "number" && Number.isFinite(fontSize) && fontSize > 0
-    ? fontSize
-    : DEFAULT_TERMINAL_FONT_SIZE;
 }
 
 function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
@@ -387,11 +377,14 @@ export class TerminalEmulatorRuntime {
 
       this.lastSize = { rows: nextRows, cols: nextCols };
       this.refreshVisibleRows();
-      this.callbacks.onResize?.({
-        rows: nextRows,
-        cols: nextCols,
-        shouldClaim,
-      });
+      this.callbacks.onResize?.(
+        createTerminalResizeEvent({
+          rows: nextRows,
+          cols: nextCols,
+          shouldClaim,
+          force,
+        }),
+      );
     };
     this.fitAndEmitResize = fitAndEmitResize;
 
@@ -401,6 +394,7 @@ export class TerminalEmulatorRuntime {
       if (this.suppressInput) {
         return;
       }
+      this.fitAndEmitResize?.({ force: true, shouldClaim: true });
       this.callbacks.onInput?.(data);
     });
 
@@ -460,6 +454,7 @@ export class TerminalEmulatorRuntime {
         altKey: event.altKey,
         metaKey: event.metaKey,
       });
+      this.fitAndEmitResize?.({ force: true, shouldClaim: true });
       this.callbacks.onTerminalKey?.({
         key: normalizeTerminalTransportKey(normalizedKey),
         ...modifiers,

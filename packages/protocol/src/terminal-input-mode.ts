@@ -6,15 +6,20 @@ export interface TerminalInputModeFeedResult {
 export interface TerminalInputModeState {
   kittyKeyboardFlags: number;
   win32InputMode: boolean;
+  applicationCursorKeys?: boolean;
+  bracketedPaste?: boolean;
 }
 
 export const DEFAULT_TERMINAL_INPUT_MODE_STATE: TerminalInputModeState = {
   kittyKeyboardFlags: 0,
   win32InputMode: false,
+  applicationCursorKeys: false,
+  bracketedPaste: false,
 };
 
 const ESC = String.fromCharCode(0x1b);
 const WIN32_INPUT_MODE = 9001;
+const BRACKETED_PASTE_MODE = 2004;
 const CSI_INPUT_MODE_SEQUENCE = new RegExp(
   `${ESC}\\[(?:([<>=?]?)([0-9;]*)u|\\?([0-9;]*)([hl]))`,
   "g",
@@ -57,13 +62,16 @@ export function terminalInputModeStatesEqual(
 ): boolean {
   return (
     left.kittyKeyboardFlags === right.kittyKeyboardFlags &&
-    left.win32InputMode === right.win32InputMode
+    left.win32InputMode === right.win32InputMode &&
+    Boolean(left.applicationCursorKeys) === Boolean(right.applicationCursorKeys) &&
+    Boolean(left.bracketedPaste) === Boolean(right.bracketedPaste)
   );
 }
 
 export class TerminalInputModeTracker {
   private kittyKeyboardFlags = 0;
   private win32InputMode = false;
+  private bracketedPaste = false;
   private readonly kittyKeyboardStack: number[] = [];
   private pending = "";
 
@@ -112,6 +120,7 @@ export class TerminalInputModeTracker {
   reset(): void {
     this.kittyKeyboardFlags = 0;
     this.win32InputMode = false;
+    this.bracketedPaste = false;
     this.kittyKeyboardStack.length = 0;
     this.pending = "";
   }
@@ -120,6 +129,7 @@ export class TerminalInputModeTracker {
     return {
       kittyKeyboardFlags: this.kittyKeyboardFlags,
       win32InputMode: this.win32InputMode,
+      bracketedPaste: this.bracketedPaste,
     };
   }
 
@@ -183,12 +193,20 @@ export class TerminalInputModeTracker {
 
   private applyPrivateModeSequence(params: string, final: string): boolean {
     const modes = parsePrivateModeParams(params);
-    if (!modes.has(WIN32_INPUT_MODE)) {
-      return false;
+    let changed = false;
+
+    if (modes.has(WIN32_INPUT_MODE)) {
+      const previous = this.win32InputMode;
+      this.win32InputMode = final === "h";
+      changed = this.win32InputMode !== previous || changed;
     }
 
-    const previous = this.win32InputMode;
-    this.win32InputMode = final === "h";
-    return this.win32InputMode !== previous;
+    if (modes.has(BRACKETED_PASTE_MODE)) {
+      const previous = this.bracketedPaste;
+      this.bracketedPaste = final === "h";
+      changed = this.bracketedPaste !== previous || changed;
+    }
+
+    return changed;
   }
 }

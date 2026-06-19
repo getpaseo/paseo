@@ -92,6 +92,7 @@ import { MobilePanelsProvider } from "@/mobile-panels/provider";
 import { I18nProvider } from "@/i18n/provider";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { polyfillCrypto } from "@/polyfills/crypto";
+import { polyfillNavigator } from "@/polyfills/navigator";
 import { queryClient } from "@/data/query-client";
 import {
   getHostRuntimeStore,
@@ -128,6 +129,7 @@ import {
   type WebNotificationClickDetail,
 } from "@/utils/os-notifications";
 
+polyfillNavigator();
 polyfillCrypto();
 
 export interface HostRuntimeBootstrapState {

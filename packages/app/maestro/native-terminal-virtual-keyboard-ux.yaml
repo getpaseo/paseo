@@ -1,0 +1,109 @@
+appId: sh.paseo.debug
+---
+# Self-contained terminal virtual keyboard UX flow.
+# Precondition: the harness has opened the visible terminal, seeded shell history,
+# and set the simulator clipboard.
+
+- assertVisible:
+    id: "terminal-virtual-keyboard"
+
+# Space and Backspace are redundant with the OS keyboard and should not be part
+# of the virtual keyboard surface.
+- assertNotVisible:
+    id: "terminal-key-space"
+- assertNotVisible:
+    id: "terminal-key-backspace"
+
+# Copy is selection-only now; it should not be a permanent virtual key.
+- assertNotVisible:
+    id: "terminal-copy"
+
+# Arrow cluster controls are present. Up sits over Down in product layout; this
+# flow verifies the actionable controls stay addressable and working.
+- assertVisible:
+    id: "terminal-key-up"
+- assertVisible:
+    id: "terminal-key-left"
+- assertVisible:
+    id: "terminal-key-down"
+- assertVisible:
+    id: "terminal-key-right"
+- assertVisible:
+    id: "terminal-key-enter"
+
+# Up + Enter reruns the seeded shell-history command.
+- assertVisible:
+    text: "MAESTRO_VK_HISTORY_OK"
+- tapOn:
+    id: "terminal-key-up"
+- tapOn:
+    id: "terminal-key-enter"
+- extendedWaitUntil:
+    visible: "MAESTRO_VK_HISTORY_OK"
+    timeout: 15000
+
+# Keyboard toggle: start hidden, show, hide, show again. After the second show,
+# Maestro inputText must reach the PTY/output.
+- hideKeyboard
+- waitForAnimationToEnd
+- tapOn:
+    id: "terminal-keyboard-toggle"
+- waitForAnimationToEnd
+- tapOn:
+    id: "terminal-keyboard-toggle"
+- waitForAnimationToEnd
+- assertNotVisible: "return"
+- tapOn:
+    id: "terminal-keyboard-toggle"
+- waitForAnimationToEnd
+- inputText: "printf 'MAESTRO_TOGGLE_INPUT_OK\\n'"
+- tapOn:
+    id: "terminal-key-enter"
+- extendedWaitUntil:
+    visible: "MAESTRO_TOGGLE_INPUT_OK"
+    timeout: 15000
+
+# Paste remains available in the virtual keyboard and sends clipboard text.
+- assertVisible:
+    id: "terminal-paste"
+    enabled: true
+- tapOn:
+    id: "terminal-paste"
+- runFlow:
+    when:
+      visible: "Allow Paste"
+    commands:
+      - tapOn: "Allow Paste"
+- tapOn:
+    id: "terminal-key-enter"
+- extendedWaitUntil:
+    visible: "MAESTRO_PASTE_OK"
+    timeout: 15000
+
+# Long-press selection makes Copy appear as a floating action; dragging while
+# selected extends the selection without opening navigation or the OS keyboard.
+- hideKeyboard
+- waitForAnimationToEnd
+- assertVisible:
+    text: "MAESTRO_COPY_OK"
+- longPressOn:
+    point: "1%,28%"
+- waitForAnimationToEnd
+- assertVisible:
+    id: "terminal-copy"
+    enabled: true
+- swipe:
+    start: "1%,28%"
+    end: "100%,28%"
+    duration: 1200
+- waitForAnimationToEnd
+- assertNotVisible:
+    id: "sidebar-sessions"
+- assertNotVisible: "return"
+- assertVisible:
+    id: "terminal-copy"
+    enabled: true
+- tapOn:
+    id: "terminal-copy"
+
+- takeScreenshot: native-terminal-virtual-keyboard-ux

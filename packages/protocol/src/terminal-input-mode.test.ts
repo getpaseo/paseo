@@ -51,6 +51,7 @@ describe("TerminalInputModeTracker", () => {
     expect(tracker.getState()).toEqual({
       kittyKeyboardFlags: 0,
       win32InputMode: true,
+      bracketedPaste: false,
     });
     expect(tracker.supportsModifiedEnter()).toBe(true);
     expect(tracker.getPreamble()).toBe("\x1b[?9001h");
@@ -67,8 +68,27 @@ describe("TerminalInputModeTracker", () => {
     expect(tracker.getState()).toEqual({
       kittyKeyboardFlags: 7,
       win32InputMode: true,
+      bracketedPaste: false,
     });
     expect(tracker.getPreamble()).toBe("\x1b[=7;1u\x1b[?9001h");
+  });
+
+  it("tracks bracketed paste mode independently", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    expect(tracker.feed("\x1b[?2004h").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      bracketedPaste: true,
+    });
+
+    expect(tracker.feed("\x1b[?2004l").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      bracketedPaste: false,
+    });
   });
 
   it("ignores encoded key input sequences", () => {

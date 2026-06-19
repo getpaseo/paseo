@@ -27,6 +27,7 @@ import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "../terminal/local-links/terminal-local-link-provider";
+import type { TerminalClipboardWriter } from "../terminal/native-renderer/terminal-selection";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
 import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
@@ -42,7 +43,10 @@ export interface TerminalEmulatorHandle {
   writeOutput: (data: TerminalOutputData) => void;
   restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
+  paste: (text: string) => void;
+  copySelection: (clipboard: TerminalClipboardWriter) => Promise<string>;
   clear: () => void;
+  showKeyboard: () => void;
   blur: () => void;
 }
 
@@ -98,13 +102,19 @@ interface TerminalEmulatorProps {
   scrollbackLines: number;
   fontFamily?: string;
   fontSize?: number;
+  keyboardInset?: number;
   swipeGesturesEnabled?: boolean;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
   initialSnapshot?: TerminalState | null;
   onInput?: (data: string) => Promise<void> | void;
   onFocus?: () => Promise<void> | void;
-  onResize?: (input: { rows: number; cols: number; shouldClaim: boolean }) => Promise<void> | void;
+  onResize?: (input: {
+    rows: number;
+    cols: number;
+    shouldClaim: boolean;
+    forceClaim?: boolean;
+  }) => Promise<void> | void;
   onTerminalKey?: (input: {
     key: string;
     ctrl: boolean;
@@ -114,6 +124,7 @@ interface TerminalEmulatorProps {
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+  onSelectionChange?: (hasSelection: boolean) => void;
   onResolveLocalFileLink?: (
     source: TerminalLocalFileLinkSource,
   ) => Promise<TerminalLocalFileLinkTarget | null> | TerminalLocalFileLinkTarget | null;
@@ -230,8 +241,19 @@ export default function TerminalEmulator({
           runtimeRef.current?.renderSnapshot({ state });
         }
       },
+      paste: (...args) => {
+        const text = args[0];
+        if (typeof text === "string" && text.length > 0) {
+          mountCallbacksRef.current.onInput?.(text);
+        }
+      },
+      copySelection: async () => "",
       clear: () => {
         runtimeRef.current?.clear();
+      },
+      showKeyboard: () => {
+        runtimeRef.current?.resize({ force: true, shouldClaim: true });
+        runtimeRef.current?.focus();
       },
       blur: () => {
         runtimeRef.current?.blur();
@@ -251,8 +273,18 @@ export default function TerminalEmulator({
       renderSnapshot: (state: TerminalState | null) => {
         runtimeRef.current?.renderSnapshot({ state });
       },
+      paste: (text: string) => {
+        if (text.length > 0) {
+          mountCallbacksRef.current.onInput?.(text);
+        }
+      },
+      copySelection: async () => "",
       clear: () => {
         runtimeRef.current?.clear();
+      },
+      showKeyboard: () => {
+        runtimeRef.current?.resize({ force: true, shouldClaim: true });
+        runtimeRef.current?.focus();
       },
       blur: () => {
         runtimeRef.current?.blur();

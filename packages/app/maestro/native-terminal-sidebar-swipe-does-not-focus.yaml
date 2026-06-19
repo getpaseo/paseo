@@ -1,0 +1,40 @@
+appId: sh.paseo.debug
+---
+# Self-contained sidebar-swipe flow.
+# Precondition: the harness has ensured the terminal is visible and the
+# sidebar is closed.
+
+- assertVisible:
+    id: "terminal-virtual-keyboard"
+- hideKeyboard
+- waitForAnimationToEnd
+
+# Sidebar should start closed.
+- assertNotVisible:
+    id: "sidebar-sessions"
+
+# Horizontal swipe from the terminal surface opens navigation. This is
+# intentionally not speed-based and not a right-edge-only gesture.
+- swipe:
+    start: "25%,50%"
+    end: "80%,50%"
+    duration: 900
+- waitForAnimationToEnd
+
+- assertVisible:
+    id: "sidebar-sessions"
+
+# If the OS keyboard appears, iOS exposes a lowercase return key. This assertion
+# is a UI-level guard; the harness also probes with Maestro inputText and fails
+# if text reaches the terminal after the swipe.
+- assertNotVisible: "return"
+
+# Close the sidebar to leave a clean state.
+- tapOn:
+    id: "sidebar-close"
+- waitForAnimationToEnd
+
+- assertNotVisible:
+    id: "sidebar-sessions"
+
+- takeScreenshot: native-terminal-sidebar-swipe
