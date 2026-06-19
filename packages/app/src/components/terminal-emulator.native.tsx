@@ -314,12 +314,7 @@ function NativeTerminalEmulator({
   };
 
   const getInputModeState = useCallback((): TerminalInputModeState => {
-    const trackedState = inputModeTrackerRef.current.getState();
-    return {
-      ...trackedState,
-      applicationCursorKeys:
-        terminalRef.current?.getInputModeState().applicationCursorKeys ?? false,
-    };
+    return inputModeTrackerRef.current.getState();
   }, []);
 
   const emitInputModeChange = useCallback(() => {
@@ -608,7 +603,7 @@ function NativeTerminalEmulator({
         callbacksRef.current.onInput?.(
           encodeTerminalPaste({
             text,
-            bracketedPaste: terminalRef.current?.getInputModeState().bracketedPaste ?? false,
+            bracketedPaste: inputModeTrackerRef.current.getState().bracketedPaste ?? false,
           }),
         );
       },
