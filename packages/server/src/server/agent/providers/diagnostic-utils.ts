@@ -280,9 +280,6 @@ function formatCommandProbeOutput(stdout: string, stderr: string): string {
 }
 
 function formatCommandProbeError(error: unknown): string {
-  if (error instanceof Error) {
-    return toDiagnosticErrorMessage(error);
-  }
   return toDiagnosticErrorMessage(error);
 }
 
