@@ -382,8 +382,6 @@ describe("QuotaFetcherService", () => {
     });
 
     it("does not refresh token on 401 when filePath is null (macOS Keychain)", async () => {
-      const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
-
       async function readKeychain() {
         return {
           claudeAiOauth: {
@@ -402,6 +400,7 @@ describe("QuotaFetcherService", () => {
         claudeHome,
         claudeKeychainReader: keychainReader,
         codexHome,
+        platform: "darwin",
         pollIntervalMs: 999_999,
       });
 
@@ -431,8 +430,6 @@ describe("QuotaFetcherService", () => {
 
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0].payload.claude).toBeUndefined();
-
-      platformSpy.mockRestore();
     });
   });
 

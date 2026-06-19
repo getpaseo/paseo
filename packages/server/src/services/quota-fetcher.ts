@@ -46,6 +46,7 @@ export interface QuotaFetcherServiceOptions {
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
+  platform?: typeof process.platform;
   pollIntervalMs?: number;
 }
 
@@ -68,6 +69,7 @@ export interface ProviderUsageFetcherFactoryOptions {
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
+  platform?: typeof process.platform;
 }
 
 export interface ProviderUsageFetcherManifestEntry {
@@ -216,14 +218,17 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
 
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<ClaudeCredentials | null>;
+  private readonly platform: typeof process.platform;
 
   constructor(
     _logger: Logger,
     claudeHome?: string,
     readKeychainCredentials = readClaudeKeychainCredentials,
+    platform: typeof process.platform = process.platform,
   ) {
     this.claudeHome = claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
     this.readKeychainCredentials = readKeychainCredentials;
+    this.platform = platform;
   }
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["claude"]> {
@@ -360,7 +365,7 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
     }
 
     // macOS keeps the credential in the login Keychain, not the file.
-    if (process.platform === "darwin") {
+    if (this.platform === "darwin") {
       const creds = await this.readKeychainCredentials();
       const oauth = creds?.claudeAiOauth;
       if (oauth?.accessToken) {
@@ -1156,6 +1161,7 @@ export interface ProviderUsageServiceOptions {
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
+  platform?: typeof process.platform;
   cacheTtlMs?: number;
   now?: () => number;
 }
@@ -1171,7 +1177,12 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
   {
     providerId: "claude",
     create: (options) =>
-      new ClaudeQuotaProvider(options.logger, options.claudeHome, options.claudeKeychainReader),
+      new ClaudeQuotaProvider(
+        options.logger,
+        options.claudeHome,
+        options.claudeKeychainReader,
+        options.platform,
+      ),
   },
   {
     providerId: "codex",
@@ -1221,6 +1232,7 @@ export class ProviderUsageService {
         claudeHome: options.claudeHome,
         claudeKeychainReader: options.claudeKeychainReader,
         codexHome: options.codexHome,
+        platform: options.platform,
       });
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
@@ -1275,7 +1287,12 @@ export class QuotaFetcherService {
     this.pollIntervalMs = options.pollIntervalMs ?? 15 * 60 * 1000;
 
     this.providers = [
-      new ClaudeQuotaProvider(this.logger, options.claudeHome, options.claudeKeychainReader),
+      new ClaudeQuotaProvider(
+        this.logger,
+        options.claudeHome,
+        options.claudeKeychainReader,
+        options.platform,
+      ),
       new CodexQuotaProvider(this.logger, options.codexHome),
       new CopilotQuotaProvider(this.logger),
       new CursorQuotaProvider(this.logger),

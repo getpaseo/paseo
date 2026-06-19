@@ -31,7 +31,16 @@ test.describe("provider usage settings", () => {
             displayName: "GLM coding plan",
             status: "available",
             planLabel: "GLM coding plan",
-            windows: [{ id: "biweekly", label: "Biweekly", usedPct: 23 }],
+            sourceLabel: "OpenUsage 0.6.27",
+            windows: [
+              { id: "biweekly", label: "Biweekly", usedPct: 23 },
+              { id: "daily", label: "Daily", remainingPct: 30 },
+            ],
+            balances: [
+              { id: "credits", label: "Credits", remaining: 1234, unit: "credits" },
+              { id: "extra", label: "Extra usage", used: 5, limit: 20, unit: "usd" },
+            ],
+            details: [{ id: "valid", label: "Valid until", value: "2026-12-31" }],
           },
         ],
       },
@@ -49,6 +58,15 @@ test.describe("provider usage settings", () => {
     await expect(card.getByText("Codex", { exact: true })).toBeVisible();
     await expect(card.getByText("GLM coding plan", { exact: true }).first()).toBeVisible();
     await expect(card.getByText("Biweekly", { exact: true })).toBeVisible();
+    await expect(card.getByText("Daily", { exact: true })).toBeVisible();
+    await expect(card.getByText("70%")).toBeVisible();
+    await expect(card.getByText("Credits", { exact: true })).toBeVisible();
+    await expect(card.getByText("1,234 left", { exact: true })).toBeVisible();
+    await expect(card.getByText("Extra usage", { exact: true })).toBeVisible();
+    await expect(card.getByText("$5.00 / $20.00", { exact: true })).toBeVisible();
+    await expect(card.getByText("Valid until", { exact: true })).toBeVisible();
+    await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
+    await expect(card.getByText(/OpenUsage 0\.6\.27/)).toBeVisible();
   });
 
   test("refresh invalidates and refetches usage", async ({ page }) => {
