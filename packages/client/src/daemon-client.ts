@@ -2098,6 +2098,19 @@ export class DaemonClient {
     return { archivedAt: result.archivedAt };
   }
 
+  async detachAgent(agentId: string): Promise<void> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"agent.detach.response">({
+      message: {
+        type: "agent.detach.request",
+        agentId,
+      },
+      timeout: 10000,
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "detachAgent rejected");
+    }
+  }
+
   async updateAgent(
     agentId: string,
     updates: { name?: string; labels?: Record<string, string> },

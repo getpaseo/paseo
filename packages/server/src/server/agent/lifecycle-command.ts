@@ -14,6 +14,11 @@ export interface LifecycleAgentManager {
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
   closeAgent(agentId: string): Promise<void>;
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
+  detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }>;
   notifyAgentState(agentId: string): void;
   setAgentMode(agentId: string, modeId: string): Promise<void>;
   updateAgentMetadata(
@@ -158,6 +163,24 @@ export async function updateAgentCommand(
   return {
     accepted: true,
     error: null,
+  };
+}
+
+export interface DetachAgentResult {
+  agentId: string;
+  record: StoredAgentRecord;
+  live: boolean;
+  previousParentAgentId: string | null;
+}
+
+export async function detachAgentCommand(
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
+  agentId: string,
+): Promise<DetachAgentResult> {
+  const result = await dependencies.agentManager.detachAgent(agentId);
+  return {
+    agentId,
+    ...result,
   };
 }
 

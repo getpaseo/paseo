@@ -5,7 +5,11 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
-import { isDelegatedAgent, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import {
+  getParentAgentIdFromLabels,
+  isDelegatedAgent,
+  PARENT_AGENT_ID_LABEL,
+} from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -345,6 +349,12 @@ type ActiveManagedAgent =
   | ManagedAgentError;
 
 type LiveManagedAgent = ActiveManagedAgent;
+type AgentLabelPatch = Record<string, string | null>;
+
+interface WriteLabelsResult {
+  record: StoredAgentRecord | null;
+  live: boolean;
+}
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
@@ -401,6 +411,21 @@ function validateAgentId(agentId: string, source: string): string {
     throw new Error(`${source}: agentId must be a UUID`);
   }
   return result.data;
+}
+
+function applyLabelPatch(
+  labels: Record<string, string>,
+  patch: AgentLabelPatch,
+): Record<string, string> {
+  const nextLabels = { ...labels };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete nextLabels[key];
+    } else {
+      nextLabels[key] = value;
+    }
+  }
+  return nextLabels;
 }
 
 function buildExplicitTimelineSeedForRegister(
@@ -1151,9 +1176,8 @@ export class AgentManager {
 
   // Children created via the MCP `create_agent` tool carry the parent-agent-id
   // label pointing back at the caller. Archiving the parent cascades to those
-  // children so subagent fleets don't outlive their orchestrator. Handoff agents
-  // launched the same way are caught by this cascade — see docs/agent-lifecycle.md
-  // for the accepted limitation.
+  // children so subagent fleets don't outlive their orchestrator. Detached
+  // handoff agents omit this label, so they stand outside the cascade.
   private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
     const registry = this.registry;
     if (!registry) {
@@ -1333,10 +1357,74 @@ export class AgentManager {
 
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     const agent = this.requireAgent(agentId);
-    agent.labels = { ...agent.labels, ...labels };
-    this.touchUpdatedAt(agent);
-    await this.persistSnapshot(agent);
-    this.emitState(agent, { persist: false });
+    await this.writeLabels(agent.id, labels);
+  }
+
+  private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      this.touchUpdatedAt(liveAgent);
+      await this.persistSnapshot(liveAgent);
+      this.emitState(liveAgent, { persist: false });
+      const record = this.registry ? await this.registry.get(agentId) : null;
+      return { record, live: true };
+    }
+
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    const nextRecord = {
+      ...record,
+      labels: applyLabelPatch(record.labels, patch),
+      updatedAt: this.nextStoredUpdatedAt(record),
+    };
+    await registry.upsert(nextRecord);
+    return { record: nextRecord, live: false };
+  }
+
+  async detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }> {
+    const registry = this.requireRegistry();
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      const previousParentAgentId = getParentAgentIdFromLabels(liveAgent.labels);
+      if (!previousParentAgentId) {
+        await this.persistSnapshot(liveAgent);
+        const record = await registry.get(agentId);
+        if (!record) {
+          throw new Error(`Agent not found in storage after detach: ${agentId}`);
+        }
+        return { record, live: true, previousParentAgentId: null };
+      }
+
+      const { record } = await this.writeLabels(agentId, { [PARENT_AGENT_ID_LABEL]: null });
+      if (!record) {
+        throw new Error(`Agent not found in storage after detach: ${agentId}`);
+      }
+      return { record, live: true, previousParentAgentId };
+    }
+
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+    const previousParentAgentId = getParentAgentIdFromLabels(record.labels);
+    if (!previousParentAgentId) {
+      return { record, live: false, previousParentAgentId: null };
+    }
+
+    const result = await this.writeLabels(agentId, { [PARENT_AGENT_ID_LABEL]: null });
+    if (!result.record) {
+      throw new Error(`Agent not found in storage after detach: ${agentId}`);
+    }
+    return { record: result.record, live: false, previousParentAgentId };
   }
 
   notifyAgentState(agentId: string): void {
@@ -1433,12 +1521,28 @@ export class AgentManager {
         await this.setTitle(agentId, updates.title);
       }
       if (updates.labels) {
-        await this.setLabels(agentId, updates.labels);
+        await this.writeLabels(agentId, updates.labels);
       }
       return;
     }
 
     const registry = this.requireRegistry();
+    if (updates.labels) {
+      const result = await this.writeLabels(agentId, updates.labels);
+      if (!updates.title) {
+        return;
+      }
+      if (!result.record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      await registry.upsert({
+        ...result.record,
+        title: updates.title,
+        updatedAt: this.nextStoredUpdatedAt(result.record),
+      });
+      return;
+    }
+
     const existing = await registry.get(agentId);
     if (!existing) {
       throw new Error(`Agent not found: ${agentId}`);
@@ -1447,7 +1551,6 @@ export class AgentManager {
     await registry.upsert({
       ...existing,
       ...(updates.title ? { title: updates.title } : {}),
-      ...(updates.labels ? { labels: { ...existing.labels, ...updates.labels } } : {}),
       updatedAt: this.nextStoredUpdatedAt(existing),
     });
   }

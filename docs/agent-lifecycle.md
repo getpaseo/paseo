@@ -21,6 +21,8 @@ Agent-scoped `create_agent` accepts `detached: true` for agents that should stan
 - **Subagents** — created with `detached: false` or omitted. They exist as part of the creating agent's work, appear in that agent's subagent track, and are archived with it.
 - **Detached agents** — created with `detached: true`. They take over as sibling/root agents (e.g. handoffs, fire-and-forget delegations), do not appear in the creating agent's subagent track, and are not archived with it.
 
+Users can also detach an existing subagent from the subagents track. Detach removes the `paseo.parent-agent-id` label only: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
+
 `notifyOnFinish` defaults to `true` for agent-scoped creation because most subagents are delegated work the creating agent needs to hear back from. Set it to `false` only for truly fire-and-forget agents.
 
 ## Archive
@@ -70,6 +72,8 @@ parentAgentId === thisAgent.id  AND  !archivedAt
 
 Archived subagents disappear from the track, by design. To remove a subagent from the track without closing its tab, use the **archive button (X)** on the row — it opens a confirm dialog and archives the subagent on confirm. That same archive shows the subagent leave the track on every connected client.
 
+To keep the agent alive but remove it from the parent's track, use **detach**. The daemon clears the parent label, emits the normal agent update, and every client reclassifies the agent from subagent to root/sibling from that updated snapshot.
+
 ## Why this shape
 
 The decision was to **decouple "close tab" from "archive" only for subagents**, rather than universally:
@@ -77,6 +81,7 @@ The decision was to **decouple "close tab" from "archive" only for subagents**, 
 - **Closing a tab on a root agent still archives** — preserves the existing UX users are trained on
 - **Closing a tab on a subagent is layout-only** — fixes the lossy "click to read, close to dismiss view, lose the row" flow
 - **Archive button on track rows** — gives subagents an explicit lifecycle gesture in their home surface
+- **Detach button on track rows** — lets a subagent continue independently without killing its work
 - **Cascade archive on parent** — keeps subagents from leaking when the parent is archived
 
 We considered universal decoupling (no tab close ever archives, archive is always explicit) but rejected it: it changes a behavior root-agent users rely on.

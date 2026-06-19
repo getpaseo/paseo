@@ -1161,6 +1161,8 @@ export class VoiceAssistantWebSocketServer {
         projectRemove: true,
         // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: true,
+        // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
+        agentDetach: true,
       },
     };
   }
