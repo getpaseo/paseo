@@ -1290,6 +1290,8 @@ export const zhCN: TranslationResources = {
     backdrop: "菜单背景",
   },
   subagents: {
+    detachAction: "分离 {{label}}",
+    detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
   },

@@ -1335,6 +1335,8 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    detachAction: "Отсоединить {{label}}",
+    detachTooltip: "Отсоединить субагент",
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
   },

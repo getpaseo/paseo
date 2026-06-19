@@ -1307,6 +1307,8 @@ export const ar: TranslationResources = {
     backdrop: "خلفية القائمة",
   },
   subagents: {
+    detachAction: "فصل {{label}}",
+    detachTooltip: "فصل الوكيل الفرعي",
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
   },

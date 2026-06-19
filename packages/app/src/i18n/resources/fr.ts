@@ -1346,6 +1346,8 @@ export const fr: TranslationResources = {
     backdrop: "Toile de fond du menu",
   },
   subagents: {
+    detachAction: "Detacher {{label}}",
+    detachTooltip: "Detacher le sous-agent",
     archiveAction: "Archiver{{label}}",
     archiveTooltip: "Sous-agent d'archivage",
   },

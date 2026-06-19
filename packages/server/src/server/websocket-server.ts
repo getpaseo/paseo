@@ -1170,6 +1170,8 @@ export class VoiceAssistantWebSocketServer {
         worktreeRestore: true,
         // COMPAT(providerUsageList): added in v0.1.98, remove after 2026-12-19 when provider_quota push is deleted.
         providerUsageList: true,
+        // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
+        agentDetach: true,
       },
     };
   }

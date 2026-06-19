@@ -1313,6 +1313,17 @@ export const SetAgentFeatureResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const AgentDetachRequestMessageSchema = z.object({
+  type: z.literal("agent.detach.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentDetachResponseMessageSchema = z.object({
+  type: z.literal("agent.detach.response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
 export const AgentRewindModeSchema = z.enum(["conversation", "files", "both"]);
 
 export const AgentRewindRequestMessageSchema = z.object({
@@ -2027,6 +2038,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
+  AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
@@ -2288,6 +2300,8 @@ export const ServerInfoStatusPayloadSchema = z
         worktreeRestore: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, remove after 2026-12-19 when provider_quota push is deleted.
         providerUsageList: z.boolean().optional(),
+        // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
+        agentDetach: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4171,6 +4185,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
+  AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
@@ -4320,6 +4335,7 @@ export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMes
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
+export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
@@ -4462,6 +4478,7 @@ export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessa
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
+export type AgentDetachRequestMessage = z.infer<typeof AgentDetachRequestMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;

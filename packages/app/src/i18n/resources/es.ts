@@ -1343,6 +1343,8 @@ export const es: TranslationResources = {
     backdrop: "Fondo del menú",
   },
   subagents: {
+    detachAction: "Separar {{label}}",
+    detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
   },

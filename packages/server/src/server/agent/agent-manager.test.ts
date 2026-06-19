@@ -1847,18 +1847,23 @@ test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
   });
   await manager.closeAgent(snapshot.id);
 
-  const before = await storage.get(snapshot.id);
-  expect(before).not.toBeNull();
+  const closed = await storage.get(snapshot.id);
+  expect(closed).not.toBeNull();
+  const before = { ...closed!, labels: { surface: "mobile" } };
+  await storage.upsert(before);
   expect(manager.getAgent(snapshot.id)).toBeNull();
+
+  const upsertSpy = vi.spyOn(storage, "upsert");
 
   await manager.updateAgentMetadata(snapshot.id, {
     title: "Stored title",
     labels: { role: "worker" },
   });
 
+  expect(upsertSpy).toHaveBeenCalledTimes(1);
   const after = await storage.get(snapshot.id);
   expect(after?.title).toBe("Stored title");
-  expect(after?.labels).toEqual({ role: "worker" });
+  expect(after?.labels).toEqual({ surface: "mobile", role: "worker" });
   expect(Date.parse(after!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
 });
 
@@ -2000,6 +2005,134 @@ test("setLabels merges and persists labels", async () => {
     surface: "mobile",
     phase: "1a",
   });
+});
+
+test("detachAgent removes only the parent label from a live agent and emits state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-detach-live-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+  });
+
+  const parent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Parent",
+  });
+  const child = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Child",
+    },
+    undefined,
+    {
+      labels: {
+        [PARENT_AGENT_ID_LABEL]: parent.id,
+        team: "infra",
+      },
+    },
+  );
+  const emittedLabels: Array<Record<string, string>> = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === child.id) {
+        emittedLabels.push(event.agent.labels);
+      }
+    },
+    { agentId: child.id, replayState: false },
+  );
+
+  const result = await manager.detachAgent(child.id);
+  await manager.flush();
+  unsubscribe();
+
+  expect(result.previousParentAgentId).toBe(parent.id);
+  expect(result.live).toBe(true);
+  expect(result.record.labels).toEqual({ team: "infra" });
+  expect(manager.getAgent(child.id)?.labels).toEqual({ team: "infra" });
+  expect((await storage.get(child.id))?.labels).toEqual({ team: "infra" });
+  expect(emittedLabels).toContainEqual({ team: "infra" });
+});
+
+test("detachAgent removes the parent label from a stored-only agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-detach-stored-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+  });
+
+  const parent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Parent",
+  });
+  const child = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Stored child",
+    },
+    undefined,
+    {
+      labels: {
+        [PARENT_AGENT_ID_LABEL]: parent.id,
+        role: "reviewer",
+      },
+    },
+  );
+  await manager.closeAgent(child.id);
+
+  const result = await manager.detachAgent(child.id);
+
+  expect(result.previousParentAgentId).toBe(parent.id);
+  expect(result.live).toBe(false);
+  expect(result.record.labels).toEqual({ role: "reviewer" });
+  expect((await storage.get(child.id))?.labels).toEqual({ role: "reviewer" });
+});
+
+test("archiveAgent does not cascade to a detached former child", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-detach-cascade-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+  });
+
+  const parent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Parent",
+  });
+  const child = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Child",
+    },
+    undefined,
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id } },
+  );
+
+  await manager.detachAgent(child.id);
+  await manager.archiveAgent(parent.id);
+
+  expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+  expect((await storage.get(child.id))?.archivedAt).toBeFalsy();
 });
 
 test("runAgent persists finished attention and idle status without an external snapshot subscriber", async () => {

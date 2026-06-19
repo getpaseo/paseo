@@ -1314,6 +1314,8 @@ export const en = {
     backdrop: "Menu backdrop",
   },
   subagents: {
+    detachAction: "Detach {{label}}",
+    detachTooltip: "Detach subagent",
     archiveAction: "Archive {{label}}",
     archiveTooltip: "Archive subagent",
   },
