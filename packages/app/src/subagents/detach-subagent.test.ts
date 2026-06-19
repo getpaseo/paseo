@@ -12,9 +12,15 @@ interface RecordedDetach {
   agentId: string;
 }
 
+interface RecordedOpen {
+  serverId: string;
+  agentId: string;
+}
+
 interface FakeDetachSubagentEnv {
   deps: DetachSubagentDeps;
   recordedDetaches: RecordedDetach[];
+  recordedOpens: RecordedOpen[];
   recordedConfirmInputs: ConfirmDialogInput[];
   recordedErrors: unknown[];
 }
@@ -30,11 +36,13 @@ function createFakeEnv(
     subagents.set(entry.id, entry.snapshot);
   }
   const recordedDetaches: RecordedDetach[] = [];
+  const recordedOpens: RecordedOpen[] = [];
   const recordedConfirmInputs: ConfirmDialogInput[] = [];
   const recordedErrors: unknown[] = [];
 
   return {
     recordedDetaches,
+    recordedOpens,
     recordedConfirmInputs,
     recordedErrors,
     deps: {
@@ -45,6 +53,9 @@ function createFakeEnv(
       },
       detachAgent: async (input) => {
         recordedDetaches.push(input);
+      },
+      openDetachedAgent: (input) => {
+        recordedOpens.push(input);
       },
       reportError: (error) => {
         recordedErrors.push(error);
@@ -87,6 +98,17 @@ describe("requestDetachSubagent", () => {
     expect(env.recordedDetaches).toEqual([{ serverId: "server-1", agentId: "child-agent" }]);
   });
 
+  it("opens the detached subagent after detach succeeds", async () => {
+    const env = createFakeEnv({
+      confirmResult: true,
+      initialSubagents: [{ id: "child-agent", snapshot: { title: "Review branch" } }],
+    });
+
+    await requestDetachSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps);
+
+    expect(env.recordedOpens).toEqual([{ serverId: "server-1", agentId: "child-agent" }]);
+  });
+
   it("does not detach the subagent when the user cancels", async () => {
     const env = createFakeEnv({
       confirmResult: false,
@@ -96,6 +118,7 @@ describe("requestDetachSubagent", () => {
     await requestDetachSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps);
 
     expect(env.recordedDetaches).toEqual([]);
+    expect(env.recordedOpens).toEqual([]);
   });
 
   it("asks for confirmation using the resolved dialog for the subagent", async () => {
@@ -125,5 +148,6 @@ describe("requestDetachSubagent", () => {
       requestDetachSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps),
     ).resolves.toBeUndefined();
     expect(env.recordedErrors).toEqual([error]);
+    expect(env.recordedOpens).toEqual([]);
   });
 });

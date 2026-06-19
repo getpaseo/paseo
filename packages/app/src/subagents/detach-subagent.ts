@@ -37,6 +37,7 @@ export interface DetachSubagentDeps {
   getSubagent: (subagentId: string) => ResolveDetachSubagentDialogInput | undefined;
   confirm: (input: ConfirmDialogInput) => Promise<boolean>;
   detachAgent: (input: { serverId: string; agentId: string }) => Promise<void>;
+  openDetachedAgent: (input: { serverId: string; agentId: string }) => void;
   reportError: (error: unknown) => void;
 }
 
@@ -60,6 +61,7 @@ export async function requestDetachSubagent(
   }
   try {
     await deps.detachAgent({ serverId: input.serverId, agentId: input.subagentId });
+    deps.openDetachedAgent({ serverId: input.serverId, agentId: input.subagentId });
   } catch (error) {
     deps.reportError(error);
   }
