@@ -156,6 +156,9 @@ export class TerminalInputModeTracker {
     if (this.applicationCursorKeys) {
       parts.push("\x1b[?1h");
     }
+    if (this.bracketedPaste) {
+      parts.push("\x1b[?2004h");
+    }
     return parts.join("");
   }
 

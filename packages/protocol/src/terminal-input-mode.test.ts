@@ -106,6 +106,7 @@ describe("TerminalInputModeTracker", () => {
       applicationCursorKeys: false,
       bracketedPaste: true,
     });
+    expect(tracker.getPreamble()).toBe("\x1b[?2004h");
 
     expect(tracker.feed("\x1b[?2004l").changed).toBe(true);
     expect(tracker.getState()).toEqual({
@@ -114,6 +115,7 @@ describe("TerminalInputModeTracker", () => {
       applicationCursorKeys: false,
       bracketedPaste: false,
     });
+    expect(tracker.getPreamble()).toBe("");
   });
 
   it("ignores encoded key input sequences", () => {
