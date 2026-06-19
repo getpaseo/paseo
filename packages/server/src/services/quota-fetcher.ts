@@ -26,6 +26,7 @@ import type {
 const execFileAsync = promisify(execFile);
 const CURSOR_SQLITE_TIMEOUT_MS = 2_000;
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
+const PROVIDER_HTTP_TIMEOUT_MS = 15_000;
 
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -44,6 +45,17 @@ const ApiOptionalStringSchema = z.preprocess(
   z.coerce.string().optional(),
 );
 type ProviderApiFetch = typeof fetch;
+
+function fetchProviderApi(
+  fetchApi: ProviderApiFetch,
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetchApi(input, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(PROVIDER_HTTP_TIMEOUT_MS),
+  });
+}
 
 export interface QuotaFetcherServiceOptions {
   broadcast: (message: ProviderQuotaMessage) => void;
@@ -389,7 +401,7 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
   }
 
   private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
-    const res = await this.fetchApi("https://api.anthropic.com/api/oauth/usage", {
+    const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/api/oauth/usage", {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -402,16 +414,20 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
   }
 
   private async refreshClaudeToken(refreshToken: string): Promise<ClaudeTokenRefresh | null> {
-    const res = await this.fetchApi("https://platform.claude.com/v1/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        client_id: CLAUDE_CLIENT_ID,
-        scope: "user:profile user:inference user:sessions:claude_code user:mcp_servers",
-      }),
-    });
+    const res = await fetchProviderApi(
+      this.fetchApi,
+      "https://platform.claude.com/v1/oauth/token",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: CLAUDE_CLIENT_ID,
+          scope: "user:profile user:inference user:sessions:claude_code user:mcp_servers",
+        }),
+      },
+    );
     if (!res.ok) return null;
     return ClaudeTokenRefreshSchema.parse(await res.json());
   }
@@ -635,7 +651,13 @@ export class CodexQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
     };
     if (accountId) headers["ChatGPT-Account-Id"] = accountId;
 
-    const res = await this.fetchApi("https://chatgpt.com/backend-api/wham/usage", { headers });
+    const res = await fetchProviderApi(
+      this.fetchApi,
+      "https://chatgpt.com/backend-api/wham/usage",
+      {
+        headers,
+      },
+    );
     if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Codex usage API returned ${res.status}`);
     const text = await res.text();
@@ -649,7 +671,7 @@ export class CodexQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
       client_id: CODEX_CLIENT_ID,
       refresh_token: refreshToken,
     });
-    const res = await this.fetchApi("https://auth.openai.com/oauth/token", {
+    const res = await fetchProviderApi(this.fetchApi, "https://auth.openai.com/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -765,16 +787,20 @@ export class CopilotQuotaProvider implements QuotaProvider, ProviderUsageFetcher
 
     if (!token) return undefined;
 
-    const res = await this.fetchApi("https://api.github.com/copilot_internal/user", {
-      headers: {
-        Authorization: `token ${token}`,
-        Accept: "application/json",
-        "Editor-Version": "vscode/1.96.2",
-        "Editor-Plugin-Version": "copilot-chat/0.26.7",
-        "User-Agent": "GitHubCopilotChat/0.26.7",
-        "X-Github-Api-Version": "2025-04-01",
+    const res = await fetchProviderApi(
+      this.fetchApi,
+      "https://api.github.com/copilot_internal/user",
+      {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/json",
+          "Editor-Version": "vscode/1.96.2",
+          "Editor-Plugin-Version": "copilot-chat/0.26.7",
+          "User-Agent": "GitHubCopilotChat/0.26.7",
+          "X-Github-Api-Version": "2025-04-01",
+        },
       },
-    });
+    );
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Copilot quota fetch failed");
@@ -870,7 +896,8 @@ export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
 
     if (!token) return undefined;
 
-    const res = await this.fetchApi(
+    const res = await fetchProviderApi(
+      this.fetchApi,
       "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
       {
         method: "POST",
@@ -965,12 +992,16 @@ export class ZaiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
     const token = process.env["ZAI_API_KEY"] || process.env["GLM_API_KEY"];
     if (!token) return undefined;
 
-    const res = await this.fetchApi("https://api.z.ai/api/biz/subscription/list", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
+    const res = await fetchProviderApi(
+      this.fetchApi,
+      "https://api.z.ai/api/biz/subscription/list",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
       },
-    });
+    );
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Z.ai quota fetch failed");
@@ -1049,13 +1080,17 @@ export class GrokQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
 
     if (!token) return undefined;
 
-    const res = await this.fetchApi("https://cli-chat-proxy.grok.com/v1/billing", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-XAI-Token-Auth": "xai-grok-cli",
-        Accept: "application/json",
+    const res = await fetchProviderApi(
+      this.fetchApi,
+      "https://cli-chat-proxy.grok.com/v1/billing",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-XAI-Token-Auth": "xai-grok-cli",
+          Accept: "application/json",
+        },
       },
-    });
+    );
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Grok quota fetch failed");
@@ -1144,7 +1179,7 @@ export class KimiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
 
     if (!token) return undefined;
 
-    const res = await this.fetchApi("https://api.kimi.com/coding/v1/usages", {
+    const res = await fetchProviderApi(this.fetchApi, "https://api.kimi.com/coding/v1/usages", {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -1283,6 +1318,7 @@ export class ProviderUsageService {
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
+  private inFlight: Promise<ProviderUsageListResult> | null = null;
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
@@ -1310,6 +1346,22 @@ export class ProviderUsageService {
       return this.cached.result;
     }
 
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+
+    const request = this.fetchFreshUsage(nowMs);
+    this.inFlight = request;
+    try {
+      return await request;
+    } finally {
+      if (this.inFlight === request) {
+        this.inFlight = null;
+      }
+    }
+  }
+
+  private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
     const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
       const fetcher = this.fetchers[index];

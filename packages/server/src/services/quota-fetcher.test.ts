@@ -76,6 +76,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+async function fetchClaudeUsageResponse(): Promise<Response> {
+  return jsonResponse(makeClaudeResponse());
+}
+
 function createLogger() {
   return {
     child: () => ({ debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() }),
@@ -173,6 +177,43 @@ describe("ProviderUsageService", () => {
     expect(calls).toBe(2);
     expect(cached).toBe(first);
     expect(refreshed.providers[0]?.windows[0]?.usedPct).toBe(2);
+  });
+
+  it("deduplicates concurrent cache misses", async () => {
+    let calls = 0;
+    let resolveUsage: ((usage: ProviderUsage) => void) | null = null;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: () => {
+            calls += 1;
+            return new Promise<ProviderUsage>((resolve) => {
+              resolveUsage = resolve;
+            });
+          },
+        },
+      ],
+    });
+
+    const first = service.listUsage();
+    const second = service.listUsage();
+
+    expect(calls).toBe(1);
+    resolveUsage?.({
+      providerId: "claude",
+      displayName: "Claude",
+      status: "available",
+      planLabel: "Max 20x",
+      windows: [{ id: "session", label: "Session", usedPct: 12 }],
+    });
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toBe(secondResult);
+    expect(calls).toBe(1);
   });
 
   it("returns an error entry for one failed fetcher without dropping other providers", async () => {
@@ -327,6 +368,20 @@ describe("QuotaFetcherService", () => {
       await service.triggerFetch();
 
       expect(broadcasts[0].payload.claude?.fiveHour?.utilizationPct).toBe(11);
+    });
+
+    it("attaches a timeout signal to provider HTTP requests", async () => {
+      writeCreds(claudeHome, "at_valid");
+      fetchApi = vi.fn(fetchClaudeUsageResponse) as never;
+
+      await service.triggerFetch();
+
+      expect(fetchApi).toHaveBeenCalledWith(
+        "https://api.anthropic.com/api/oauth/usage",
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+        }),
+      );
     });
 
     it("does not call Claude when credentials file is missing", async () => {
