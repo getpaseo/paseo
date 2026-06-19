@@ -1,4 +1,4 @@
-export type SupportedLocale = "ar" | "en" | "es" | "fr" | "ru" | "zh-CN";
+export type SupportedLocale = "ar" | "en" | "es" | "fr" | "pt-BR" | "ru" | "zh-CN";
 export type AppLanguage = "system" | SupportedLocale;
 
 export interface LanguageOption {
@@ -14,16 +14,27 @@ export const LANGUAGE_OPTIONS: LanguageOption[] = [
   { value: "en", labelKey: "settings.general.language.options.en" },
   { value: "es", labelKey: "settings.general.language.options.es" },
   { value: "fr", labelKey: "settings.general.language.options.fr" },
+  { value: "pt-BR", labelKey: "settings.general.language.options.ptBR" },
   { value: "ru", labelKey: "settings.general.language.options.ru" },
   { value: "zh-CN", labelKey: "settings.general.language.options.zhCN" },
 ];
 
-const SUPPORTED_LANGUAGES = new Set<AppLanguage>(["system", "ar", "en", "es", "fr", "ru", "zh-CN"]);
+const SUPPORTED_LANGUAGES = new Set<AppLanguage>([
+  "system",
+  "ar",
+  "en",
+  "es",
+  "fr",
+  "pt-BR",
+  "ru",
+  "zh-CN",
+]);
 const LANGUAGE_NATIVE_NAMES: Record<SupportedLocale, string> = {
   ar: "العربية",
   en: "English",
   es: "Español",
   fr: "Français",
+  "pt-BR": "Português brasileiro",
   ru: "Русский",
   "zh-CN": "简体中文",
 };
@@ -33,6 +44,7 @@ const LANGUAGE_NAMES_BY_LOCALE: Record<SupportedLocale, Record<SupportedLocale, 
     en: "الإنجليزية",
     es: "الإسبانية",
     fr: "الفرنسية",
+    "pt-BR": "البرتغالية البرازيلية",
     ru: "الروسية",
     "zh-CN": "الصينية المبسطة",
   },
@@ -41,6 +53,7 @@ const LANGUAGE_NAMES_BY_LOCALE: Record<SupportedLocale, Record<SupportedLocale, 
     en: "English",
     es: "Spanish",
     fr: "French",
+    "pt-BR": "Brazilian Portuguese",
     ru: "Russian",
     "zh-CN": "Simplified Chinese",
   },
@@ -49,6 +62,7 @@ const LANGUAGE_NAMES_BY_LOCALE: Record<SupportedLocale, Record<SupportedLocale, 
     en: "inglés",
     es: "español",
     fr: "francés",
+    "pt-BR": "portugués brasileño",
     ru: "ruso",
     "zh-CN": "chino simplificado",
   },
@@ -57,14 +71,25 @@ const LANGUAGE_NAMES_BY_LOCALE: Record<SupportedLocale, Record<SupportedLocale, 
     en: "anglais",
     es: "espagnol",
     fr: "français",
+    "pt-BR": "portugais brésilien",
     ru: "russe",
     "zh-CN": "chinois simplifié",
+  },
+  "pt-BR": {
+    ar: "árabe",
+    en: "inglês",
+    es: "espanhol",
+    fr: "francês",
+    "pt-BR": "Português brasileiro",
+    ru: "russo",
+    "zh-CN": "chinês simplificado",
   },
   ru: {
     ar: "арабский",
     en: "английский",
     es: "испанский",
     fr: "французский",
+    "pt-BR": "бразильский португальский",
     ru: "русский",
     "zh-CN": "упрощенный китайский",
   },
@@ -73,6 +98,7 @@ const LANGUAGE_NAMES_BY_LOCALE: Record<SupportedLocale, Record<SupportedLocale, 
     en: "英语",
     es: "西班牙语",
     fr: "法语",
+    "pt-BR": "巴西葡萄牙语",
     ru: "俄语",
     "zh-CN": "简体中文",
   },
@@ -123,6 +149,9 @@ export function resolveSupportedLocale(
     }
     if (normalized === "fr" || normalized.startsWith("fr-")) {
       return "fr";
+    }
+    if (normalized === "pt" || normalized === "pt-br") {
+      return "pt-BR";
     }
     if (normalized === "ru" || normalized.startsWith("ru-")) {
       return "ru";

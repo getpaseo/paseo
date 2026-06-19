@@ -1432,6 +1432,7 @@ export const ar: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },

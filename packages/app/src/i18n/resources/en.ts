@@ -1438,6 +1438,7 @@ export const en = {
           en: "English",
           es: "Spanish",
           fr: "French",
+          ptBR: "Brazilian Portuguese",
           ru: "Russian",
           zhCN: "Simplified Chinese",
         },
