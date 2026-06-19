@@ -20,7 +20,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
-import { formatCadence, formatNextRun } from "@/utils/schedule-format";
+import { formatCadence, formatNextRun, resolveScheduleTitle } from "@/utils/schedule-format";
 import { shortenPath } from "@/utils/shorten-path";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
@@ -61,25 +61,6 @@ export interface ScheduleRowActions {
 interface ScheduleRowProps extends ScheduleRowActions {
   schedule: ScheduleSummary;
   pending?: ScheduleRowPending;
-}
-
-/** Row primary label: name → title → first prompt line → fallback. */
-function resolveTitle(schedule: ScheduleSummary): string {
-  const name = schedule.name?.trim();
-  if (name) {
-    return name;
-  }
-  if (schedule.target.type === "new-agent") {
-    const configTitle = schedule.target.config.title?.trim();
-    if (configTitle) {
-      return configTitle;
-    }
-  }
-  const firstPromptLine = schedule.prompt
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  return firstPromptLine || "Untitled schedule";
 }
 
 function resolveProvider(schedule: ScheduleSummary): string | null {
@@ -167,7 +148,7 @@ function DesktopScheduleRow({
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
 
   const provider = resolveProvider(schedule);
-  const title = resolveTitle(schedule);
+  const title = resolveScheduleTitle(schedule);
   const cwd = resolveCwd(schedule);
   const model = resolveModelLabel(schedule);
 
@@ -370,7 +351,7 @@ function CompactScheduleRow({
   onDelete,
 }: ScheduleRowProps): ReactElement {
   const provider = resolveProvider(schedule);
-  const title = resolveTitle(schedule);
+  const title = resolveScheduleTitle(schedule);
   const model = resolveModelLabel(schedule);
 
   const metaParts = [model, formatCadence(schedule.cadence), nextRunLabel(schedule)].filter(

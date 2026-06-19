@@ -132,10 +132,10 @@ export function ScheduleFormSheet({
         provider={selectedProvider}
         disabled={disabled}
         active={hovered || pressed || isOpen}
-        isPlaceholder={selectedModelLabel === "Select model"}
+        isPlaceholder={!selectedModel}
       />
     ),
-    [selectedProvider],
+    [selectedModel, selectedProvider],
   );
 
   const { createSchedule, updateSchedule, isCreating, isUpdating } = useScheduleMutations({

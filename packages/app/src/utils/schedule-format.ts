@@ -35,6 +35,24 @@ export function isNewAgentSchedule(schedule: ScheduleSummary): boolean {
   return schedule.target.type === "new-agent";
 }
 
+export function resolveScheduleTitle(schedule: ScheduleSummary): string {
+  const name = schedule.name?.trim();
+  if (name) {
+    return name;
+  }
+  if (schedule.target.type === "new-agent") {
+    const configTitle = schedule.target.config.title?.trim();
+    if (configTitle) {
+      return configTitle;
+    }
+  }
+  const firstPromptLine = schedule.prompt
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return firstPromptLine || "Untitled schedule";
+}
+
 function pluralize(value: number, noun: string): string {
   return value === 1 ? `1 ${noun}` : `${value} ${noun}s`;
 }

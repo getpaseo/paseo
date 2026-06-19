@@ -9,6 +9,7 @@ import {
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { resolveScheduleTitle } from "@/utils/schedule-format";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 interface SchedulesTableProps {
@@ -73,28 +74,6 @@ function keyExtractor(schedule: ScheduleSummary): string {
   return schedule.id;
 }
 
-/**
- * Human label for the schedule, used in the delete confirmation. Mirrors the
- * row's title precedence (name → config title → first prompt line → fallback).
- */
-function scheduleLabel(schedule: ScheduleSummary): string {
-  const name = schedule.name?.trim();
-  if (name) {
-    return name;
-  }
-  if (schedule.target.type === "new-agent") {
-    const configTitle = schedule.target.config.title?.trim();
-    if (configTitle) {
-      return configTitle;
-    }
-  }
-  const firstPromptLine = schedule.prompt
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  return firstPromptLine || "Untitled schedule";
-}
-
 // ---------------------------------------------------------------------------
 // Per-row wrapper — owns local in-flight state and binds the table's mutation
 // callbacks to this schedule. Local state keeps pending precise to the acting
@@ -157,7 +136,7 @@ function SchedulesTableRow({
     void (async () => {
       const confirmed = await confirmDialog({
         title: "Delete schedule",
-        message: `Delete "${scheduleLabel(schedule)}"? This cannot be undone.`,
+        message: `Delete "${resolveScheduleTitle(schedule)}"? This cannot be undone.`,
         confirmLabel: "Delete",
         destructive: true,
       });
