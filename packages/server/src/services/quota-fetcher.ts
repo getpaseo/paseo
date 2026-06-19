@@ -144,20 +144,21 @@ export class ClaudeQuotaProvider implements QuotaProvider {
     let resp = await this.callClaudeApi(oauth.accessToken);
 
     if (resp === "NEEDS_AUTH") {
+      // On macOS the credential lives in the Keychain (filePath === null) whose ACL
+      // only trusts /usr/bin/security. Since Claude Code owns the refresh and Anthropic
+      // rotates/revokes the refresh token on the server, we must skip token refresh
+      // if read-only (Keychain) to avoid invalidating Claude Code's login state.
+      if (!filePath) return undefined;
+
       if (!oauth.refreshToken) return undefined;
       const refreshed = await this.refreshClaudeToken(oauth.refreshToken);
       if (!refreshed?.access_token) return undefined;
 
-      // Only the file-backed store is writable. On macOS the credential lives in
-      // the Keychain (filePath === null) whose ACL only trusts /usr/bin/security,
-      // and Claude Code owns the refresh, so stay read-only there.
-      if (filePath) {
-        await this.saveClaudeCredentials(filePath, {
-          ...oauth,
-          accessToken: refreshed.access_token,
-          refreshToken: refreshed.refresh_token ?? oauth.refreshToken,
-        });
-      }
+      await this.saveClaudeCredentials(filePath, {
+        ...oauth,
+        accessToken: refreshed.access_token,
+        refreshToken: refreshed.refresh_token ?? oauth.refreshToken,
+      });
 
       resp = await this.callClaudeApi(refreshed.access_token);
       if (resp === "NEEDS_AUTH") return undefined;

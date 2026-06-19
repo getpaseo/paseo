@@ -4,6 +4,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DesktopDir = (Resolve-Path "$ScriptDir\..").Path
 $AppDir = (Resolve-Path "$DesktopDir\..\app").Path
 $RootDir = (Resolve-Path "$DesktopDir\..\..").Path
+$env:PATH = "$RootDir\node_modules\.bin;$env:PATH"
 
 # Build the Electron main process
 npm run build:main
@@ -78,18 +79,27 @@ if (-not $env:PASEO_LISTEN) { $env:PASEO_LISTEN = "127.0.0.1:$DevDaemonPort" }
 # ONLY seed the script-managed home: never rewrite a user-supplied PASEO_HOME
 # (that could clobber a production config.json with the dev port + wildcard CORS).
 if ($PaseoHomeManaged) {
-    node -e '
-const fs = require("fs");
-const [path, port] = [process.argv[1], process.argv[2]];
+    $env:TMP_CFG_PATH = "$($env:PASEO_HOME)/config.json"
+    $env:TMP_CFG_PORT = $DevDaemonPort
+    $TmpScript = [System.IO.Path]::GetTempFileName() + ".js"
+    $ScriptContent = @"
+const fs = require('fs');
+const path = process.env.TMP_CFG_PATH;
+const port = process.env.TMP_CFG_PORT;
 let cfg = {};
-try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
+try { cfg = JSON.parse(fs.readFileSync(path, 'utf8')); } catch(e) {}
 cfg.version = cfg.version || 1;
 cfg.daemon = cfg.daemon || {};
-cfg.daemon.listen = `127.0.0.1:${port}`;
+cfg.daemon.listen = '127.0.0.1:' + port;
 cfg.daemon.cors = cfg.daemon.cors || {};
-cfg.daemon.cors.allowedOrigins = ["*"];
+cfg.daemon.cors.allowedOrigins = ['*'];
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
-' "$($env:PASEO_HOME)/config.json" $DevDaemonPort
+"@
+    Set-Content -Path $TmpScript -Value $ScriptContent
+    node $TmpScript
+    Remove-Item $TmpScript -ErrorAction SilentlyContinue
+    Remove-Item Env:\TMP_CFG_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:\TMP_CFG_PORT -ErrorAction SilentlyContinue
 } else {
     Write-Host "  (custom PASEO_HOME - leaving its config.json untouched)"
 }
@@ -107,9 +117,9 @@ Write-Host @"
 "@
 
 # Launch Metro + Electron together, kill both on exit
-& "$RootDir\node_modules\.bin\concurrently" `
+concurrently `
     --kill-others `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
-    "cd `"$AppDir`" && `$env:PASEO_WEB_PLATFORM = `"electron`"; npx expo start --port $($env:EXPO_PORT)" `
+    "cd `"$AppDir`" && cross-env PASEO_WEB_PLATFORM=electron npx expo start --port $($env:EXPO_PORT)" `
     "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
