@@ -87,6 +87,7 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
@@ -5606,6 +5607,9 @@ export class CodexAppServerAgentClient implements AgentClient {
       const availability = await checkCodexLaunchAvailable(launch);
       const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
+        ...(await buildCommandResolutionDiagnosticRows(launch, {
+          knownBinaryNames: ["codex"],
+        })),
         ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
       let status = formatDiagnosticStatus(available);

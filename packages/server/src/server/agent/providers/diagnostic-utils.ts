@@ -1,3 +1,7 @@
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
+import path from "node:path";
+
 import {
   createProviderEnvSpec,
   type ProviderLaunchAvailability,
@@ -152,6 +156,84 @@ export interface BinaryDiagnosticVersionCommand {
 export interface BinaryDiagnosticRowsOptions {
   binaryLabel?: string;
   versionCommand?: BinaryDiagnosticVersionCommand;
+}
+
+export interface CommandResolutionDiagnosticRowsOptions {
+  knownBinaryNames: readonly string[];
+}
+
+function resolvePathValue(): string {
+  return process.env["PATH"] ?? process.env["Path"] ?? "";
+}
+
+async function isExecutableFile(filePath: string): Promise<boolean> {
+  try {
+    const candidate = await stat(filePath);
+    if (!candidate.isFile()) {
+      return false;
+    }
+    if (process.platform === "win32") {
+      return true;
+    }
+    await access(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function formatPathMatches(binaryNames: readonly string[]): Promise<string> {
+  const searchableNames = binaryNames.filter(
+    (binaryName) =>
+      binaryName.trim().length > 0 && !binaryName.includes("/") && !binaryName.includes("\\"),
+  );
+
+  if (searchableNames.length === 0) {
+    return "not checked";
+  }
+
+  const pathEntries = resolvePathValue().split(path.delimiter).filter(Boolean);
+  const matches: string[] = [];
+  const seen = new Set<string>();
+
+  for (const directory of pathEntries) {
+    for (const binaryName of searchableNames) {
+      const candidate = path.join(directory, binaryName);
+      if (seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+      if (await isExecutableFile(candidate)) {
+        matches.push(candidate);
+      }
+    }
+  }
+
+  return matches.length > 0 ? matches.join("\n    ") : "none";
+}
+
+export async function buildCommandResolutionDiagnosticRows(
+  launch: ResolvedProviderLaunch,
+  options: CommandResolutionDiagnosticRowsOptions,
+): Promise<DiagnosticEntry[]> {
+  return [
+    {
+      label: "Command source",
+      value: launch.source,
+    },
+    {
+      label: "Configured command",
+      value: [launch.command, ...launch.args].join(" "),
+    },
+    {
+      label: "Daemon PATH",
+      value: resolvePathValue() || "(empty)",
+    },
+    {
+      label: "PATH matches",
+      value: await formatPathMatches(options.knownBinaryNames),
+    },
+  ];
 }
 
 async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand): Promise<string> {

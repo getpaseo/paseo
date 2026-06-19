@@ -20,6 +20,7 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
@@ -127,6 +128,9 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Copilot", [
+          ...(await buildCommandResolutionDiagnosticRows(launch, {
+            knownBinaryNames: ["copilot"],
+          })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
