@@ -839,9 +839,10 @@ export function TerminalPane({
   const toggleModifier = useCallback(
     (modifier: keyof ModifierState) => {
       setModifiers((current) => ({ ...current, [modifier]: !current[modifier] }));
+      requestTerminalFocus();
       requestTerminalReflow();
     },
-    [requestTerminalReflow],
+    [requestTerminalFocus, requestTerminalReflow],
   );
 
   const sendVirtualKey = useCallback(
@@ -854,6 +855,7 @@ export function TerminalPane({
         meta: false,
       });
       clearPendingModifiers();
+      requestTerminalFocus();
       requestTerminalReflow();
     },
     [
@@ -861,6 +863,7 @@ export function TerminalPane({
       modifiers.alt,
       modifiers.ctrl,
       modifiers.shift,
+      requestTerminalFocus,
       requestTerminalReflow,
       sendTerminalKey,
     ],

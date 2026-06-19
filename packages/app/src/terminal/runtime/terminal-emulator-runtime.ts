@@ -210,6 +210,10 @@ export class TerminalEmulatorRuntime {
     this.pendingModifiers = input.pendingModifiers;
   }
 
+  getInputModeState(): TerminalInputModeState {
+    return this.inputModeTracker.getState();
+  }
+
   mount(input: TerminalEmulatorRuntimeMountInput): void {
     this.unmount();
 

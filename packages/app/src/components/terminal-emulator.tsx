@@ -23,6 +23,7 @@ import {
   TerminalEmulatorRuntime,
   type TerminalOutputData,
 } from "../terminal/runtime/terminal-emulator-runtime";
+import { encodeTerminalPaste } from "../terminal/runtime/terminal-paste";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -222,6 +223,18 @@ export default function TerminalEmulator({
   const dropActiveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const domBridgeRef = useRef<DOMImperativeFactory | null>(null);
+  const pasteText = useCallback((text: string) => {
+    if (text.length === 0) {
+      return;
+    }
+    mountCallbacksRef.current.onInput?.(
+      encodeTerminalPaste({
+        text,
+        bracketedPaste: runtimeRef.current?.getInputModeState().bracketedPaste ?? false,
+      }),
+    );
+  }, []);
+
   useDOMImperativeHandle(
     domBridgeRef,
     (): DOMImperativeFactory => ({
@@ -244,7 +257,7 @@ export default function TerminalEmulator({
       paste: (...args) => {
         const text = args[0];
         if (typeof text === "string" && text.length > 0) {
-          mountCallbacksRef.current.onInput?.(text);
+          pasteText(text);
         }
       },
       copySelection: async () => "",
@@ -259,7 +272,7 @@ export default function TerminalEmulator({
         runtimeRef.current?.blur();
       },
     }),
-    [],
+    [pasteText],
   );
   useImperativeHandle(
     ref,
@@ -274,9 +287,7 @@ export default function TerminalEmulator({
         runtimeRef.current?.renderSnapshot({ state });
       },
       paste: (text: string) => {
-        if (text.length > 0) {
-          mountCallbacksRef.current.onInput?.(text);
-        }
+        pasteText(text);
       },
       copySelection: async () => "",
       clear: () => {
@@ -290,7 +301,7 @@ export default function TerminalEmulator({
         runtimeRef.current?.blur();
       },
     }),
-    [],
+    [pasteText],
   );
 
   useEffect(() => {

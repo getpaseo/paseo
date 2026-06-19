@@ -308,6 +308,16 @@ describe("terminal-emulator-runtime", () => {
     ]);
   });
 
+  it("exposes the tracked input mode state", () => {
+    const { runtime } = createRuntimeWithTerminal();
+
+    runtime.write({ data: terminalOutput("\x1b[?2004h") });
+
+    expect(runtime.getInputModeState()).toMatchObject({
+      bracketedPaste: true,
+    });
+  });
+
   it("commits each drained plain write through its own xterm callback", () => {
     const { runtime, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
     const committed: string[] = [];
