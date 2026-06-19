@@ -58,8 +58,9 @@ import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
-import { isWeb } from "@/constants/platform";
+import { isWeb, isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import * as Haptics from "expo-haptics";
 import { useComposerHeightMirror } from "./height-mirror";
 import {
   resolveSendTooltipLabel,
@@ -67,7 +68,12 @@ import {
   resolveVoiceAccessibilityLabel,
   resolveVoiceTooltipText,
 } from "./labels";
-import { computeCanStartDictation, runAlternateSendAction, runDefaultSendAction } from "./state";
+import {
+  computeCanStartDictation,
+  runAlternateSendAction,
+  runDefaultSendAction,
+  runLongPressQueueAction,
+} from "./state";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 
@@ -783,6 +789,9 @@ function SendButtonTooltip({
   canPressLoadingButton,
   onSubmitLoadingPress,
   onDefaultSendAction,
+  onLongPressQueue,
+  isQueueAvailable,
+  queueAccessibilityHint,
   isSendButtonDisabled,
   submitAccessibilityLabel,
   sendButtonCombinedStyle,
@@ -797,6 +806,9 @@ function SendButtonTooltip({
   canPressLoadingButton: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
   onDefaultSendAction: () => void;
+  onLongPressQueue: (() => void) | undefined;
+  isQueueAvailable: boolean;
+  queueAccessibilityHint: string | undefined;
   isSendButtonDisabled: boolean;
   submitAccessibilityLabel: string;
   sendButtonCombinedStyle: React.ComponentProps<typeof TooltipTrigger>["style"];
@@ -808,10 +820,15 @@ function SendButtonTooltip({
   sendTooltipLabel: string;
 }) {
   if (!shouldShow) return null;
+  // Long-press to queue only applies when queueing is available and the button
+  // is in its normal send state (not the loading/cancel affordance).
+  const longPressQueue = canPressLoadingButton || !isQueueAvailable ? undefined : onLongPressQueue;
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger
         onPress={canPressLoadingButton ? onSubmitLoadingPress : onDefaultSendAction}
+        onLongPress={longPressQueue}
+        accessibilityHint={longPressQueue ? queueAccessibilityHint : undefined}
         disabled={isSendButtonDisabled}
         accessibilityLabel={submitAccessibilityLabel}
         accessibilityRole="button"
@@ -1019,13 +1036,14 @@ interface QueueMessageContext {
   onMinimizeHeight: () => void;
 }
 
-function queueMessageImpl(ctx: QueueMessageContext): void {
-  if (!ctx.onQueue) return;
+function queueMessageImpl(ctx: QueueMessageContext): boolean {
+  if (!ctx.onQueue) return false;
   const trimmed = ctx.value.trim();
-  if (!trimmed && ctx.attachments.length === 0) return;
+  if (!trimmed && ctx.attachments.length === 0) return false;
   ctx.onQueue({ text: trimmed, attachments: ctx.attachments, cwd: ctx.cwd });
   ctx.onChangeText("");
   ctx.onMinimizeHeight();
+  return true;
 }
 
 function computeIsRealtimeVoiceForAgent(
@@ -1583,6 +1601,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [attachments, cwd, onQueue, onChangeText, minimizeInputHeight],
     );
 
+    // Long-pressing the send button queues the draft instead of sending it,
+    // regardless of the default send behavior setting. Tap still sends.
+    const handleLongPressSend = useCallback(() => {
+      runLongPressQueueAction({
+        onQueue,
+        queueMessage: handleQueueMessage,
+        onQueued: () => {
+          if (isNative) {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+          }
+        },
+      });
+    }, [onQueue, handleQueueMessage]);
+
     const handleDefaultSendAction = useCallback(() => {
       runDefaultSendAction({
         defaultSendBehavior,
@@ -1887,6 +1919,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
                 canPressLoadingButton={canPressLoadingButton}
                 onSubmitLoadingPress={onSubmitLoadingPress}
                 onDefaultSendAction={handleDefaultSendAction}
+                onLongPressQueue={handleLongPressSend}
+                isQueueAvailable={Boolean(onQueue)}
+                queueAccessibilityHint={t("composer.input.queueMessage")}
                 isSendButtonDisabled={isSendButtonDisabled}
                 submitAccessibilityLabel={submitAccessibilityLabel}
                 sendButtonCombinedStyle={sendButtonCombinedStyle}

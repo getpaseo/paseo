@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { computeCanStartDictation, runAlternateSendAction, runDefaultSendAction } from "./state";
+import { describe, expect, it, vi } from "vitest";
+import {
+  computeCanStartDictation,
+  runAlternateSendAction,
+  runDefaultSendAction,
+  runLongPressQueueAction,
+} from "./state";
 
 const connected = { isConnected: true } as never;
 const disconnected = { isConnected: false } as never;
@@ -147,5 +152,31 @@ describe("composer send behavior", () => {
 
     expect(defaultAction.calls).toEqual(["queue"]);
     expect(alternateAction.calls).toEqual(["send"]);
+  });
+});
+
+describe("runLongPressQueueAction", () => {
+  it("does nothing when queueing is unavailable", () => {
+    const queueMessage = vi.fn(() => true);
+    const onQueued = vi.fn();
+    runLongPressQueueAction({ onQueue: undefined, queueMessage, onQueued });
+    expect(queueMessage).not.toHaveBeenCalled();
+    expect(onQueued).not.toHaveBeenCalled();
+  });
+
+  it("queues and fires the queued side effect when there is content", () => {
+    const queueMessage = vi.fn(() => true);
+    const onQueued = vi.fn();
+    runLongPressQueueAction({ onQueue: () => undefined, queueMessage, onQueued });
+    expect(queueMessage).toHaveBeenCalledTimes(1);
+    expect(onQueued).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the queued side effect when nothing was queued", () => {
+    const queueMessage = vi.fn(() => false);
+    const onQueued = vi.fn();
+    runLongPressQueueAction({ onQueue: () => undefined, queueMessage, onQueued });
+    expect(queueMessage).toHaveBeenCalledTimes(1);
+    expect(onQueued).not.toHaveBeenCalled();
   });
 });
