@@ -35,6 +35,10 @@ const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const ApiNumberSchema = z.coerce.number().finite();
+const ApiNullableNumberSchema = z.preprocess(
+  (value) => (value == null ? null : value),
+  ApiNumberSchema.nullable(),
+);
 
 export interface QuotaFetcherServiceOptions {
   broadcast: (message: ProviderQuotaMessage) => void;
@@ -115,6 +119,11 @@ function balanceToneFromRemaining(
   if (typeof remaining !== "number") return "default";
   if (remaining <= 0) return "danger";
   return "ok";
+}
+
+function toIsoStringOrNull(timestampMs: number): string | null {
+  const date = new Date(timestampMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -777,6 +786,48 @@ export class CopilotQuotaProvider implements QuotaProvider, ProviderUsageFetcher
 // ---------------------------------------------------------------------------
 // Cursor
 // ---------------------------------------------------------------------------
+const CursorBillingCycleTimestampSchema = z.preprocess(
+  (value) => (typeof value === "string" || typeof value === "number" ? value : null),
+  z.union([z.string(), z.number()]).nullable(),
+);
+
+const CursorUsageResponseSchema = z.object({
+  planUsage: z
+    .object({
+      totalSpend: ApiNullableNumberSchema,
+      includedSpend: ApiNullableNumberSchema,
+      bonusSpend: ApiNullableNumberSchema,
+      remaining: ApiNullableNumberSchema,
+      limit: ApiNullableNumberSchema,
+    })
+    .nullish(),
+  billingCycleStart: CursorBillingCycleTimestampSchema,
+  billingCycleEnd: CursorBillingCycleTimestampSchema,
+});
+
+type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
+
+function parseCursorBillingCycleTimestamp(
+  value: CursorUsageResponse["billingCycleStart"],
+): string | null {
+  if (value === null) return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) {
+    const timestampMs = Math.abs(numeric) < 10_000_000_000 ? numeric * 1000 : numeric;
+    return toIsoStringOrNull(timestampMs);
+  }
+
+  return toIsoStringOrNull(new Date(raw).getTime());
+}
+
+function centsToDollars(value: number | null): number | null {
+  return value === null ? null : value / 100;
+}
+
 export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "cursor";
   readonly providerId = "cursor";
@@ -810,43 +861,19 @@ export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
       return undefined;
     }
 
-    const resp = (await res.json()) as unknown as {
-      planUsage?: {
-        totalSpend?: number;
-        includedSpend?: number;
-        bonusSpend?: number;
-        remaining?: number;
-        limit?: number;
-      } | null;
-      billingCycleStart?: string;
-      billingCycleEnd?: string;
-    };
+    const resp = CursorUsageResponseSchema.parse(await res.json());
     return {
       planUsage: resp.planUsage
         ? {
-            totalSpend:
-              typeof resp.planUsage.totalSpend === "number"
-                ? resp.planUsage.totalSpend / 100
-                : null,
-            includedSpend:
-              typeof resp.planUsage.includedSpend === "number"
-                ? resp.planUsage.includedSpend / 100
-                : null,
-            bonusSpend:
-              typeof resp.planUsage.bonusSpend === "number"
-                ? resp.planUsage.bonusSpend / 100
-                : null,
-            remaining:
-              typeof resp.planUsage.remaining === "number" ? resp.planUsage.remaining / 100 : null,
-            limit: typeof resp.planUsage.limit === "number" ? resp.planUsage.limit / 100 : null,
+            totalSpend: centsToDollars(resp.planUsage.totalSpend),
+            includedSpend: centsToDollars(resp.planUsage.includedSpend),
+            bonusSpend: centsToDollars(resp.planUsage.bonusSpend),
+            remaining: centsToDollars(resp.planUsage.remaining),
+            limit: centsToDollars(resp.planUsage.limit),
           }
         : null,
-      billingCycleStart: resp.billingCycleStart
-        ? new Date(Number(resp.billingCycleStart)).toISOString()
-        : null,
-      billingCycleEnd: resp.billingCycleEnd
-        ? new Date(Number(resp.billingCycleEnd)).toISOString()
-        : null,
+      billingCycleStart: parseCursorBillingCycleTimestamp(resp.billingCycleStart),
+      billingCycleEnd: parseCursorBillingCycleTimestamp(resp.billingCycleEnd),
     };
   }
 

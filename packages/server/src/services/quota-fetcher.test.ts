@@ -581,14 +581,14 @@ describe("QuotaFetcherService", () => {
             () =>
               jsonResponse({
                 planUsage: {
-                  totalSpend: 1500,
-                  includedSpend: 1000,
-                  bonusSpend: 500,
-                  remaining: 2500,
-                  limit: 4000,
+                  totalSpend: "1500",
+                  includedSpend: "1000",
+                  bonusSpend: "500",
+                  remaining: "2500",
+                  limit: "4000",
                 },
-                billingCycleStart: "1768399334000",
-                billingCycleEnd: "1771077734000",
+                billingCycleStart: "1768399334",
+                billingCycleEnd: "1771077734",
               }),
           ],
         ]),
@@ -600,7 +600,40 @@ describe("QuotaFetcherService", () => {
       expect(cursor?.planUsage?.totalSpend).toBe(15);
       expect(cursor?.planUsage?.limit).toBe(40);
       expect(cursor?.planUsage?.remaining).toBe(25);
-      expect(cursor?.billingCycleEnd).toBe(new Date(1771077734000).toISOString());
+      expect(cursor?.billingCycleStart).toBe(new Date(1768399334 * 1000).toISOString());
+      expect(cursor?.billingCycleEnd).toBe(new Date(1771077734 * 1000).toISOString());
+    });
+
+    it("normalizes malformed Cursor billing dates to null", async () => {
+      writeCreds(claudeHome, "at_valid");
+      process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
+      globalThis.fetch = mockFetch(
+        new Map([
+          ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+          [
+            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+            () =>
+              jsonResponse({
+                planUsage: {
+                  totalSpend: 1500,
+                  includedSpend: 1000,
+                  bonusSpend: 500,
+                  remaining: 2500,
+                  limit: 4000,
+                },
+                billingCycleStart: "not-a-date",
+                billingCycleEnd: "2026-02-16T12:42:14.000Z",
+              }),
+          ],
+        ]),
+      );
+
+      await service.triggerFetch();
+
+      const { cursor } = broadcasts[0].payload;
+      expect(cursor?.planUsage?.totalSpend).toBe(15);
+      expect(cursor?.billingCycleStart).toBeNull();
+      expect(cursor?.billingCycleEnd).toBe("2026-02-16T12:42:14.000Z");
     });
 
     it("returns zai quota when ZAI_API_KEY is set and API succeeds", async () => {
