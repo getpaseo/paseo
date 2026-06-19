@@ -16,6 +16,7 @@ interface FakeDetachSubagentEnv {
   deps: DetachSubagentDeps;
   recordedDetaches: RecordedDetach[];
   recordedConfirmInputs: ConfirmDialogInput[];
+  recordedErrors: unknown[];
 }
 
 function createFakeEnv(
@@ -30,10 +31,12 @@ function createFakeEnv(
   }
   const recordedDetaches: RecordedDetach[] = [];
   const recordedConfirmInputs: ConfirmDialogInput[] = [];
+  const recordedErrors: unknown[] = [];
 
   return {
     recordedDetaches,
     recordedConfirmInputs,
+    recordedErrors,
     deps: {
       getSubagent: (id) => subagents.get(id),
       confirm: async (dialog) => {
@@ -42,6 +45,9 @@ function createFakeEnv(
       },
       detachAgent: async (input) => {
         recordedDetaches.push(input);
+      },
+      reportError: (error) => {
+        recordedErrors.push(error);
       },
     },
   };
@@ -61,7 +67,7 @@ describe("resolveDetachSubagentDialog", () => {
   it("falls back to this subagent when the title is not displayable", () => {
     expect(resolveDetachSubagentDialog({ title: "New Agent" })).toEqual({
       title: "Detach subagent?",
-      message: "this subagent will leave this track and continue as a standalone agent.",
+      message: "This subagent will leave this track and continue as a standalone agent.",
       confirmLabel: "Detach",
       cancelLabel: "Cancel",
       destructive: false,
@@ -105,17 +111,19 @@ describe("requestDetachSubagent", () => {
     ]);
   });
 
-  it("swallows detach errors so the caller never sees them", async () => {
+  it("reports detach errors after the user confirms", async () => {
     const env = createFakeEnv({
       confirmResult: true,
       initialSubagents: [{ id: "child-agent", snapshot: { title: "Review branch" } }],
     });
+    const error = new Error("daemon offline");
     env.deps.detachAgent = async () => {
-      throw new Error("daemon offline");
+      throw error;
     };
 
     await expect(
       requestDetachSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps),
     ).resolves.toBeUndefined();
+    expect(env.recordedErrors).toEqual([error]);
   });
 });

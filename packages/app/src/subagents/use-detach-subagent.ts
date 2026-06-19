@@ -1,7 +1,9 @@
 import { useCallback } from "react";
+import { useToast } from "@/contexts/toast-context";
 import { i18n } from "@/i18n/i18next";
 import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { toErrorMessage } from "@/utils/error-messages";
 import { requestDetachSubagent, type ResolveDetachSubagentDialogInput } from "./detach-subagent";
 
 export { resolveDetachSubagentDialog, requestDetachSubagent } from "./detach-subagent";
@@ -17,6 +19,7 @@ export interface UseDetachSubagentInput {
 
 export function useDetachSubagent(input: UseDetachSubagentInput): (subagentId: string) => void {
   const { serverId } = input;
+  const toast = useToast();
 
   return useCallback(
     (subagentId: string) => {
@@ -33,9 +36,12 @@ export function useDetachSubagent(input: UseDetachSubagentInput): (subagentId: s
             }
             await client.detachAgent(agentId);
           },
+          reportError: (error) => {
+            toast.error(toErrorMessage(error));
+          },
         },
       );
     },
-    [serverId],
+    [serverId, toast],
   );
 }

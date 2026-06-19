@@ -16,6 +16,7 @@ interface FakeArchiveSubagentEnv {
   deps: ArchiveSubagentDeps;
   recordedArchives: RecordedArchive[];
   recordedConfirmInputs: ConfirmDialogInput[];
+  recordedErrors: unknown[];
   setSubagent(id: string, snapshot: ResolveArchiveSubagentDialogInput | undefined): void;
 }
 
@@ -31,10 +32,12 @@ function createFakeEnv(
   }
   const recordedArchives: RecordedArchive[] = [];
   const recordedConfirmInputs: ConfirmDialogInput[] = [];
+  const recordedErrors: unknown[] = [];
 
   return {
     recordedArchives,
     recordedConfirmInputs,
+    recordedErrors,
     setSubagent(id, snapshot) {
       subagents.set(id, snapshot);
     },
@@ -46,6 +49,9 @@ function createFakeEnv(
       },
       archiveAgent: async (input) => {
         recordedArchives.push(input);
+      },
+      reportError: (error) => {
+        recordedErrors.push(error);
       },
     },
   };
@@ -176,7 +182,7 @@ describe("requestArchiveSubagent", () => {
     expect(env.recordedArchives).toEqual([]);
   });
 
-  it("swallows archive errors so the caller never sees them", async () => {
+  it("reports archive errors after the user confirms", async () => {
     const env = createFakeEnv({
       confirmResult: true,
       initialSubagents: [
@@ -186,12 +192,14 @@ describe("requestArchiveSubagent", () => {
         },
       ],
     });
+    const error = new Error("daemon offline");
     env.deps.archiveAgent = async () => {
-      throw new Error("daemon offline");
+      throw error;
     };
 
     await expect(
       requestArchiveSubagent({ serverId: "server-1", subagentId: "child-agent" }, env.deps),
     ).resolves.toBeUndefined();
+    expect(env.recordedErrors).toEqual([error]);
   });
 });

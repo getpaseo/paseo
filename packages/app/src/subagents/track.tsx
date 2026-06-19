@@ -194,22 +194,27 @@ function SubagentRowActions({
   onDetachPress?: () => void;
   onArchivePress: () => void;
 }): ReactElement {
+  const { t } = useTranslation();
   return (
     <View
       style={visible ? styles.actionClusterVisible : styles.actionClusterHidden}
       pointerEvents={visible ? "auto" : "none"}
     >
       {onDetachPress ? (
-        <SubagentDetachButton
-          rowId={rowId}
-          displayLabel={displayLabel}
+        <SubagentActionButton
+          accessibilityLabel={t("subagents.detachAction", { label: displayLabel })}
+          testID={`subagents-track-detach-${rowId}`}
+          tooltipLabel={t("subagents.detachTooltip")}
+          icon="detach"
           visible={visible}
           onPress={onDetachPress}
         />
       ) : null}
-      <SubagentArchiveButton
-        rowId={rowId}
-        displayLabel={displayLabel}
+      <SubagentActionButton
+        accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
+        testID={`subagents-track-archive-${rowId}`}
+        tooltipLabel={t("subagents.archiveTooltip")}
+        icon="archive"
         visible={visible}
         onPress={onArchivePress}
       />
@@ -217,77 +222,47 @@ function SubagentRowActions({
   );
 }
 
-function SubagentDetachButton({
-  rowId,
-  displayLabel,
-  visible,
-  onPress,
-}: {
-  rowId: string;
-  displayLabel: string;
-  visible: boolean;
-  onPress: () => void;
-}): ReactElement {
-  const { t } = useTranslation();
-  return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-      <TooltipTrigger asChild disabled={!visible}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("subagents.detachAction", { label: displayLabel })}
-          testID={`subagents-track-detach-${rowId}`}
-          onPress={onPress}
-          style={styles.actionButton}
-          hitSlop={8}
-        >
-          {({ hovered, pressed }) => (
-            <ThemedUnlink
-              size={14}
-              uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
-            />
-          )}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{t("subagents.detachTooltip")}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
+type SubagentActionIcon = "archive" | "detach";
+
+function renderSubagentActionIcon(icon: SubagentActionIcon, isActive: boolean): ReactElement {
+  const uniProps = isActive ? foregroundColorMapping : foregroundMutedColorMapping;
+  if (icon === "detach") {
+    return <ThemedUnlink size={14} uniProps={uniProps} />;
+  }
+  return <ThemedArchive size={14} uniProps={uniProps} />;
 }
 
-function SubagentArchiveButton({
-  rowId,
-  displayLabel,
+function SubagentActionButton({
+  accessibilityLabel,
+  testID,
+  tooltipLabel,
+  icon,
   visible,
   onPress,
 }: {
-  rowId: string;
-  displayLabel: string;
+  accessibilityLabel: string;
+  testID: string;
+  tooltipLabel: string;
+  icon: SubagentActionIcon;
   visible: boolean;
   onPress: () => void;
 }): ReactElement {
-  const { t } = useTranslation();
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild disabled={!visible}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
-          testID={`subagents-track-archive-${rowId}`}
+          accessibilityLabel={accessibilityLabel}
+          testID={testID}
           onPress={onPress}
           style={styles.actionButton}
           hitSlop={8}
         >
-          {({ hovered, pressed }) => (
-            <ThemedArchive
-              size={14}
-              uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
-            />
-          )}
+          {({ hovered, pressed }) => renderSubagentActionIcon(icon, hovered || pressed)}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{t("subagents.archiveTooltip")}</Text>
+        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
       </TooltipContent>
     </Tooltip>
   );

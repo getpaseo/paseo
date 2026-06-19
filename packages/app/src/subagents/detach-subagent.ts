@@ -22,7 +22,7 @@ function resolveSubagentLabel(title: Agent["title"] | null | undefined): string 
 export function resolveDetachSubagentDialog(
   input: ResolveDetachSubagentDialogInput,
 ): ConfirmDialogInput {
-  const subagentLabel = resolveSubagentLabel(input.title) ?? "this subagent";
+  const subagentLabel = resolveSubagentLabel(input.title) ?? "This subagent";
 
   return {
     title: "Detach subagent?",
@@ -37,6 +37,7 @@ export interface DetachSubagentDeps {
   getSubagent: (subagentId: string) => ResolveDetachSubagentDialogInput | undefined;
   confirm: (input: ConfirmDialogInput) => Promise<boolean>;
   detachAgent: (input: { serverId: string; agentId: string }) => Promise<void>;
+  reportError: (error: unknown) => void;
 }
 
 export interface RequestDetachSubagentInput {
@@ -57,5 +58,9 @@ export async function requestDetachSubagent(
   if (!confirmed) {
     return;
   }
-  void deps.detachAgent({ serverId: input.serverId, agentId: input.subagentId }).catch(() => {});
+  try {
+    await deps.detachAgent({ serverId: input.serverId, agentId: input.subagentId });
+  } catch (error) {
+    deps.reportError(error);
+  }
 }

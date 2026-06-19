@@ -356,6 +356,11 @@ interface WriteLabelsResult {
   live: boolean;
 }
 
+interface AgentMetadataPatch {
+  title?: string;
+  labels?: AgentLabelPatch;
+}
+
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
 function attachPersistenceCwd(
@@ -1371,6 +1376,14 @@ export class AgentManager {
       return { record, live: true };
     }
 
+    const nextRecord = await this.writeStoredMetadata(agentId, { labels: patch });
+    return { record: nextRecord, live: false };
+  }
+
+  private async writeStoredMetadata(
+    agentId: string,
+    patch: AgentMetadataPatch,
+  ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
     if (!record) {
@@ -1379,11 +1392,12 @@ export class AgentManager {
 
     const nextRecord = {
       ...record,
-      labels: applyLabelPatch(record.labels, patch),
+      ...(patch.title ? { title: patch.title } : {}),
+      ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
     };
     await registry.upsert(nextRecord);
-    return { record: nextRecord, live: false };
+    return nextRecord;
   }
 
   async detachAgent(agentId: string): Promise<{
@@ -1526,33 +1540,7 @@ export class AgentManager {
       return;
     }
 
-    const registry = this.requireRegistry();
-    if (updates.labels) {
-      const result = await this.writeLabels(agentId, updates.labels);
-      if (!updates.title) {
-        return;
-      }
-      if (!result.record) {
-        throw new Error(`Agent not found: ${agentId}`);
-      }
-      await registry.upsert({
-        ...result.record,
-        title: updates.title,
-        updatedAt: this.nextStoredUpdatedAt(result.record),
-      });
-      return;
-    }
-
-    const existing = await registry.get(agentId);
-    if (!existing) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    await registry.upsert({
-      ...existing,
-      ...(updates.title ? { title: updates.title } : {}),
-      updatedAt: this.nextStoredUpdatedAt(existing),
-    });
+    await this.writeStoredMetadata(agentId, updates);
   }
 
   async runAgent(
