@@ -57,6 +57,13 @@ describe("buildCommandResolutionDiagnosticRows", () => {
       label: "PATH matches",
       value: expect.stringContaining(binaryPath),
     });
+    if (process.platform === "win32") {
+      expect(rows.some((row) => row.label === "where.exe claude")).toBe(true);
+      expect(rows.some((row) => row.label === "powershell Get-Command -All claude")).toBe(true);
+    } else {
+      expect(rows.some((row) => row.label === "which -a claude")).toBe(true);
+      expect(rows.some((row) => row.label.endsWith(" -lc type -a claude"))).toBe(true);
+    }
   });
 
   test("reports none when the daemon PATH has no matching executable", async () => {

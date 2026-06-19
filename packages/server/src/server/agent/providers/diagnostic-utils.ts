@@ -162,8 +162,18 @@ export interface CommandResolutionDiagnosticRowsOptions {
   knownBinaryNames: readonly string[];
 }
 
+const COMMAND_PROBE_TIMEOUT_MS = 3_000;
+const COMMAND_PROBE_MAX_BUFFER = 32 * 1024;
+
 function resolvePathValue(): string {
   return process.env["PATH"] ?? process.env["Path"] ?? "";
+}
+
+function resolveShellValue(): string {
+  if (process.platform === "win32") {
+    return process.env["ComSpec"] ?? "cmd.exe";
+  }
+  return process.env["SHELL"] ?? "/bin/sh";
 }
 
 async function isExecutableFile(filePath: string): Promise<boolean> {
@@ -212,6 +222,104 @@ async function formatPathMatches(binaryNames: readonly string[]): Promise<string
   return matches.length > 0 ? matches.join("\n    ") : "none";
 }
 
+function shellToken(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function formatCommandProbeOutput(stdout: string, stderr: string): string {
+  const sections: string[] = [];
+  const trimmedStdout = truncateForDiagnostic(stdout);
+  const trimmedStderr = truncateForDiagnostic(stderr);
+  if (trimmedStdout.length > 0) {
+    sections.push(trimmedStdout);
+  }
+  if (trimmedStderr.length > 0) {
+    sections.push(`stderr: ${trimmedStderr}`);
+  }
+  return sections.length > 0 ? sections.join("\n") : "(no output)";
+}
+
+function formatCommandProbeError(error: unknown): string {
+  if (error instanceof Error) {
+    return toDiagnosticErrorMessage(error);
+  }
+  return toDiagnosticErrorMessage(error);
+}
+
+async function runCommandProbe(command: string, args: string[]): Promise<string> {
+  try {
+    const { stdout, stderr } = await execCommand(command, args, {
+      timeout: COMMAND_PROBE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+      maxBuffer: COMMAND_PROBE_MAX_BUFFER,
+    });
+    return formatCommandProbeOutput(stdout, stderr);
+  } catch (error) {
+    return formatCommandProbeError(error);
+  }
+}
+
+async function buildPosixCommandProbeRows(binaryName: string): Promise<DiagnosticEntry[]> {
+  const shell = resolveShellValue();
+  const typeCommand = `type -a ${shellToken(binaryName)}`;
+  return [
+    {
+      label: `which -a ${binaryName}`,
+      value: await runCommandProbe("/usr/bin/which", ["-a", binaryName]),
+    },
+    {
+      label: `${path.basename(shell)} -lc type -a ${binaryName}`,
+      value: await runCommandProbe(shell, ["-lc", typeCommand]),
+    },
+  ];
+}
+
+async function buildWindowsCommandProbeRows(binaryName: string): Promise<DiagnosticEntry[]> {
+  const powershellCommand = [
+    "$ErrorActionPreference = 'Continue';",
+    `Get-Command -All ${JSON.stringify(binaryName)} |`,
+    "Select-Object CommandType,Source,Name,Definition |",
+    "Format-List",
+  ].join(" ");
+
+  return [
+    {
+      label: `where.exe ${binaryName}`,
+      value: await runCommandProbe("where.exe", [binaryName]),
+    },
+    {
+      label: `powershell Get-Command -All ${binaryName}`,
+      value: await runCommandProbe("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        powershellCommand,
+      ]),
+    },
+  ];
+}
+
+async function buildCommandProbeRows(binaryNames: readonly string[]): Promise<DiagnosticEntry[]> {
+  const searchableNames = binaryNames.filter(
+    (binaryName) =>
+      binaryName.trim().length > 0 && !binaryName.includes("/") && !binaryName.includes("\\"),
+  );
+  if (searchableNames.length === 0) {
+    return [];
+  }
+
+  const rows: DiagnosticEntry[] = [];
+  for (const binaryName of searchableNames) {
+    rows.push(
+      ...(process.platform === "win32"
+        ? await buildWindowsCommandProbeRows(binaryName)
+        : await buildPosixCommandProbeRows(binaryName)),
+    );
+  }
+  return rows;
+}
+
 export async function buildCommandResolutionDiagnosticRows(
   launch: ResolvedProviderLaunch,
   options: CommandResolutionDiagnosticRowsOptions,
@@ -230,9 +338,14 @@ export async function buildCommandResolutionDiagnosticRows(
       value: resolvePathValue() || "(empty)",
     },
     {
+      label: "Daemon shell",
+      value: resolveShellValue(),
+    },
+    {
       label: "PATH matches",
       value: await formatPathMatches(options.knownBinaryNames),
     },
+    ...(await buildCommandProbeRows(options.knownBinaryNames)),
   ];
 }
 
