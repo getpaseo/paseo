@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { useSessionStore } from "@/stores/session-store";
 import { isNewAgentSchedule } from "@/utils/schedule-format";
@@ -20,10 +21,13 @@ export interface UseSchedulesResult {
   isRefetching: boolean;
 }
 
-async function fetchNewAgentSchedules(serverId: string): Promise<ScheduleSummary[]> {
+async function fetchNewAgentSchedules(
+  serverId: string,
+  unavailableMessage: string,
+): Promise<ScheduleSummary[]> {
   const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
   if (!client) {
-    throw new Error("Daemon client not available");
+    throw new Error(unavailableMessage);
   }
 
   const payload = await client.scheduleList();
@@ -35,11 +39,12 @@ async function fetchNewAgentSchedules(serverId: string): Promise<ScheduleSummary
 }
 
 export function useSchedules({ serverId }: UseSchedulesInput): UseSchedulesResult {
+  const { t } = useTranslation();
   const hasClient = useSessionStore((state) => (state.sessions[serverId]?.client ?? null) !== null);
 
   const query = useQuery({
     queryKey: schedulesQueryKey(serverId),
-    queryFn: () => fetchNewAgentSchedules(serverId),
+    queryFn: () => fetchNewAgentSchedules(serverId, t("common.errors.daemonClientUnavailable")),
     enabled: hasClient,
     staleTime: 5_000,
   });

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type {
   CreateScheduleOptions,
   DaemonClient,
@@ -27,10 +28,10 @@ export interface UseScheduleMutationsResult {
   isRunningNow: boolean;
 }
 
-function requireClient(serverId: string): DaemonClient {
+function requireClient(serverId: string, unavailableMessage: string): DaemonClient {
   const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
   if (!client) {
-    throw new Error("Daemon client not available");
+    throw new Error(unavailableMessage);
   }
   return client;
 }
@@ -88,6 +89,7 @@ export function useScheduleMutations({
   serverId: string;
 }): UseScheduleMutationsResult {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: schedulesQueryKey(serverId) });
@@ -95,7 +97,7 @@ export function useScheduleMutations({
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateScheduleInput): Promise<void> => {
-      const client = requireClient(serverId);
+      const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
       const payload = await client.scheduleCreate(input);
       if (payload.error) {
         throw new Error(payload.error);
@@ -106,7 +108,7 @@ export function useScheduleMutations({
 
   const updateMutation = useMutation({
     mutationFn: async (input: UpdateScheduleInput): Promise<void> => {
-      const client = requireClient(serverId);
+      const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
       const payload = await client.scheduleUpdate(input);
       if (payload.error) {
         throw new Error(payload.error);
@@ -117,7 +119,7 @@ export function useScheduleMutations({
 
   const pauseMutation = useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const client = requireClient(serverId);
+      const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
       const payload = await client.schedulePause({ id });
       if (payload.error) {
         throw new Error(payload.error);
@@ -139,7 +141,7 @@ export function useScheduleMutations({
 
   const resumeMutation = useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const client = requireClient(serverId);
+      const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
       const payload = await client.scheduleResume({ id });
       if (payload.error) {
         throw new Error(payload.error);
@@ -161,7 +163,7 @@ export function useScheduleMutations({
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const client = requireClient(serverId);
+      const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
       const payload = await client.scheduleDelete({ id });
       if (payload.error) {
         throw new Error(payload.error);
@@ -183,7 +185,7 @@ export function useScheduleMutations({
 
   const runNowMutation = useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const client = requireClient(serverId);
+      const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
       const payload = await client.scheduleRunOnce({ id });
       if (payload.error) {
         throw new Error(payload.error);
