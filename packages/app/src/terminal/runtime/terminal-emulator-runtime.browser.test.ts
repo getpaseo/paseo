@@ -15,6 +15,7 @@ interface TerminalSize {
   rows: number;
   cols: number;
   shouldClaim: boolean;
+  forceClaim?: boolean;
 }
 
 interface TerminalKeyRecord {
@@ -26,6 +27,7 @@ interface TerminalKeyRecord {
 }
 
 type BrowserTerminal = TerminalSize & {
+  input: (data: string, wasUserInput?: boolean) => void;
   refresh: (start: number, end: number) => void;
   reset: () => void;
 };
@@ -246,6 +248,22 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(grownSize.shouldClaim).toBe(true);
   });
 
+  it("does not claim a resize while forwarding ordinary terminal input", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const sizeCount = mounted.sizes.length;
+    const terminal = getBrowserTerminal();
+
+    terminal.input("a", true);
+
+    await waitFor({ predicate: () => mounted.inputs.length > 0 });
+
+    expect(mounted.inputs.at(-1)).toBe("a");
+    expect(mounted.sizes).toHaveLength(sizeCount);
+  });
+
   it("refreshes visible rows on a forced same-size resize", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });
@@ -331,6 +349,27 @@ describe("terminal emulator runtime in a real browser", () => {
         meta: false,
       },
     ]);
+
+    const sizeCount = mounted.sizes.length;
+    mounted.terminalKeys.length = 0;
+
+    dispatchTerminalKey({
+      host: mounted.host,
+      key: "Enter",
+      shiftKey: true,
+    });
+    await nextFrame();
+
+    expect(mounted.terminalKeys).toEqual([
+      {
+        key: "Enter",
+        ctrl: false,
+        shift: true,
+        alt: false,
+        meta: false,
+      },
+    ]);
+    expect(mounted.sizes).toHaveLength(sizeCount);
   });
 
   it.each([

@@ -394,7 +394,6 @@ export class TerminalEmulatorRuntime {
       if (this.suppressInput) {
         return;
       }
-      this.fitAndEmitResize?.({ force: true, shouldClaim: true });
       this.callbacks.onInput?.(data);
     });
 
@@ -454,7 +453,6 @@ export class TerminalEmulatorRuntime {
         altKey: event.altKey,
         metaKey: event.metaKey,
       });
-      this.fitAndEmitResize?.({ force: true, shouldClaim: true });
       this.callbacks.onTerminalKey?.({
         key: normalizeTerminalTransportKey(normalizedKey),
         ...modifiers,
