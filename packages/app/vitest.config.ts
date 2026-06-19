@@ -13,6 +13,8 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  // Match production's automatic JSX runtime so component browser tests can render.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],

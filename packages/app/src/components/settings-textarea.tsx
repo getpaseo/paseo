@@ -1,7 +1,8 @@
 import type { StyleProp, TextStyle } from "react-native";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { isWeb } from "@/constants/platform";
 import { settingsStyles } from "@/styles/settings";
 
 interface SettingsTextAreaProps {
@@ -23,9 +24,41 @@ export function SettingsTextArea({
 }: SettingsTextAreaProps) {
   const { theme } = useUnistyles();
   const inputStyle = useMemo(() => [styles.input, style], [style]);
+  const inputRef = useRef<TextInput>(null);
+
+  // RN-Web's onChange misses native input events when the textarea is portaled
+  // outside the React root container (AdaptiveModalSheet's overlay root), so
+  // Electron's menu-driven Cmd+V paste updates the DOM but never fires
+  // onChangeText. A direct DOM listener keeps the value in sync. See #1602.
+  useEffect(() => {
+    if (!isWeb) return;
+    const node = inputRef.current as unknown as HTMLTextAreaElement | null;
+    if (!node || typeof node.addEventListener !== "function") return;
+    let composing = false;
+    // Don't push the in-progress value mid-IME-composition; sync on end instead.
+    const handleInput = () => {
+      if (!composing) onChangeText(node.value);
+    };
+    const handleCompositionStart = () => {
+      composing = true;
+    };
+    const handleCompositionEnd = () => {
+      composing = false;
+      onChangeText(node.value);
+    };
+    node.addEventListener("input", handleInput);
+    node.addEventListener("compositionstart", handleCompositionStart);
+    node.addEventListener("compositionend", handleCompositionEnd);
+    return () => {
+      node.removeEventListener("input", handleInput);
+      node.removeEventListener("compositionstart", handleCompositionStart);
+      node.removeEventListener("compositionend", handleCompositionEnd);
+    };
+  }, [onChangeText]);
 
   return (
     <TextInput
+      ref={inputRef}
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       multiline
