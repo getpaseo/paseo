@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, type Page } from "./fixtures";
-import { seedWorkspace } from "./helpers/seed-client";
+import { seedWorkspace, type SeedDaemonClient } from "./helpers/seed-client";
 import { createIdleAgent, expectWorkspaceTabVisible } from "./helpers/archive-tab";
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
-import { captureWsSessionFrames, renameModalInput, renameModalSubmit } from "./helpers/rename";
+import { renameModalInput, renameModalSubmit } from "./helpers/rename";
 import { getServerId } from "./helpers/server-id";
 
 async function openAgentInWorkspace(page: Page, agent: { id: string; workspaceId: string }) {
@@ -17,8 +17,13 @@ async function openAgentInWorkspace(page: Page, agent: { id: string; workspaceId
   await expectWorkspaceTabVisible(page, agent.id);
 }
 
+async function fetchAgentTitle(client: SeedDaemonClient, agentId: string): Promise<string | null> {
+  const result = await client.fetchAgents({ scope: "active" });
+  return result.entries.find((entry) => entry.agent.id === agentId)?.agent.title ?? null;
+}
+
 test.describe("Workspace agent tab rename", () => {
-  test("right-click rename sends update_agent_request and updates the tab label", async ({
+  test("right-click rename persists the agent title and updates the tab label", async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -31,12 +36,6 @@ test.describe("Workspace agent tab rename", () => {
         cwd: workspace.repoPath,
         title: initialTitle,
       });
-
-      const updateFrames = captureWsSessionFrames(page, "update_agent_request", (inner) => ({
-        agentId: String(inner.agentId ?? ""),
-        name: String(inner.name ?? ""),
-        requestId: String(inner.requestId ?? ""),
-      }));
 
       await openAgentInWorkspace(page, agent);
 
@@ -62,12 +61,7 @@ test.describe("Workspace agent tab rename", () => {
 
       await expect(input).toHaveCount(0, { timeout: 15_000 });
       await expect(tab).toContainText(renamed, { timeout: 15_000 });
-
-      expect(updateFrames.length).toBeGreaterThan(0);
-      const lastFrame = updateFrames.at(-1)!;
-      expect(lastFrame.agentId).toBe(agent.id);
-      expect(lastFrame.name).toBe(renamed);
-      expect(lastFrame.requestId.length).toBeGreaterThan(0);
+      await expect.poll(() => fetchAgentTitle(workspace.client, agent.id)).toBe(renamed);
     } finally {
       await workspace.cleanup();
     }

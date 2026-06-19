@@ -75,7 +75,6 @@ import {
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
-import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
@@ -276,13 +275,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const workspaceRoot = agent.cwd?.trim() || "";
-    const workspaceId = resolveWorkspaceIdByDirectory({
-      workspaces: useSessionStore.getState().sessions[resolvedServerId]?.workspaces?.values(),
-      workspaceDirectory: workspaceRoot,
-    });
     const { requestDirectoryListing } = useFileExplorerActions({
       serverId: resolvedServerId,
-      workspaceId: workspaceId ?? undefined,
+      workspaceId: agent.workspaceId,
       workspaceRoot,
     });
     const { isLoadingOlder, hasOlder, loadOlder } = useLoadOlderAgentHistory({
@@ -334,10 +329,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return;
           }
 
-          if (workspaceId) {
+          if (agent.workspaceId) {
             navigateToPreparedWorkspaceTab({
               serverId: resolvedServerId,
-              workspaceId,
+              workspaceId: agent.workspaceId,
               target: createWorkspaceFileTabTarget(location),
             });
           }

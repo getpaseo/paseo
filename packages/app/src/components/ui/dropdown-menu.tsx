@@ -303,7 +303,7 @@ interface TriggerState {
 }
 type TriggerStyleProp = StyleProp<ViewStyle> | ((state: TriggerState) => StyleProp<ViewStyle>);
 
-interface DropdownMenuTriggerProps extends Omit<PressableProps, "style" | "children"> {
+export interface DropdownMenuTriggerProps extends Omit<PressableProps, "style" | "children"> {
   style?: TriggerStyleProp;
   children: ReactNode | ((state: TriggerState) => ReactNode);
 }

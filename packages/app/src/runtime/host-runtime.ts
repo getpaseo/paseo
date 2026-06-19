@@ -38,6 +38,10 @@ import {
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  fetchLegacyDaemonWorkspaceDirectory,
+  shouldUseLegacyDaemonWorkspaceDirectory,
+} from "@/workspace/legacy-daemon-workspaces";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
 import { queryClient } from "@/query/query-client";
 
@@ -185,6 +189,54 @@ function readFetchAgentsNextCursor(
     return page.afterCursor;
   }
   return null;
+}
+
+interface AgentDirectoryFetchInput {
+  client: DaemonClient;
+  filter?: FetchAgentsOptions["filter"];
+  subscribe?: FetchAgentsOptions["subscribe"];
+  page?: FetchAgentsOptions["page"];
+}
+
+interface AgentDirectoryFetchResult {
+  entries: FetchAgentsEntry[];
+  subscriptionId: string | null;
+}
+
+async function fetchCurrentAgentDirectory(
+  input: AgentDirectoryFetchInput,
+): Promise<AgentDirectoryFetchResult> {
+  const pageLimit = input.page?.limit ?? DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT;
+  let cursor = input.page?.cursor ?? null;
+  let includeSubscribe = true;
+  let subscriptionId: string | null = null;
+  const entries: FetchAgentsEntry[] = [];
+
+  while (true) {
+    const payload = await input.client.fetchAgents({
+      scope: input.filter ? undefined : "active",
+      ...(input.filter ? { filter: input.filter } : {}),
+      sort: DEFAULT_AGENT_DIRECTORY_SORT,
+      ...(includeSubscribe && input.subscribe ? { subscribe: input.subscribe } : {}),
+      page: cursor ? { limit: pageLimit, cursor } : { limit: pageLimit },
+    });
+
+    entries.push(...payload.entries);
+    subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
+    includeSubscribe = false;
+
+    if (!readFetchAgentsHasMore(payload.pageInfo)) {
+      break;
+    }
+
+    const nextCursor = readFetchAgentsNextCursor(payload.pageInfo);
+    if (!nextCursor) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+
+  return { entries, subscriptionId };
 }
 
 function toActiveConnection(connection: HostConnection): ActiveConnection {
@@ -674,7 +726,7 @@ export class HostRuntimeController {
 
   async activateConnection(input: {
     connectionId: string;
-    existingClient: DaemonClient;
+    existingClient?: DaemonClient;
   }): Promise<void> {
     await this.switchToConnection(input);
   }
@@ -913,7 +965,22 @@ export class HostRuntimeController {
             const activated = await maybeActivateFirstAvailable(connection.id, connectedClient);
             shouldCloseClient = shouldCloseClient && !activated;
 
-            const { rttMs } = await connectedClient.checkLiveness({ timeoutMs: 5000 });
+            if (activeClient) {
+              const rttMs = activeClient.getLastLivenessRttMs();
+              if (!this.isCurrentProbeRequest(requestVersion)) {
+                return;
+              }
+              if (rttMs !== null) {
+                probeByConnectionId.set(connection.id, {
+                  status: "available",
+                  latencyMs: rttMs,
+                });
+                publishProbeState();
+              }
+              return;
+            }
+
+            const rttMs = await connectedClient.measureLatency({ timeoutMs: 5000 });
             if (!this.isCurrentProbeRequest(requestVersion)) {
               return;
             }
@@ -1897,46 +1964,37 @@ export class HostRuntimeStore {
 
     controller.markAgentDirectorySyncLoading();
     try {
-      const pageLimit = input.page?.limit ?? DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT;
-      let cursor = input.page?.cursor ?? null;
-      let includeSubscribe = true;
-      let subscriptionId: string | null = null;
-      const allEntries: FetchAgentsEntry[] = [];
-
-      while (true) {
-        const payload = await client.fetchAgents({
-          scope: input.filter ? undefined : "active",
-          ...(input.filter ? { filter: input.filter } : {}),
-          sort: DEFAULT_AGENT_DIRECTORY_SORT,
-          ...(includeSubscribe && input.subscribe ? { subscribe: input.subscribe } : {}),
-          page: cursor ? { limit: pageLimit, cursor } : { limit: pageLimit },
+      const session = useSessionStore.getState().sessions[input.serverId];
+      if (!input.filter && shouldUseLegacyDaemonWorkspaceDirectory(session?.serverInfo)) {
+        const result = await fetchLegacyDaemonWorkspaceDirectory({
+          client,
+          serverId: input.serverId,
+          subscribe: input.subscribe,
+          page: input.page,
         });
-
-        allEntries.push(...payload.entries);
-
-        subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
-        includeSubscribe = false;
-
-        if (!readFetchAgentsHasMore(payload.pageInfo)) {
-          break;
-        }
-
-        const nextCursor = readFetchAgentsNextCursor(payload.pageInfo);
-        if (!nextCursor) {
-          break;
-        }
-        cursor = nextCursor;
+        controller.markAgentDirectorySyncReady();
+        return {
+          agents: result.agents,
+          subscriptionId: result.subscriptionId,
+        };
       }
+
+      const directory = await fetchCurrentAgentDirectory({
+        client,
+        filter: input.filter,
+        subscribe: input.subscribe,
+        page: input.page,
+      });
 
       const { agents } = replaceFetchedAgentDirectory({
         serverId: input.serverId,
-        entries: allEntries,
+        entries: directory.entries,
       });
 
       controller.markAgentDirectorySyncReady();
       return {
         agents,
-        subscriptionId,
+        subscriptionId: directory.subscriptionId,
       };
     } catch (error) {
       controller.markAgentDirectorySyncError(toErrorMessage(error));

@@ -250,11 +250,13 @@ function transition(input: {
   state: "working" | "idle" | "attention" | null;
   changedAt: number;
   id?: string;
+  workspaceId?: string;
 }): TerminalActivityTransitionEvent {
   return {
     terminalId: input.id ?? "term-1",
     name: "bash",
     cwd: CWD,
+    workspaceId: input.workspaceId ?? "ws-1",
     activity: input.state ? { state: input.state, changedAt: input.changedAt } : null,
     previous: { state: input.previousState, changedAt: input.previousChangedAt },
   };
@@ -285,7 +287,7 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
     const payload = readTerminalAttentionMessage(ws);
     expect(payload.terminalId).toBe("term-1");
     expect(payload.cwd).toBe(CWD);
-    expect(payload.workspaceId).toBeUndefined();
+    expect(payload.workspaceId).toBe("ws-1");
     expect(payload.reason).toBe("finished");
     expect(payload.title).toBe("Terminal finished");
     expect(payload.body).toBe("bash");
@@ -293,9 +295,9 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
     expect(payload.shouldNotify).toBe(false);
   });
 
-  it("resolves the workspaceId for the terminal cwd into the payload", async () => {
+  it("forwards the terminal event workspaceId into the payload", async () => {
     const { manager, emit } = createTerminalManager();
-    const { server } = createServer(manager, createWorkspaceRegistry([workspaceRecord()]));
+    const { server } = createServer(manager);
     const ws = connectClient(server);
 
     emit(
@@ -304,17 +306,18 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
         previousChangedAt: 1000,
         state: "idle",
         changedAt: 11001,
+        workspaceId: "ws-event",
       }),
     );
 
     await flushAsync();
 
-    expect(readTerminalAttentionMessage(ws).workspaceId).toBe("ws-1");
+    expect(readTerminalAttentionMessage(ws).workspaceId).toBe("ws-event");
   });
 
-  it("resolves the parent workspaceId for a subdirectory terminal cwd", async () => {
+  it("keeps the event workspaceId for a subdirectory terminal cwd", async () => {
     const { manager, emit } = createTerminalManager();
-    const { server } = createServer(manager, createWorkspaceRegistry([workspaceRecord()]));
+    const { server } = createServer(manager);
     const ws = connectClient(server);
 
     emit({
@@ -332,7 +335,7 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
     expect(readTerminalAttentionMessage(ws).workspaceId).toBe("ws-1");
   });
 
-  it("omits workspaceId for archived or unregistered workspaces", async () => {
+  it("does not derive terminal attention ownership from the workspace registry", async () => {
     const { manager, emit } = createTerminalManager();
     const { server } = createServer(
       manager,
@@ -354,7 +357,7 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
 
     await flushAsync();
 
-    expect(readTerminalAttentionMessage(ws).workspaceId).toBeUndefined();
+    expect(readTerminalAttentionMessage(ws).workspaceId).toBe("ws-1");
   });
 
   it("does not broadcast on working -> working (no transition to idle)", async () => {

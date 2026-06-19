@@ -404,8 +404,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 
     const modes = await session.getAvailableModes();
 
-    expect(modes.some((mode) => mode.id === "build")).toBe(true);
-    expect(modes.some((mode) => mode.id === "plan")).toBe(true);
+    expect(modes.map((mode) => mode.id)).toEqual(["paseo-test-custom"]);
 
     const custom = modes.find((mode) => mode.id === "paseo-test-custom");
     expect(custom).toBeDefined();

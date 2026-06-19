@@ -2,11 +2,10 @@ import { useEffect, useRef } from "react";
 import { useLocalSearchParams, usePathname, useRouter, type Href } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useSessionStore } from "@/stores/session-store";
-import { useResolveWorkspaceIdByCwd } from "@/stores/session-store-hooks";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildHostRootRoute } from "@/utils/host-routes";
-import { resolveWorkspaceIdByDirectory } from "@/utils/workspace-identity";
-import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 export default function HostAgentReadyRoute() {
   return (
@@ -28,16 +27,16 @@ function HostAgentReadyRouteContent() {
   const agentId = typeof params.agentId === "string" ? params.agentId : "";
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const agentCwd = useSessionStore((state) => {
+  const agentWorkspaceId = useSessionStore((state) => {
     if (!serverId || !agentId) {
       return null;
     }
-    return state.sessions[serverId]?.agents?.get(agentId)?.cwd ?? null;
+    return state.sessions[serverId]?.agents?.get(agentId)?.workspaceId ?? null;
   });
   const hasHydratedWorkspaces = useSessionStore((state) =>
     serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
   );
-  const resolvedWorkspaceId = useResolveWorkspaceIdByCwd(serverId, agentCwd);
+  const resolvedWorkspaceId = normalizeWorkspaceOpaqueId(agentWorkspaceId);
 
   useEffect(() => {
     if (redirectedRef.current) {
@@ -51,10 +50,9 @@ function HostAgentReadyRouteContent() {
 
     if (resolvedWorkspaceId) {
       redirectedRef.current = true;
-      navigateToPreparedWorkspaceTab({
+      navigateToAgent({
         serverId,
-        workspaceId: resolvedWorkspaceId,
-        target: { kind: "agent", agentId },
+        agentId,
         currentPathname: pathname,
       });
     }
@@ -67,14 +65,14 @@ function HostAgentReadyRouteContent() {
     if (!serverId || !agentId) {
       return;
     }
-    if (agentCwd?.trim() && !hasHydratedWorkspaces) {
+    if (agentWorkspaceId && !hasHydratedWorkspaces) {
       return;
     }
     if (!client || !isConnected) {
       redirectedRef.current = true;
       router.replace(buildHostRootRoute(serverId));
     }
-  }, [agentCwd, agentId, client, hasHydratedWorkspaces, isConnected, router, serverId]);
+  }, [agentWorkspaceId, agentId, client, hasHydratedWorkspaces, isConnected, router, serverId]);
 
   useEffect(() => {
     if (redirectedRef.current) {
@@ -91,21 +89,13 @@ function HostAgentReadyRouteContent() {
         if (cancelled || redirectedRef.current) {
           return;
         }
-        const cwd = result?.agent?.cwd?.trim();
-        const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
-        const workspaceId = resolveWorkspaceIdByDirectory({
-          workspaces: workspaces?.values(),
-          workspaceDirectory: cwd,
-        });
-        if (!workspaceId && !hasHydratedWorkspaces) {
-          return;
-        }
+        const workspaceId = normalizeWorkspaceOpaqueId(result?.agent?.workspaceId);
         redirectedRef.current = true;
         if (workspaceId) {
-          navigateToPreparedWorkspaceTab({
+          navigateToAgent({
             serverId,
+            agentId,
             workspaceId,
-            target: { kind: "agent", agentId },
             currentPathname: pathname,
           });
           return;
@@ -124,7 +114,7 @@ function HostAgentReadyRouteContent() {
     return () => {
       cancelled = true;
     };
-  }, [agentId, client, hasHydratedWorkspaces, isConnected, pathname, router, serverId]);
+  }, [agentId, client, isConnected, pathname, router, serverId]);
 
   return null;
 }

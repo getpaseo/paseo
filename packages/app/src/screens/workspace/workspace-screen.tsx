@@ -42,7 +42,7 @@ import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { BranchSwitcher } from "@/components/branch-switcher";
+import { ScreenTitle } from "@/components/headers/screen-title";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -71,7 +71,11 @@ import { useToast } from "@/contexts/toast-context";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  useSessionStore,
+  useWorkspaceRestoreStatus,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
@@ -1183,7 +1187,6 @@ interface WorkspaceHeaderTitleBarProps {
   subtitle: string;
   showSubtitle: boolean;
   currentBranchName: string | null;
-  isGitCheckout: boolean;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
@@ -1219,7 +1222,6 @@ function WorkspaceHeaderTitleBar({
   subtitle,
   showSubtitle,
   currentBranchName,
-  isGitCheckout,
   normalizedServerId,
   normalizedWorkspaceId,
   workspaceScripts,
@@ -1256,13 +1258,7 @@ function WorkspaceHeaderTitleBar({
         </View>
       ) : (
         <View style={styles.headerTitleTextGroup}>
-          <BranchSwitcher
-            currentBranchName={currentBranchName}
-            title={title}
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
-            isGitCheckout={isGitCheckout}
-          />
+          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
           {showSubtitle ? (
             <Text
               testID="workspace-header-subtitle"
@@ -1495,6 +1491,7 @@ function useWorkspaceRouteActions(normalizedServerId: string): {
 
 function useResolvedWorkspaceRouteState(input: {
   serverId: string;
+  workspaceId: string;
   workspace: WorkspaceDescriptor | null;
   hasHydratedWorkspaces: boolean;
 }): WorkspaceRouteState {
@@ -1505,6 +1502,7 @@ function useResolvedWorkspaceRouteState(input: {
   );
   const hostSnapshot = useHostRuntimeSnapshot(input.serverId);
   const hostName = useMemo(() => getHostDisplayName(host, input.serverId), [host, input.serverId]);
+  const restoreStatus = useWorkspaceRestoreStatus(input.serverId, input.workspaceId);
 
   return useMemo(
     () =>
@@ -1514,6 +1512,7 @@ function useResolvedWorkspaceRouteState(input: {
         lastError: hostSnapshot?.lastError ?? null,
         workspace: input.workspace,
         hasHydratedWorkspaces: input.hasHydratedWorkspaces,
+        restoreStatus,
       }),
     [
       hostName,
@@ -1521,6 +1520,7 @@ function useResolvedWorkspaceRouteState(input: {
       hostSnapshot?.lastError,
       input.workspace,
       input.hasHydratedWorkspaces,
+      restoreStatus,
     ],
   );
 }
@@ -1798,7 +1798,7 @@ function WorkspaceScreenContent({
       deriveWorkspaceAgentVisibility({
         sessionAgents: state.sessions[normalizedServerId]?.agents,
         agentDetails: state.sessions[normalizedServerId]?.agentDetails,
-        workspaceDirectory,
+        workspaceId: normalizedWorkspaceId,
       }),
     workspaceAgentVisibilityEqual,
   );
@@ -1866,6 +1866,7 @@ function WorkspaceScreenContent({
   );
   const workspaceRouteState = useResolvedWorkspaceRouteState({
     serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
     workspace: workspaceDescriptor,
     hasHydratedWorkspaces,
   });
@@ -3389,7 +3390,7 @@ function WorkspaceScreenContent({
             onScriptTerminalStarted={handleScriptTerminalStarted}
             onViewTerminal={handleViewScriptTerminal}
             onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
-            hideLabels={showCompactButtonLabels}
+            hideLabels
           />
         ) : null}
         {!isMobile && workspaceDirectory ? (
@@ -3397,7 +3398,7 @@ function WorkspaceScreenContent({
             serverId={normalizedServerId}
             cwd={workspaceDirectory}
             activeFile={activeFileLocation}
-            hideLabels={showCompactButtonLabels}
+            hideLabels
           />
         ) : null}
         {!isMobile && isGitCheckout ? (
@@ -3637,7 +3638,6 @@ function WorkspaceScreenContent({
                 subtitle={workspaceHeaderSubtitle}
                 showSubtitle={shouldShowWorkspaceHeaderSubtitle}
                 currentBranchName={currentBranchName}
-                isGitCheckout={isGitCheckout}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
                 workspaceScripts={workspaceScripts}

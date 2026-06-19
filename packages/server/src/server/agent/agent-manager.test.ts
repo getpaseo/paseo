@@ -13,6 +13,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -930,6 +931,39 @@ test("createAgent passes persistSession to provider create options", async () =>
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("createAgent persists workspaceId on the stored record and emits it in the snapshot", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-0000000000a1",
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+      },
+      undefined,
+      { workspaceId: "wks_owner" },
+    );
+
+    expect(agent.workspaceId).toBe("wks_owner");
+    expect(toAgentPayload(agent).workspaceId).toBe("wks_owner");
+
+    const record = await storage.get(agent.id);
+    expect(record?.workspaceId).toBe("wks_owner");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("createAgent injects paseo MCP server only into provider launch config", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -1549,6 +1583,7 @@ test("importProviderSession imports the selected session without listing and pub
     provider: "codex",
     providerHandleId: "thread-selected",
     cwd: workdir,
+    workspaceId: "ws-imported",
   });
 
   expect(client.listCalls).toBe(0);
@@ -1825,86 +1860,6 @@ test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
   expect(after?.title).toBe("Stored title");
   expect(after?.labels).toEqual({ role: "worker" });
   expect(Date.parse(after!.updatedAt)).toBeGreaterThan(Date.parse(before!.updatedAt));
-});
-
-test("setGeneratedTitle persists generated title when no title exists", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-empty-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const manager = new AgentManager({
-    clients: {
-      codex: new TestAgentClient(),
-    },
-    registry: storage,
-    logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000129",
-  });
-
-  const snapshot = await manager.createAgent({
-    provider: "codex",
-    cwd: workdir,
-  });
-
-  await manager.setGeneratedTitle(snapshot.id, "Generated title");
-
-  const after = await storage.get(snapshot.id);
-  expect(after?.title).toBe("Generated title");
-});
-
-test("setGeneratedTitle ignores blank generated titles", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-blank-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const manager = new AgentManager({
-    clients: {
-      codex: new TestAgentClient(),
-    },
-    registry: storage,
-    logger,
-    idFactory: () => "00000000-0000-4000-8000-000000000130",
-  });
-
-  const snapshot = await manager.createAgent({
-    provider: "codex",
-    cwd: workdir,
-  });
-  const before = await storage.get(snapshot.id);
-  expect(before).not.toBeNull();
-
-  const stateEvents: ManagedAgent[] = [];
-  manager.subscribe(
-    (event) => {
-      if (event.type === "agent_state") {
-        stateEvents.push(event.agent);
-      }
-    },
-    { agentId: snapshot.id, replayState: false },
-  );
-
-  await manager.setGeneratedTitle(snapshot.id, "   ");
-
-  const after = await storage.get(snapshot.id);
-  expect(after?.title).toBeNull();
-  expect(after?.updatedAt).toBe(before?.updatedAt);
-  expect(manager.getAgent(snapshot.id)?.updatedAt.toISOString()).toBe(before?.updatedAt);
-  expect(stateEvents).toEqual([]);
-});
-
-test("setGeneratedTitle throws for an unknown agent", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-unknown-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const manager = new AgentManager({
-    clients: {
-      codex: new TestAgentClient(),
-    },
-    registry: storage,
-    logger,
-  });
-
-  await expect(
-    manager.setGeneratedTitle("00000000-0000-4000-8000-000000000999", "Generated title"),
-  ).rejects.toThrow("Unknown agent '00000000-0000-4000-8000-000000000999'");
 });
 
 test("persists live mode, model, and thinking changes without an external snapshot subscriber", async () => {

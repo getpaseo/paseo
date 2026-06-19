@@ -47,6 +47,45 @@ describe("workspace source of truth consumption", () => {
     expect(sidebarWorkspace.statusBucket).toBe("running");
   });
 
+  it("maps the sidebar entry branch from gitRuntime.currentBranch", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: createWorkspaceDescriptor({
+        name: "feat/workspace-sot",
+        gitRuntime: {
+          currentBranch: "feat/real-branch",
+          isDirty: false,
+          aheadOfOrigin: 0,
+        },
+      }),
+    });
+
+    expect(entry.currentBranch).toBe("feat/real-branch");
+  });
+
+  it("normalizes detached HEAD, blank, and missing branches to null", () => {
+    const detached = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: createWorkspaceDescriptor({
+        gitRuntime: { currentBranch: "HEAD", isDirty: false, aheadOfOrigin: 0 },
+      }),
+    });
+    const blank = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: createWorkspaceDescriptor({
+        gitRuntime: { currentBranch: "  ", isDirty: false, aheadOfOrigin: 0 },
+      }),
+    });
+    const missing = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: createWorkspaceDescriptor(),
+    });
+
+    expect(detached.currentBranch).toBeNull();
+    expect(blank.currentBranch).toBeNull();
+    expect(missing.currentBranch).toBeNull();
+  });
+
   it("keeps the header skeleton while the workspace descriptor is missing", () => {
     expect(
       resolveWorkspaceHeaderRenderState({

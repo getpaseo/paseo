@@ -63,7 +63,10 @@ export async function ensureAgentLoaded(
       if (!config) {
         throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
       }
-      snapshot = await deps.agentManager.createAgent(config, agentId, { labels: record.labels });
+      snapshot = await deps.agentManager.createAgent(config, agentId, {
+        labels: record.labels,
+        workspaceId: record.workspaceId,
+      });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 

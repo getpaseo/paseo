@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
-import { clickNewChat, clickNewTerminal } from "./helpers/launcher";
-import { captureWsSessionFrames } from "./helpers/rename";
+import { clickNewChat, clickNewTerminal, gotoWorkspace } from "./helpers/launcher";
+import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import {
   expectTerminalSurfaceVisible,
   focusTerminalSurface,
@@ -9,13 +9,25 @@ import {
   waitForTerminalContent,
 } from "./helpers/terminal-perf";
 
-interface CreateAgentFrame {
-  initialPrompt: string | null;
+interface CreatedAgentCwdAssertion {
+  workspaceId: string;
   cwd: string | null;
 }
 
-function cwdForPrompt(frames: CreateAgentFrame[], prompt: string): string | null {
-  return frames.find((frame) => frame.initialPrompt === prompt)?.cwd ?? null;
+async function fetchSingleAgentForWorkspace(
+  workspace: SeededWorkspace,
+): Promise<CreatedAgentCwdAssertion | null> {
+  const agents = (await workspace.client.fetchAgents({ scope: "active" })).entries
+    .map((entry) => entry.agent)
+    .filter((agent) => agent.workspaceId === workspace.workspaceId);
+  if (agents.length !== 1) {
+    return null;
+  }
+  const [agent] = agents;
+  return {
+    workspaceId: workspace.workspaceId,
+    cwd: agent.cwd,
+  };
 }
 
 test.describe("Workspace cwd correctness", () => {
@@ -36,37 +48,36 @@ test.describe("Workspace cwd correctness", () => {
     await waitForTerminalContent(page, (text) => text.includes(workspace.repoPath), 10_000);
   });
 
-  test("draft tab creates an agent in the workspace cwd", async ({ page, withWorkspace }) => {
+  test("draft tab creates an agent in the workspace cwd", async ({ page }) => {
     test.setTimeout(60_000);
 
-    const createAgentFrames = captureWsSessionFrames(page, "create_agent_request", (inner) => {
-      const config = (inner.config ?? {}) as Record<string, unknown>;
-      return {
-        initialPrompt: typeof inner.initialPrompt === "string" ? inner.initialPrompt : null,
-        cwd: typeof config.cwd === "string" ? config.cwd : null,
-      };
-    });
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-cwd-draft-agent-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
 
-    const workspace = await withWorkspace({ prefix: "workspace-cwd-draft-agent-" });
-    await workspace.navigateTo();
+      await clickNewChat(page);
+      const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
+      const message = `cwd draft create ${Date.now()}`;
+      await expect(composer).toBeEditable({ timeout: 15_000 });
+      await composer.fill(message);
+      await composer.press("Enter");
+      await expect(page.getByText(message, { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
 
-    await clickNewChat(page);
-    const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
-    const message = `cwd draft create ${Date.now()}`;
-    await expect(composer).toBeEditable({ timeout: 15_000 });
-    await composer.fill(message);
-    await composer.press("Enter");
-    await expect(page.getByText(message, { exact: true }).first()).toBeVisible({
-      timeout: 30_000,
-    });
+      await expect(page.locator('[data-testid^="workspace-tab-agent_"]').first()).toBeVisible({
+        timeout: 30_000,
+      });
 
-    await expect(page.locator('[data-testid^="workspace-tab-agent_"]').first()).toBeVisible({
-      timeout: 30_000,
-    });
-
-    await expect
-      .poll(() => cwdForPrompt(createAgentFrames, message), { timeout: 30_000 })
-      .toBe(workspace.repoPath);
+      await expect
+        .poll(() => fetchSingleAgentForWorkspace(workspace), { timeout: 30_000 })
+        .toEqual({
+          workspaceId: workspace.workspaceId,
+          cwd: workspace.repoPath,
+        });
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   test("worktree workspace opens terminals in the worktree directory", async ({

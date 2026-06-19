@@ -84,4 +84,27 @@ describe("create agent preferences", () => {
   it("loads invalid stored preferences as empty preferences", () => {
     expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({});
   });
+
+  it("persists and reloads the workspace isolation choice", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const save = preferences.update({ isolation: "worktree" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await save;
+
+    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+    expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
+      isolation: "worktree",
+    });
+  });
+
+  it("treats stored preferences without an isolation choice as undefined", () => {
+    expect(parseFormPreferences({ provider: "codex" }).isolation).toBeUndefined();
+  });
+
+  it("rejects an unknown isolation value as invalid stored preferences", () => {
+    expect(parseFormPreferences({ provider: "codex", isolation: "sandbox" })).toEqual({});
+  });
 });

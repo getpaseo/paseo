@@ -256,6 +256,12 @@ describe("splitHtmlishMarkdown", () => {
     expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
   });
 
+  it("terminates when an unmatched backtick follows a closed inline code span", () => {
+    const source = "Use `<details><summary>Example</summary>Body</details>` before `dangling";
+
+    expect(splitHtmlishMarkdown(source)).toEqual([{ kind: "markdown", text: source }]);
+  });
+
   it("still parses normal details outside code", () => {
     expect(splitHtmlishMarkdown("`code`\n<details><summary>Real</summary>Body</details>")).toEqual([
       { kind: "markdown", text: "`code`\n" },

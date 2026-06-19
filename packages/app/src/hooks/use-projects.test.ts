@@ -48,6 +48,7 @@ function createRuntime(hosts: HostFixture[]): RuntimeAdapter {
       return {
         requestId: `req-${host.serverId}`,
         entries: workspaces,
+        emptyProjects: [],
         pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
       } satisfies FetchWorkspacesResult;
     };

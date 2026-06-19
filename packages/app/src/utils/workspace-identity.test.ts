@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import {
-  resolveWorkspaceIdByDirectory,
-  resolveWorkspaceMapKeyByIdentity,
-  resolveWorkspaceRouteId,
-} from "./workspace-identity";
+import { resolveWorkspaceMapKeyByIdentity, resolveWorkspaceRouteId } from "./workspace-identity";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -35,42 +31,6 @@ describe("resolveWorkspaceRouteId", () => {
 
   it("returns null for empty values", () => {
     expect(resolveWorkspaceRouteId({ routeWorkspaceId: "   " })).toBeNull();
-  });
-});
-
-describe("resolveWorkspaceIdByDirectory", () => {
-  it("matches workspace directories", () => {
-    const workspaces = [
-      createWorkspace({
-        id: "workspace-1",
-        projectRootPath: "/repo",
-        workspaceDirectory: "/repo/.paseo/worktrees/feature",
-      }),
-    ];
-
-    expect(
-      resolveWorkspaceIdByDirectory({
-        workspaces,
-        workspaceDirectory: "/repo/.paseo/worktrees/feature",
-      }),
-    ).toBe("workspace-1");
-  });
-
-  it("does not match project root metadata", () => {
-    const workspaces = [
-      createWorkspace({
-        id: "workspace-1",
-        projectRootPath: "/repo",
-        workspaceDirectory: "/repo/.paseo/worktrees/feature",
-      }),
-    ];
-
-    expect(
-      resolveWorkspaceIdByDirectory({
-        workspaces,
-        workspaceDirectory: "/repo",
-      }),
-    ).toBeNull();
   });
 });
 

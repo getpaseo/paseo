@@ -119,6 +119,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     await expect(
       runAsyncWorktreeBootstrap({
         agentId: "agent-live-failure",
+        workspaceId: "ws-live-failure",
         worktree: worktreeBootstrap.worktree,
         shouldBootstrap: worktreeBootstrap.shouldBootstrap,
         terminalManager: null,
@@ -169,6 +170,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     const persisted: AgentTimelineItem[] = [];
     await runAsyncWorktreeBootstrap({
       agentId: "agent-large-output",
+      workspaceId: "ws-large-output",
       worktree: worktreeBootstrap.worktree,
       shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: null,
@@ -238,6 +240,7 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     await runAsyncWorktreeBootstrap({
       agentId: "agent-terminal-readiness",
+      workspaceId: "ws-terminal-readiness",
       worktree: worktreeBootstrap.worktree,
       shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: {

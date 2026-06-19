@@ -13,6 +13,7 @@ export function deriveProjectPlacementFromCwd(cwd: string): ProjectPlacementPayl
   return {
     projectKey,
     projectName: deriveProjectName(projectKey),
+    workspaceName: null,
     checkout: {
       cwd: normalizedCwd,
       isGit: false,

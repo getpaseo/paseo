@@ -255,13 +255,15 @@ describe("daemon checkout ship loop", () => {
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
 
+        // Archiving removes the agent from the active list but leaves the
+        // worktree on disk — disk deletion is a separate, explicit step.
         const worktreeListAfter = await ctx.client.getPaseoWorktreeList({
           cwd: repoDir,
         });
         expect(
           worktreeListAfter.worktrees.some((entry) => entry.worktreePath === worktree.worktreePath),
-        ).toBe(false);
-        expect(existsSync(worktree.worktreePath)).toBe(false);
+        ).toBe(true);
+        expect(existsSync(worktree.worktreePath)).toBe(true);
 
         const remainingAgents = await ctx.client.fetchAgents();
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);

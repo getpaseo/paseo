@@ -519,7 +519,18 @@ test("bootstraps configured worktree terminals after setup succeeds", async () =
     const setupPort = readFileSync(path.join(agent.cwd, "setup-port.txt"), "utf8").trim();
     expect(setupPort.length).toBeGreaterThan(0);
 
-    const createdTerminal = await ctx.client.createTerminal(agent.cwd, "Manual Port Check");
+    const openedWorktree = await ctx.client.openProject(agent.cwd);
+    if (!openedWorktree.workspace) {
+      throw new Error(openedWorktree.error ?? `Failed to open worktree workspace for ${agent.cwd}`);
+    }
+    const createdTerminal = await ctx.client.createTerminal(
+      agent.cwd,
+      "Manual Port Check",
+      undefined,
+      {
+        workspaceId: openedWorktree.workspace.id,
+      },
+    );
     expect(createdTerminal.error).toBeNull();
     expect(createdTerminal.terminal).toBeTruthy();
     const manualTerminalId = createdTerminal.terminal?.id;
@@ -684,7 +695,7 @@ test("creates agent in ~/.paseo/worktrees/{hash} when worktree is requested", as
   rmSync(cwd, { recursive: true, force: true });
 }, 60000);
 
-test("archives worktree by running teardown commands and shutting down worktree terminals", async () => {
+test("archiving a worktree shuts down its terminals but leaves the worktree on disk", async () => {
   const repoRoot = tmpCwd();
 
   const { execSync } = await import("child_process");
@@ -766,9 +777,11 @@ test("archives worktree by running teardown commands and shutting down worktree 
   expect(archive.success).toBe(true);
   expect(archive.removedAgents).toContain(agent.id);
 
-  expect(existsSync(agent.cwd)).toBe(false);
-  expect(existsSync(teardownMarkerPath)).toBe(true);
-  expect(readFileSync(teardownMarkerPath, "utf8").trim()).toBe(agent.cwd);
+  // Archiving tears down the workspace's terminals but never deletes the
+  // worktree from disk and never runs teardown commands — on-disk removal is a
+  // separate, explicit step.
+  expect(existsSync(agent.cwd)).toBe(true);
+  expect(existsSync(teardownMarkerPath)).toBe(false);
 
   const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
   expect(afterArchiveDirectories).not.toContain(agent.cwd);

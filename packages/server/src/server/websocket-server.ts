@@ -9,7 +9,6 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
-import { resolveActiveWorkspaceRecordForCwd } from "./workspace-registry-model.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
@@ -27,6 +26,7 @@ import {
   wrapSessionMessage,
 } from "./messages.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
+import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
@@ -85,9 +85,12 @@ type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
 type TerminalAttentionReason = "finished" | "needs_input";
 
 function resolveTerminalAttentionReason(input: {
+  attentionReason?: TerminalActivity["attentionReason"];
   previousState: "working" | "idle" | "attention" | null;
   state: "working" | "idle" | "attention" | null;
 }): TerminalAttentionReason | null {
+  if (input.attentionReason === "finished") return "finished";
+  if (input.attentionReason === "needs_input") return "needs_input";
   if (input.state === "attention") return "needs_input";
   if (input.previousState === "working" && input.state === "idle") return "finished";
   return null;
@@ -353,6 +356,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonRuntimeConfig:
     | {
         listen: string | null;
+        appBaseUrl?: string;
         relay: {
           enabled: boolean;
           endpoint: string;
@@ -451,6 +455,7 @@ export class VoiceAssistantWebSocketServer {
     daemonRuntimeConfig?: {
       listen: string | null;
       worktreesRoot?: string;
+      appBaseUrl?: string;
       relay: {
         enabled: boolean;
         endpoint: string;
@@ -578,6 +583,7 @@ export class VoiceAssistantWebSocketServer {
     if (this.terminalManager) {
       this.unsubscribeTerminalActivity = this.terminalManager.subscribeTerminalActivity((event) => {
         const reason = resolveTerminalAttentionReason({
+          attentionReason: event.activity?.attentionReason,
           previousState: event.previous?.state ?? null,
           state: event.activity?.state ?? null,
         });
@@ -587,6 +593,7 @@ export class VoiceAssistantWebSocketServer {
         void this.broadcastTerminalAttention({
           terminalId: event.terminalId,
           cwd: event.cwd,
+          ...(event.workspaceId ? { workspaceId: event.workspaceId } : {}),
           terminalName: event.name,
           reason,
         }).catch((err) => {
@@ -1183,6 +1190,12 @@ export class VoiceAssistantWebSocketServer {
         rewind: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
+        // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
+        workspaceMultiplicity: true,
+        // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
+        projectRemove: true,
+        // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
+        worktreeRestore: true,
       },
     };
   }
@@ -1853,14 +1866,10 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private async resolveWorkspaceIdForCwd(cwd: string): Promise<string | undefined> {
-    const workspaces = await this.workspaceRegistry.list();
-    return resolveActiveWorkspaceRecordForCwd(cwd, workspaces)?.workspaceId;
-  }
-
   private async broadcastTerminalAttention(params: {
     terminalId: string;
     cwd: string;
+    workspaceId?: string;
     terminalName: string;
     reason: TerminalAttentionReason;
   }): Promise<void> {
@@ -1878,7 +1887,7 @@ export class VoiceAssistantWebSocketServer {
 
     const allStates = clientEntries.map((e) => e.state);
     const nowMs = Date.now();
-    const workspaceId = await this.resolveWorkspaceIdForCwd(params.cwd);
+    const workspaceId = params.workspaceId;
 
     const plan = computeNotificationPlan({
       allStates,

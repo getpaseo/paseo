@@ -28,23 +28,16 @@ function workspace(input?: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
 }
 
 describe("workspace archive pending suppression", () => {
-  it("tracks a locally pending workspace archive by id and directory", () => {
+  it("tracks a locally pending workspace archive by id", () => {
     markWorkspaceArchivePending({
       serverId: "server-1",
       workspaceId: "/repo/worktree",
-      workspaceDirectory: "/repo/worktree",
     });
 
     expect(
       isWorkspaceArchivePending({
         serverId: "server-1",
         workspaceId: "/repo/worktree",
-      }),
-    ).toBe(true);
-    expect(
-      isWorkspaceArchivePending({
-        serverId: "server-1",
-        workspaceDirectory: "/repo/worktree",
       }),
     ).toBe(true);
     expect(
@@ -68,15 +61,30 @@ describe("workspace archive pending suppression", () => {
     markWorkspaceArchivePending({
       serverId: "server-1",
       workspaceId: "/repo/worktree",
-      workspaceDirectory: "/repo/worktree",
     });
 
     expect(
       shouldSuppressWorkspaceForLocalArchive({
         serverId: "server-1",
-        workspace: workspace({ workspaceDirectory: "/repo/worktree" }),
+        workspace: workspace({ archivingAt: null }),
       }),
     ).toBe(true);
+
+    clearWorkspaceArchivePending({ serverId: "server-1", workspaceId: "/repo/worktree" });
+  });
+
+  it("does not suppress a same-cwd sibling whose id is not the one archived", () => {
+    markWorkspaceArchivePending({
+      serverId: "server-1",
+      workspaceId: "/repo/worktree",
+    });
+
+    expect(
+      shouldSuppressWorkspaceForLocalArchive({
+        serverId: "server-1",
+        workspace: workspace({ id: "sibling", workspaceDirectory: "/repo/worktree" }),
+      }),
+    ).toBe(false);
 
     clearWorkspaceArchivePending({ serverId: "server-1", workspaceId: "/repo/worktree" });
   });
@@ -94,7 +102,6 @@ describe("workspace archive pending suppression", () => {
     markWorkspaceArchivePending({
       serverId: "server-1",
       workspaceId: "/repo/worktree",
-      workspaceDirectory: "/repo/worktree",
     });
 
     expect(

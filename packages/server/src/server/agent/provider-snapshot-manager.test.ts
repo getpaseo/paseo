@@ -158,6 +158,95 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("wait:true returns a warm provider without refreshing it", async () => {
+    const cwd = "/tmp/project";
+    const isAvailable = vi.fn(async () => true);
+    const listModels = vi.fn(async () => [
+      {
+        provider: "codex",
+        id: "gpt-5.4-mini",
+        label: "GPT 5.4 Mini",
+      },
+    ]);
+    const listModes = vi.fn(async () => [] as AgentMode[]);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", { isAvailable, listModels, listModes }),
+      },
+    });
+    const listener = vi.fn();
+    manager.on("change", listener);
+    try {
+      const [first] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+      expect(first).toMatchObject({ provider: "codex", status: "ready" });
+      expect(isAvailable).toHaveBeenCalledTimes(1);
+      expect(listModels).toHaveBeenCalledTimes(1);
+      expect(listModes).toHaveBeenCalledTimes(1);
+
+      listener.mockClear();
+      const [second] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
+
+      expect(second).toEqual(first);
+      expect(isAvailable).toHaveBeenCalledTimes(1);
+      expect(listModels).toHaveBeenCalledTimes(1);
+      expect(listModes).toHaveBeenCalledTimes(1);
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("explicit refresh re-probes only the requested warm provider", async () => {
+    const cwd = "/tmp/project";
+    const isAvailableCodex = vi.fn(async () => true);
+    const listCodexModels = vi.fn(async () => [
+      {
+        provider: "codex",
+        id: "gpt-5.4-mini",
+        label: "GPT 5.4 Mini",
+      },
+    ]);
+    const listCodexModes = vi.fn(async () => [] as AgentMode[]);
+    const isAvailableClaude = vi.fn(async () => true);
+    const listClaudeModels = vi.fn(async () => [
+      {
+        provider: "claude",
+        id: "claude-opus-4.5",
+        label: "Claude Opus 4.5",
+      },
+    ]);
+    const listClaudeModes = vi.fn(async () => [] as AgentMode[]);
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: isAvailableCodex,
+          listModels: listCodexModels,
+          listModes: listCodexModes,
+        }),
+        claude: createExtraClient("claude", {
+          isAvailable: isAvailableClaude,
+          listModels: listClaudeModels,
+          listModes: listClaudeModes,
+        }),
+      },
+    });
+    try {
+      await manager.listProviders({ cwd, providers: ["codex", "claude"], wait: true });
+      await manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] });
+
+      expect(isAvailableCodex).toHaveBeenCalledTimes(2);
+      expect(listCodexModels).toHaveBeenCalledTimes(2);
+      expect(listCodexModes).toHaveBeenCalledTimes(2);
+      expect(isAvailableClaude).toHaveBeenCalledTimes(1);
+      expect(listClaudeModels).toHaveBeenCalledTimes(1);
+      expect(listClaudeModes).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("refreshTimeoutMs option overrides the default and yields a timeout error", async () => {
     // never-resolving isAvailable forces the timeout path
     const isAvailable = vi.fn(() => new Promise<boolean>(() => {}));

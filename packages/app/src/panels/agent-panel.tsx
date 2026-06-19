@@ -83,6 +83,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -93,6 +94,7 @@ interface ChatAgentStateShape {
   id: string | null;
   status: Agent["status"] | null;
   cwd: string | null;
+  workspaceId?: string;
   capabilities?: Agent["capabilities"];
   lastError?: Agent["lastError"] | null;
 }
@@ -136,6 +138,7 @@ function selectChatAgentState(
     id: agent.id,
     status: agent.status,
     cwd: agent.cwd,
+    workspaceId: agent.workspaceId,
     capabilities: agent.capabilities,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
@@ -156,6 +159,7 @@ function buildChatAgentFromState(
     id: state.id,
     status: state.status,
     cwd: state.cwd,
+    workspaceId: state.workspaceId,
     capabilities: state.capabilities,
     lastError: state.lastError ?? null,
     projectPlacement,
@@ -235,10 +239,13 @@ function storeFetchedAgentDetail(input: {
   result: NonNullable<FetchAgentResult>;
 }): Agent {
   const normalized = normalizeAgentSnapshot(input.result.agent, input.serverId);
-  const hydrated: Agent = {
-    ...normalized,
-    projectPlacement: input.result.project,
-  };
+  const hydrated: Agent = applyLegacyDaemonWorkspaceOwnership({
+    serverId: input.serverId,
+    agent: {
+      ...normalized,
+      projectPlacement: input.result.project,
+    },
+  });
   const store = useSessionStore.getState();
 
   if (shouldStoreFetchedAgentInActiveDirectory(hydrated)) {
@@ -342,9 +349,10 @@ function DraftPanel() {
   const handleCreated = useCallback(
     (agentSnapshot: Parameters<typeof normalizeAgentSnapshot>[0]) => {
       const normalized = normalizeAgentSnapshot(agentSnapshot, serverId);
+      const agent = applyLegacyDaemonWorkspaceOwnership({ serverId, agent: normalized });
       useSessionStore.getState().setAgents(serverId, (prev) => {
         const next = new Map(prev);
-        next.set(agentSnapshot.id, normalized);
+        next.set(agentSnapshot.id, agent);
         return next;
       });
       retargetCurrentTab({ kind: "agent", agentId: agentSnapshot.id });
@@ -545,15 +553,13 @@ function AgentPanelBody({
   );
   const agentState = useSessionStore(
     useShallow((state) => {
-      const session = state.sessions[serverId];
-      const agent = agentId
-        ? (session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null)
-        : null;
+      const agent = resolveChatAgentFromSession(state, serverId, agentId);
       return {
         serverId: agent?.serverId ?? null,
         id: agent?.id ?? null,
         status: agent?.status ?? null,
         cwd: agent?.cwd ?? null,
+        workspaceId: agent?.workspaceId,
         lastError: agent?.lastError ?? null,
         archivedAt: agent?.archivedAt ?? null,
       };
@@ -646,6 +652,7 @@ function AgentPanelBody({
           id: agentState.id,
           status: agentState.status,
           cwd: agentState.cwd,
+          workspaceId: agentState.workspaceId,
           lastError: agentState.lastError ?? null,
           projectPlacement,
         }

@@ -57,7 +57,11 @@ function GitActionMenuItem({
     <View>
       {needsSeparator && showSeparator ? <DropdownMenuSeparator /> : null}
       <DropdownMenuItem
-        testID={`changes-menu-${action.id}`}
+        testID={
+          action.id === "archive-worktree"
+            ? "workspace-archive-action"
+            : `changes-menu-${action.id}`
+        }
         leading={action.icon}
         trailing={trailing}
         disabled={action.disabled}

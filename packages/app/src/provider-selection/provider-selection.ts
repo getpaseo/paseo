@@ -229,7 +229,15 @@ export function filterAndRankModelRows(
 }
 
 export function resolveEffectiveComposerModelId(selection: ProviderSelectionState): string {
-  return selection.modelId.trim();
+  const selectedModelId = selection.modelId.trim();
+  if (selectedModelId) {
+    return selectedModelId;
+  }
+  return (
+    selection.availableModels.find((model) => model.isDefault)?.id ??
+    selection.availableModels[0]?.id ??
+    ""
+  );
 }
 
 export function resolveEffectiveComposerThinkingOptionId(

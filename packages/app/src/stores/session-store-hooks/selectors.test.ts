@@ -6,7 +6,6 @@ import {
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
-  selectResolveWorkspaceIdByCwd,
   selectWorkspace,
   selectWorkspaceDirectory,
   selectWorkspaceFields,
@@ -232,6 +231,29 @@ describe("workspace structure composition", () => {
     tracked.stop();
   });
 
+  it("renders a project with zero active workspaces as an empty project parent", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    useSessionStore.getState().setWorkspaces(SERVER_ID, new Map());
+    useSessionStore.getState().setEmptyProjects(SERVER_ID, [
+      {
+        projectId: "empty-project",
+        projectDisplayName: "Empty Project",
+        projectCustomName: null,
+        projectRootPath: "/repo/empty",
+        projectKind: "git",
+      },
+    ]);
+
+    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
+    expect(projects).toEqual([
+      expect.objectContaining({
+        projectKey: "empty-project",
+        projectName: "Empty Project",
+        workspaceKeys: [],
+      }),
+    ]);
+  });
+
   it("changes when a structure-relevant project identity field changes", () => {
     const workspace = createWorkspace({
       id: "workspace-a",
@@ -356,33 +378,6 @@ describe("selectHasWorkspaces", () => {
     const before = tracked.current;
 
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspaceB]);
-    expect(tracked.current).toBe(before);
-
-    tracked.stop();
-  });
-});
-
-describe("selectResolveWorkspaceIdByCwd", () => {
-  it("resolves by cwd and stays stable under unrelated updates", () => {
-    const workspaceA = createWorkspace({
-      id: "workspace-a",
-      workspaceDirectory: "/repo/a",
-    });
-    const workspaceB = createWorkspace({
-      id: "workspace-b",
-      workspaceDirectory: "/repo/b",
-    });
-    initializeWorkspaces([workspaceA, workspaceB]);
-
-    const tracked = trackSelector(
-      useSessionStore,
-      (state) => selectResolveWorkspaceIdByCwd(state, SERVER_ID, "/repo/a"),
-      workspaceEqualityFns.identity,
-    );
-    const before = tracked.current;
-    expect(before).toBe("workspace-a");
-
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceB, status: "running" }]);
     expect(tracked.current).toBe(before);
 
     tracked.stop();

@@ -85,7 +85,7 @@ export function validateOpenAiCredentialRequirements(params: {
   }
 
   if (missingOpenAiCredentialsFor.length > 0) {
-    logger.error(
+    logger.warn(
       {
         requestedProviders: {
           dictationStt: providers.dictationStt.provider,
@@ -94,10 +94,7 @@ export function validateOpenAiCredentialRequirements(params: {
         },
         missingOpenAiCredentialsFor,
       },
-      "Invalid speech configuration: OpenAI provider selected but credentials are missing",
-    );
-    throw new Error(
-      `Missing OpenAI credentials for configured speech features: ${missingOpenAiCredentialsFor.join(", ")}`,
+      "Invalid speech configuration: OpenAI provider selected but credentials are missing — speech features will be unavailable",
     );
   }
 }
@@ -195,7 +192,7 @@ export function initializeOpenAiSpeechServices(params: {
       );
     }
   } else if (needsAnyOpenAi) {
-    logger.warn("OpenAI speech providers are configured but credentials are missing");
+    // validateOpenAiCredentialRequirements already warned about missing credentials
   }
 
   return {

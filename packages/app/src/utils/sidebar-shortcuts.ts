@@ -3,7 +3,6 @@ import type {
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
-import { isSidebarProjectFlattened } from "./sidebar-project-row-model";
 
 export interface SidebarShortcutWorkspaceTarget {
   serverId: string;
@@ -32,7 +31,7 @@ export function buildSidebarShortcutModel(input: {
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
   for (const project of input.projects) {
-    if (!isSidebarProjectFlattened(project) && input.collapsedProjectKeys.has(project.projectKey)) {
+    if (input.collapsedProjectKeys.has(project.projectKey)) {
       continue;
     }
 

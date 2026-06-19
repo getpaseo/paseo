@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.1.97 - 2026-06-18
+
+### Added
+
+- **Simplify workspace model** — run multiple workspaces on the same code without a worktree, each with its own agents, terminals, and status ([#1539](https://github.com/getpaseo/paseo/pull/1539))
+- **Reopen archived workspaces from History** — restore a past workspace even after its worktree was removed
+- **Terminals show when their agent is working, idle, or waiting for input** ([#1507](https://github.com/getpaseo/paseo/pull/1507))
+- **Attach files to agents on mobile** ([#1501](https://github.com/getpaseo/paseo/pull/1501))
+- **Hide dotfiles in the file explorer** ([#1516](https://github.com/getpaseo/paseo/pull/1516) by [@yuruiz](https://github.com/yuruiz))
+- **Pin terminal, browser, and new-tab buttons to the tab row and sidebar**
+- **Create a new workspace with a keyboard shortcut**
+
+### Improved
+
+- Workspace titles come from your first prompt and are shorter ([#1563](https://github.com/getpaseo/paseo/pull/1563))
+- Copy a workspace's branch or path from its hover card
+- Terminals stay smooth under heavy output ([#1500](https://github.com/getpaseo/paseo/pull/1500))
+- Worktrees are removed when their last workspace is archived ([#1562](https://github.com/getpaseo/paseo/pull/1562))
+- Finish notifications include subagent results ([#1558](https://github.com/getpaseo/paseo/pull/1558))
+- Cursor lists only models you can select ([#1556](https://github.com/getpaseo/paseo/pull/1556))
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Brief daemon slowdowns no longer drop your connection
+- Linux AppImage updates no longer hang on quit or delete the app ([#1485](https://github.com/getpaseo/paseo/pull/1485) by [@xpufx](https://github.com/xpufx))
+- Opening Providers settings no longer crashes on Android ([#1537](https://github.com/getpaseo/paseo/pull/1537))
+- Coding-agent terminal shortcuts work on Windows ([#1509](https://github.com/getpaseo/paseo/pull/1509))
+- ACP and Kimi sessions can be imported again ([#1510](https://github.com/getpaseo/paseo/pull/1510) by [@wbxl2000](https://github.com/wbxl2000))
+- ACP agents shut down without leaving orphaned processes ([#1460](https://github.com/getpaseo/paseo/pull/1460) by [@yeshan333](https://github.com/yeshan333))
+- Imported session previews show clean prompts ([#1502](https://github.com/getpaseo/paseo/pull/1502))
+- Local pairing offers use the correct app URL ([#1187](https://github.com/getpaseo/paseo/pull/1187) by [@aibaiiqpl](https://github.com/aibaiiqpl))
+- The app no longer freezes from repeated provider re-probes
+- Removing a project from the sidebar now removes the project itself instead of leaving it behind
+- Workspace shortcut numbers no longer appear for the wrong key ([#1580](https://github.com/getpaseo/paseo/pull/1580) by [@cleiter](https://github.com/cleiter))
+- Chats no longer hang when a message contains unmatched backticks ([#1585](https://github.com/getpaseo/paseo/pull/1585) by [@thaning0](https://github.com/thaning0))
+
 ## 0.1.96 - 2026-06-13
 
 _This release only fixes an Android issue — desktop users don't need to update._

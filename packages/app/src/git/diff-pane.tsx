@@ -36,7 +36,6 @@ import {
   ChevronDown,
   Columns2,
   Download,
-  GitBranch,
   GitCommitHorizontal,
   GitMerge,
   ListChevronsDownUp,
@@ -80,6 +79,7 @@ import { GitHubIcon } from "@/components/icons/github-icon";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
+import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
@@ -1086,7 +1086,6 @@ interface GitDiffPaneProps {
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
-  hideHeaderRow?: boolean;
   enabled?: boolean;
 }
 
@@ -1112,7 +1111,6 @@ const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
-const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 interface DiffLayoutToggleGroupProps {
@@ -1500,6 +1498,7 @@ interface DerivedStatusState {
   baseRef: string | undefined;
   hasUncommittedChanges: boolean;
   actionsDisabled: boolean;
+  currentBranchName: string | null;
 }
 
 function deriveStatusState({
@@ -1517,6 +1516,8 @@ function deriveStatusState({
   const baseRef = gitStatus?.baseRef ?? undefined;
   const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
+  const currentBranchName =
+    gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD" ? gitStatus.currentBranch : null;
   return {
     gitStatus,
     isGit,
@@ -1525,6 +1526,7 @@ function deriveStatusState({
     baseRef,
     hasUncommittedChanges,
     actionsDisabled,
+    currentBranchName,
   };
 }
 
@@ -1580,13 +1582,7 @@ function shouldEnableCheckoutDiff(input: { paneEnabled: boolean; isGit: boolean 
   return input.paneEnabled && input.isGit;
 }
 
-export function GitDiffPane({
-  serverId,
-  workspaceId,
-  cwd,
-  hideHeaderRow,
-  enabled,
-}: GitDiffPaneProps) {
+export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPaneProps) {
   const { settings: appSettings } = useAppSettings();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1684,7 +1680,8 @@ export function GitDiffPane({
     error: statusError,
   } = useCheckoutStatusQuery({ serverId, cwd });
   const statusState = deriveStatusState({ status, isStatusLoading, isStatusError, statusError });
-  const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges } = statusState;
+  const { isGit, notGit, statusErrorMessage, baseRef, hasUncommittedChanges, currentBranchName } =
+    statusState;
 
   const reviewDraftScopeKey = useMemo(
     () =>
@@ -2106,7 +2103,11 @@ export function GitDiffPane({
     }),
     [],
   );
-  const { gitActions, branchLabel } = useGitActions({ serverId, cwd, icons: gitActionsIcons });
+  const { gitActions, branchLabel } = useGitActions({
+    serverId,
+    cwd,
+    icons: gitActionsIcons,
+  });
   const committedDiffDescription = useMemo(
     () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
     [baseRefLabel, branchLabel],
@@ -2152,15 +2153,17 @@ export function GitDiffPane({
 
   return (
     <View style={styles.container}>
-      {!hideHeaderRow ? (
+      {isGit && (currentBranchName || isMobile) ? (
         <View style={styles.header} testID="changes-header">
-          <View style={styles.headerLeft}>
-            <ThemedGitBranch size={16} uniProps={foregroundMutedIconColorMapping} />
-            <Text style={styles.branchLabel} testID="changes-branch" numberOfLines={1}>
-              {branchLabel}
-            </Text>
-          </View>
-          {isGit ? <GitActionsSplitButton gitActions={gitActions} /> : null}
+          <BranchSwitcher
+            currentBranchName={currentBranchName}
+            serverId={serverId}
+            workspaceId={workspaceId ?? cwd}
+            workspaceDirectory={cwd}
+            isGitCheckout={isGit}
+            testID="changes-branch-switcher"
+          />
+          {isMobile ? <GitActionsSplitButton gitActions={gitActions} /> : null}
         </View>
       ) : null}
 
@@ -2261,19 +2264,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flex: 1,
-    minWidth: 0,
-  },
-  branchLabel: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.medium,
-    flexShrink: 1,
   },
   diffStatusContainer: {
     height: WORKSPACE_SECONDARY_HEADER_HEIGHT,

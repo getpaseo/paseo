@@ -1,6 +1,7 @@
 import { it, expect, afterEach } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
 import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
+import type { TerminalWorkspaceContributionChangedEvent } from "./terminal-manager.js";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -63,7 +64,7 @@ it("returns empty list for new cwd", async () => {
 it("returns existing terminals on subsequent calls", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  const created = await manager.createTerminal({ cwd });
+  const created = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   const first = await manager.getTerminals(cwd);
   const second = await manager.getTerminals(cwd);
 
@@ -88,8 +89,8 @@ it("creates separate terminals for different cwds", async () => {
   const firstCwd = mkdtempSync(join(tmpdir(), "terminal-manager-first-"));
   const secondCwd = mkdtempSync(join(tmpdir(), "terminal-manager-second-"));
   temporaryDirs.push(firstCwd, secondCwd);
-  const tmpTerminals = [await manager.createTerminal({ cwd: firstCwd })];
-  const homeTerminals = [await manager.createTerminal({ cwd: secondCwd })];
+  const tmpTerminals = [await manager.createTerminal({ cwd: firstCwd, workspaceId: "ws-test" })];
+  const homeTerminals = [await manager.createTerminal({ cwd: secondCwd, workspaceId: "ws-test" })];
 
   expect(tmpTerminals.length).toBe(1);
   expect(homeTerminals.length).toBe(1);
@@ -103,17 +104,35 @@ it("lists subdirectory terminals when querying the workspace root", async () => 
   mkdirSync(subdirCwd, { recursive: true });
   temporaryDirs.push(rootCwd);
 
-  const created = await manager.createTerminal({ cwd: subdirCwd, name: "Mobile" });
+  const created = await manager.createTerminal({
+    cwd: subdirCwd,
+    name: "Mobile",
+    workspaceId: "ws-test",
+  });
 
   const rootTerminals = await manager.getTerminals(rootCwd);
   expect(rootTerminals.map((terminal) => terminal.id)).toEqual([created.id]);
 });
 
+it("includes only stamped terminals in workspace-scoped queries", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const legacy = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  const owned = await manager.createTerminal({ cwd, workspaceId: "ws-owned" });
+  const sibling = await manager.createTerminal({ cwd, workspaceId: "ws-sibling" });
+
+  const scoped = await manager.getTerminals(cwd, { workspaceId: "ws-owned" });
+  const unscoped = await manager.getTerminals(cwd);
+
+  expect(scoped.map((terminal) => terminal.id)).toEqual([owned.id]);
+  expect(unscoped.map((terminal) => terminal.id)).toEqual([legacy.id, owned.id, sibling.id]);
+});
+
 it("creates additional terminal with auto-incrementing name", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  await manager.createTerminal({ cwd });
-  const second = await manager.createTerminal({ cwd });
+  await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  const second = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
 
   expect(second.name).toBe("Terminal 2");
 
@@ -123,7 +142,11 @@ it("creates additional terminal with auto-incrementing name", async () => {
 
 it("uses custom name when provided", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()), name: "Dev Server" });
+  const session = await manager.createTerminal({
+    cwd: realpathSync(tmpdir()),
+    name: "Dev Server",
+    workspaceId: "ws-test",
+  });
 
   expect(session.name).toBe("Dev Server");
 });
@@ -131,7 +154,7 @@ it("uses custom name when provided", async () => {
 it("creates first terminal if none exist", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  const session = await manager.createTerminal({ cwd });
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
 
   expect(session.name).toBe("Terminal 1");
 
@@ -142,7 +165,9 @@ it("creates first terminal if none exist", async () => {
 
 it("throws for relative paths", async () => {
   manager = createTerminalManager();
-  await expect(manager.createTerminal({ cwd: "tmp" })).rejects.toThrow("cwd must be absolute path");
+  await expect(manager.createTerminal({ cwd: "tmp", workspaceId: "ws-test" })).rejects.toThrow(
+    "cwd must be absolute path",
+  );
 });
 
 it("does not reject Windows absolute paths as relative", async () => {
@@ -151,7 +176,7 @@ it("does not reject Windows absolute paths as relative", async () => {
   temporaryDirs.push(cwd);
 
   try {
-    await manager.createTerminal({ cwd });
+    await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   } catch (error) {
     expect((error as Error).message).not.toBe("cwd must be absolute path");
   }
@@ -168,6 +193,7 @@ it("inherits registered env for the worktree root cwd", async () => {
     env: { PASEO_WORKTREE_PORT: "45678" },
   });
   await manager.createTerminal({
+    workspaceId: "ws-test",
     cwd,
     command: process.execPath,
     args: [
@@ -193,6 +219,7 @@ it("inherits registered env for subdirectories within the worktree", async () =>
     env: { PASEO_WORKTREE_PORT: "45679" },
   });
   await manager.createTerminal({
+    workspaceId: "ws-test",
     cwd: subdirCwd,
     command: process.execPath,
     args: [
@@ -207,7 +234,10 @@ it("inherits registered env for subdirectories within the worktree", async () =>
 
 it("returns terminal by id", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+  const session = await manager.createTerminal({
+    cwd: realpathSync(tmpdir()),
+    workspaceId: "ws-test",
+  });
   const found = manager.getTerminal(session.id);
 
   expect(found).toBe(session);
@@ -222,7 +252,10 @@ it("returns undefined for unknown id", () => {
 
 it("removes terminal from manager", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+  const session = await manager.createTerminal({
+    cwd: realpathSync(tmpdir()),
+    workspaceId: "ws-test",
+  });
   const id = session.id;
 
   manager.killTerminal(id);
@@ -233,7 +266,7 @@ it("removes terminal from manager", async () => {
 it("removes cwd entry when last terminal is killed", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  const created = await manager.createTerminal({ cwd });
+  const created = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   manager.killTerminal(created.id);
 
   const remaining = await manager.getTerminals(cwd);
@@ -244,8 +277,8 @@ it("removes cwd entry when last terminal is killed", async () => {
 it("keeps cwd entry when other terminals remain", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  await manager.createTerminal({ cwd });
-  const second = await manager.createTerminal({ cwd });
+  await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  const second = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
 
   const terminals = await manager.getTerminals(cwd);
   manager.killTerminal(terminals[0].id);
@@ -264,7 +297,7 @@ it("is no-op for unknown id", () => {
 it("auto-removes terminal when shell exits", async () => {
   manager = createTerminalManager();
   const cwd = realpathSync(tmpdir());
-  const session = await manager.createTerminal({ cwd });
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   const exitedId = session.id;
   session.kill();
 
@@ -286,8 +319,8 @@ it("returns all cwds with active terminals", async () => {
   const firstCwd = mkdtempSync(join(tmpdir(), "terminal-manager-list-first-"));
   const secondCwd = mkdtempSync(join(tmpdir(), "terminal-manager-list-second-"));
   temporaryDirs.push(firstCwd, secondCwd);
-  await manager.createTerminal({ cwd: firstCwd });
-  await manager.createTerminal({ cwd: secondCwd });
+  await manager.createTerminal({ cwd: firstCwd, workspaceId: "ws-test" });
+  await manager.createTerminal({ cwd: secondCwd, workspaceId: "ws-test" });
 
   const dirs = manager.listDirectories();
   expect(dirs).toContain(firstCwd);
@@ -300,8 +333,8 @@ it("kills all terminals and clears state", async () => {
   const firstCwd = mkdtempSync(join(tmpdir(), "terminal-manager-kill-first-"));
   const secondCwd = mkdtempSync(join(tmpdir(), "terminal-manager-kill-second-"));
   temporaryDirs.push(firstCwd, secondCwd);
-  const tmpSession = await manager.createTerminal({ cwd: firstCwd });
-  const homeSession = await manager.createTerminal({ cwd: secondCwd });
+  const tmpSession = await manager.createTerminal({ cwd: firstCwd, workspaceId: "ws-test" });
+  const homeSession = await manager.createTerminal({ cwd: secondCwd, workspaceId: "ws-test" });
   const tmpId = tmpSession.id;
   const homeId = homeSession.id;
 
@@ -325,8 +358,8 @@ it("emits cwd snapshots when terminals are created", async () => {
     });
   });
 
-  await manager.createTerminal({ cwd });
-  await manager.createTerminal({ cwd, name: "Dev Server" });
+  await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  await manager.createTerminal({ cwd, name: "Dev Server", workspaceId: "ws-test" });
 
   expect(snapshots).toContainEqual({
     cwd,
@@ -366,6 +399,7 @@ it("emits updated terminal titles after debounced title changes", async () => {
   });
 
   const session = await manager.createTerminal({
+    workspaceId: "ws-test",
     cwd: realpathSync(tmpdir()),
     command: process.execPath,
     args: ["-e", "process.stdout.write('\\x1b]0;Logs\\x07'); setTimeout(() => {}, 10000);"],
@@ -387,7 +421,7 @@ it("emits empty snapshot when last terminal is removed", async () => {
     });
   });
 
-  const session = await manager.createTerminal({ cwd });
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   manager.killTerminal(session.id);
 
   expect(snapshots).toContainEqual({
@@ -401,6 +435,7 @@ it("emits empty snapshot when last terminal is removed", async () => {
 it("setTerminalTitle returns false for unknown terminal ids without changing existing terminals", async () => {
   manager = createTerminalManager();
   const session = await manager.createTerminal({
+    workspaceId: "ws-test",
     cwd: realpathSync(tmpdir()),
     title: "Existing title",
   });
@@ -424,7 +459,10 @@ it("setTerminalTitle returns false for unknown terminal ids without changing exi
 
 it("setTerminalTitle returns true and updates the terminal title for existing terminals", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+  const session = await manager.createTerminal({
+    cwd: realpathSync(tmpdir()),
+    workspaceId: "ws-test",
+  });
 
   expect(manager.setTerminalTitle(session.id, "x")).toBe(true);
   expect(session.getTitle()).toBe("x");
@@ -432,7 +470,10 @@ it("setTerminalTitle returns true and updates the terminal title for existing te
 
 it("new terminal starts with unknown activity", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+  const session = await manager.createTerminal({
+    cwd: realpathSync(tmpdir()),
+    workspaceId: "ws-test",
+  });
 
   expect(session.getActivity()).toBeNull();
 });
@@ -450,7 +491,7 @@ it("includes nullable activity in terminals-changed snapshot items", async () =>
     );
   });
 
-  const session = await manager.createTerminal({ cwd });
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
 
   expect(snapshots.length).toBeGreaterThan(0);
   const lastSnapshot = snapshots[snapshots.length - 1];
@@ -476,7 +517,7 @@ it("setTerminalActivity returns true and emits terminals-changed", async () => {
     );
   });
 
-  const session = await manager.createTerminal({ cwd });
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   await expect(manager.setTerminalActivity(session.id, "working")).resolves.toBe(true);
 
   const hasWorkingActivity = (entries: ActivityEntry[]) =>
@@ -504,7 +545,7 @@ it("clearTerminalAttention returns attention terminals to idle", async () => {
     );
   });
 
-  const session = await manager.createTerminal({ cwd });
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
   await manager.setTerminalActivity(session.id, "attention");
 
   await expect(manager.clearTerminalAttention(session.id)).resolves.toBe(true);
@@ -521,10 +562,91 @@ it("clearTerminalAttention returns attention terminals to idle", async () => {
 
 it("clearTerminalAttention leaves non-attention terminals unchanged", async () => {
   manager = createTerminalManager();
-  const session = await manager.createTerminal({ cwd: realpathSync(tmpdir()) });
+  const session = await manager.createTerminal({
+    cwd: realpathSync(tmpdir()),
+    workspaceId: "ws-test",
+  });
   await manager.setTerminalActivity(session.id, "working");
 
   await expect(manager.clearTerminalAttention(session.id)).resolves.toBe(false);
 
   expect(session.getActivity()?.state).toBe("working");
+});
+
+it("emits workspace contribution event when activity bucket changes", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const events: TerminalWorkspaceContributionChangedEvent[] = [];
+  const unsubscribe = manager.subscribeTerminalWorkspaceContributionChanged((event) => {
+    events.push(event);
+  });
+
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  await manager.setTerminalActivity(session.id, "working");
+
+  expect(events).toEqual([
+    {
+      terminalId: session.id,
+      cwd,
+      workspaceId: "ws-test",
+    },
+  ]);
+
+  unsubscribe();
+});
+
+it("does not emit workspace contribution event for title-only changes", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const events: TerminalWorkspaceContributionChangedEvent[] = [];
+  const unsubscribe = manager.subscribeTerminalWorkspaceContributionChanged((event) => {
+    events.push(event);
+  });
+
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  manager.setTerminalTitle(session.id, "New title");
+
+  expect(events).toEqual([]);
+
+  unsubscribe();
+});
+
+it("emits workspace contribution event when a contributing terminal is removed", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const events: TerminalWorkspaceContributionChangedEvent[] = [];
+  const unsubscribe = manager.subscribeTerminalWorkspaceContributionChanged((event) => {
+    events.push(event);
+  });
+
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  await manager.setTerminalActivity(session.id, "working");
+  events.length = 0;
+  manager.killTerminal(session.id);
+
+  expect(events).toEqual([
+    {
+      terminalId: session.id,
+      cwd,
+      workspaceId: "ws-test",
+    },
+  ]);
+
+  unsubscribe();
+});
+
+it("does not emit workspace contribution event when an idle terminal is removed", async () => {
+  manager = createTerminalManager();
+  const cwd = realpathSync(tmpdir());
+  const events: TerminalWorkspaceContributionChangedEvent[] = [];
+  const unsubscribe = manager.subscribeTerminalWorkspaceContributionChanged((event) => {
+    events.push(event);
+  });
+
+  const session = await manager.createTerminal({ cwd, workspaceId: "ws-test" });
+  manager.killTerminal(session.id);
+
+  expect(events).toEqual([]);
+
+  unsubscribe();
 });

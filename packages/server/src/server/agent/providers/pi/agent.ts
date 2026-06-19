@@ -47,6 +47,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 import {
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
@@ -2076,6 +2077,9 @@ export class PiRpcAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Pi", [
+          ...(await buildCommandResolutionDiagnosticRows(launch, {
+            knownBinaryNames: [launch.command],
+          })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Configured providers", value: configuredProvidersValue },
           {

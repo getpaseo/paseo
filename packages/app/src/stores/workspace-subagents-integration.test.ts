@@ -56,6 +56,7 @@ const AGENT_DEFAULTS: Agent = {
   lastError: null,
   title: "Agent",
   cwd: WORKSPACE_DIRECTORY,
+  workspaceId: WORKSPACE_ID,
   model: null,
   features: undefined,
   thinkingOptionId: undefined,
@@ -91,7 +92,7 @@ function deriveVisibilityFromSession(): WorkspaceAgentVisibility {
   const sessionAgents = useSessionStore.getState().sessions[SERVER_ID]?.agents ?? new Map();
   return deriveWorkspaceAgentVisibility({
     sessionAgents,
-    workspaceDirectory: WORKSPACE_DIRECTORY,
+    workspaceId: WORKSPACE_ID,
   });
 }
 

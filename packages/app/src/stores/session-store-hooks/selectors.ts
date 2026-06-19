@@ -5,11 +5,8 @@ import {
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
-import {
-  resolveWorkspaceIdByDirectory,
-  resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-identity";
-import type { WorkspaceDescriptor } from "../session-store";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
@@ -17,7 +14,11 @@ export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/w
 export interface SessionsSnapshot {
   sessions: Record<
     string,
-    { hasHydratedWorkspaces?: boolean; workspaces: Map<string, WorkspaceDescriptor> }
+    {
+      hasHydratedWorkspaces?: boolean;
+      workspaces: Map<string, WorkspaceDescriptor>;
+      emptyProjects?: Map<string, EmptyProjectDescriptor>;
+    }
   >;
 }
 
@@ -142,12 +143,18 @@ export function selectWorkspaceStructureProjects(
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  const workspaces = state.sessions[serverId]?.workspaces;
-  if (!workspaces || workspaces.size === 0) {
+  const session = state.sessions[serverId];
+  const workspaces = session?.workspaces;
+  const emptyProjects = session?.emptyProjects;
+  if ((!workspaces || workspaces.size === 0) && (!emptyProjects || emptyProjects.size === 0)) {
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  return buildWorkspaceStructureProjects({ serverId, workspaces: workspaces.values() });
+  return buildWorkspaceStructureProjects({
+    serverId,
+    workspaces: workspaces?.values() ?? [],
+    emptyProjects: emptyProjects?.values() ?? [],
+  });
 }
 
 export function selectProjectOrder(state: SidebarOrderSnapshot, serverId: string | null): string[] {
@@ -238,21 +245,6 @@ export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | 
     return false;
   }
   return (state.sessions[serverId]?.workspaces?.size ?? 0) > 0;
-}
-
-export function selectResolveWorkspaceIdByCwd(
-  state: SessionsSnapshot,
-  serverId: string | null,
-  cwd: string | null | undefined,
-): string | null {
-  if (!serverId || !cwd) {
-    return null;
-  }
-  const workspaces = state.sessions[serverId]?.workspaces;
-  return resolveWorkspaceIdByDirectory({
-    workspaces: workspaces?.values(),
-    workspaceDirectory: cwd,
-  });
 }
 
 export function selectWorkspaceStatusesForBadges(

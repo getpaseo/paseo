@@ -1,42 +1,45 @@
 import { useCallback, useMemo, useRef } from "react";
-import { Pressable, View, type PressableStateCallbackType } from "react-native";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, GitBranch } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { Combobox, ComboboxItem } from "@/components/ui/combobox";
-import type { ComboboxProps } from "@/components/ui/combobox";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import type { Theme } from "@/styles/theme";
+import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
-import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
-import { ScreenTitle } from "@/components/headers/screen-title";
 
 interface BranchSwitcherProps {
   currentBranchName: string | null;
-  title: string;
   serverId: string;
   workspaceId: string;
+  workspaceDirectory: string | null;
   isGitCheckout: boolean;
+  testID?: string;
 }
+
+const foregroundMutedIconColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+const ThemedGitBranch = withUnistyles(GitBranch);
+const ThemedChevronDown = withUnistyles(ChevronDown);
 
 export function BranchSwitcher({
   currentBranchName,
-  title,
   serverId,
   workspaceId,
+  workspaceDirectory,
   isGitCheckout,
+  testID = "workspace-header-branch-switcher",
 }: BranchSwitcherProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
   const anchorRef = useRef<View>(null);
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const toast = useToast();
   const queryClient = useQueryClient();
-  const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
 
   const { branchOptions, isOpen, setIsOpen, handleBranchSelect } = useBranchSwitcher({
     client,
@@ -50,26 +53,19 @@ export function BranchSwitcher({
     queryClient,
   });
 
-  const titleContent = (
-    <View style={styles.titleRow}>
-      {isGitCheckout ? <GitBranch size={14} color={theme.colors.foregroundMuted} /> : null}
-      <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
-    </View>
-  );
-
   const handleOpen = useCallback(() => setIsOpen(true), [setIsOpen]);
 
   const triggerStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.branchSwitcherTrigger,
-      (Boolean(hovered) || pressed) && styles.branchSwitcherTriggerHovered,
+      styles.trigger,
+      (Boolean(hovered) || pressed) && styles.triggerHovered,
     ],
     [],
   );
 
   const branchLeadingSlot = useMemo(
-    () => <GitBranch size={14} color={theme.colors.foregroundMuted} />,
-    [theme.colors.foregroundMuted],
+    () => <ThemedGitBranch size={14} uniProps={foregroundMutedIconColorMapping} />,
+    [],
   );
 
   const renderBranchOption = useCallback<NonNullable<ComboboxProps["renderOption"]>>(
@@ -86,20 +82,23 @@ export function BranchSwitcher({
   );
 
   if (!currentBranchName) {
-    return <View style={styles.branchSwitcherTrigger}>{titleContent}</View>;
+    return null;
   }
 
   return (
-    <View ref={anchorRef} collapsable={false}>
+    <View ref={anchorRef} collapsable={false} style={styles.anchor}>
       <Pressable
-        testID="workspace-header-branch-switcher"
+        testID={testID}
         onPress={handleOpen}
         style={triggerStyle}
         accessibilityRole="button"
         accessibilityLabel={t("branchSwitcher.currentBranch", { branchName: currentBranchName })}
       >
-        {titleContent}
-        {!isCompact ? <ChevronDown size={12} color={theme.colors.foregroundMuted} /> : null}
+        <ThemedGitBranch size={14} uniProps={foregroundMutedIconColorMapping} />
+        <Text style={styles.branchLabel} numberOfLines={1}>
+          {currentBranchName}
+        </Text>
+        <ThemedChevronDown size={12} uniProps={foregroundMutedIconColorMapping} />
       </Pressable>
       <Combobox
         options={branchOptions}
@@ -123,31 +122,28 @@ export function BranchSwitcher({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  branchSwitcherTrigger: {
+  anchor: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  trigger: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
     minWidth: 0,
-    marginLeft: {
-      xs: -theme.spacing[2],
-      md: 0,
-    },
-    paddingVertical: {
-      xs: 0,
-      md: theme.spacing[1],
-    },
+    paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
+    marginLeft: -theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     flexShrink: 1,
   },
-  branchSwitcherTriggerHovered: {
+  triggerHovered: {
     backgroundColor: theme.colors.surface1,
   },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    minWidth: 0,
-    overflow: "hidden",
+  branchLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.medium,
+    flexShrink: 1,
   },
 }));

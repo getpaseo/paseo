@@ -189,11 +189,23 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies with retry
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            else
+              exit_code=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit $exit_code
+            fi
+            sleep $((attempt * 20))
+          done
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: npx playwright install chromium
 
       - name: Build app dependencies
         run: npm run build:app-deps
@@ -240,11 +252,23 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies with retry
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            else
+              exit_code=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit $exit_code
+            fi
+            sleep $((attempt * 20))
+          done
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: npx playwright install chromium
 
       - name: Build app dependencies
         run: npm run build:app-deps

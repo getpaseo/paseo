@@ -101,6 +101,7 @@ function createWorkspaceGitServiceStub(
       projectDisplayName: string;
       workspaceDisplayName: string;
       gitRemote?: string | null;
+      currentBranch?: string | null;
     }
   >,
 ) {
@@ -209,7 +210,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(workspaces.get("w1")!.archivedAt).toBeTruthy();
   });
 
-  test("archives orphaned projects after all workspaces are archived", async () => {
+  test("keeps a project active after all its workspaces are archived", async () => {
     const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
 
     projects.set(
@@ -245,8 +246,8 @@ describe("WorkspaceReconciliationService", () => {
     const result = await service.runOnce();
 
     const projChange = result.changesApplied.find((c) => c.kind === "project_archived");
-    expect(projChange).toBeDefined();
-    expect(projects.get("p1")!.archivedAt).toBeTruthy();
+    expect(projChange).toBeUndefined();
+    expect(projects.get("p1")!.archivedAt).toBeFalsy();
   });
 
   test("updates project kind when a directory becomes a git repo", async () => {
@@ -456,7 +457,7 @@ describe("WorkspaceReconciliationService", () => {
         expect.objectContaining({
           kind: "project_archived",
           projectId: repoDir,
-          reason: "no_active_workspaces",
+          reason: "merged_duplicate",
         }),
       ]),
     );
@@ -580,7 +581,7 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")!.customName).toBe("My Fork");
   });
 
-  test("updates workspace display name when branch changes", async () => {
+  test("updates workspace branch metadata without clobbering the workspace name", async () => {
     const dir = createTempGitRepo("reconcile-branch-");
     tempDirs.push(dir);
 
@@ -606,7 +607,8 @@ describe("WorkspaceReconciliationService", () => {
         projectId: "p1",
         cwd: dir,
         kind: "local_checkout",
-        displayName: "main",
+        displayName: "Human workspace title",
+        branch: "main",
         createdAt: timestamp,
         updatedAt: timestamp,
       }),
@@ -621,6 +623,7 @@ describe("WorkspaceReconciliationService", () => {
           projectKind: "git",
           projectDisplayName: path.basename(dir),
           workspaceDisplayName: "feature-branch",
+          currentBranch: "feature-branch",
         },
       }),
     });
@@ -629,7 +632,12 @@ describe("WorkspaceReconciliationService", () => {
 
     const wsUpdate = result.changesApplied.find((c) => c.kind === "workspace_updated");
     expect(wsUpdate).toBeDefined();
-    expect(workspaces.get("w1")!.displayName).toBe("feature-branch");
+    expect(wsUpdate).toMatchObject({
+      kind: "workspace_updated",
+      fields: { branch: "feature-branch" },
+    });
+    expect(workspaces.get("w1")!.displayName).toBe("Human workspace title");
+    expect(workspaces.get("w1")!.branch).toBe("feature-branch");
   });
 
   test("does not modify already-archived records", async () => {
@@ -753,7 +761,7 @@ describe("WorkspaceReconciliationService", () => {
       {
         message: "Workspace reconciliation applied changes",
         payload: expect.objectContaining({
-          changeCount: 2,
+          changeCount: 1,
           changes: expect.arrayContaining([
             {
               kind: "workspace_archived",
@@ -761,17 +769,12 @@ describe("WorkspaceReconciliationService", () => {
               directory: "/tmp/does-not-exist-log-test",
               reason: "directory_missing",
             },
-            {
-              kind: "project_archived",
-              projectId: "p1",
-              directory: "/tmp/does-not-exist-log-test",
-              reason: "no_active_workspaces",
-            },
           ]),
           durationMs: expect.any(Number),
         }),
       },
     ]);
+    expect(projects.get("p1")!.archivedAt).toBeFalsy();
   });
 
   test("does not log reconciliation when no changes are applied", async () => {
