@@ -5,7 +5,7 @@ import {
   deriveWorkspaceAgentVisibility,
   type WorkspaceAgentVisibility,
 } from "@/workspace-tabs/agent-visibility";
-import { selectSubagentsForParent } from "@/subagents";
+import { selectSubagentsForParent } from "@/subagents/select";
 import { buildWorkspaceTabPersistenceKey, useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
 
