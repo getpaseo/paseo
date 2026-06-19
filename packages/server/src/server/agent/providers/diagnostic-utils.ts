@@ -160,29 +160,41 @@ export interface BinaryDiagnosticRowsOptions {
 
 export interface CommandResolutionDiagnosticRowsOptions {
   knownBinaryNames: readonly string[];
+  includeCommandProbes?: boolean;
+  pathValue?: string;
+  pathext?: string;
+  platform?: NodeJS.Platform;
+  shell?: string;
 }
 
 const COMMAND_PROBE_TIMEOUT_MS = 3_000;
 const COMMAND_PROBE_MAX_BUFFER = 32 * 1024;
 
-function resolvePathValue(): string {
-  return process.env["PATH"] ?? process.env["Path"] ?? "";
+function resolvePlatform(options?: CommandResolutionDiagnosticRowsOptions): NodeJS.Platform {
+  return options?.platform ?? process.platform;
 }
 
-function resolveShellValue(): string {
-  if (process.platform === "win32") {
+function resolvePathValue(options?: CommandResolutionDiagnosticRowsOptions): string {
+  return options?.pathValue ?? process.env["PATH"] ?? process.env["Path"] ?? "";
+}
+
+function resolveShellValue(options?: CommandResolutionDiagnosticRowsOptions): string {
+  if (options?.shell) {
+    return options.shell;
+  }
+  if (resolvePlatform(options) === "win32") {
     return process.env["ComSpec"] ?? "cmd.exe";
   }
   return process.env["SHELL"] ?? "/bin/sh";
 }
 
-async function isExecutableFile(filePath: string): Promise<boolean> {
+async function isExecutableFile(filePath: string, platform: NodeJS.Platform): Promise<boolean> {
   try {
     const candidate = await stat(filePath);
     if (!candidate.isFile()) {
       return false;
     }
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       return true;
     }
     await access(filePath, constants.X_OK);
@@ -192,29 +204,57 @@ async function isExecutableFile(filePath: string): Promise<boolean> {
   }
 }
 
-async function formatPathMatches(binaryNames: readonly string[]): Promise<string> {
-  const searchableNames = binaryNames.filter(
+function resolveSearchableNames(binaryNames: readonly string[]): string[] {
+  return binaryNames.filter(
     (binaryName) =>
       binaryName.trim().length > 0 && !binaryName.includes("/") && !binaryName.includes("\\"),
   );
+}
+
+function resolveWindowsPathExt(options: CommandResolutionDiagnosticRowsOptions): string[] {
+  const value = options.pathext ?? process.env["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD";
+  return value
+    .split(";")
+    .map((extension) => extension.trim())
+    .filter(Boolean)
+    .map((extension) => (extension.startsWith(".") ? extension : `.${extension}`));
+}
+
+function resolveBinaryCandidateNames(
+  binaryName: string,
+  options: CommandResolutionDiagnosticRowsOptions,
+): string[] {
+  if (resolvePlatform(options) !== "win32" || path.win32.extname(binaryName)) {
+    return [binaryName];
+  }
+  return [binaryName, ...resolveWindowsPathExt(options).map((extension) => binaryName + extension)];
+}
+
+async function formatPathMatches(options: CommandResolutionDiagnosticRowsOptions): Promise<string> {
+  const binaryNames = options.knownBinaryNames;
+  const searchableNames = resolveSearchableNames(binaryNames);
 
   if (searchableNames.length === 0) {
     return "not checked";
   }
 
-  const pathEntries = resolvePathValue().split(path.delimiter).filter(Boolean);
+  const pathDelimiter = resolvePlatform(options) === "win32" ? ";" : path.delimiter;
+  const pathEntries = resolvePathValue(options).split(pathDelimiter).filter(Boolean);
   const matches: string[] = [];
   const seen = new Set<string>();
+  const platform = resolvePlatform(options);
 
   for (const directory of pathEntries) {
     for (const binaryName of searchableNames) {
-      const candidate = path.join(directory, binaryName);
-      if (seen.has(candidate)) {
-        continue;
-      }
-      seen.add(candidate);
-      if (await isExecutableFile(candidate)) {
-        matches.push(candidate);
+      for (const candidateName of resolveBinaryCandidateNames(binaryName, options)) {
+        const candidate = path.join(directory, candidateName);
+        if (seen.has(candidate)) {
+          continue;
+        }
+        seen.add(candidate);
+        if (await isExecutableFile(candidate, platform)) {
+          matches.push(candidate);
+        }
       }
     }
   }
@@ -301,10 +341,7 @@ async function buildWindowsCommandProbeRows(binaryName: string): Promise<Diagnos
 }
 
 async function buildCommandProbeRows(binaryNames: readonly string[]): Promise<DiagnosticEntry[]> {
-  const searchableNames = binaryNames.filter(
-    (binaryName) =>
-      binaryName.trim().length > 0 && !binaryName.includes("/") && !binaryName.includes("\\"),
-  );
+  const searchableNames = resolveSearchableNames(binaryNames);
   if (searchableNames.length === 0) {
     return [];
   }
@@ -324,6 +361,7 @@ export async function buildCommandResolutionDiagnosticRows(
   launch: ResolvedProviderLaunch,
   options: CommandResolutionDiagnosticRowsOptions,
 ): Promise<DiagnosticEntry[]> {
+  const includeCommandProbes = options.includeCommandProbes ?? true;
   return [
     {
       label: "Command source",
@@ -335,17 +373,17 @@ export async function buildCommandResolutionDiagnosticRows(
     },
     {
       label: "Daemon PATH",
-      value: resolvePathValue() || "(empty)",
+      value: truncateForDiagnostic(resolvePathValue(options)) || "(empty)",
     },
     {
       label: "Daemon shell",
-      value: resolveShellValue(),
+      value: resolveShellValue(options),
     },
     {
       label: "PATH matches",
-      value: await formatPathMatches(options.knownBinaryNames),
+      value: await formatPathMatches(options),
     },
-    ...(await buildCommandProbeRows(options.knownBinaryNames)),
+    ...(includeCommandProbes ? await buildCommandProbeRows(options.knownBinaryNames) : []),
   ];
 }
 

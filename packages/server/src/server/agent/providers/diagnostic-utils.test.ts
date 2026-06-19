@@ -8,11 +8,9 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
-const originalPath = process.env.PATH;
 const tempDirs: string[] = [];
 
 afterEach(() => {
-  process.env.PATH = originalPath;
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -40,11 +38,13 @@ describe("buildCommandResolutionDiagnosticRows", () => {
   test("reports daemon PATH matches for known binary names", async () => {
     const binDir = makeTempDir();
     const binaryPath = writeExecutable(binDir, "claude");
-    process.env.PATH = [binDir, originalPath].filter(Boolean).join(path.delimiter);
 
     const rows = await buildCommandResolutionDiagnosticRows(
       { command: "claude", args: [], source: "default" },
-      { knownBinaryNames: ["claude"] },
+      {
+        knownBinaryNames: ["claude"],
+        pathValue: binDir,
+      },
     );
 
     expect(rows).toContainEqual({ label: "Command source", value: "default" });
@@ -68,20 +68,59 @@ describe("buildCommandResolutionDiagnosticRows", () => {
 
   test("reports none when the daemon PATH has no matching executable", async () => {
     const binDir = makeTempDir();
-    process.env.PATH = binDir;
 
     const rows = await buildCommandResolutionDiagnosticRows(
       { command: "claude", args: [], source: "default" },
-      { knownBinaryNames: ["claude"] },
+      { knownBinaryNames: ["claude"], includeCommandProbes: false, pathValue: binDir },
     );
 
     expect(rows).toContainEqual({ label: "PATH matches", value: "none" });
   });
 
+  test("truncates very long daemon PATH values", async () => {
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "claude", args: [], source: "default" },
+      {
+        knownBinaryNames: ["claude"],
+        includeCommandProbes: false,
+        pathValue: "x".repeat(5000),
+      },
+    );
+
+    expect(rows).toContainEqual({
+      label: "Daemon PATH",
+      value: expect.stringContaining("(truncated)"),
+    });
+  });
+
+  test("matches Windows PATHEXT executable names", async () => {
+    const binDir = makeTempDir();
+    const binaryPath = writeExecutable(binDir, "claude.EXE");
+
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "claude", args: [], source: "default" },
+      {
+        knownBinaryNames: ["claude"],
+        includeCommandProbes: false,
+        pathext: ".EXE;.CMD",
+        pathValue: binDir,
+        platform: "win32",
+      },
+    );
+
+    expect(rows).toContainEqual({
+      label: "PATH matches",
+      value: expect.stringContaining(binaryPath),
+    });
+  });
+
   test("does not treat absolute configured commands as PATH binary names", async () => {
     const rows = await buildCommandResolutionDiagnosticRows(
       { command: "/Users/mn/.local/bin/claude", args: [], source: "override" },
-      { knownBinaryNames: ["/Users/mn/.local/bin/claude"] },
+      {
+        knownBinaryNames: ["/Users/mn/.local/bin/claude"],
+        includeCommandProbes: false,
+      },
     );
 
     expect(rows).toContainEqual({ label: "PATH matches", value: "not checked" });
