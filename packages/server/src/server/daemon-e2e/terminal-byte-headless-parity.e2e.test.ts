@@ -40,7 +40,7 @@ test("byte-stream headless terminal matches daemon state after high-output attac
       cwd: terminalCwd.path,
       gatePath: terminalCwd.gatePath,
     });
-    const liveHeadless = new ClientHeadlessTerminal({ rows: 24, cols: 80 });
+    const liveHeadless = new ClientHeadlessTerminal(BYTE_TEST_SIZE);
     const stopLive = pipeTerminalStreamToHeadless({
       client,
       terminalId: terminal.id,
