@@ -227,14 +227,16 @@ describe("QuotaFetcherService", () => {
   let codexHome: string;
   let broadcasts: ProviderQuotaMessage[];
   let service: QuotaFetcherService;
-  let originalFetch: typeof fetch;
+  let fetchApi: typeof fetch;
   let originalEnv: Record<string, string | undefined>;
+  const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+    fetchApi(url, init)) as typeof fetch;
 
   beforeEach(() => {
     claudeHome = mkdtempSync(join(tmpdir(), "quota-test-claude-"));
     codexHome = mkdtempSync(join(tmpdir(), "quota-test-codex-"));
     broadcasts = [];
-    originalFetch = globalThis.fetch;
+    fetchApi = mockFetch(new Map());
     originalEnv = { ...process.env };
 
     const envVarsToClear = [
@@ -262,12 +264,12 @@ describe("QuotaFetcherService", () => {
       claudeHome,
       claudeKeychainReader: async () => null,
       codexHome,
+      fetch: fetchThroughTestDouble,
       pollIntervalMs: 999_999,
     });
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     service.stop();
     rmSync(claudeHome, { recursive: true, force: true });
     rmSync(codexHome, { recursive: true, force: true });
@@ -287,7 +289,7 @@ describe("QuotaFetcherService", () => {
   describe("Claude quota", () => {
     it("returns quota windows when credentials exist and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid");
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
         ]),
@@ -305,7 +307,7 @@ describe("QuotaFetcherService", () => {
 
     it("normalizes numeric strings from the Claude API", async () => {
       writeCreds(claudeHome, "at_valid");
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           [
             "https://api.anthropic.com/api/oauth/usage",
@@ -329,13 +331,13 @@ describe("QuotaFetcherService", () => {
 
     it("does not call Claude when credentials file is missing", async () => {
       // no writeCreds — file absent
-      globalThis.fetch = vi.fn() as never; // should not be called
+      fetchApi = vi.fn() as never; // should not be called
 
       await service.triggerFetch();
 
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0].payload.claude).toBeUndefined();
-      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(fetchApi).not.toHaveBeenCalled();
     });
 
     it("refreshes access token on 401 and retries", async () => {
@@ -353,7 +355,7 @@ describe("QuotaFetcherService", () => {
         }
         throw new Error(`Unmocked: ${u}`);
       }
-      globalThis.fetch = vi.fn(handleRefreshFlow) as never;
+      fetchApi = vi.fn(handleRefreshFlow) as never;
 
       await service.triggerFetch();
 
@@ -373,7 +375,7 @@ describe("QuotaFetcherService", () => {
         }
         throw new Error(`Unmocked: ${u}`);
       }
-      globalThis.fetch = vi.fn(handlePersistentAuth) as never;
+      fetchApi = vi.fn(handlePersistentAuth) as never;
 
       await service.triggerFetch();
 
@@ -401,6 +403,7 @@ describe("QuotaFetcherService", () => {
         claudeKeychainReader: keychainReader,
         codexHome,
         platform: "darwin",
+        fetch: fetchThroughTestDouble,
         pollIntervalMs: 999_999,
       });
 
@@ -408,7 +411,7 @@ describe("QuotaFetcherService", () => {
         return new Response(null, { status: 401 });
       }
       const usageFetch = vi.fn(handleUsageFetch);
-      globalThis.fetch = usageFetch as never;
+      fetchApi = usageFetch as never;
 
       await testService.triggerFetch();
 
@@ -439,7 +442,7 @@ describe("QuotaFetcherService", () => {
     it("returns quota windows when auth file exists and API succeeds", async () => {
       writeCreds(claudeHome, "at_claude"); // need Claude too so broadcast fires
       writeCodexAuth(codexHome, "at_codex_valid");
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           ["https://chatgpt.com/backend-api/wham/usage", () => jsonResponse(makeCodexResponse())],
@@ -458,7 +461,7 @@ describe("QuotaFetcherService", () => {
     it("normalizes string credit balances from the Codex API", async () => {
       writeCreds(claudeHome, "at_claude");
       writeCodexAuth(codexHome, "at_codex_valid");
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -482,7 +485,7 @@ describe("QuotaFetcherService", () => {
     it("treats HTML response as auth failure and skips", async () => {
       writeCreds(claudeHome, "at_claude");
       writeCodexAuth(codexHome, "at_codex_stale");
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -506,7 +509,7 @@ describe("QuotaFetcherService", () => {
       writeCodexAuth(codexHome, "at_codex_stale", "rt_codex_valid");
 
       let usageCalls = 0;
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -546,7 +549,7 @@ describe("QuotaFetcherService", () => {
     it("returns copilot quota when COPILOT_TOKEN is set and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid"); // need Claude too so broadcast fires
       process.env["COPILOT_TOKEN"] = "copilot_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -570,7 +573,7 @@ describe("QuotaFetcherService", () => {
     it("returns cursor quota when CURSOR_ACCESS_TOKEN is set and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -604,7 +607,7 @@ describe("QuotaFetcherService", () => {
     it("normalizes malformed Cursor billing dates to null", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["CURSOR_ACCESS_TOKEN"] = "cursor_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -636,7 +639,7 @@ describe("QuotaFetcherService", () => {
     it("returns zai quota when ZAI_API_KEY is set and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["ZAI_API_KEY"] = "zai_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -667,7 +670,7 @@ describe("QuotaFetcherService", () => {
     it("returns grok quota when GROK_API_KEY is set and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["GROK_API_KEY"] = "grok_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -691,7 +694,7 @@ describe("QuotaFetcherService", () => {
     it("preserves zero values from Grok quota responses", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["GROK_API_KEY"] = "grok_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -715,7 +718,7 @@ describe("QuotaFetcherService", () => {
     it("returns kimi quota when KIMI_TOKEN is set and API succeeds", async () => {
       writeCreds(claudeHome, "at_valid");
       process.env["KIMI_TOKEN"] = "kimi_test_token";
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
           [
@@ -745,7 +748,7 @@ describe("QuotaFetcherService", () => {
 
   describe("broadcast deduplication", () => {
     it("broadcasts a fetched marker when no provider has quota data", async () => {
-      globalThis.fetch = mockFetch(new Map());
+      fetchApi = mockFetch(new Map());
 
       await service.triggerFetch();
 
@@ -760,7 +763,7 @@ describe("QuotaFetcherService", () => {
 
     it("broadcasts only once when payload is unchanged", async () => {
       writeCreds(claudeHome, "at_valid");
-      globalThis.fetch = mockFetch(
+      fetchApi = mockFetch(
         new Map([
           ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
         ]),
@@ -780,7 +783,7 @@ describe("QuotaFetcherService", () => {
           makeClaudeResponse({ five_hour: { utilization, resets_at: "2026-06-01T21:00:00Z" } }),
         );
       }
-      globalThis.fetch = vi.fn(fetchWithUtilization) as never;
+      fetchApi = vi.fn(fetchWithUtilization) as never;
 
       await service.triggerFetch();
       utilization = 25.0;
@@ -799,7 +802,7 @@ describe("QuotaFetcherService", () => {
 
   it("getCached returns last broadcast message after fetch", async () => {
     writeCreds(claudeHome, "at_valid");
-    globalThis.fetch = mockFetch(
+    fetchApi = mockFetch(
       new Map([
         ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
       ]),

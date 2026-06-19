@@ -39,6 +39,11 @@ const ApiNullableNumberSchema = z.preprocess(
   (value) => (value == null ? null : value),
   ApiNumberSchema.nullable(),
 );
+const ApiOptionalStringSchema = z.preprocess(
+  (value) => (value == null ? undefined : value),
+  z.coerce.string().optional(),
+);
+type ProviderApiFetch = typeof fetch;
 
 export interface QuotaFetcherServiceOptions {
   broadcast: (message: ProviderQuotaMessage) => void;
@@ -47,6 +52,7 @@ export interface QuotaFetcherServiceOptions {
   claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
   platform?: typeof process.platform;
+  fetch?: ProviderApiFetch;
   pollIntervalMs?: number;
 }
 
@@ -64,17 +70,20 @@ export interface ProviderUsageFetcher {
   fetchUsage(): Promise<ProviderUsage>;
 }
 
+export type ProviderUsageQuotaFetcher = ProviderUsageFetcher & QuotaProvider;
+
 export interface ProviderUsageFetcherFactoryOptions {
   logger: Logger;
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
   platform?: typeof process.platform;
+  fetch?: ProviderApiFetch;
 }
 
 export interface ProviderUsageFetcherManifestEntry {
   readonly providerId: string;
-  create(options: ProviderUsageFetcherFactoryOptions): ProviderUsageFetcher;
+  create(options: ProviderUsageFetcherFactoryOptions): ProviderUsageQuotaFetcher;
 }
 
 function unavailableUsage(provider: {
@@ -219,16 +228,19 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<ClaudeCredentials | null>;
   private readonly platform: typeof process.platform;
+  private readonly fetchApi: ProviderApiFetch;
 
   constructor(
     _logger: Logger,
     claudeHome?: string,
     readKeychainCredentials = readClaudeKeychainCredentials,
     platform: typeof process.platform = process.platform,
+    fetchApi: ProviderApiFetch = fetch,
   ) {
     this.claudeHome = claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
     this.readKeychainCredentials = readKeychainCredentials;
     this.platform = platform;
+    this.fetchApi = fetchApi;
   }
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["claude"]> {
@@ -377,7 +389,7 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
   }
 
   private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
-    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+    const res = await this.fetchApi("https://api.anthropic.com/api/oauth/usage", {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -390,7 +402,7 @@ export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
   }
 
   private async refreshClaudeToken(refreshToken: string): Promise<ClaudeTokenRefresh | null> {
-    const res = await fetch("https://platform.claude.com/v1/oauth/token", {
+    const res = await this.fetchApi("https://platform.claude.com/v1/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -477,9 +489,11 @@ export class CodexQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly displayName = "Codex";
 
   private readonly codexHome: string;
+  private readonly fetchApi: ProviderApiFetch;
 
-  constructor(_logger: Logger, codexHome?: string) {
+  constructor(_logger: Logger, codexHome?: string, fetchApi: ProviderApiFetch = fetch) {
     this.codexHome = codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
+    this.fetchApi = fetchApi;
   }
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["codex"]> {
@@ -621,7 +635,7 @@ export class CodexQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
     };
     if (accountId) headers["ChatGPT-Account-Id"] = accountId;
 
-    const res = await fetch("https://chatgpt.com/backend-api/wham/usage", { headers });
+    const res = await this.fetchApi("https://chatgpt.com/backend-api/wham/usage", { headers });
     if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Codex usage API returned ${res.status}`);
     const text = await res.text();
@@ -635,7 +649,7 @@ export class CodexQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
       client_id: CODEX_CLIENT_ID,
       refresh_token: refreshToken,
     });
-    const res = await fetch("https://auth.openai.com/oauth/token", {
+    const res = await this.fetchApi("https://auth.openai.com/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -727,12 +741,20 @@ async function readCursorTokenFromSqlite(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 // GitHub Copilot
 // ---------------------------------------------------------------------------
+const CopilotUsageResponseSchema = z.object({
+  copilot_plan: ApiOptionalStringSchema,
+  quota_reset_date: ApiOptionalStringSchema,
+});
+
 export class CopilotQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "copilot";
   readonly providerId = "copilot";
   readonly displayName = "GitHub Copilot";
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly fetchApi: ProviderApiFetch = fetch,
+  ) {}
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["copilot"]> {
     const token =
@@ -743,7 +765,7 @@ export class CopilotQuotaProvider implements QuotaProvider, ProviderUsageFetcher
 
     if (!token) return undefined;
 
-    const res = await fetch("https://api.github.com/copilot_internal/user", {
+    const res = await this.fetchApi("https://api.github.com/copilot_internal/user", {
       headers: {
         Authorization: `token ${token}`,
         Accept: "application/json",
@@ -759,10 +781,7 @@ export class CopilotQuotaProvider implements QuotaProvider, ProviderUsageFetcher
       return undefined;
     }
 
-    const resp = (await res.json()) as unknown as {
-      copilot_plan?: string;
-      quota_reset_date?: string;
-    };
+    const resp = CopilotUsageResponseSchema.parse(await res.json());
     return {
       plan: resp.copilot_plan || null,
       quotaResetDate: resp.quota_reset_date || null,
@@ -838,7 +857,10 @@ export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
   readonly providerId = "cursor";
   readonly displayName = "Cursor";
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly fetchApi: ProviderApiFetch = fetch,
+  ) {}
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["cursor"]> {
     const token =
@@ -848,7 +870,7 @@ export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
 
     if (!token) return undefined;
 
-    const res = await fetch(
+    const res = await this.fetchApi(
       "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
       {
         method: "POST",
@@ -916,18 +938,34 @@ export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher 
 // ---------------------------------------------------------------------------
 // Z.ai
 // ---------------------------------------------------------------------------
+const ZaiUsageResponseSchema = z.object({
+  data: z
+    .array(
+      z.object({
+        productName: ApiOptionalStringSchema,
+        status: ApiOptionalStringSchema,
+        purchaseTime: ApiOptionalStringSchema,
+        valid: ApiOptionalStringSchema,
+      }),
+    )
+    .optional(),
+});
+
 export class ZaiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "zai";
   readonly providerId = "zai";
   readonly displayName = "Z.ai";
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly fetchApi: ProviderApiFetch = fetch,
+  ) {}
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["zai"]> {
     const token = process.env["ZAI_API_KEY"] || process.env["GLM_API_KEY"];
     if (!token) return undefined;
 
-    const res = await fetch("https://api.z.ai/api/biz/subscription/list", {
+    const res = await this.fetchApi("https://api.z.ai/api/biz/subscription/list", {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -939,14 +977,7 @@ export class ZaiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
       return undefined;
     }
 
-    const resp = (await res.json()) as unknown as {
-      data?: Array<{
-        productName?: string;
-        status?: string;
-        purchaseTime?: string;
-        valid?: string;
-      }>;
-    };
+    const resp = ZaiUsageResponseSchema.parse(await res.json());
     const sub = resp.data?.[0];
     if (!sub) return undefined;
 
@@ -985,12 +1016,32 @@ export class ZaiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
 // ---------------------------------------------------------------------------
 // Grok
 // ---------------------------------------------------------------------------
+const GrokUsageResponseSchema = z.object({
+  config: z
+    .object({
+      monthlyLimit: z
+        .object({
+          val: ApiNumberSchema.optional(),
+        })
+        .nullish(),
+    })
+    .nullish(),
+  usage: z
+    .object({
+      creditUsage: ApiNumberSchema.optional(),
+    })
+    .nullish(),
+});
+
 export class GrokQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "grok";
   readonly providerId = "grok";
   readonly displayName = "Grok";
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly fetchApi: ProviderApiFetch = fetch,
+  ) {}
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["grok"]> {
     const token =
@@ -998,7 +1049,7 @@ export class GrokQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
 
     if (!token) return undefined;
 
-    const res = await fetch("https://cli-chat-proxy.grok.com/v1/billing", {
+    const res = await this.fetchApi("https://cli-chat-proxy.grok.com/v1/billing", {
       headers: {
         Authorization: `Bearer ${token}`,
         "X-XAI-Token-Auth": "xai-grok-cli",
@@ -1011,10 +1062,7 @@ export class GrokQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
       return undefined;
     }
 
-    const resp = (await res.json()) as unknown as {
-      config?: { monthlyLimit?: { val?: number } };
-      usage?: { creditUsage?: number };
-    };
+    const resp = GrokUsageResponseSchema.parse(await res.json());
     return {
       monthlyLimit: resp.config?.monthlyLimit?.val ?? null,
       creditUsage: resp.usage?.creditUsage ?? null,
@@ -1070,12 +1118,25 @@ export class GrokQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
 // ---------------------------------------------------------------------------
 // Kimi
 // ---------------------------------------------------------------------------
+const KimiUsageResponseSchema = z.object({
+  usage: z
+    .object({
+      limit: ApiOptionalStringSchema,
+      remaining: ApiOptionalStringSchema,
+      resetTime: ApiOptionalStringSchema,
+    })
+    .nullish(),
+});
+
 export class KimiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "kimi";
   readonly providerId = "kimi";
   readonly displayName = "Kimi";
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly fetchApi: ProviderApiFetch = fetch,
+  ) {}
 
   async fetch(): Promise<ProviderQuotaMessage["payload"]["kimi"]> {
     const token =
@@ -1083,7 +1144,7 @@ export class KimiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
 
     if (!token) return undefined;
 
-    const res = await fetch("https://api.kimi.com/coding/v1/usages", {
+    const res = await this.fetchApi("https://api.kimi.com/coding/v1/usages", {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -1095,9 +1156,7 @@ export class KimiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
       return undefined;
     }
 
-    const resp = (await res.json()) as unknown as {
-      usage?: { limit?: string; remaining?: string; resetTime?: string };
-    };
+    const resp = KimiUsageResponseSchema.parse(await res.json());
     return {
       limit: resp.usage?.limit || null,
       remaining: resp.usage?.remaining || null,
@@ -1162,6 +1221,7 @@ export interface ProviderUsageServiceOptions {
   claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
   codexHome?: string;
   platform?: typeof process.platform;
+  fetch?: ProviderApiFetch;
   cacheTtlMs?: number;
   now?: () => number;
 }
@@ -1182,37 +1242,38 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
         options.claudeHome,
         options.claudeKeychainReader,
         options.platform,
+        options.fetch,
       ),
   },
   {
     providerId: "codex",
-    create: (options) => new CodexQuotaProvider(options.logger, options.codexHome),
+    create: (options) => new CodexQuotaProvider(options.logger, options.codexHome, options.fetch),
   },
   {
     providerId: "copilot",
-    create: (options) => new CopilotQuotaProvider(options.logger),
+    create: (options) => new CopilotQuotaProvider(options.logger, options.fetch),
   },
   {
     providerId: "cursor",
-    create: (options) => new CursorQuotaProvider(options.logger),
+    create: (options) => new CursorQuotaProvider(options.logger, options.fetch),
   },
   {
     providerId: "zai",
-    create: (options) => new ZaiQuotaProvider(options.logger),
+    create: (options) => new ZaiQuotaProvider(options.logger, options.fetch),
   },
   {
     providerId: "grok",
-    create: (options) => new GrokQuotaProvider(options.logger),
+    create: (options) => new GrokQuotaProvider(options.logger, options.fetch),
   },
   {
     providerId: "kimi",
-    create: (options) => new KimiQuotaProvider(options.logger),
+    create: (options) => new KimiQuotaProvider(options.logger, options.fetch),
   },
 ];
 
 export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
-): ProviderUsageFetcher[] {
+): ProviderUsageQuotaFetcher[] {
   return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
 }
 
@@ -1233,6 +1294,7 @@ export class ProviderUsageService {
         claudeKeychainReader: options.claudeKeychainReader,
         codexHome: options.codexHome,
         platform: options.platform,
+        fetch: options.fetch,
       });
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
@@ -1286,20 +1348,14 @@ export class QuotaFetcherService {
     this.logger = options.logger.child({ module: "quota-fetcher" });
     this.pollIntervalMs = options.pollIntervalMs ?? 15 * 60 * 1000;
 
-    this.providers = [
-      new ClaudeQuotaProvider(
-        this.logger,
-        options.claudeHome,
-        options.claudeKeychainReader,
-        options.platform,
-      ),
-      new CodexQuotaProvider(this.logger, options.codexHome),
-      new CopilotQuotaProvider(this.logger),
-      new CursorQuotaProvider(this.logger),
-      new ZaiQuotaProvider(this.logger),
-      new GrokQuotaProvider(this.logger),
-      new KimiQuotaProvider(this.logger),
-    ];
+    this.providers = createProviderUsageFetchers({
+      logger: this.logger,
+      claudeHome: options.claudeHome,
+      claudeKeychainReader: options.claudeKeychainReader,
+      codexHome: options.codexHome,
+      platform: options.platform,
+      fetch: options.fetch,
+    });
   }
 
   public start(): void {
