@@ -4028,6 +4028,244 @@ test("dispatches terminals_changed events to typed listeners", async () => {
   ]);
 });
 
+test("dispatches provider_quota events to typed listeners", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const received: unknown[] = [];
+  const unsubscribe = client.on("provider_quota", (message) => {
+    received.push(message);
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        claude: {
+          fiveHour: {
+            utilizationPct: 11,
+            resetsAt: "2026-06-19T05:00:00.000Z",
+          },
+          sevenDay: null,
+          sevenDayOpus: null,
+          plan: "Pro 1x",
+        },
+        codex: {
+          session: null,
+          weekly: null,
+          codeReview: null,
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: 0,
+          },
+          planType: "pro",
+          email: "user@example.com",
+        },
+      },
+    }),
+  );
+
+  unsubscribe();
+
+  expect(received).toEqual([
+    {
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        claude: {
+          fiveHour: {
+            utilizationPct: 11,
+            resetsAt: "2026-06-19T05:00:00.000Z",
+          },
+          sevenDay: null,
+          sevenDayOpus: null,
+          plan: "Pro 1x",
+        },
+        codex: {
+          session: null,
+          weekly: null,
+          codeReview: null,
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: 0,
+          },
+          planType: "pro",
+          email: "user@example.com",
+        },
+      },
+    },
+  ]);
+});
+
+test("sends provider.usage.list.request and resolves provider.usage.list.response", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const usagePromise = client.listProviderUsage({ requestId: "usage-1" });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.usage.list.request",
+      requestId: "usage-1",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-1",
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "glm",
+            displayName: "GLM coding plan",
+            status: "available",
+            planLabel: "GLM coding plan",
+            windows: [
+              {
+                id: "biweekly",
+                label: "Biweekly",
+                usedPct: 23,
+                remainingPct: 77,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "usage-1",
+    fetchedAt: "2026-06-19T00:00:00.000Z",
+    providers: [
+      {
+        providerId: "glm",
+        displayName: "GLM coding plan",
+        status: "available",
+        planLabel: "GLM coding plan",
+        windows: [
+          {
+            id: "biweekly",
+            label: "Biweekly",
+            usedPct: 23,
+            remainingPct: 77,
+          },
+        ],
+      },
+    ],
+  });
+});
+
+test("retains provider_quota when it arrives before typed listeners subscribe", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  expect(client.getLastProviderQuotaMessage()).toBeNull();
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        claude: {
+          fiveHour: {
+            utilizationPct: 11,
+            resetsAt: "2026-06-19T05:00:00.000Z",
+          },
+          sevenDay: null,
+          sevenDayOpus: null,
+          plan: "Pro 1x",
+        },
+        codex: {
+          session: null,
+          weekly: null,
+          codeReview: null,
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: 0,
+          },
+          planType: "pro",
+          email: "user@example.com",
+        },
+      },
+    }),
+  );
+
+  expect(client.getLastProviderQuotaMessage()).toEqual({
+    type: "provider_quota",
+    payload: {
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      claude: {
+        fiveHour: {
+          utilizationPct: 11,
+          resetsAt: "2026-06-19T05:00:00.000Z",
+        },
+        sevenDay: null,
+        sevenDayOpus: null,
+        plan: "Pro 1x",
+      },
+      codex: {
+        session: null,
+        weekly: null,
+        codeReview: null,
+        credits: {
+          hasCredits: false,
+          unlimited: false,
+          balance: 0,
+        },
+        planType: "pro",
+        email: "user@example.com",
+      },
+    },
+  });
+});
+
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

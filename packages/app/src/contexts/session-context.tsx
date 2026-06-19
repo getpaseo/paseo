@@ -541,7 +541,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
-  const setProviderQuota = useSessionStore((state) => state.setProviderQuota);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
   const removeWorkspaceSetup = useWorkspaceSetupStore((state) => state.removeWorkspace);
   const clearWorkspaceSetupServer = useWorkspaceSetupStore((state) => state.clearServer);
@@ -1714,11 +1713,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     });
 
-    const unsubProviderQuota = client.on("provider_quota", (message) => {
-      if (message.type !== "provider_quota") return;
-      setProviderQuota(serverId, message.payload);
-    });
-
     const unsubTerminalAttention = client.on("terminal_attention_required", (message) => {
       if (message.type !== "terminal_attention_required") {
         return;
@@ -1759,7 +1753,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubVoiceInputState();
       unsubAgentDeleted();
       unsubAgentArchived();
-      unsubProviderQuota();
       unsubTerminalAttention();
       agentStreamReducerQueue.dispose({ flush: true });
     };
@@ -1793,7 +1786,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
     updateSessionServerInfo,
-    setProviderQuota,
     voiceRuntime,
     voiceAudioEngine,
   ]);

@@ -1399,6 +1399,7 @@ export const en = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Providers",
+      usage: "Usage",
       terminals: "Terminals",
       host: "Host",
     },

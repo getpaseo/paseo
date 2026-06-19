@@ -1,10 +1,11 @@
-import { useMemo, type ReactNode } from "react";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { useCallback, useState } from "react";
+import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useSessionStore } from "@/stores/session-store";
+import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
+import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -71,12 +72,6 @@ function getMeterColors(
   return { progress: theme.colors.foregroundMuted, track };
 }
 
-function getBarColor(pct: number, theme: ReturnType<typeof useUnistyles>["theme"]): string {
-  if (pct > 90) return theme.colors.destructive;
-  if (pct >= 70) return theme.colors.palette.amber[500];
-  return theme.colors.accent;
-}
-
 function getMeterGeometry(showPercentage: boolean) {
   if (showPercentage) {
     return {
@@ -98,334 +93,6 @@ function getMeterGeometry(showPercentage: boolean) {
   };
 }
 
-function formatResetsAtLabel(resetsAt: string | undefined): string {
-  if (!resetsAt) return "";
-  const diffMs = new Date(resetsAt).getTime() - Date.now();
-  if (!Number.isFinite(diffMs)) return "";
-  if (diffMs <= 0) return "resetting now";
-  const diffMinutes = Math.floor(diffMs / 60_000);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays > 0) return `resets ${diffDays}d`;
-  if (diffHours > 0) return `resets ${diffHours}h`;
-  return `resets ${diffMinutes}m`;
-}
-
-function QuotaUsageBar({
-  label,
-  utilizationPct,
-  resetsAt,
-  theme,
-}: {
-  label: string;
-  utilizationPct: number;
-  resetsAt?: string;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  const pct = clampPercentage(utilizationPct);
-  const barColor = getBarColor(pct, theme);
-  const resetLabel = formatResetsAtLabel(resetsAt);
-
-  const fillStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.usageBarFill, { width: `${pct}%`, backgroundColor: barColor }],
-    [pct, barColor],
-  );
-
-  return (
-    <View style={styles.usageBarContainer}>
-      <View style={styles.usageBarRow}>
-        <Text style={styles.usageBarLabel}>{label}</Text>
-        <Text style={styles.usageBarValue}>
-          {`${Math.round(pct)}%`}
-          {resetLabel ? ` · ${resetLabel}` : ""}
-        </Text>
-      </View>
-      <View style={styles.usageBarTrack}>
-        <View style={fillStyle} />
-      </View>
-    </View>
-  );
-}
-
-type ProviderQuota = NonNullable<
-  ReturnType<typeof useSessionStore.getState>["sessions"][string]["providerQuota"]
->;
-
-function ClaudeQuotaContent({
-  quota,
-  theme,
-}: {
-  quota: NonNullable<ProviderQuota["claude"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  return (
-    <>
-      <Text style={styles.tooltipTitle}>{`Plan usage${quota.plan ? ` · ${quota.plan}` : ""}`}</Text>
-      {quota.fiveHour ? (
-        <QuotaUsageBar
-          label="5-hour limit"
-          utilizationPct={quota.fiveHour.utilizationPct}
-          resetsAt={quota.fiveHour.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.sevenDay ? (
-        <QuotaUsageBar
-          label="Weekly · all models"
-          utilizationPct={quota.sevenDay.utilizationPct}
-          resetsAt={quota.sevenDay.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.sevenDayOpus ? (
-        <QuotaUsageBar
-          label="Weekly · Opus"
-          utilizationPct={quota.sevenDayOpus.utilizationPct}
-          resetsAt={quota.sevenDayOpus.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.sevenDayOmelette ? (
-        <QuotaUsageBar
-          label="Weekly · Design"
-          utilizationPct={quota.sevenDayOmelette.utilizationPct}
-          resetsAt={quota.sevenDayOmelette.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.extraUsage?.isEnabled ? (
-        <Text style={styles.tooltipDetail}>Overage credits: Enabled</Text>
-      ) : null}
-    </>
-  );
-}
-
-function CodexQuotaContent({
-  quota,
-  theme,
-}: {
-  quota: NonNullable<ProviderQuota["codex"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  return (
-    <>
-      <Text
-        style={styles.tooltipTitle}
-      >{`Plan usage${quota.planType ? ` · ${quota.planType}` : ""}`}</Text>
-      {quota.session ? (
-        <QuotaUsageBar
-          label="Session"
-          utilizationPct={quota.session.utilizationPct}
-          resetsAt={quota.session.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.weekly ? (
-        <QuotaUsageBar
-          label="Weekly"
-          utilizationPct={quota.weekly.utilizationPct}
-          resetsAt={quota.weekly.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.codeReview ? (
-        <QuotaUsageBar
-          label="Code Review"
-          utilizationPct={quota.codeReview.utilizationPct}
-          resetsAt={quota.codeReview.resetsAt}
-          theme={theme}
-        />
-      ) : null}
-      {quota.credits?.balance != null ? (
-        <Text
-          style={styles.tooltipDetail}
-        >{`Credits remaining: $${quota.credits.balance.toFixed(2)}`}</Text>
-      ) : null}
-    </>
-  );
-}
-
-function CopilotQuotaContent({
-  quota,
-  theme: _theme,
-}: {
-  quota: NonNullable<ProviderQuota["copilot"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  const resetLabel = formatResetsAtLabel(quota.quotaResetDate || undefined);
-  return (
-    <>
-      <Text style={styles.tooltipTitle}>
-        {`GitHub Copilot${quota.plan ? ` · ${quota.plan}` : ""}`}
-      </Text>
-      {resetLabel ? <Text style={styles.tooltipDetail}>{`Resets: ${resetLabel}`}</Text> : null}
-    </>
-  );
-}
-
-function CursorQuotaContent({
-  quota,
-  theme,
-}: {
-  quota: NonNullable<ProviderQuota["cursor"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  const limit = quota.planUsage?.limit;
-  const remaining = quota.planUsage?.remaining;
-  const totalSpend = quota.planUsage?.totalSpend;
-  const utilizationPct =
-    typeof limit === "number" && typeof remaining === "number" && limit > 0
-      ? ((limit - remaining) / limit) * 100
-      : 0;
-
-  const label =
-    typeof totalSpend === "number" && typeof limit === "number"
-      ? `Spent $${totalSpend.toFixed(2)} / $${limit.toFixed(2)}`
-      : "Usage";
-
-  return (
-    <>
-      <Text style={styles.tooltipTitle}>Cursor usage</Text>
-      {quota.planUsage ? (
-        <QuotaUsageBar label={label} utilizationPct={utilizationPct} theme={theme} />
-      ) : null}
-      {quota.billingCycleEnd ? (
-        <Text style={styles.tooltipDetail}>
-          {`Billing resets ${new Date(quota.billingCycleEnd).toLocaleDateString()}`}
-        </Text>
-      ) : null}
-    </>
-  );
-}
-
-function ZaiQuotaContent({
-  quota,
-  theme: _theme,
-}: {
-  quota: NonNullable<ProviderQuota["zai"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  return (
-    <>
-      <Text style={styles.tooltipTitle}>
-        {`Z.ai${quota.productName ? ` · ${quota.productName}` : ""}`}
-      </Text>
-      {quota.status ? <Text style={styles.tooltipDetail}>{`Status: ${quota.status}`}</Text> : null}
-      {quota.valid ? <Text style={styles.tooltipDetail}>{`Valid: ${quota.valid}`}</Text> : null}
-    </>
-  );
-}
-
-function GrokQuotaContent({
-  quota,
-  theme,
-}: {
-  quota: NonNullable<ProviderQuota["grok"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  const limit = quota.monthlyLimit;
-  const usage = quota.creditUsage;
-  const utilizationPct =
-    typeof limit === "number" && typeof usage === "number" && limit > 0 ? (usage / limit) * 100 : 0;
-
-  const label =
-    typeof usage === "number" && typeof limit === "number"
-      ? `Used ${usage.toLocaleString()} / ${limit.toLocaleString()}`
-      : "Usage";
-
-  return (
-    <>
-      <Text style={styles.tooltipTitle}>Grok Build Quota</Text>
-      <QuotaUsageBar label={label} utilizationPct={utilizationPct} theme={theme} />
-    </>
-  );
-}
-
-function KimiQuotaContent({
-  quota,
-  theme,
-}: {
-  quota: NonNullable<ProviderQuota["kimi"]>;
-  theme: ReturnType<typeof useUnistyles>["theme"];
-}) {
-  const limitVal = quota.limit ? parseFloat(quota.limit) : NaN;
-  const remainingVal = quota.remaining ? parseFloat(quota.remaining) : NaN;
-
-  const hasNumbers = !isNaN(limitVal) && !isNaN(remainingVal);
-  const usedVal = hasNumbers ? limitVal - remainingVal : 0;
-  const utilizationPct = hasNumbers && limitVal > 0 ? (usedVal / limitVal) * 100 : 0;
-
-  const label = hasNumbers ? `Used ${Math.round(usedVal)} / ${Math.round(limitVal)}` : "Usage";
-
-  return (
-    <>
-      <Text style={styles.tooltipTitle}>Kimi Code Quota</Text>
-      {hasNumbers ? (
-        <QuotaUsageBar
-          label={label}
-          utilizationPct={utilizationPct}
-          resetsAt={quota.resetTime || undefined}
-          theme={theme}
-        />
-      ) : (
-        <Text style={styles.tooltipDetail}>No quota data available</Text>
-      )}
-    </>
-  );
-}
-
-const QUOTA_RENDERERS: Record<
-  string,
-  (quota: unknown, theme: ReturnType<typeof useUnistyles>["theme"]) => ReactNode
-> = {
-  claude: (q, t) => (
-    <ClaudeQuotaContent quota={q as NonNullable<ProviderQuota["claude"]>} theme={t} />
-  ),
-  codex: (q, t) => <CodexQuotaContent quota={q as NonNullable<ProviderQuota["codex"]>} theme={t} />,
-  copilot: (q, t) => (
-    <CopilotQuotaContent quota={q as NonNullable<ProviderQuota["copilot"]>} theme={t} />
-  ),
-  cursor: (q, t) => (
-    <CursorQuotaContent quota={q as NonNullable<ProviderQuota["cursor"]>} theme={t} />
-  ),
-  zai: (q, t) => <ZaiQuotaContent quota={q as NonNullable<ProviderQuota["zai"]>} theme={t} />,
-  grok: (q, t) => <GrokQuotaContent quota={q as NonNullable<ProviderQuota["grok"]>} theme={t} />,
-  kimi: (q, t) => <KimiQuotaContent quota={q as NonNullable<ProviderQuota["kimi"]>} theme={t} />,
-};
-
-function PlanUsageSection({
-  provider,
-  providerQuota,
-}: {
-  provider: string | null | undefined;
-  providerQuota: ProviderQuota | null;
-}) {
-  const { theme } = useUnistyles();
-  const p = provider?.toLowerCase();
-  if (!p || !(p in QUOTA_RENDERERS)) return null;
-
-  const render = QUOTA_RENDERERS[p];
-  const quotaData = providerQuota ? providerQuota[p as keyof ProviderQuota] : null;
-
-  if (!providerQuota) {
-    return (
-      <>
-        <View style={styles.tooltipDivider} />
-        <Text style={styles.tooltipDetail}>Loading plan usage…</Text>
-      </>
-    );
-  }
-
-  if (!quotaData) return null;
-
-  return (
-    <>
-      <View style={styles.tooltipDivider} />
-      {render(quotaData, theme)}
-    </>
-  );
-}
-
 export function ContextWindowMeter({
   maxTokens,
   usedTokens,
@@ -436,10 +103,20 @@ export function ContextWindowMeter({
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+  const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
+    serverId ?? null,
+    { enabled: isTooltipOpen },
+  );
   const percentage = getUsagePercentage(maxTokens, usedTokens);
-
-  const providerQuota = useSessionStore((state) =>
-    serverId ? (state.sessions[serverId]?.providerQuota ?? null) : null,
+  const handleTooltipOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      setIsTooltipOpen(nextOpen);
+      if (nextOpen) {
+        void refreshProviderUsage();
+      }
+    },
+    [refreshProviderUsage],
   );
 
   if (percentage === null) {
@@ -456,10 +133,17 @@ export function ContextWindowMeter({
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
 
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+    <Tooltip
+      open={isTooltipOpen}
+      onOpenChange={handleTooltipOpenChange}
+      delayDuration={0}
+      enabledOnDesktop
+      enabledOnMobile
+    >
       <TooltipTrigger asChild triggerRefProp="ref">
         <Pressable
           style={containerStyle}
+          testID="context-window-meter"
           accessibilityRole="image"
           accessibilityLabel={t("contextWindow.accessibility", {
             percentage: roundedPercentage,
@@ -515,7 +199,7 @@ export function ContextWindowMeter({
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
           ) : null}
-          <PlanUsageSection provider={provider} providerQuota={providerQuota} />
+          <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
         </View>
       </TooltipContent>
     </Tooltip>
@@ -563,37 +247,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     lineHeight: theme.fontSize.xs * 1.4,
-  },
-  tooltipDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.border,
-    marginVertical: theme.spacing[1] + 1,
-  },
-  usageBarContainer: {
-    gap: 3,
-  },
-  usageBarRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  usageBarLabel: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-  },
-  usageBarValue: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: "500",
-  },
-  usageBarTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.surface3,
-    overflow: "hidden",
-  },
-  usageBarFill: {
-    height: 4,
-    borderRadius: 2,
   },
 }));

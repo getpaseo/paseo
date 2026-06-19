@@ -61,7 +61,7 @@ import {
   WebSocketRuntimeMetricsWindow,
   type WebSocketRuntimeCounters,
 } from "./websocket/runtime-metrics.js";
-import { QuotaFetcherService } from "../services/quota-fetcher.js";
+import { ProviderUsageService } from "../services/quota-fetcher.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -408,9 +408,7 @@ export class VoiceAssistantWebSocketServer {
   private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
-  private readonly quotaFetcher: QuotaFetcherService;
-  private readonly agentStatuses = new Map<string, string>();
-  private unsubscribeAgentManager: (() => void) | null = null;
+  private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
 
   constructor(
@@ -537,24 +535,8 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
-    this.quotaFetcher = new QuotaFetcherService({
-      broadcast: (message) => this.broadcast(wrapSessionMessage(message)),
+    this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
-    });
-    this.quotaFetcher.start();
-
-    this.unsubscribeAgentManager = this.agentManager.subscribe((event) => {
-      if (event.type === "agent_state") {
-        const agentId = event.agent.id;
-        const prevStatus = this.agentStatuses.get(agentId);
-        const newStatus = event.agent.lifecycle;
-        if (newStatus !== prevStatus) {
-          this.agentStatuses.set(agentId, newStatus);
-          if (newStatus === "idle" || newStatus === "error") {
-            void this.quotaFetcher.triggerFetch();
-          }
-        }
-      }
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
@@ -768,9 +750,6 @@ export class VoiceAssistantWebSocketServer {
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
     this.unsubscribeDaemonConfigChange = null;
-    this.unsubscribeAgentManager?.();
-    this.unsubscribeAgentManager = null;
-    this.quotaFetcher.stop();
     this.unsubscribeTerminalActivity?.();
     this.unsubscribeTerminalActivity = null;
     if (this.runtimeMetricsInterval) {
@@ -1004,6 +983,7 @@ export class VoiceAssistantWebSocketServer {
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
+      providerUsageService: this.providerUsageService,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
@@ -1128,10 +1108,6 @@ export class VoiceAssistantWebSocketServer {
       existing.sockets.add(ws);
       this.sessions.set(ws, existing);
       this.sendToClient(ws, this.createServerInfoMessage());
-      const cachedQuota = this.quotaFetcher.getCached();
-      if (cachedQuota) {
-        this.sendToClient(ws, wrapSessionMessage(cachedQuota));
-      }
       existing.connectionLogger.trace(
         {
           clientId,
@@ -1155,10 +1131,6 @@ export class VoiceAssistantWebSocketServer {
     this.sessions.set(ws, connection);
     this.externalSessionsByKey.set(clientId, connection);
     this.sendToClient(ws, this.createServerInfoMessage());
-    const cachedQuota = this.quotaFetcher.getCached();
-    if (cachedQuota) {
-      this.sendToClient(ws, wrapSessionMessage(cachedQuota));
-    }
     connection.connectionLogger.trace(
       {
         clientId,
@@ -1196,6 +1168,8 @@ export class VoiceAssistantWebSocketServer {
         projectRemove: true,
         // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: true,
+        // COMPAT(providerUsageList): added in v0.1.98, remove after 2026-12-19 when provider_quota push is deleted.
+        providerUsageList: true,
       },
     };
   }

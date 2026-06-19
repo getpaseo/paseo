@@ -1420,6 +1420,7 @@ export const ru: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Провайдеры",
+      usage: "Использование",
       terminals: "Terminals",
       host: "Host",
     },

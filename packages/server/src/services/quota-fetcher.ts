@@ -1,9 +1,10 @@
 /**
- * QuotaFetcherService
+ * Provider usage fetchers
  *
  * Fetches plan quota utilization from Anthropic, OpenAI, GitHub Copilot, Cursor,
- * Z.ai, Grok, and Kimi provider APIs, caching and broadcasting them as a
- * `provider_quota` WebSocket message to all connected clients.
+ * Z.ai, Grok, and Kimi provider APIs. ProviderUsageService exposes the
+ * fetch-on-demand RPC path; QuotaFetcherService remains only for the legacy
+ * `provider_quota` message contract.
  */
 
 import { existsSync, promises as fs } from "node:fs";
@@ -12,7 +13,15 @@ import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
-import type { ProviderQuotaMessage, ProviderQuotaWindow } from "../server/messages.js";
+import { z } from "zod";
+import type {
+  ProviderQuotaMessage,
+  ProviderQuotaWindow,
+  ProviderUsage,
+  ProviderUsageBalance,
+  ProviderUsageDetail,
+  ProviderUsageWindow,
+} from "../server/messages.js";
 
 const execFileAsync = promisify(execFile);
 const CURSOR_SQLITE_TIMEOUT_MS = 2_000;
@@ -24,6 +33,8 @@ const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 // this generic-password service name instead of ~/.claude/.credentials.json.
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+
+const ApiNumberSchema = z.coerce.number().finite();
 
 export interface QuotaFetcherServiceOptions {
   broadcast: (message: ProviderQuotaMessage) => void;
@@ -40,6 +51,70 @@ export interface QuotaFetcherServiceOptions {
 export interface QuotaProvider {
   readonly id: string;
   fetch(): Promise<unknown>;
+}
+
+export interface ProviderUsageFetcher {
+  readonly providerId: string;
+  readonly displayName: string;
+  fetchUsage(): Promise<ProviderUsage>;
+}
+
+export interface ProviderUsageFetcherFactoryOptions {
+  logger: Logger;
+  claudeHome?: string;
+  claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
+  codexHome?: string;
+}
+
+export interface ProviderUsageFetcherManifestEntry {
+  readonly providerId: string;
+  create(options: ProviderUsageFetcherFactoryOptions): ProviderUsageFetcher;
+}
+
+function unavailableUsage(provider: {
+  providerId: string;
+  displayName: string;
+  error?: string | null;
+}): ProviderUsage {
+  return {
+    providerId: provider.providerId,
+    displayName: provider.displayName,
+    status: provider.error ? "error" : "unavailable",
+    planLabel: null,
+    windows: [],
+    balances: [],
+    details: [],
+    error: provider.error ?? null,
+  };
+}
+
+function windowFromUsedPct(input: {
+  id: string;
+  label: string;
+  utilizationPct: number | null | undefined;
+  resetsAt?: string | null;
+  tone?: ProviderUsageWindow["tone"];
+}): ProviderUsageWindow {
+  const usedPct = typeof input.utilizationPct === "number" ? input.utilizationPct : null;
+  const window: ProviderUsageWindow = {
+    id: input.id,
+    label: input.label,
+    usedPct,
+    remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
+    resetsAt: input.resetsAt ?? null,
+  };
+  if (input.tone) {
+    window.tone = input.tone;
+  }
+  return window;
+}
+
+function balanceToneFromRemaining(
+  remaining: number | null | undefined,
+): ProviderUsageBalance["tone"] {
+  if (typeof remaining !== "number") return "default";
+  if (remaining <= 0) return "danger";
+  return "ok";
 }
 
 // ---------------------------------------------------------------------------
@@ -62,27 +137,33 @@ interface ClaudeCredentialRecord {
   filePath: string | null;
 }
 
-interface ClaudeUsageWindow {
-  utilization: number;
-  resets_at?: string;
-}
+const ClaudeUsageWindowSchema = z.object({
+  utilization: ApiNumberSchema,
+  resets_at: z.string().optional(),
+});
 
-interface ClaudeUsageResponse {
-  five_hour?: ClaudeUsageWindow;
-  seven_day?: ClaudeUsageWindow;
-  seven_day_opus?: ClaudeUsageWindow;
-  seven_day_omelette?: ClaudeUsageWindow;
-  extra_usage?: {
-    is_enabled?: boolean;
-  };
-}
+const ClaudeUsageResponseSchema = z.object({
+  five_hour: ClaudeUsageWindowSchema.nullish(),
+  seven_day: ClaudeUsageWindowSchema.nullish(),
+  seven_day_opus: ClaudeUsageWindowSchema.nullish(),
+  seven_day_omelette: ClaudeUsageWindowSchema.nullish(),
+  extra_usage: z
+    .object({
+      is_enabled: z.boolean().optional(),
+    })
+    .nullish(),
+});
 
-interface ClaudeTokenRefresh {
-  access_token?: string;
-  refresh_token?: string;
-}
+const ClaudeTokenRefreshSchema = z.object({
+  access_token: z.string().optional(),
+  refresh_token: z.string().optional(),
+});
 
-function toQuotaWindow(w: ClaudeUsageWindow | undefined): ProviderQuotaWindow | null {
+type ClaudeUsageWindow = z.infer<typeof ClaudeUsageWindowSchema>;
+type ClaudeUsageResponse = z.infer<typeof ClaudeUsageResponseSchema>;
+type ClaudeTokenRefresh = z.infer<typeof ClaudeTokenRefreshSchema>;
+
+function toQuotaWindow(w: ClaudeUsageWindow | null | undefined): ProviderQuotaWindow | null {
   if (!w) return null;
   return { utilizationPct: w.utilization, resetsAt: w.resets_at };
 }
@@ -119,8 +200,10 @@ async function readClaudeKeychainCredentials(): Promise<ClaudeCredentials | null
   }
 }
 
-export class ClaudeQuotaProvider implements QuotaProvider {
+export class ClaudeQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "claude";
+  readonly providerId = "claude";
+  readonly displayName = "Claude";
 
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<ClaudeCredentials | null>;
@@ -178,6 +261,79 @@ export class ClaudeQuotaProvider implements QuotaProvider {
     };
   }
 
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) {
+      return unavailableUsage(this);
+    }
+
+    const windows: ProviderUsageWindow[] = [];
+    if (quota.fiveHour) {
+      windows.push(
+        windowFromUsedPct({
+          id: "five_hour",
+          label: "Session",
+          utilizationPct: quota.fiveHour.utilizationPct,
+          resetsAt: quota.fiveHour.resetsAt ?? null,
+          tone: "ok",
+        }),
+      );
+    }
+    if (quota.sevenDay) {
+      windows.push(
+        windowFromUsedPct({
+          id: "weekly",
+          label: "Weekly",
+          utilizationPct: quota.sevenDay.utilizationPct,
+          resetsAt: quota.sevenDay.resetsAt ?? null,
+          tone: "ok",
+        }),
+      );
+    }
+    if (quota.sevenDayOpus) {
+      windows.push(
+        windowFromUsedPct({
+          id: "weekly_opus",
+          label: "Weekly · Opus",
+          utilizationPct: quota.sevenDayOpus.utilizationPct,
+          resetsAt: quota.sevenDayOpus.resetsAt ?? null,
+          tone: "ok",
+        }),
+      );
+    }
+    if (quota.sevenDayOmelette) {
+      windows.push(
+        windowFromUsedPct({
+          id: "weekly_omelette",
+          label: "Weekly · Omelette",
+          utilizationPct: quota.sevenDayOmelette.utilizationPct,
+          resetsAt: quota.sevenDayOmelette.resetsAt ?? null,
+          tone: "ok",
+        }),
+      );
+    }
+
+    const details: ProviderUsageDetail[] = [];
+    if (quota.extraUsage?.isEnabled !== undefined && quota.extraUsage?.isEnabled !== null) {
+      details.push({
+        id: "extra_usage",
+        label: "Extra usage",
+        value: quota.extraUsage.isEnabled ? "Enabled" : "Disabled",
+      });
+    }
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: quota.plan,
+      windows,
+      balances: [],
+      details,
+      error: null,
+    };
+  }
+
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
     const credPath = join(this.claudeHome, ".credentials.json");
 
@@ -216,7 +372,7 @@ export class ClaudeQuotaProvider implements QuotaProvider {
     });
     if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
-    return res.json() as Promise<ClaudeUsageResponse>;
+    return ClaudeUsageResponseSchema.parse(await res.json());
   }
 
   private async refreshClaudeToken(refreshToken: string): Promise<ClaudeTokenRefresh | null> {
@@ -231,7 +387,7 @@ export class ClaudeQuotaProvider implements QuotaProvider {
       }),
     });
     if (!res.ok) return null;
-    return res.json() as Promise<ClaudeTokenRefresh>;
+    return ClaudeTokenRefreshSchema.parse(await res.json());
   }
 
   private async saveClaudeCredentials(
@@ -264,35 +420,47 @@ interface CodexAuthRecord {
   path: string;
 }
 
-interface CodexWindow {
-  used_percent?: number;
-  reset_at?: number;
-}
+const CodexWindowSchema = z.object({
+  used_percent: ApiNumberSchema.optional(),
+  reset_at: ApiNumberSchema.optional(),
+});
 
-interface CodexUsageResponse {
-  plan_type?: string;
-  email?: string;
-  rate_limit?: {
-    primary_window?: CodexWindow;
-    secondary_window?: CodexWindow;
-  };
-  code_review_rate_limit?: {
-    primary_window?: CodexWindow;
-  };
-  credits?: {
-    has_credits?: boolean;
-    unlimited?: boolean;
-    balance?: number;
-  };
-}
+const CodexUsageResponseSchema = z.object({
+  plan_type: z.string().optional(),
+  email: z.string().optional(),
+  rate_limit: z
+    .object({
+      primary_window: CodexWindowSchema.nullish(),
+      secondary_window: CodexWindowSchema.nullish(),
+    })
+    .nullish(),
+  code_review_rate_limit: z
+    .object({
+      primary_window: CodexWindowSchema.nullish(),
+    })
+    .nullish(),
+  credits: z
+    .object({
+      has_credits: z.boolean().optional(),
+      unlimited: z.boolean().optional(),
+      balance: ApiNumberSchema.optional(),
+    })
+    .nullish(),
+});
 
-interface CodexTokenRefresh {
-  access_token?: string;
-  refresh_token?: string;
-}
+const CodexTokenRefreshSchema = z.object({
+  access_token: z.string().optional(),
+  refresh_token: z.string().optional(),
+});
 
-export class CodexQuotaProvider implements QuotaProvider {
+type CodexWindow = z.infer<typeof CodexWindowSchema>;
+type CodexUsageResponse = z.infer<typeof CodexUsageResponseSchema>;
+type CodexTokenRefresh = z.infer<typeof CodexTokenRefreshSchema>;
+
+export class CodexQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "codex";
+  readonly providerId = "codex";
+  readonly displayName = "Codex";
 
   private readonly codexHome: string;
 
@@ -321,7 +489,7 @@ export class CodexQuotaProvider implements QuotaProvider {
       if (resp === "NEEDS_AUTH") return undefined;
     }
 
-    const toWindow = (w: CodexWindow | undefined) => {
+    const toWindow = (w: CodexWindow | null | undefined) => {
       if (!w) return null;
       return {
         utilizationPct: w.used_percent ?? 0,
@@ -342,6 +510,70 @@ export class CodexQuotaProvider implements QuotaProvider {
         : null,
       planType: resp.plan_type ?? null,
       email: resp.email ?? null,
+    };
+  }
+
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) {
+      return unavailableUsage(this);
+    }
+
+    const windows: ProviderUsageWindow[] = [];
+    if (quota.session) {
+      windows.push(
+        windowFromUsedPct({
+          id: "session",
+          label: "Session",
+          utilizationPct: quota.session.utilizationPct,
+          resetsAt: quota.session.resetsAt ?? null,
+          tone: "ok",
+        }),
+      );
+    }
+    if (quota.weekly) {
+      windows.push(
+        windowFromUsedPct({
+          id: "weekly",
+          label: "Weekly",
+          utilizationPct: quota.weekly.utilizationPct,
+          resetsAt: quota.weekly.resetsAt ?? null,
+          tone: quota.weekly.utilizationPct >= 70 ? "warning" : "ok",
+        }),
+      );
+    }
+    if (quota.codeReview) {
+      windows.push(
+        windowFromUsedPct({
+          id: "code_review",
+          label: "Code review",
+          utilizationPct: quota.codeReview.utilizationPct,
+          resetsAt: quota.codeReview.resetsAt ?? null,
+          tone: quota.codeReview.utilizationPct >= 70 ? "warning" : "ok",
+        }),
+      );
+    }
+
+    const balances: ProviderUsageBalance[] = [];
+    if (quota.credits?.balance !== undefined && quota.credits?.balance !== null) {
+      balances.push({
+        id: "credits",
+        label: "Credits",
+        remaining: quota.credits.balance,
+        unit: "usd",
+        tone: balanceToneFromRemaining(quota.credits.balance),
+      });
+    }
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: quota.planType,
+      windows,
+      balances,
+      details: [],
+      error: null,
     };
   }
 
@@ -380,7 +612,7 @@ export class CodexQuotaProvider implements QuotaProvider {
     if (!res.ok) throw new Error(`Codex usage API returned ${res.status}`);
     const text = await res.text();
     if (text.trim().startsWith("<")) return "NEEDS_AUTH";
-    return JSON.parse(text) as CodexUsageResponse;
+    return CodexUsageResponseSchema.parse(JSON.parse(text));
   }
 
   private async refreshCodexToken(refreshToken: string): Promise<CodexTokenRefresh | null> {
@@ -395,7 +627,7 @@ export class CodexQuotaProvider implements QuotaProvider {
       body: params.toString(),
     });
     if (!res.ok) return null;
-    return res.json() as Promise<CodexTokenRefresh>;
+    return CodexTokenRefreshSchema.parse(await res.json());
   }
 
   private async saveCodexAuth(
@@ -481,8 +713,10 @@ async function readCursorTokenFromSqlite(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 // GitHub Copilot
 // ---------------------------------------------------------------------------
-export class CopilotQuotaProvider implements QuotaProvider {
+export class CopilotQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "copilot";
+  readonly providerId = "copilot";
+  readonly displayName = "GitHub Copilot";
 
   constructor(private readonly logger: Logger) {}
 
@@ -520,13 +754,33 @@ export class CopilotQuotaProvider implements QuotaProvider {
       quotaResetDate: resp.quota_reset_date || null,
     };
   }
+
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) return unavailableUsage(this);
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: quota.plan,
+      windows: [],
+      balances: [],
+      details: quota.quotaResetDate
+        ? [{ id: "reset", label: "Quota reset", value: quota.quotaResetDate }]
+        : [],
+      error: null,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Cursor
 // ---------------------------------------------------------------------------
-export class CursorQuotaProvider implements QuotaProvider {
+export class CursorQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "cursor";
+  readonly providerId = "cursor";
+  readonly displayName = "Cursor";
 
   constructor(private readonly logger: Logger) {}
 
@@ -595,13 +849,45 @@ export class CursorQuotaProvider implements QuotaProvider {
         : null,
     };
   }
+
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) return unavailableUsage(this);
+
+    const balances: ProviderUsageBalance[] = [];
+    if (quota.planUsage) {
+      balances.push({
+        id: "plan_usage",
+        label: "Plan usage",
+        used: quota.planUsage.totalSpend,
+        remaining: quota.planUsage.remaining,
+        limit: quota.planUsage.limit,
+        unit: "usd",
+        resetsAt: quota.billingCycleEnd,
+        tone: balanceToneFromRemaining(quota.planUsage.remaining),
+      });
+    }
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: null,
+      windows: [],
+      balances,
+      details: [],
+      error: null,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Z.ai
 // ---------------------------------------------------------------------------
-export class ZaiQuotaProvider implements QuotaProvider {
+export class ZaiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "zai";
+  readonly providerId = "zai";
+  readonly displayName = "Z.ai";
 
   constructor(private readonly logger: Logger) {}
 
@@ -639,13 +925,38 @@ export class ZaiQuotaProvider implements QuotaProvider {
       valid: sub.valid || null,
     };
   }
+
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) return unavailableUsage(this);
+
+    const details: ProviderUsageDetail[] = [];
+    if (quota.status) details.push({ id: "status", label: "Status", value: quota.status });
+    if (quota.valid) details.push({ id: "valid", label: "Valid", value: quota.valid });
+    if (quota.purchaseTime) {
+      details.push({ id: "purchase_time", label: "Purchased", value: quota.purchaseTime });
+    }
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: quota.productName,
+      windows: [],
+      balances: [],
+      details,
+      error: null,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Grok
 // ---------------------------------------------------------------------------
-export class GrokQuotaProvider implements QuotaProvider {
+export class GrokQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "grok";
+  readonly providerId = "grok";
+  readonly displayName = "Grok";
 
   constructor(private readonly logger: Logger) {}
 
@@ -678,6 +989,39 @@ export class GrokQuotaProvider implements QuotaProvider {
     };
   }
 
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) return unavailableUsage(this);
+
+    const balances: ProviderUsageBalance[] = [];
+    if (quota.monthlyLimit !== null || quota.creditUsage !== null) {
+      const remaining =
+        quota.monthlyLimit !== null && quota.creditUsage !== null
+          ? Math.max(0, quota.monthlyLimit - quota.creditUsage)
+          : null;
+      balances.push({
+        id: "monthly_credits",
+        label: "Monthly credits",
+        used: quota.creditUsage,
+        remaining,
+        limit: quota.monthlyLimit,
+        unit: "credits",
+        tone: balanceToneFromRemaining(remaining),
+      });
+    }
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: null,
+      windows: [],
+      balances,
+      details: [],
+      error: null,
+    };
+  }
+
   private async readGrokToken(): Promise<string | null> {
     const p = join(homedir(), ".grok", "auth.json");
     if (!existsSync(p)) return null;
@@ -694,8 +1038,10 @@ export class GrokQuotaProvider implements QuotaProvider {
 // ---------------------------------------------------------------------------
 // Kimi
 // ---------------------------------------------------------------------------
-export class KimiQuotaProvider implements QuotaProvider {
+export class KimiQuotaProvider implements QuotaProvider, ProviderUsageFetcher {
   readonly id = "kimi";
+  readonly providerId = "kimi";
+  readonly displayName = "Kimi";
 
   constructor(private readonly logger: Logger) {}
 
@@ -727,6 +1073,40 @@ export class KimiQuotaProvider implements QuotaProvider {
     };
   }
 
+  async fetchUsage(): Promise<ProviderUsage> {
+    const quota = await this.fetch();
+    if (!quota) return unavailableUsage(this);
+
+    const limit = quota.limit === null ? null : Number(quota.limit);
+    const remaining = quota.remaining === null ? null : Number(quota.remaining);
+    const hasFiniteLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0;
+    const hasFiniteRemaining = typeof remaining === "number" && Number.isFinite(remaining);
+    const usedPct =
+      hasFiniteLimit && hasFiniteRemaining
+        ? Math.max(0, Math.min(100, ((limit - remaining) / limit) * 100))
+        : null;
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: null,
+      windows: [
+        {
+          id: "coding_usage",
+          label: "Coding usage",
+          usedPct,
+          remainingPct: usedPct === null ? null : Math.max(0, 100 - usedPct),
+          resetsAt: quota.resetTime,
+          tone: "ok",
+        },
+      ],
+      balances: [],
+      details: [],
+      error: null,
+    };
+  }
+
   private async readKimiToken(): Promise<string | null> {
     const p = join(homedir(), ".kimi", "credentials", "kimi-code.json");
     if (!existsSync(p)) return null;
@@ -743,6 +1123,115 @@ export class KimiQuotaProvider implements QuotaProvider {
 // ---------------------------------------------------------------------------
 // Quota Fetcher Service
 // ---------------------------------------------------------------------------
+export interface ProviderUsageServiceOptions {
+  logger: Logger;
+  fetchers?: ProviderUsageFetcher[];
+  claudeHome?: string;
+  claudeKeychainReader?: () => Promise<ClaudeCredentials | null>;
+  codexHome?: string;
+  cacheTtlMs?: number;
+  now?: () => number;
+}
+
+export interface ProviderUsageListResult {
+  fetchedAt: string;
+  providers: ProviderUsage[];
+}
+
+const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry[] = [
+  {
+    providerId: "claude",
+    create: (options) =>
+      new ClaudeQuotaProvider(options.logger, options.claudeHome, options.claudeKeychainReader),
+  },
+  {
+    providerId: "codex",
+    create: (options) => new CodexQuotaProvider(options.logger, options.codexHome),
+  },
+  {
+    providerId: "copilot",
+    create: (options) => new CopilotQuotaProvider(options.logger),
+  },
+  {
+    providerId: "cursor",
+    create: (options) => new CursorQuotaProvider(options.logger),
+  },
+  {
+    providerId: "zai",
+    create: (options) => new ZaiQuotaProvider(options.logger),
+  },
+  {
+    providerId: "grok",
+    create: (options) => new GrokQuotaProvider(options.logger),
+  },
+  {
+    providerId: "kimi",
+    create: (options) => new KimiQuotaProvider(options.logger),
+  },
+];
+
+export function createProviderUsageFetchers(
+  options: ProviderUsageFetcherFactoryOptions,
+): ProviderUsageFetcher[] {
+  return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+}
+
+export class ProviderUsageService {
+  private readonly logger: Logger;
+  private readonly fetchers: ProviderUsageFetcher[];
+  private readonly cacheTtlMs: number;
+  private readonly now: () => number;
+  private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
+
+  constructor(options: ProviderUsageServiceOptions) {
+    this.logger = options.logger.child({ module: "provider-usage-service" });
+    this.fetchers =
+      options.fetchers ??
+      createProviderUsageFetchers({
+        logger: this.logger,
+        claudeHome: options.claudeHome,
+        claudeKeychainReader: options.claudeKeychainReader,
+        codexHome: options.codexHome,
+      });
+    this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
+    this.now = options.now ?? Date.now;
+  }
+
+  async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
+    const nowMs = this.now();
+    if (
+      !options?.forceRefresh &&
+      this.cached &&
+      nowMs - this.cached.fetchedAtMs < this.cacheTtlMs
+    ) {
+      return this.cached.result;
+    }
+
+    const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
+    const providers = settled.map((result, index) => {
+      const fetcher = this.fetchers[index];
+      if (result.status === "fulfilled") {
+        return result.value;
+      }
+      this.logger.debug(
+        { err: result.reason, providerId: fetcher.providerId },
+        "Provider usage fetch failed",
+      );
+      return unavailableUsage({
+        providerId: fetcher.providerId,
+        displayName: fetcher.displayName,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      });
+    });
+
+    const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
+    this.cached = { fetchedAtMs: nowMs, result };
+    return result;
+  }
+}
+
 export class QuotaFetcherService {
   private readonly broadcastFn: (message: ProviderQuotaMessage) => void;
   private readonly logger: Logger;

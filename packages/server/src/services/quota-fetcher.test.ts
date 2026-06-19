@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QuotaFetcherService } from "./quota-fetcher.js";
-import type { ProviderQuotaMessage } from "../server/messages.js";
+import { ProviderUsageService, QuotaFetcherService } from "./quota-fetcher.js";
+import type { ProviderQuotaMessage, ProviderUsage } from "../server/messages.js";
+import type { ProviderUsageFetcher } from "./quota-fetcher.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,9 +76,151 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function createLogger() {
+  return {
+    child: () => ({ debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() }),
+  } as never;
+}
+
+function usageFetcher(usage: ProviderUsage): ProviderUsageFetcher {
+  return {
+    providerId: usage.providerId,
+    displayName: usage.displayName,
+    fetchUsage: async () => usage,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe("ProviderUsageService", () => {
+  it("returns arbitrary registered providers and windows as normalized usage data", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [
+        usageFetcher({
+          providerId: "glm",
+          displayName: "GLM coding plan",
+          status: "available",
+          planLabel: "GLM coding plan",
+          windows: [
+            {
+              id: "biweekly",
+              label: "Biweekly",
+              usedPct: 23,
+              remainingPct: 77,
+              resetsAt: "2026-07-03T00:00:00.000Z",
+            },
+          ],
+        }),
+      ],
+    });
+
+    await expect(service.listUsage()).resolves.toEqual({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [
+        {
+          providerId: "glm",
+          displayName: "GLM coding plan",
+          status: "available",
+          planLabel: "GLM coding plan",
+          windows: [
+            {
+              id: "biweekly",
+              label: "Biweekly",
+              usedPct: 23,
+              remainingPct: 77,
+              resetsAt: "2026-07-03T00:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("caches usage until forced to refresh", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    let calls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => now,
+      cacheTtlMs: 60_000,
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            calls += 1;
+            return {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "available",
+              planLabel: "Max 20x",
+              windows: [{ id: "session", label: "Session", usedPct: calls }],
+            };
+          },
+        },
+      ],
+    });
+
+    const first = await service.listUsage();
+    now += 30_000;
+    const cached = await service.listUsage();
+    const refreshed = await service.listUsage({ forceRefresh: true });
+
+    expect(calls).toBe(2);
+    expect(cached).toBe(first);
+    expect(refreshed.providers[0]?.windows[0]?.usedPct).toBe(2);
+  });
+
+  it("returns an error entry for one failed fetcher without dropping other providers", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            throw new Error("Claude auth expired");
+          },
+        },
+        usageFetcher({
+          providerId: "codex",
+          displayName: "Codex",
+          status: "available",
+          planLabel: "Pro 20x",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
+        }),
+      ],
+    });
+
+    await expect(service.listUsage()).resolves.toEqual({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          status: "error",
+          planLabel: null,
+          windows: [],
+          balances: [],
+          details: [],
+          error: "Claude auth expired",
+        },
+        {
+          providerId: "codex",
+          displayName: "Codex",
+          status: "available",
+          planLabel: "Pro 20x",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
+        },
+      ],
+    });
+  });
+});
 
 describe("QuotaFetcherService", () => {
   let claudeHome: string;
@@ -158,6 +301,30 @@ describe("QuotaFetcherService", () => {
       expect(claude?.sevenDay?.utilizationPct).toBe(1.0);
       expect(claude?.sevenDayOpus?.utilizationPct).toBe(0.5);
       expect(claude?.plan).toBe("Pro 1x");
+    });
+
+    it("normalizes numeric strings from the Claude API", async () => {
+      writeCreds(claudeHome, "at_valid");
+      globalThis.fetch = mockFetch(
+        new Map([
+          [
+            "https://api.anthropic.com/api/oauth/usage",
+            () =>
+              jsonResponse({
+                five_hour: {
+                  utilization: "11",
+                  resets_at: "2026-06-01T21:00:00Z",
+                },
+                seven_day_opus: null,
+                seven_day_omelette: null,
+              }),
+          ],
+        ]),
+      );
+
+      await service.triggerFetch();
+
+      expect(broadcasts[0].payload.claude?.fiveHour?.utilizationPct).toBe(11);
     });
 
     it("does not call Claude when credentials file is missing", async () => {
@@ -289,6 +456,30 @@ describe("QuotaFetcherService", () => {
       expect(codex?.weekly?.utilizationPct).toBe(8);
       expect(codex?.planType).toBe("plus");
       expect(codex?.email).toBe("user@example.com");
+    });
+
+    it("normalizes string credit balances from the Codex API", async () => {
+      writeCreds(claudeHome, "at_claude");
+      writeCodexAuth(codexHome, "at_codex_valid");
+      globalThis.fetch = mockFetch(
+        new Map([
+          ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse(
+                makeCodexResponse({
+                  code_review_rate_limit: null,
+                  credits: { balance: "0" },
+                }),
+              ),
+          ],
+        ]),
+      );
+
+      await service.triggerFetch();
+
+      expect(broadcasts[0].payload.codex?.credits?.balance).toBe(0);
     });
 
     it("treats HTML response as auth failure and skips", async () => {

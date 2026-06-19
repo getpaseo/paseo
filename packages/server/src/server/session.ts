@@ -244,6 +244,7 @@ import {
   type GitHubService,
   type PullRequestTimelineItem,
 } from "../services/github-service.js";
+import type { ProviderUsageService } from "../services/quota-fetcher.js";
 import {
   summarizeFetchWorkspacesEntries,
   workspaceIdsOnCheckout,
@@ -629,6 +630,7 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
+  providerUsageService: ProviderUsageService;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -863,6 +865,7 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
+  private readonly providerUsageService: ProviderUsageService;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
@@ -932,6 +935,7 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
+      providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -1025,6 +1029,7 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager;
+    this.providerUsageService = providerUsageService;
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -2231,6 +2236,8 @@ export class Session {
         return this.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
         return this.handleProviderDiagnosticRequest(msg);
+      case "provider.usage.list.request":
+        return this.handleProviderUsageListRequest(msg);
       default:
         return undefined;
     }
@@ -4313,6 +4320,34 @@ export class Session {
           requestType: msg.type,
           error: `Failed to get provider diagnostic: ${err.message}`,
           code: "provider_diagnostic_failed",
+        },
+      });
+    }
+  }
+
+  private async handleProviderUsageListRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
+  ): Promise<void> {
+    try {
+      const usage = await this.providerUsageService.listUsage();
+      this.emit({
+        type: "provider.usage.list.response",
+        payload: {
+          requestId: msg.requestId,
+          fetchedAt: usage.fetchedAt,
+          providers: usage.providers,
+        },
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.sessionLogger.error({ err }, "Failed to list provider usage");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: `Failed to list provider usage: ${err.message}`,
+          code: "provider_usage_list_failed",
         },
       });
     }

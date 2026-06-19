@@ -63,6 +63,7 @@ import type {
   GetProvidersSnapshotResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
+  ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   AgentRewindResponseMessage,
@@ -349,6 +350,7 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
+type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type ReadProjectConfigPayload = Extract<
@@ -921,6 +923,10 @@ export class DaemonClient {
   private readonly logClientIdHash: string;
   private readonly logGeneration: number | null;
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
+  private lastProviderQuotaMessage: Extract<
+    SessionOutboundMessage,
+    { type: "provider_quota" }
+  > | null = null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
@@ -1052,6 +1058,7 @@ export class DaemonClient {
       });
       this.transport = transport;
       this.lastServerInfoMessage = null;
+      this.lastProviderQuotaMessage = null;
 
       this.updateConnectionState(
         {
@@ -1191,6 +1198,7 @@ export class DaemonClient {
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
+    this.lastProviderQuotaMessage = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -3797,6 +3805,16 @@ export class DaemonClient {
     });
   }
 
+  async listProviderUsage(options?: { requestId?: string }): Promise<ProviderUsageListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "provider.usage.list.request",
+      },
+      timeout: 30000,
+    });
+  }
+
   async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
   async listCommands(agentId: string, options?: ListCommandsOptions): Promise<ListCommandsPayload>;
   async listCommands(
@@ -4524,6 +4542,13 @@ export class DaemonClient {
     return this.lastServerInfoMessage;
   }
 
+  getLastProviderQuotaMessage(): Extract<
+    SessionOutboundMessage,
+    { type: "provider_quota" }
+  > | null {
+    return this.lastProviderQuotaMessage;
+  }
+
   private resolveTransportUrlForAttempt(): string {
     return this.config.url;
   }
@@ -4815,6 +4840,7 @@ export class DaemonClient {
     this.rejectPingProbe(new Error(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
+    this.lastProviderQuotaMessage = null;
 
     if (wasDisposed) {
       this.rejectConnect(new Error(reason ?? "Daemon client is disposed"));
@@ -4925,6 +4951,10 @@ export class DaemonClient {
 
     if (msg.type === "terminal_stream_exit") {
       this.terminalStreams.removeTerminal(msg.payload.terminalId);
+    }
+
+    if (msg.type === "provider_quota") {
+      this.lastProviderQuotaMessage = msg;
     }
 
     if (this.rawMessageListeners.size > 0) {

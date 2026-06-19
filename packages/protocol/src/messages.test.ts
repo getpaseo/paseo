@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
+  SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
 } from "./messages.js";
 
@@ -128,6 +129,197 @@ describe("workspace descriptor message compatibility", () => {
       gitRuntime: null,
       githubRuntime: null,
     });
+  });
+});
+
+describe("provider quota message contract", () => {
+  test("rejects codex credit balances that are not numbers", () => {
+    const parsed = SessionOutboundMessageSchema.safeParse({
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        codex: {
+          session: null,
+          weekly: null,
+          codeReview: null,
+          credits: {
+            hasCredits: false,
+            unlimited: false,
+            balance: "0",
+          },
+          planType: "pro",
+          email: "user@example.com",
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("drops unknown providers from provider_quota payloads", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        glm: {
+          plan: "GLM coding plan",
+          biweekly: {
+            utilizationPct: 12,
+            resetsAt: "2026-07-01T00:00:00.000Z",
+          },
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("provider_quota");
+    if (parsed.type !== "provider_quota") {
+      throw new Error("Expected provider_quota");
+    }
+    expect(parsed.payload).toEqual({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+    });
+  });
+
+  test("drops new Claude quota windows while retaining known windows", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        claude: {
+          fiveHour: null,
+          sevenDay: {
+            utilizationPct: 54,
+            resetsAt: "2026-06-20T07:00:00.000Z",
+          },
+          sevenDayOpus: null,
+          biweekly: {
+            utilizationPct: 23,
+            resetsAt: "2026-07-03T00:00:00.000Z",
+          },
+          plan: "Max 20x",
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("provider_quota");
+    if (parsed.type !== "provider_quota") {
+      throw new Error("Expected provider_quota");
+    }
+    expect(parsed.payload.claude).toEqual({
+      fiveHour: null,
+      sevenDay: {
+        utilizationPct: 54,
+        resetsAt: "2026-06-20T07:00:00.000Z",
+      },
+      sevenDayOpus: null,
+      plan: "Max 20x",
+    });
+  });
+
+  test("rejects Claude quota payloads that replace required known windows", () => {
+    const parsed = SessionOutboundMessageSchema.safeParse({
+      type: "provider_quota",
+      payload: {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        claude: {
+          fiveHour: null,
+          biweekly: {
+            utilizationPct: 23,
+            resetsAt: "2026-07-03T00:00:00.000Z",
+          },
+          plan: "Max 20x",
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe("provider usage list message contract", () => {
+  test("accepts the usage list request as a namespaced correlated RPC", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "provider.usage.list.request",
+      requestId: "usage-1",
+    });
+
+    expect(parsed).toEqual({
+      type: "provider.usage.list.request",
+      requestId: "usage-1",
+    });
+  });
+
+  test("accepts new providers and new usage windows as normalized data", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-2",
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "glm",
+            displayName: "GLM coding plan",
+            status: "available",
+            planLabel: "GLM coding plan",
+            fetchedAt: "2026-06-19T00:00:00.000Z",
+            windows: [
+              {
+                id: "biweekly",
+                label: "Biweekly",
+                usedPct: 23,
+                remainingPct: 77,
+                resetsAt: "2026-07-03T00:00:00.000Z",
+                tone: "ok",
+              },
+            ],
+            balances: [
+              {
+                id: "credits",
+                label: "Credits",
+                remaining: 120,
+                unit: "credits",
+              },
+            ],
+            details: [{ id: "region", label: "Region", value: "US" }],
+            error: null,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe("provider.usage.list.response");
+    if (parsed.type !== "provider.usage.list.response") {
+      throw new Error("Expected provider.usage.list.response");
+    }
+    expect(parsed.payload.providers[0]?.providerId).toBe("glm");
+    expect(parsed.payload.providers[0]?.windows[0]?.label).toBe("Biweekly");
+  });
+
+  test("keeps protocol numbers strict after API boundary normalization", () => {
+    const parsed = SessionOutboundMessageSchema.safeParse({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-3",
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "claude",
+            displayName: "Claude",
+            status: "available",
+            planLabel: "Max 20x",
+            windows: [
+              {
+                id: "session",
+                label: "Session",
+                usedPct: "7",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });
 
