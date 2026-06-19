@@ -60,7 +60,6 @@ export function resolveTerminalInputFocusRequest(input: {
 
 export function createTerminalTextInputState(): TerminalTextInputState {
   let previousText = "";
-  let isClearPending = false;
   let submittedText: string | null = null;
 
   return {
@@ -79,7 +78,6 @@ export function createTerminalTextInputState(): TerminalTextInputState {
       }
       if (isPrintableKey(key)) {
         previousText += key;
-        isClearPending = false;
         return { data: key, shouldClear: false };
       }
       return { data: "", shouldClear: false };
@@ -90,38 +88,27 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         submittedText = null;
         if (text === lateSubmitText) {
           previousText = "";
-          isClearPending = false;
           return { data: "", shouldClear: false };
         }
       }
 
       if (text.length === 0) {
         previousText = "";
-        isClearPending = false;
         return { data: "", shouldClear: false };
       }
 
       if (text.includes("\n") || text.includes("\r")) {
         previousText = "";
-        isClearPending = false;
         return { data: "", shouldClear: true };
       }
 
       if (!text.startsWith(previousText)) {
-        if (isClearPending) {
-          const data = text;
-          previousText = text;
-          isClearPending = false;
-          return { data, shouldClear: false };
-        }
-
         previousText = text;
         return { data: "", shouldClear: false };
       }
 
       const appendedText = text.slice(previousText.length);
       previousText = text;
-      isClearPending = false;
       return {
         data: appendedText,
         shouldClear: false,
@@ -129,7 +116,6 @@ export function createTerminalTextInputState(): TerminalTextInputState {
     },
     reset(): void {
       previousText = "";
-      isClearPending = false;
     },
   };
 }
