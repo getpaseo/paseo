@@ -332,6 +332,82 @@ describe("searchWorkspaceEntries", () => {
     ]);
   });
 
+  it("suffix mode finds files under hidden workspace directories", async () => {
+    mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, ".claude", "settings.local.json"), "{}");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "settings.local.json",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+    });
+
+    expect(results).toEqual([{ path: ".claude/settings.local.json", kind: "file" }]);
+  });
+
+  it("does not suggest hidden directories even when includeDirectories is true", async () => {
+    mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, ".claude", "settings.local.json"), "{}");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "claude",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+      matchMode: "fuzzy",
+    });
+
+    expect(results.some((entry) => entry.path === ".claude" && entry.kind === "directory")).toBe(
+      false,
+    );
+    expect(results).toContainEqual({
+      path: ".claude/settings.local.json",
+      kind: "file",
+    });
+  });
+
+  it("path mode does not suggest hidden workspace directories", async () => {
+    mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, ".claude", "settings.local.json"), "{}");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "./",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+      matchMode: "fuzzy",
+    });
+
+    expect(results).toContainEqual({
+      path: "README.md",
+      kind: "file",
+    });
+    expect(results.some((entry) => entry.path === ".claude" && entry.kind === "directory")).toBe(
+      false,
+    );
+  });
+
+  it("does not traverse .git while searching workspace files", async () => {
+    mkdirSync(path.join(workspaceDir, ".git", "objects", "ab"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, ".git", "objects", "ab", "deadbeef"), "");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "deadbeef",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+    });
+
+    expect(results).toEqual([]);
+  });
+
   // POSIX-only: creates and follows a symlink escape fixture.
   it.skipIf(isWindows)(
     "supports path-style queries and does not escape cwd through symlinks",
