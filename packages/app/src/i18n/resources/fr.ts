@@ -613,9 +613,9 @@ export const fr: TranslationResources = {
           success: "PRfusionné",
         },
         autoMerge: {
-          enableSquash: "Fusion automatique",
-          enableMerge: "Fusion automatique",
-          enableRebase: "Fusion automatique",
+          enableSquash: "Fusion automatique (squash)",
+          enableMerge: "Fusion automatique (merge)",
+          enableRebase: "Fusion automatique (rebase)",
           enabled: "Fusion automatique activée",
           enabling: "Activation de la fusion automatique...",
           disabling: "Désactivation de la fusion automatique...",

@@ -612,9 +612,9 @@ export const ru: TranslationResources = {
           success: "PR объединен",
         },
         autoMerge: {
-          enableSquash: "Автообъединение",
-          enableMerge: "Автообъединение",
-          enableRebase: "Автообъединение",
+          enableSquash: "Автообъединение (squash)",
+          enableMerge: "Автообъединение (merge)",
+          enableRebase: "Автообъединение (rebase)",
           enabled: "Автоматическое объединение включено",
           enabling: "Включение автоматического объединения...",
           disabling: "Отключение автоматического объединения...",

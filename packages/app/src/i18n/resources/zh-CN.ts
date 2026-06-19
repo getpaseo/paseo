@@ -606,9 +606,9 @@ export const zhCN: TranslationResources = {
           success: "PR 已 merge",
         },
         autoMerge: {
-          enableSquash: "Auto merge",
-          enableMerge: "Auto merge",
-          enableRebase: "Auto merge",
+          enableSquash: "Auto merge (squash)",
+          enableMerge: "Auto merge (merge)",
+          enableRebase: "Auto merge (rebase)",
           enabled: "Auto-merge 已启用",
           enabling: "正在启用 auto-merge...",
           disabling: "正在禁用 auto-merge...",

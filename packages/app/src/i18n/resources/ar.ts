@@ -608,9 +608,9 @@ export const ar: TranslationResources = {
           success: "تم دمج PR",
         },
         autoMerge: {
-          enableSquash: "دمج تلقائي",
-          enableMerge: "دمج تلقائي",
-          enableRebase: "دمج تلقائي",
+          enableSquash: "دمج تلقائي (squash)",
+          enableMerge: "دمج تلقائي (merge)",
+          enableRebase: "دمج تلقائي (rebase)",
           enabled: "تم تمكين الدمج التلقائي",
           enabling: "تمكين الدمج التلقائي...",
           disabling: "تعطيل الدمج التلقائي...",

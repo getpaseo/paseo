@@ -606,9 +606,9 @@ export const en = {
           success: "PR merged",
         },
         autoMerge: {
-          enableSquash: "Auto merge",
-          enableMerge: "Auto merge",
-          enableRebase: "Auto merge",
+          enableSquash: "Auto merge (squash)",
+          enableMerge: "Auto merge (merge)",
+          enableRebase: "Auto merge (rebase)",
           enabled: "Auto-merge enabled",
           enabling: "Enabling auto-merge...",
           disabling: "Disabling auto-merge...",
