@@ -61,7 +61,7 @@ import {
   WebSocketRuntimeMetricsWindow,
   type WebSocketRuntimeCounters,
 } from "./websocket/runtime-metrics.js";
-import { ProviderUsageService } from "../services/quota-fetcher.js";
+import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -1168,7 +1168,7 @@ export class VoiceAssistantWebSocketServer {
         projectRemove: true,
         // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: true,
-        // COMPAT(providerUsageList): added in v0.1.98, remove after 2026-12-19 when provider_quota push is deleted.
+        // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: true,

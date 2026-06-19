@@ -58,7 +58,7 @@ Boundary tests should assert observable behavior: cold reads may call provider a
 
 Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
 
-To add plan usage for a provider, implement `ProviderUsageFetcher` in `packages/server/src/services/quota-fetcher.ts` and register it in `PROVIDER_USAGE_FETCHERS`. A fetcher owns provider auth/API parsing and returns the generic shape:
+To add plan usage for a provider, add `packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in `packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in that file. A fetcher owns provider auth/API parsing and returns the generic shape:
 
 - `providerId`, `displayName`, `status`, and optional `planLabel`
 - any number of `windows` such as Session, Weekly, or Biweekly

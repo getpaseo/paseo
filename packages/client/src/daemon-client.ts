@@ -213,10 +213,6 @@ export type DaemonEvent =
       type: "providers_snapshot_update";
       payload: Extract<SessionOutboundMessage, { type: "providers_snapshot_update" }>["payload"];
     }
-  | {
-      type: "provider_quota";
-      payload: Extract<SessionOutboundMessage, { type: "provider_quota" }>["payload"];
-    }
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
@@ -923,10 +919,6 @@ export class DaemonClient {
   private readonly logClientIdHash: string;
   private readonly logGeneration: number | null;
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
-  private lastProviderQuotaMessage: Extract<
-    SessionOutboundMessage,
-    { type: "provider_quota" }
-  > | null = null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
@@ -1058,7 +1050,6 @@ export class DaemonClient {
       });
       this.transport = transport;
       this.lastServerInfoMessage = null;
-      this.lastProviderQuotaMessage = null;
 
       this.updateConnectionState(
         {
@@ -1198,7 +1189,6 @@ export class DaemonClient {
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
-    this.lastProviderQuotaMessage = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
       this.runtimeMetricsInterval = null;
@@ -4555,13 +4545,6 @@ export class DaemonClient {
     return this.lastServerInfoMessage;
   }
 
-  getLastProviderQuotaMessage(): Extract<
-    SessionOutboundMessage,
-    { type: "provider_quota" }
-  > | null {
-    return this.lastProviderQuotaMessage;
-  }
-
   private resolveTransportUrlForAttempt(): string {
     return this.config.url;
   }
@@ -4853,7 +4836,6 @@ export class DaemonClient {
     this.rejectPingProbe(new Error(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
-    this.lastProviderQuotaMessage = null;
 
     if (wasDisposed) {
       this.rejectConnect(new Error(reason ?? "Daemon client is disposed"));
@@ -4966,10 +4948,6 @@ export class DaemonClient {
       this.terminalStreams.removeTerminal(msg.payload.terminalId);
     }
 
-    if (msg.type === "provider_quota") {
-      this.lastProviderQuotaMessage = msg;
-    }
-
     if (this.rawMessageListeners.size > 0) {
       for (const handler of this.rawMessageListeners) {
         try {
@@ -5073,11 +5051,6 @@ export class DaemonClient {
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",
-          payload: msg.payload,
-        };
-      case "provider_quota":
-        return {
-          type: "provider_quota",
           payload: msg.payload,
         };
       default:

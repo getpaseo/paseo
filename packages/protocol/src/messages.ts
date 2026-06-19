@@ -2298,7 +2298,7 @@ export const ServerInfoStatusPayloadSchema = z
         projectRemove: z.boolean().optional(),
         // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: z.boolean().optional(),
-        // COMPAT(providerUsageList): added in v0.1.98, remove after 2026-12-19 when provider_quota push is deleted.
+        // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
@@ -4033,95 +4033,6 @@ export const TerminalStreamExitSchema = z.object({
   }),
 });
 
-export const ProviderQuotaWindowSchema = z.object({
-  utilizationPct: z.number(),
-  resetsAt: z.string().optional(),
-});
-
-export const ProviderQuotaMessageSchema = z.object({
-  type: z.literal("provider_quota"),
-  payload: z.object({
-    claude: z
-      .object({
-        fiveHour: ProviderQuotaWindowSchema.nullable(),
-        sevenDay: ProviderQuotaWindowSchema.nullable(),
-        sevenDayOpus: ProviderQuotaWindowSchema.nullable(),
-        sevenDayOmelette: ProviderQuotaWindowSchema.nullable().optional(),
-        extraUsage: z
-          .object({
-            isEnabled: z.boolean().nullable(),
-          })
-          .nullable()
-          .optional(),
-        plan: z.string().nullable(),
-      })
-      .optional(),
-    codex: z
-      .object({
-        session: ProviderQuotaWindowSchema.nullable(),
-        weekly: ProviderQuotaWindowSchema.nullable(),
-        codeReview: ProviderQuotaWindowSchema.nullable().optional(),
-        credits: z
-          .object({
-            hasCredits: z.boolean().nullable(),
-            unlimited: z.boolean().nullable(),
-            balance: z.number().nullable(),
-          })
-          .nullable()
-          .optional(),
-        planType: z.string().nullable(),
-        email: z.string().nullable(),
-      })
-      .optional(),
-    copilot: z
-      .object({
-        plan: z.string().nullable(),
-        quotaResetDate: z.string().nullable(),
-      })
-      .optional(),
-    cursor: z
-      .object({
-        planUsage: z
-          .object({
-            totalSpend: z.number().nullable(),
-            includedSpend: z.number().nullable(),
-            bonusSpend: z.number().nullable(),
-            remaining: z.number().nullable(),
-            limit: z.number().nullable(),
-          })
-          .nullable(),
-        billingCycleStart: z.string().nullable(),
-        billingCycleEnd: z.string().nullable(),
-      })
-      .optional(),
-    zai: z
-      .object({
-        productName: z.string().nullable(),
-        status: z.string().nullable(),
-        purchaseTime: z.string().nullable(),
-        valid: z.string().nullable(),
-      })
-      .optional(),
-    grok: z
-      .object({
-        monthlyLimit: z.number().nullable(),
-        creditUsage: z.number().nullable(),
-      })
-      .optional(),
-    kimi: z
-      .object({
-        limit: z.string().nullable(),
-        remaining: z.string().nullable(),
-        resetTime: z.string().nullable(),
-      })
-      .optional(),
-    fetchedAt: z.string(),
-  }),
-});
-
-export type ProviderQuotaMessage = z.infer<typeof ProviderQuotaMessageSchema>;
-export type ProviderQuotaWindow = z.infer<typeof ProviderQuotaWindowSchema>;
-
 export const TerminalAttentionRequiredSchema = z.object({
   type: z.literal("terminal_attention_required"),
   payload: z.object({
@@ -4247,7 +4158,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
   TerminalStreamExitSchema,
-  ProviderQuotaMessageSchema,
   TerminalAttentionRequiredSchema,
   ChatCreateResponseSchema,
   ChatListResponseSchema,
