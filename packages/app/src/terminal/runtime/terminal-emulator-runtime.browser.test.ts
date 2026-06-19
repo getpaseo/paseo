@@ -137,6 +137,23 @@ function latestSize(sizes: TerminalSize[]): TerminalSize {
   return size;
 }
 
+function expectNoForcedSameSizeClaim(input: {
+  sizes: TerminalSize[];
+  startIndex: number;
+  baseline: TerminalSize;
+}): void {
+  const forcedSameSizeClaims = input.sizes
+    .slice(input.startIndex)
+    .filter(
+      (size) =>
+        size.rows === input.baseline.rows &&
+        size.cols === input.baseline.cols &&
+        size.shouldClaim &&
+        size.forceClaim,
+    );
+  expect(forcedSameSizeClaims).toEqual([]);
+}
+
 function getBrowserTerminal(): BrowserTerminal {
   const terminal = window.__paseoTerminal as BrowserTerminal | undefined;
   if (!terminal) {
@@ -248,12 +265,13 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(grownSize.shouldClaim).toBe(true);
   });
 
-  it("does not claim a resize while forwarding ordinary terminal input", async () => {
+  it("does not force-claim a same-size resize while forwarding ordinary terminal input", async () => {
     await page.viewport(900, 600);
     const mounted = createTerminalHost({ width: 720, height: 360 });
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
     const sizeCount = mounted.sizes.length;
+    const sizeBeforeInput = latestSize(mounted.sizes);
     const terminal = getBrowserTerminal();
 
     terminal.input("a", true);
@@ -261,7 +279,11 @@ describe("terminal emulator runtime in a real browser", () => {
     await waitFor({ predicate: () => mounted.inputs.length > 0 });
 
     expect(mounted.inputs.at(-1)).toBe("a");
-    expect(mounted.sizes).toHaveLength(sizeCount);
+    expectNoForcedSameSizeClaim({
+      sizes: mounted.sizes,
+      startIndex: sizeCount,
+      baseline: sizeBeforeInput,
+    });
   });
 
   it("refreshes visible rows on a forced same-size resize", async () => {
@@ -351,6 +373,7 @@ describe("terminal emulator runtime in a real browser", () => {
     ]);
 
     const sizeCount = mounted.sizes.length;
+    const sizeBeforeKey = latestSize(mounted.sizes);
     mounted.terminalKeys.length = 0;
 
     dispatchTerminalKey({
@@ -369,7 +392,11 @@ describe("terminal emulator runtime in a real browser", () => {
         meta: false,
       },
     ]);
-    expect(mounted.sizes).toHaveLength(sizeCount);
+    expectNoForcedSameSizeClaim({
+      sizes: mounted.sizes,
+      startIndex: sizeCount,
+      baseline: sizeBeforeKey,
+    });
   });
 
   it.each([
