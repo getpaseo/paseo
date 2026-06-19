@@ -609,8 +609,8 @@ export const fr: TranslationResources = {
           squash: "Fusionner PR (squash)",
           merge: "Fusionner PR (merge)",
           rebase: "Fusionner PR (rebase)",
-          pending: "Fusion dePR...",
-          success: "PRfusionné",
+          pending: "Fusion de PR...",
+          success: "PR fusionné",
         },
         autoMerge: {
           enableSquash: "Fusion automatique (squash)",

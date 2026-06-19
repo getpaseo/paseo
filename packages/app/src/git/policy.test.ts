@@ -765,6 +765,41 @@ describe("git-actions-policy", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["SQUASH", "enable-pr-auto-merge-squash", "Auto merge (squash)"],
+    ["MERGE", "enable-pr-auto-merge-merge", "Auto merge (merge)"],
+    ["REBASE", "enable-pr-auto-merge-rebase", "Auto merge (rebase)"],
+  ] as const)(
+    "labels the %s auto-merge action with its method",
+    (viewerDefaultMergeMethod, id, label) => {
+      const actions = buildGitActions(
+        createInput({
+          hasRemote: true,
+          isOnBaseBranch: false,
+          aheadCount: 2,
+          hasPullRequest: true,
+          pullRequestUrl: "https://example.com/pr/993",
+          pullRequestState: "open",
+          pullRequestMergeable: "MERGEABLE",
+          pullRequestGithub: githubStatus({
+            mergeStateStatus: "BLOCKED",
+            viewerCanEnableAutoMerge: true,
+            repository: {
+              autoMergeAllowed: true,
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+              viewerDefaultMergeMethod,
+            },
+          }),
+          shipDefault: "pr",
+        }),
+      );
+
+      expect(actions.primary).toMatchObject({ id, label });
+    },
+  );
+
   it("does not offer auto-merge when the daemon feature gate is missing", () => {
     const actions = buildGitActions(
       createInput({
