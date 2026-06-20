@@ -200,7 +200,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return new Promise((resolve, reject) => {
       const serverProcess = spawnProcess(
         launchPrefix.command,
-        [...launchPrefix.args, "serve", "--port", String(port)],
+        [...launchPrefix.args, "serve", "--port", String(port), "--pure"],
         {
           cwd: os.homedir(),
           detached: process.platform !== "win32",
