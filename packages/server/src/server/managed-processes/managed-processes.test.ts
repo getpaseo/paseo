@@ -205,6 +205,49 @@ describe("managed process registry", () => {
     expect(terminator.terminatedPids).toEqual([]);
     expect(await restartedRegistry.list()).toHaveLength(1);
   });
+
+  test("does not terminate a reused PID whose command line only mentions the tokens", async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), "paseo-managed-processes-"));
+    const terminator = new FakeProcessTerminator();
+    const registry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable: new FakeProcessTable([], [4105]),
+      terminateProcess: terminator.terminate,
+      logger: createTestLogger(),
+    });
+    await registry.record({
+      owner: { provider: "opencode", kind: "helper-server" },
+      pid: 4105,
+      command: "opencode",
+      args: ["serve", "--port", "4105"],
+      metadata: { port: 4105 },
+    });
+
+    const restartedRegistry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable: new FakeProcessTable([
+        {
+          pid: 4105,
+          commandLine: "node /tmp/serve.js --port 4105 # opencode helper",
+          startedAt: null,
+        },
+      ]),
+      terminateProcess: terminator.terminate,
+      logger: createTestLogger(),
+    });
+    const result = await restartedRegistry.reapStale();
+
+    expect(result).toEqual({
+      checked: 1,
+      dead: 0,
+      mismatched: 1,
+      removed: 1,
+      terminated: 0,
+      errors: [],
+    });
+    expect(terminator.terminatedPids).toEqual([]);
+    expect(await restartedRegistry.list()).toEqual([]);
+  });
 });
 
 describe("managed process termination", () => {

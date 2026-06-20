@@ -390,9 +390,14 @@ function processIdentityMatches(
 }
 
 function commandLineMatchesRecord(record: ManagedProcessRecord, commandLine: string): boolean {
+  // Require the command name and args as one contiguous run, not scattered
+  // tokens. Without exact process identity (lstart), a reused PID whose command
+  // line merely mentions "opencode", "serve" and the port elsewhere must not be
+  // mistaken for our leftover and killed.
   const normalized = normalizeCommandLine(commandLine);
   const commandName = path.basename(record.command).toLowerCase();
-  return [commandName, ...record.args].every((token) => normalized.includes(token.toLowerCase()));
+  const signature = [commandName, ...record.args].map((token) => token.toLowerCase()).join(" ");
+  return normalized.includes(signature);
 }
 
 function normalizeCommandLine(commandLine: string): string {
