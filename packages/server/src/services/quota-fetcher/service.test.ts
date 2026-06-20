@@ -335,7 +335,11 @@ describe("real provider usage fetchers", () => {
   });
 
   function service(
-    options: { platform?: typeof process.platform; keychain?: () => Promise<unknown | null> } = {},
+    options: {
+      platform?: typeof process.platform;
+      keychain?: () => Promise<unknown | null>;
+      kimiHomeDir?: string;
+    } = {},
   ) {
     const logger = createLogger();
     const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
@@ -356,7 +360,11 @@ describe("real provider usage fetchers", () => {
         new CursorQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new GrokQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
-        new KimiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+        new KimiQuotaProvider({
+          logger,
+          fetch: fetchThroughTestDouble,
+          homeDir: options.kimiHomeDir,
+        }),
       ],
       cacheTtlMs: 0,
     });
@@ -712,11 +720,11 @@ describe("real provider usage fetchers", () => {
 
   it("fetches Kimi usage from the CLI credential home", async () => {
     writeKimiCredentials(join(homeDir, ".kimi-code"), "kimi_cli_token");
-    fetchApi = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      expect(url.toString()).toBe("https://api.kimi.com/coding/v1/usages");
-      expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe(
-        "Bearer kimi_cli_token",
-      );
+    let requestedUrl: string | null = null;
+    let authorization: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      requestedUrl = url.toString();
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
       return jsonResponse({
         usage: {
           limit: "200",
@@ -726,8 +734,10 @@ describe("real provider usage fetchers", () => {
       });
     }) as unknown as typeof fetch;
 
-    const kimi = findProvider(await service().listUsage(), "kimi");
+    const kimi = findProvider(await service({ kimiHomeDir: homeDir }).listUsage(), "kimi");
 
+    expect(requestedUrl).toBe("https://api.kimi.com/coding/v1/usages");
+    expect(authorization).toBe("Bearer kimi_cli_token");
     expect(kimi).toMatchObject({
       status: "available",
       windows: [
