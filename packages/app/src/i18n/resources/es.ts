@@ -822,6 +822,14 @@ export const es: TranslationResources = {
       },
     },
     workspace: {
+      embeddedTabs: {
+        collapse: "Contraer espacio de trabajo",
+        expand: "Expandir espacio de trabajo",
+        showAll: "Mostrar todo",
+        showAllLabel: "Mostrar todas las pestañas",
+        showLess: "Mostrar menos",
+        showLessLabel: "Mostrar menos pestañas",
+      },
       status: {
         scriptsAvailable: "Guiones disponibles",
         creating: "Creando...",
@@ -1525,6 +1533,11 @@ export const es: TranslationResources = {
           ghostty: "fantasmal",
           auto: "Sistema",
         },
+      },
+      tabs: {
+        embeddedTabs: "Pestañas integradas",
+        embeddedTabsHint:
+          "Mostrar las pestañas del panel principal bajo cada espacio de trabajo en la barra lateral",
       },
       fonts: {
         title: "Fuentes",

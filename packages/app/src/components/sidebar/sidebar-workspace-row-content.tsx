@@ -10,6 +10,8 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   CircleAlert,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Folder,
   FolderGit2,
@@ -21,6 +23,7 @@ import {
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import { SyncedLoader } from "@/components/synced-loader";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/use-pr-status-query";
@@ -28,6 +31,8 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { isNative as platformIsNative } from "@/constants/platform";
+import { useTranslation } from "react-i18next";
 
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const DEFAULT_STATUS_DOT_SIZE = 7;
@@ -50,6 +55,8 @@ const redColorMapping = (theme: Theme) => ({ color: theme.colors.palette.red[500
 const purpleColorMapping = (theme: Theme) => ({ color: theme.colors.palette.purple[500] });
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
@@ -99,6 +106,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   isCreating = false,
   shortcutNumber = null,
   showShortcutBadge = false,
+  expandable = false,
+  expanded = false,
+  onToggleExpanded,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -109,8 +119,14 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   isCreating?: boolean;
   shortcutNumber?: number | null;
   showShortcutBadge?: boolean;
+  expandable?: boolean;
+  expanded?: boolean;
+  onToggleExpanded?: (event: GestureResponderEvent) => void;
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const showExpandToggle = expandable && (isHovered || platformIsNative || isCompact);
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -124,11 +140,34 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        <WorkspaceStatusIndicator
-          bucket={workspace.statusBucket}
-          workspaceKind={workspace.workspaceKind}
-          loading={isLoading}
-        />
+        <View style={styles.workspaceLeadingIconSlot}>
+          {showExpandToggle ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                expanded
+                  ? t("sidebar.workspace.embeddedTabs.collapse")
+                  : t("sidebar.workspace.embeddedTabs.expand")
+              }
+              onPress={onToggleExpanded}
+              style={styles.workspaceExpandButton}
+              hitSlop={6}
+            >
+              {expanded ? (
+                <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
+              ) : (
+                <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />
+              )}
+            </Pressable>
+          ) : (
+            <WorkspaceStatusIndicator
+              bucket={workspace.statusBucket}
+              workspaceKind={workspace.workspaceKind}
+              loading={isLoading}
+              showStatus={!expandable || !expanded}
+            />
+          )}
+        </View>
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <View style={styles.workspaceTitleLeft}>
@@ -181,11 +220,17 @@ function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
   loading = false,
+  showStatus = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
   loading?: boolean;
+  showStatus?: boolean;
 }) {
+  if (!showStatus) {
+    return <WorkspaceKindIcon workspaceKind={workspaceKind} />;
+  }
+
   const shouldShowSyncedLoader = shouldRenderSyncedStatusLoader({ bucket });
 
   if (loading) {
@@ -222,11 +267,6 @@ function WorkspaceStatusIndicator({
 
   if (bucket === "done") return null;
 
-  let KindIcon: typeof ThemedMonitor;
-  if (workspaceKind === "local_checkout") KindIcon = ThemedMonitor;
-  else if (workspaceKind === "worktree") KindIcon = ThemedFolderGit2;
-  else KindIcon = ThemedFolder;
-
   const dotColorStyle = getStatusDotColorStyle(bucket);
   const statusDotSize = isEmphasizedStatusDotBucket(bucket)
     ? EMPHASIZED_STATUS_DOT_SIZE
@@ -237,7 +277,7 @@ function WorkspaceStatusIndicator({
       : DEFAULT_STATUS_DOT_OFFSET;
   return (
     <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
-      <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
+      <WorkspaceKindIconGlyph workspaceKind={workspaceKind} />
       {dotColorStyle ? (
         <StatusDotOverlay
           dotColorStyle={dotColorStyle}
@@ -247,6 +287,31 @@ function WorkspaceStatusIndicator({
       ) : null}
     </View>
   );
+}
+
+function WorkspaceKindIcon({
+  workspaceKind,
+}: {
+  workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
+}) {
+  return (
+    <View style={styles.workspaceStatusDot} testID={`workspace-kind-icon-${workspaceKind}`}>
+      <WorkspaceKindIconGlyph workspaceKind={workspaceKind} />
+    </View>
+  );
+}
+
+function WorkspaceKindIconGlyph({
+  workspaceKind,
+}: {
+  workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
+}) {
+  let KindIcon: typeof ThemedMonitor;
+  if (workspaceKind === "local_checkout") KindIcon = ThemedMonitor;
+  else if (workspaceKind === "worktree") KindIcon = ThemedFolderGit2;
+  else KindIcon = ThemedFolder;
+
+  return <KindIcon size={14} uniProps={foregroundMutedColorMapping} />;
 }
 
 function StatusDotOverlay({
@@ -477,6 +542,20 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
     gap: theme.spacing[2],
     width: "100%",
+  },
+  workspaceLeadingIconSlot: {
+    width: WORKSPACE_STATUS_DOT_WIDTH,
+    height: 20,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  workspaceExpandButton: {
+    width: 14,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   workspaceContentColumn: {
     flex: 1,

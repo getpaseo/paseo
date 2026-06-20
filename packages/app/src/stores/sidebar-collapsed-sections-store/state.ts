@@ -1,11 +1,13 @@
 export interface CollapsedProjectsState {
   collapsedProjectKeys: Set<string>;
   collapsedStatusGroupKeys: Set<string>;
+  collapsedWorkspaceKeys: Set<string>;
 }
 
 export interface PersistedCollapsedProjects {
   collapsedProjectKeys?: unknown;
   collapsedStatusGroupKeys?: unknown;
+  collapsedWorkspaceKeys?: unknown;
 }
 
 export function toggleProjectCollapsed(
@@ -34,6 +36,19 @@ export function toggleStatusGroupCollapsed(
   return { ...state, collapsedStatusGroupKeys: next };
 }
 
+export function toggleWorkspaceCollapsed(
+  state: CollapsedProjectsState,
+  workspaceKey: string,
+): CollapsedProjectsState {
+  const next = new Set(state.collapsedWorkspaceKeys);
+  if (next.has(workspaceKey)) {
+    next.delete(workspaceKey);
+  } else {
+    next.add(workspaceKey);
+  }
+  return { ...state, collapsedWorkspaceKeys: next };
+}
+
 export function setProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
@@ -51,10 +66,12 @@ export function setProjectCollapsed(
 export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
   collapsedStatusGroupKeys: string[];
+  collapsedWorkspaceKeys: string[];
 } {
   return {
     collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
     collapsedStatusGroupKeys: Array.from(state.collapsedStatusGroupKeys),
+    collapsedWorkspaceKeys: Array.from(state.collapsedWorkspaceKeys),
   };
 }
 
@@ -62,14 +79,20 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
   persisted: PersistedCollapsedProjects | undefined,
   current: S,
 ): S {
-  if (!persisted?.collapsedProjectKeys) {
-    if (!persisted?.collapsedStatusGroupKeys) return current;
+  if (
+    !persisted?.collapsedProjectKeys &&
+    !persisted?.collapsedStatusGroupKeys &&
+    !persisted?.collapsedWorkspaceKeys
+  ) {
+    return current;
   }
   const restoredProjects = deserializeCollapsedKeys(persisted.collapsedProjectKeys);
   const restoredStatusGroups = deserializeCollapsedKeys(persisted.collapsedStatusGroupKeys);
+  const restoredWorkspaces = deserializeCollapsedKeys(persisted.collapsedWorkspaceKeys);
   if (
     areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
-    areSetsEqual(current.collapsedStatusGroupKeys, restoredStatusGroups)
+    areSetsEqual(current.collapsedStatusGroupKeys, restoredStatusGroups) &&
+    areSetsEqual(current.collapsedWorkspaceKeys, restoredWorkspaces)
   ) {
     return current;
   }
@@ -77,6 +100,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     ...current,
     collapsedProjectKeys: restoredProjects,
     collapsedStatusGroupKeys: restoredStatusGroups,
+    collapsedWorkspaceKeys: restoredWorkspaces,
   };
 }
 

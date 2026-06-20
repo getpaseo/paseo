@@ -148,6 +148,9 @@ export function useSettings(): UseSettingsReturn {
       if (updates.language !== undefined) {
         appUpdates.language = updates.language;
       }
+      if (updates.embeddedTabs !== undefined) {
+        appUpdates.embeddedTabs = updates.embeddedTabs;
+      }
       if (updates.sendBehavior !== undefined) {
         appUpdates.sendBehavior = updates.sendBehavior;
       }

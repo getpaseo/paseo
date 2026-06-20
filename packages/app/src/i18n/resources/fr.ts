@@ -821,6 +821,14 @@ export const fr: TranslationResources = {
       },
     },
     workspace: {
+      embeddedTabs: {
+        collapse: "Réduire l’espace de travail",
+        expand: "Développer l’espace de travail",
+        showAll: "Tout afficher",
+        showAllLabel: "Afficher tous les onglets",
+        showLess: "Afficher moins",
+        showLessLabel: "Afficher moins d’onglets",
+      },
       status: {
         scriptsAvailable: "Scripts disponibles",
         creating: "Création...",
@@ -1529,6 +1537,11 @@ export const fr: TranslationResources = {
           ghostty: "Fantôme",
           auto: "Système",
         },
+      },
+      tabs: {
+        embeddedTabs: "Onglets intégrés",
+        embeddedTabsHint:
+          "Afficher les onglets du volet principal sous chaque espace de travail dans la barre latérale",
       },
       fonts: {
         title: "Polices",

@@ -85,6 +85,7 @@ function SortableItemInner<T>({
 
   const style = useMemo(
     () => ({
+      width: "100%",
       transform: combinedTransform || undefined,
       transition,
       opacity: isDragging ? 0.9 : 1,

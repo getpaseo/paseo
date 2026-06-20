@@ -28,7 +28,8 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { View, Text } from "react-native";
+import { Columns2, Rows2 } from "lucide-react-native";
+import { Pressable, View, Text, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
@@ -121,6 +122,7 @@ interface SplitContainerProps {
   onReorderTabsInPane: (paneId: string, tabIds: string[]) => void;
   renderPaneEmptyState?: () => ReactNode;
   focusModeEnabled?: boolean;
+  embeddedMainPaneId?: string | null;
 }
 
 interface WorkspaceTabDragData {
@@ -392,6 +394,7 @@ export function SplitContainer({
   onReorderTabsInPane,
   renderPaneEmptyState = () => null,
   focusModeEnabled,
+  embeddedMainPaneId = null,
 }: SplitContainerProps) {
   const [activeDragTabId, setActiveDragTabId] = useState<string | null>(null);
   const [dropPreview, setDropPreview] = useState<SplitDropZoneHover | null>(null);
@@ -611,6 +614,7 @@ export function SplitContainer({
           showDropZones={activeDragTabId !== null}
           dropPreview={dropPreview}
           tabDropPreview={tabDropPreview}
+          embeddedMainPaneId={embeddedMainPaneId}
         />
         <DragOverlay dropAnimation={null}>
           {activeDragTabId ? (
@@ -754,6 +758,7 @@ function SplitNodeView({
   showDropZones,
   dropPreview,
   tabDropPreview,
+  embeddedMainPaneId,
 }: SplitNodeViewProps) {
   const groupId = node.kind === "group" ? node.group.id : null;
   const groupDirection = node.kind === "group" ? node.group.direction : null;
@@ -806,6 +811,7 @@ function SplitNodeView({
         showDropZones={showDropZones}
         dropPreview={dropPreview}
         tabDropPreview={tabDropPreview}
+        embeddedMainPaneId={embeddedMainPaneId}
       />
     );
   }
@@ -853,6 +859,7 @@ function SplitNodeView({
               showDropZones={showDropZones}
               dropPreview={dropPreview}
               tabDropPreview={tabDropPreview}
+              embeddedMainPaneId={embeddedMainPaneId}
             />
           </SplitGroupChild>
           {index < node.group.children.length - 1 ? (
@@ -904,8 +911,10 @@ function SplitPaneView({
   showDropZones,
   dropPreview,
   tabDropPreview,
+  embeddedMainPaneId,
 }: SplitPaneViewProps) {
-  const { theme: _theme } = useUnistyles();
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
   const paneRef = useRef<View | null>(null);
   const stableOnFocusPane = useStableEvent(onFocusPane);
   const padding = useWindowControlsPadding("tabRow");
@@ -1009,45 +1018,89 @@ function SplitPaneView({
     () => [styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }],
     [padding.left, padding.right],
   );
+  const isEmbeddedMainPane = embeddedMainPaneId === pane.id;
+  const embeddedSplitActionStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.embeddedSplitAction,
+      (hovered || pressed) && styles.embeddedSplitActionHovered,
+    ],
+    [],
+  );
 
   return (
     <RenderProfile id={`SplitPaneView:${pane.id}`}>
       <View ref={paneRef} collapsable={false} style={styles.pane}>
-        <View style={paneTabsStyle}>
-          <TitlebarDragRegion />
-          <WorkspaceDesktopTabsRow
-            paneId={pane.id}
-            isFocused={isFocused}
-            tabs={desktopTabRowItems}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            setHoveredCloseTabKey={setHoveredCloseTabKey}
-            onNavigateTab={onNavigateTab}
-            onCloseTab={onCloseTab}
-            onCopyResumeCommand={onCopyResumeCommand}
-            onCopyAgentId={onCopyAgentId}
-            onCopyFilePath={onCopyFilePath}
-            onReloadAgent={onReloadAgent}
-            onRenameTab={onRenameTab}
-            onCloseTabsToLeft={handleCloseTabsToLeft}
-            onCloseTabsToRight={handleCloseTabsToRight}
-            onCloseOtherTabs={handleCloseOtherTabs}
-            onCreateDraftTab={onCreateDraftTab}
-            onCreateTerminalTab={onCreateTerminalTab}
-            onCreateBrowserTab={onCreateBrowserTab}
-            showCreateBrowserTab={showCreateBrowserTab}
-            onReorderTabs={handleReorderTabs}
-            onSplitRight={handleSplitRight}
-            onSplitDown={handleSplitDown}
-            externalDndContext
-            activeDragTabId={activeDragTabId}
-            tabDropPreviewIndex={
-              tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
-            }
-          />
-        </View>
+        {isEmbeddedMainPane ? null : (
+          <View style={paneTabsStyle}>
+            <TitlebarDragRegion />
+            <WorkspaceDesktopTabsRow
+              paneId={pane.id}
+              isFocused={isFocused}
+              tabs={desktopTabRowItems}
+              normalizedServerId={normalizedServerId}
+              normalizedWorkspaceId={normalizedWorkspaceId}
+              setHoveredCloseTabKey={setHoveredCloseTabKey}
+              onNavigateTab={onNavigateTab}
+              onCloseTab={onCloseTab}
+              onCopyResumeCommand={onCopyResumeCommand}
+              onCopyAgentId={onCopyAgentId}
+              onCopyFilePath={onCopyFilePath}
+              onReloadAgent={onReloadAgent}
+              onRenameTab={onRenameTab}
+              onCloseTabsToLeft={handleCloseTabsToLeft}
+              onCloseTabsToRight={handleCloseTabsToRight}
+              onCloseOtherTabs={handleCloseOtherTabs}
+              onCreateDraftTab={onCreateDraftTab}
+              onCreateTerminalTab={onCreateTerminalTab}
+              onCreateBrowserTab={onCreateBrowserTab}
+              showCreateBrowserTab={showCreateBrowserTab}
+              onReorderTabs={handleReorderTabs}
+              onSplitRight={handleSplitRight}
+              onSplitDown={handleSplitDown}
+              externalDndContext
+              activeDragTabId={activeDragTabId}
+              tabDropPreviewIndex={
+                tabDropPreview?.paneId === pane.id ? tabDropPreview.indicatorIndex : null
+              }
+            />
+          </View>
+        )}
 
         <View style={styles.paneContent}>
+          {isEmbeddedMainPane ? (
+            <View style={styles.embeddedSplitActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("workspace.tabs.actions.splitRight")}
+                onPress={handleSplitRight}
+                style={embeddedSplitActionStyle}
+              >
+                {({ hovered, pressed }) => (
+                  <Columns2
+                    size={15}
+                    color={
+                      hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                    }
+                  />
+                )}
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("workspace.tabs.actions.splitDown")}
+                onPress={handleSplitDown}
+                style={embeddedSplitActionStyle}
+              >
+                {({ hovered, pressed }) => (
+                  <Rows2
+                    size={15}
+                    color={
+                      hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                    }
+                  />
+                )}
+              </Pressable>
+            </View>
+          ) : null}
           {mountedPaneTabIds.length > 0
             ? mountedPaneTabIds.map((tabId) => {
                 const tabDescriptor = tabDescriptorMap.get(tabId);
@@ -1148,6 +1201,28 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     minHeight: 0,
+  },
+  embeddedSplitActions: {
+    position: "absolute",
+    top: theme.spacing[2],
+    right: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    zIndex: 5,
+  },
+  embeddedSplitAction: {
+    width: 28,
+    height: 28,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface0,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+  },
+  embeddedSplitActionHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   dragOverlayChip: {
     flexDirection: "row",

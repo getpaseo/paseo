@@ -79,6 +79,7 @@ import {
 import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
+  findMainPane,
   getFocusedBrowserId,
   type WorkspaceLayout,
   useWorkspaceLayoutStore,
@@ -184,6 +185,7 @@ import {
   type TerminalProfileInput,
 } from "@/screens/workspace/terminals/use-workspace-terminals";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useAppSettings } from "@/hooks/use-settings";
 import {
   getTerminalProfileIcon,
   resolveTerminalProfiles,
@@ -1726,6 +1728,18 @@ function useWorkspaceCheckoutStatus(input: {
   return { checkoutQuery, isCheckoutStatusLoading };
 }
 
+function useDesktopEmbeddedTabsEnabled(isMobile: boolean): boolean {
+  const { settings: appSettings } = useAppSettings();
+  return appSettings.embeddedTabs && !isMobile;
+}
+
+function shouldShowDesktopPaneFallbackTabs(input: {
+  shouldRenderDesktopPaneFallback: boolean;
+  embeddedTabsEnabled: boolean;
+}): boolean {
+  return input.shouldRenderDesktopPaneFallback && !input.embeddedTabsEnabled;
+}
+
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1735,6 +1749,7 @@ function WorkspaceScreenContent({
   const _insets = useSafeAreaInsets();
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
+  const embeddedTabsEnabled = useDesktopEmbeddedTabsEnabled(isMobile);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
 
   const normalizedServerId = useMemo(() => trimNonEmpty(decodeSegment(serverId)) ?? "", [serverId]);
@@ -1968,6 +1983,10 @@ function WorkspaceScreenContent({
   const showWorkspaceSetup = shouldShowWorkspaceSetup(workspaceSetupSnapshot);
   const uiTabs = useMemo(
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
+    [workspaceLayout],
+  );
+  const mainPaneId = useMemo(
+    () => (workspaceLayout ? (findMainPane(workspaceLayout.root)?.id ?? null) : null),
     [workspaceLayout],
   );
   useSyncWorkspaceActiveBrowser({ workspaceLayout, isRouteFocused });
@@ -3163,6 +3182,10 @@ function WorkspaceScreenContent({
     () => !isMobile && !canRenderDesktopPaneSplits,
     [isMobile, canRenderDesktopPaneSplits],
   );
+  const shouldShowDesktopPaneFallback = shouldShowDesktopPaneFallbackTabs({
+    shouldRenderDesktopPaneFallback,
+    embeddedTabsEnabled,
+  });
   useEffect(() => {
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
@@ -3586,6 +3609,7 @@ function WorkspaceScreenContent({
         onResizeSplit={handleResizePaneSplit}
         onReorderTabsInPane={handleReorderTabsInPane}
         renderPaneEmptyState={renderSplitPaneEmptyState}
+        embeddedMainPaneId={embeddedTabsEnabled ? mainPaneId : null}
       />
     );
   }, [
@@ -3621,6 +3645,8 @@ function WorkspaceScreenContent({
     handleResizePaneSplit,
     handleReorderTabsInPane,
     renderSplitPaneEmptyState,
+    embeddedTabsEnabled,
+    mainPaneId,
   ]);
   const desktopContent = desktopSplitContent ?? content;
 
@@ -3694,7 +3720,7 @@ function WorkspaceScreenContent({
         />
       ) : null}
 
-      {shouldRenderDesktopPaneFallback ? (
+      {shouldShowDesktopPaneFallback ? (
         <WorkspaceDesktopTabsRow
           paneId={focusedPaneIdOrUndefined}
           isFocused={isRouteFocused}

@@ -117,6 +117,18 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.language).toBe("zh-CN");
   });
 
+  it("loads persisted embedded tabs preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ embeddedTabs: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.embeddedTabs).toBe(true);
+  });
+
   it("drops an unknown persisted language back to system", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

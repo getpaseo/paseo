@@ -28,6 +28,7 @@ export const MAX_FONT_FAMILY_LENGTH = 200;
 export interface AppSettings {
   theme: ThemeName | "auto";
   language: AppLanguage;
+  embeddedTabs: boolean;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
@@ -46,6 +47,7 @@ export interface Settings extends AppSettings {
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: "auto",
   language: "system",
+  embeddedTabs: false,
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
@@ -155,6 +157,9 @@ function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
   const language = parseAppLanguage(stored.language);
   if (language !== null) {
     result.language = language;
+  }
+  if (typeof stored.embeddedTabs === "boolean") {
+    result.embeddedTabs = stored.embeddedTabs;
   }
   if (stored.sendBehavior === "interrupt" || stored.sendBehavior === "queue") {
     result.sendBehavior = stored.sendBehavior;

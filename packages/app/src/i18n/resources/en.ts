@@ -802,6 +802,14 @@ export const en = {
       },
     },
     workspace: {
+      embeddedTabs: {
+        collapse: "Collapse workspace",
+        expand: "Expand workspace",
+        showAll: "Show all",
+        showAllLabel: "Show all tabs",
+        showLess: "Show less",
+        showLessLabel: "Show fewer tabs",
+      },
       status: {
         scriptsAvailable: "Scripts available",
         creating: "Creating...",
@@ -1494,6 +1502,10 @@ export const en = {
           ghostty: "Ghostty",
           auto: "System",
         },
+      },
+      tabs: {
+        embeddedTabs: "Embedded tabs",
+        embeddedTabsHint: "Show main pane tabs under each workspace in the sidebar",
       },
       fonts: {
         title: "Fonts",

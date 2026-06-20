@@ -299,7 +299,16 @@ describe("workspace-layout-store tree transforms", () => {
 
     const singlePaneRoot = createPane({ id: "main", tabIds: ["tab-a"] });
     const emptied = removeTabFromTree(singlePaneRoot, "tab-a");
-    expect(emptied).toEqual(createPane({ id: "main", tabIds: [], focusedTabId: null }));
+    expect(emptied).toEqual({
+      kind: "pane",
+      pane: {
+        id: "main",
+        tabIds: [],
+        focusedTabId: null,
+        tabs: [],
+        createdAt: 0,
+      },
+    });
   });
 });
 
@@ -829,6 +838,7 @@ describe("workspace-layout-store actions", () => {
       id: "main",
       tabIds: [thirdTabId!, firstTabId!, secondTabId!],
       focusedTabId: thirdTabId,
+      createdAt: 0,
       tabs: [
         {
           tabId: thirdTabId,
@@ -884,6 +894,7 @@ describe("workspace-layout-store actions", () => {
       id: splitPaneId,
       tabIds: [fourthTabId!, thirdTabId!],
       focusedTabId: fourthTabId,
+      createdAt: expect.any(Number),
       tabs: [
         {
           tabId: fourthTabId,

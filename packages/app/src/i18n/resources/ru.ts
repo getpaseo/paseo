@@ -814,6 +814,14 @@ export const ru: TranslationResources = {
       },
     },
     workspace: {
+      embeddedTabs: {
+        collapse: "Свернуть рабочее пространство",
+        expand: "Развернуть рабочее пространство",
+        showAll: "Показать все",
+        showAllLabel: "Показать все вкладки",
+        showLess: "Показать меньше",
+        showLessLabel: "Показать меньше вкладок",
+      },
       status: {
         scriptsAvailable: "Доступны скрипты",
         creating: "Создание...",
@@ -1516,6 +1524,11 @@ export const ru: TranslationResources = {
           ghostty: "Призрачный",
           auto: "Система",
         },
+      },
+      tabs: {
+        embeddedTabs: "Встроенные вкладки",
+        embeddedTabsHint:
+          "Показывать вкладки основной панели под каждой рабочей областью на боковой панели",
       },
       fonts: {
         title: "Шрифты",

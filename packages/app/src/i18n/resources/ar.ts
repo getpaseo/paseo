@@ -795,6 +795,14 @@ export const ar: TranslationResources = {
       },
     },
     workspace: {
+      embeddedTabs: {
+        collapse: "طي مساحة العمل",
+        expand: "توسيع مساحة العمل",
+        showAll: "إظهار الكل",
+        showAllLabel: "إظهار كل علامات التبويب",
+        showLess: "إظهار أقل",
+        showLessLabel: "إظهار عدد أقل من علامات التبويب",
+      },
       status: {
         scriptsAvailable: "البرامج النصية المتاحة",
         creating: "جارٍ الإنشاء...",
@@ -1488,6 +1496,10 @@ export const ar: TranslationResources = {
           ghostty: "شبحي",
           auto: "نظام",
         },
+      },
+      tabs: {
+        embeddedTabs: "علامات تبويب مدمجة",
+        embeddedTabsHint: "اعرض علامات تبويب الجزء الرئيسي تحت كل مساحة عمل في الشريط الجانبي",
       },
       fonts: {
         title: "الخطوط",

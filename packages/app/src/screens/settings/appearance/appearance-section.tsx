@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import {
   MAX_CODE_FONT_SIZE,
@@ -185,6 +186,28 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+    </View>
+  );
+}
+
+interface EmbeddedTabsRowProps {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}
+
+function EmbeddedTabsRow({ value, onChange }: EmbeddedTabsRowProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.rowWithBorder}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.tabs.embeddedTabs")}</Text>
+        <Text style={settingsStyles.rowHint}>{t("settings.appearance.tabs.embeddedTabsHint")}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={t("settings.appearance.tabs.embeddedTabs")}
+      />
     </View>
   );
 }
@@ -390,6 +413,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleEmbeddedTabsChange = useCallback(
+    (embeddedTabs: boolean) => {
+      void updateSettings({ embeddedTabs });
+    },
+    [updateSettings],
+  );
+
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
@@ -475,6 +505,7 @@ export function AppearanceSection() {
       <SettingsSection title={t("settings.appearance.theme.title")}>
         <View style={settingsStyles.card}>
           <ThemeRow value={settings.theme} onChange={handleThemeChange} />
+          <EmbeddedTabsRow value={settings.embeddedTabs} onChange={handleEmbeddedTabsChange} />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
