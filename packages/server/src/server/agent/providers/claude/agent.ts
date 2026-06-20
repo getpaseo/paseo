@@ -47,6 +47,7 @@ import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./quer
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -364,11 +365,6 @@ interface ClaudeAgentSessionOptions {
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 type ClaudeThinkingOption = ClaudeThinkingEffort | "ultracode";
-
-const SETTING_APPLIES_NEXT_TURN_NOTICE: AgentProviderNotice = {
-  type: "info",
-  message: "This change applies next turn.",
-};
 
 function resolvePathEnvKey(): "Path" | "PATH" | null {
   if (process.env["Path"] !== undefined) return "Path";

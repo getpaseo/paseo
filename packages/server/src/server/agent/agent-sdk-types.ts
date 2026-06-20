@@ -1,16 +1,14 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+
+export type { AgentProviderNotice };
 
 export type AgentProvider = string;
 
 export interface AgentMetadata {
   [key: string]: unknown;
 }
-
-export type AgentProviderNotice =
-  | { type: "info"; message: string }
-  | { type: "warning"; message: string }
-  | { type: "error"; message: string };
 
 /**
  * Stdio-based MCP server (spawns a subprocess).

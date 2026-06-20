@@ -93,6 +93,7 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
+import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../provider-notices.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 
 function assertChildWithPipes(
@@ -110,10 +111,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
-const SETTING_APPLIES_NEXT_TURN_NOTICE: AgentProviderNotice = {
-  type: "info",
-  message: "This change applies next turn.",
-};
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
