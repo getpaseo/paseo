@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -15,6 +15,10 @@ function makeTmpDir(): string {
 const logger = pino({ level: "silent" });
 
 describe("sherpa model downloader", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   test("getSherpaOnnxModelDir maps modelId to extractedDir", () => {
     const modelsDir = "/tmp/models";
     expect(getSherpaOnnxModelDir(modelsDir, "parakeet-tdt-0.6b-v2-int8")).toContain(
@@ -59,5 +63,33 @@ describe("sherpa model downloader", () => {
     });
 
     expect(out).toBe(modelDir);
+  });
+
+  test("ensureSherpaOnnxModel downloads SenseVoice direct files before archive fallback", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model-bytes"))
+      .mockResolvedValueOnce(new Response("tokens-bytes"));
+    vi.stubGlobal("fetch", fetch);
+
+    const modelsDir = makeTmpDir();
+    const modelDir = getSherpaOnnxModelDir(modelsDir, SENSE_VOICE_MODEL);
+
+    const out = await ensureSherpaOnnxModel({
+      modelsDir,
+      modelId: SENSE_VOICE_MODEL,
+      logger,
+    });
+
+    expect(out).toBe(modelDir);
+    expect(existsSync(path.join(modelsDir, ".downloads"))).toBe(false);
+    expect(readFileSync(path.join(modelDir, "model.int8.onnx"), "utf8")).toBe("model-bytes");
+    expect(readFileSync(path.join(modelDir, "tokens.txt"), "utf8")).toBe("tokens-bytes");
+    expect(fetch).toHaveBeenCalledWith(
+      "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/model.int8.onnx?download=true",
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/tokens.txt?download=true",
+    );
   });
 });

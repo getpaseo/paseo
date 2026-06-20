@@ -25,6 +25,10 @@ interface SherpaOnnxCatalogEntryBase {
   archiveUrl: string;
   extractedDir: string;
   requiredFiles: string[];
+  directFiles?: Array<{
+    path: string;
+    urls: string[];
+  }>;
   description: string;
   defaultFor?: DefaultModelRole;
 }
@@ -77,6 +81,22 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2",
     extractedDir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
     requiredFiles: ["model.int8.onnx", "tokens.txt"],
+    directFiles: [
+      {
+        path: "model.int8.onnx",
+        urls: [
+          "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/model.int8.onnx?download=true",
+          "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/model.int8.onnx?download=true",
+        ],
+      },
+      {
+        path: "tokens.txt",
+        urls: [
+          "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/tokens.txt?download=true",
+          "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main/tokens.txt?download=true",
+        ],
+      },
+    ],
     recognizer: {
       kind: "sense_voice",
       model: "model.int8.onnx",

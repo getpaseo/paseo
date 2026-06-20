@@ -41,6 +41,8 @@ For supported European languages, switch the local STT model to `parakeet-tdt-0.
 
 For Chinese or Chinese/English mixed local STT, use `sense-voice-zh-en-ja-ko-yue-int8-2025-09-09`.
 
+Paseo downloads SenseVoice from Hugging Face mirror direct files before falling back to the GitHub release archive. This avoids relying only on GitHub release assets for large local speech model setup.
+
 ```json
 {
   "version": 1,

@@ -120,6 +120,8 @@ async function main(): Promise<void> {
 
   const providers: RequestedSpeechProviders = {
     dictationStt: { provider: "local", explicit: true },
+    // Not used for single-file transcription.
+    voiceTurnDetection: { provider: "local", explicit: false, enabled: false },
     voiceStt: { provider: "local", explicit: true },
     // Not used here, but required by the shared runtime config shape.
     voiceTts: { provider: "openai", explicit: false },
