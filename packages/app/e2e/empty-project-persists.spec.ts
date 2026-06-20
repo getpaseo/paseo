@@ -51,10 +51,6 @@ async function addProjectFromPicker(page: Page, projectPath: string): Promise<st
   await page.getByTestId("sidebar-add-project").click();
 
   const input = page.getByPlaceholder("Type a directory path...");
-  await input.waitFor({ state: "visible", timeout: 2_000 }).catch(() => undefined);
-  if (!(await input.isVisible().catch(() => false))) {
-    await page.getByText("Open a folder on your machine", { exact: true }).click();
-  }
   await expect(input).toBeVisible({ timeout: 30_000 });
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
@@ -103,7 +99,7 @@ test.describe("Project with no workspaces persists", () => {
       expect(workspaces.entries).toEqual([]);
     } finally {
       if (projectId) {
-        await removeProjectFromSidebar(page, projectId).catch(() => undefined);
+        await client.removeProject(projectId).catch(() => undefined);
       }
       await client.close().catch(() => undefined);
       await repo.cleanup().catch(() => undefined);
@@ -190,7 +186,6 @@ test.describe("Project remove", () => {
         page.getByTestId(`sidebar-project-new-workspace-row-${workspace.projectId}`),
       ).toBeVisible({ timeout: 30_000 });
     } finally {
-      await removeProjectFromSidebar(page, workspace.projectId).catch(() => undefined);
       await workspace.cleanup();
     }
   });
