@@ -549,12 +549,26 @@ describe("ClaudeAgentSession features", () => {
   const logger = createTestLogger();
 
   function createQueryMock() {
-    const queryReturn = vi.fn(async () => undefined);
+    let endQuery: (() => void) | null = null;
+    const queryEnded = new Promise<void>((resolve) => {
+      endQuery = resolve;
+    });
+    const queryReturn = vi.fn(async () => {
+      endQuery?.();
+    });
     const queryMock = {
       close: vi.fn(),
       return: queryReturn,
       applyFlagSettings: vi.fn(async () => undefined),
       setModel: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<SDKMessage, void> {
+        return {
+          next: async () => {
+            await queryEnded;
+            return { value: undefined, done: true };
+          },
+        };
+      },
     };
     const queryFactory = vi.fn(() => queryMock);
     return { queryFactory, queryMock };
@@ -622,13 +636,9 @@ describe("ClaudeAgentSession features", () => {
       thinkingOptionId: "ultracode",
     });
 
-    await expect(
-      (
-        session as unknown as {
-          ensureQuery(): Promise<unknown>;
-        }
-      ).ensureQuery(),
-    ).resolves.toBeDefined();
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
 
     expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
       effort: "xhigh",
@@ -640,8 +650,10 @@ describe("ClaudeAgentSession features", () => {
   });
 
   test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
+    const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
       logger,
+      queryFactory,
       resolveBinary: async () => "/test/claude/bin",
     });
     const session = await client.createSession({
@@ -649,11 +661,10 @@ describe("ClaudeAgentSession features", () => {
       cwd: process.cwd(),
       model: "claude-opus-4-8",
     });
-    (
-      session as unknown as {
-        activeForegroundTurnId: string | null;
-      }
-    ).activeForegroundTurnId = "turn-active";
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
 
     await expect(session.setThinkingOption?.("ultracode")).resolves.toEqual({
       type: "info",
