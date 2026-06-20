@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import pino from "pino";
 
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
@@ -81,7 +83,7 @@ function ttsKey(config: LocalSpeechWorkerConfig): string {
 }
 
 function localModelPath(modelDir: string, relPath: string): string {
-  return `${modelDir}/${relPath}`;
+  return path.join(modelDir, relPath);
 }
 
 function buildSttRecognizerModel(
