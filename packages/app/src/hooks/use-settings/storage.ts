@@ -36,6 +36,7 @@ export interface AppSettings {
   uiFontSize: number; // clamped px, default 16
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
+  promptScrollMarkers: boolean;
 }
 
 export interface Settings extends AppSettings {
@@ -54,6 +55,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   uiFontSize: DEFAULT_UI_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
+  promptScrollMarkers: true,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -193,6 +195,9 @@ function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
   }
   if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
     result.syntaxTheme = stored.syntaxTheme;
+  }
+  if (typeof stored.promptScrollMarkers === "boolean") {
+    result.promptScrollMarkers = stored.promptScrollMarkers;
   }
   return result;
 }

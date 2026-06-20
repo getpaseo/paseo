@@ -1542,6 +1542,14 @@ export const es: TranslationResources = {
         codeSize: "Tamaño del código",
         codeSizeAccessibility: "Tamaño de fuente del código",
       },
+      display: {
+        title: "Pantalla",
+        promptMarkers: "Marcadores de indicaciones",
+        promptMarkersHint:
+          "Muestra puntos junto a la barra de desplazamiento del chat de escritorio para cada indicación del usuario.",
+        promptMarkersAccessibility:
+          "Mostrar marcadores de indicaciones junto a la barra de desplazamiento del chat",
+      },
       syntax: {
         title: "Sintaxis",
         highlightTheme: "Tema destacado",

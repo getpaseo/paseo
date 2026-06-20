@@ -1546,6 +1546,14 @@ export const fr: TranslationResources = {
         codeSize: "Taille du code",
         codeSizeAccessibility: "Taille de la police du code",
       },
+      display: {
+        title: "Affichage",
+        promptMarkers: "Repères de prompts",
+        promptMarkersHint:
+          "Afficher des points près de la barre de défilement du chat sur ordinateur pour chaque prompt utilisateur",
+        promptMarkersAccessibility:
+          "Afficher les repères de prompts près de la barre de défilement du chat",
+      },
       syntax: {
         title: "Syntaxe",
         highlightTheme: "Thème de surbrillance",

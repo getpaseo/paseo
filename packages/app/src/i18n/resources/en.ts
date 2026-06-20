@@ -1510,6 +1510,12 @@ export const en = {
         codeSize: "Code size",
         codeSizeAccessibility: "Code font size",
       },
+      display: {
+        title: "Display",
+        promptMarkers: "Prompt markers",
+        promptMarkersHint: "Show dots beside the desktop chat scrollbar for each user prompt",
+        promptMarkersAccessibility: "Show prompt markers beside the chat scrollbar",
+      },
       syntax: {
         title: "Syntax",
         highlightTheme: "Highlight theme",

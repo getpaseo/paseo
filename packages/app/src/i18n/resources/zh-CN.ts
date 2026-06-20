@@ -1485,6 +1485,12 @@ export const zhCN: TranslationResources = {
         codeSize: "代码字号",
         codeSizeAccessibility: "代码字号",
       },
+      display: {
+        title: "显示",
+        promptMarkers: "提示标记",
+        promptMarkersHint: "在桌面聊天滚动条旁为每条用户提示显示圆点",
+        promptMarkersAccessibility: "在聊天滚动条旁显示提示标记",
+      },
       syntax: {
         title: "语法",
         highlightTheme: "高亮主题",

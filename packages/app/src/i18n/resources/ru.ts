@@ -1533,6 +1533,13 @@ export const ru: TranslationResources = {
         codeSize: "Размер кода",
         codeSizeAccessibility: "Размер шрифта кода",
       },
+      display: {
+        title: "Отображение",
+        promptMarkers: "Маркеры запросов",
+        promptMarkersHint:
+          "Показывать точки рядом с полосой прокрутки чата на рабочем столе для каждого запроса пользователя.",
+        promptMarkersAccessibility: "Показывать маркеры запросов рядом с полосой прокрутки чата",
+      },
       syntax: {
         title: "Синтаксис",
         highlightTheme: "Выделить тему",

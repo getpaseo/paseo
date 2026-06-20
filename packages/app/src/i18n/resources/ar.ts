@@ -1504,6 +1504,12 @@ export const ar: TranslationResources = {
         codeSize: "حجم الكود",
         codeSizeAccessibility: "حجم خط الكود",
       },
+      display: {
+        title: "العرض",
+        promptMarkers: "علامات المطالبات",
+        promptMarkersHint: "إظهار نقاط بجانب شريط تمرير دردشة سطح المكتب لكل مطالبة من المستخدم",
+        promptMarkersAccessibility: "إظهار علامات المطالبات بجانب شريط تمرير الدردشة",
+      },
       syntax: {
         title: "بناء الجملة",
         highlightTheme: "تسليط الضوء على الموضوع",

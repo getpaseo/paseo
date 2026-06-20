@@ -172,6 +172,9 @@ export function useSettings(): UseSettingsReturn {
       if (updates.syntaxTheme !== undefined) {
         appUpdates.syntaxTheme = updates.syntaxTheme;
       }
+      if (updates.promptScrollMarkers !== undefined) {
+        appUpdates.promptScrollMarkers = updates.promptScrollMarkers;
+      }
       const promises: Promise<void>[] = [];
       if (Object.keys(appUpdates).length > 0) {
         promises.push(appSettings.updateSettings(appUpdates));
