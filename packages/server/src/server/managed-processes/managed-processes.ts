@@ -9,7 +9,10 @@ import type { ProcessTerminator, TreeKillTarget } from "../../utils/tree-kill.js
 
 const MANAGED_PROCESS_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MANAGED_PROCESS_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+const MANAGED_PROCESS_EXIT_POLL_INTERVAL_MS = 50;
 const MANAGED_PROCESS_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+// `ps -o lstart` emits a fixed-width 24-char ctime stamp, e.g. "Sat Jun 20 10:30:40 2026".
+const POSIX_LSTART_WIDTH = 24;
 
 const ManagedProcessRecordSchema = z.object({
   id: z.string().min(1),
@@ -40,8 +43,13 @@ export interface ManagedProcessSnapshot {
   startedAt: string | null;
 }
 
+export type ManagedProcessInspection =
+  | { status: "alive"; snapshot: ManagedProcessSnapshot }
+  | { status: "not-found" }
+  | { status: "error"; error: unknown };
+
 export interface ManagedProcessTable {
-  inspect(pid: number): Promise<ManagedProcessSnapshot | null>;
+  inspect(pid: number): Promise<ManagedProcessInspection>;
 }
 
 export interface ManagedProcessCommandRunner {
@@ -100,13 +108,13 @@ export function createManagedProcessRegistry(
   return new FileBackedManagedProcessRegistry(options);
 }
 
-export function createSystemManagedProcessTable(_options?: {
+export function createSystemManagedProcessTable(options?: {
   platform?: NodeJS.Platform;
   commandRunner?: ManagedProcessCommandRunner;
 }): ManagedProcessTable {
   return new SystemManagedProcessTable({
-    platform: _options?.platform ?? process.platform,
-    commandRunner: _options?.commandRunner ?? {
+    platform: options?.platform ?? process.platform,
+    commandRunner: options?.commandRunner ?? {
       exec: execCommand,
     },
   });
@@ -121,45 +129,56 @@ class SystemManagedProcessTable implements ManagedProcessTable {
     this.commandRunner = options.commandRunner;
   }
 
-  async inspect(pid: number): Promise<ManagedProcessSnapshot | null> {
+  async inspect(pid: number): Promise<ManagedProcessInspection> {
     if (!Number.isInteger(pid) || pid <= 0) {
-      return null;
+      return { status: "not-found" };
     }
 
     try {
       return this.platform === "win32"
         ? await this.inspectWindows(pid)
         : await this.inspectPosix(pid);
-    } catch {
-      return null;
+    } catch (error) {
+      return { status: "error", error };
     }
   }
 
-  private async inspectPosix(pid: number): Promise<ManagedProcessSnapshot | null> {
-    const { stdout } = await this.commandRunner.exec("ps", [
-      "-ww",
-      "-p",
-      String(pid),
-      "-o",
-      "lstart=",
-      "-o",
-      "command=",
-    ]);
-    const line = stdout.trimEnd();
-    if (!line) {
-      return null;
+  private async inspectPosix(pid: number): Promise<ManagedProcessInspection> {
+    let stdout: string;
+    try {
+      ({ stdout } = await this.commandRunner.exec("ps", [
+        "-ww",
+        "-p",
+        String(pid),
+        "-o",
+        "lstart=",
+        "-o",
+        "command=",
+      ]));
+    } catch (error) {
+      // `ps -p <pid>` exits non-zero when no process matches the pid; a numeric
+      // exit code means ps ran and found nothing, distinct from ps failing to run.
+      return isCommandExitFailure(error) ? { status: "not-found" } : { status: "error", error };
     }
 
-    const startedAt = line.slice(0, 24).trim();
-    const commandLine = line.slice(24).trim();
+    const line = stdout.trimEnd();
+    if (!line) {
+      return { status: "not-found" };
+    }
+
+    const startedAt = line.slice(0, POSIX_LSTART_WIDTH).trim();
+    const commandLine = line.slice(POSIX_LSTART_WIDTH).trim();
     return {
-      pid,
-      commandLine: commandLine || null,
-      startedAt: startedAt || null,
+      status: "alive",
+      snapshot: {
+        pid,
+        commandLine: commandLine || null,
+        startedAt: startedAt || null,
+      },
     };
   }
 
-  private async inspectWindows(pid: number): Promise<ManagedProcessSnapshot | null> {
+  private async inspectWindows(pid: number): Promise<ManagedProcessInspection> {
     const command = [
       `$process = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}';`,
       "if ($process) { $process | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress }",
@@ -172,14 +191,17 @@ class SystemManagedProcessTable implements ManagedProcessTable {
     ]);
     const trimmed = stdout.trim();
     if (!trimmed) {
-      return null;
+      return { status: "not-found" };
     }
 
     const parsed = WindowsProcessSnapshotSchema.parse(JSON.parse(trimmed));
     return {
-      pid,
-      commandLine: parsed.CommandLine ?? null,
-      startedAt: parsed.CreationDate ?? null,
+      status: "alive",
+      snapshot: {
+        pid,
+        commandLine: parsed.CommandLine ?? null,
+        startedAt: parsed.CreationDate ?? null,
+      },
     };
   }
 }
@@ -198,7 +220,8 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
   }
 
   async record(input: ManagedProcessRecordInput): Promise<ManagedProcessRecord> {
-    const snapshot = await this.processTable.inspect(input.pid);
+    const inspection = await this.processTable.inspect(input.pid);
+    const snapshot = inspection.status === "alive" ? inspection.snapshot : null;
     const record: ManagedProcessRecord = {
       id: randomUUID(),
       owner: input.owner,
@@ -239,14 +262,34 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
     for (const entry of await this.readEntries()) {
       result.checked += 1;
       try {
-        const snapshot = await this.processTable.inspect(entry.record.pid);
-        if (!snapshot) {
+        const inspection = await this.processTable.inspect(entry.record.pid);
+        if (inspection.status === "not-found") {
           await fs.rm(entry.path, { force: true });
           result.dead += 1;
           result.removed += 1;
           continue;
         }
 
+        if (inspection.status === "error") {
+          // Inspection failed, so we cannot tell whether the helper is still
+          // alive. Keep the record and retry on the next reconcile rather than
+          // orphaning a live process by deleting its record without killing it.
+          const message =
+            inspection.error instanceof Error ? inspection.error.message : String(inspection.error);
+          result.errors.push({ id: entry.record.id, message });
+          this.logger.warn(
+            {
+              err: inspection.error,
+              id: entry.record.id,
+              pid: entry.record.pid,
+              owner: entry.record.owner,
+            },
+            "Could not inspect managed helper process; leaving record for next reconcile",
+          );
+          continue;
+        }
+
+        const snapshot = inspection.snapshot;
         if (!processIdentityMatches(entry.record, snapshot)) {
           await fs.rm(entry.path, { force: true });
           result.mismatched += 1;
@@ -308,9 +351,18 @@ class FileBackedManagedProcessRegistry implements ManagedProcessRegistry {
         continue;
       }
       const filePath = path.join(this.directory, fileName);
-      const raw = await fs.readFile(filePath, "utf8");
-      const parsed = ManagedProcessRecordSchema.parse(JSON.parse(raw));
-      entries.push({ path: filePath, record: parsed });
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const parsed = ManagedProcessRecordSchema.parse(JSON.parse(raw));
+        entries.push({ path: filePath, record: parsed });
+      } catch (error) {
+        // A single corrupt or partially-written record must not abort the whole
+        // reconcile and leave every other leftover un-reaped. Skip it.
+        this.logger.warn(
+          { err: error, file: fileName },
+          "Skipping unreadable managed process record",
+        );
+      }
     }
     return entries;
   }
@@ -347,7 +399,7 @@ function normalizeCommandLine(commandLine: string): string {
   return commandLine.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function createPidTarget(pid: number): TreeKillTarget {
+export function createPidTarget(pid: number): TreeKillTarget {
   return {
     pid,
     exitCode: null,
@@ -356,7 +408,36 @@ function createPidTarget(pid: number): TreeKillTarget {
       process.kill(pid, signal);
       return true;
     },
+    // The reaper has no ChildProcess handle for a leftover from a previous
+    // daemon, so it observes exit by polling the pid. Without this, termination
+    // can never see a graceful SIGTERM exit and always waits out the full
+    // graceful+force window before escalating to SIGKILL.
+    once(_event, listener) {
+      const timer = setInterval(() => {
+        if (!isProcessAlive(pid)) {
+          clearInterval(timer);
+          listener();
+        }
+      }, MANAGED_PROCESS_EXIT_POLL_INTERVAL_MS);
+      timer.unref();
+    },
   };
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isNodeErrorWithCode(error, "EPERM");
+  }
+}
+
+function isCommandExitFailure(error: unknown): boolean {
+  // execFile rejects with a numeric `code` (the process exit status) when the
+  // command ran and exited non-zero; a string `code` (e.g. "ENOENT") means it
+  // never ran.
+  return typeof (error as { code?: unknown })?.code === "number";
 }
 
 function isNodeErrorWithCode(error: unknown, code: string): boolean {

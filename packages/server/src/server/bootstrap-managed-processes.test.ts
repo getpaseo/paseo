@@ -45,7 +45,7 @@ describe("daemon managed process bootstrap", () => {
         relayEnabled: false,
         appBaseUrl: "https://app.paseo.sh",
         managedProcesses,
-      } as PaseoDaemonConfig & { managedProcesses: ManagedProcessRegistry },
+      } as PaseoDaemonConfig,
       pino({ level: "silent" }),
     );
 

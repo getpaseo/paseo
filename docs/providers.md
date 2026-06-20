@@ -42,7 +42,7 @@ Provider session import has its own contract. The picker calls `listImportableSe
 
 Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
 
-Daemon bootstrap reconciles that ledger before provider clients are created: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, and only positively matched Paseo-owned leftovers are terminated. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
+Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in place for the next reconcile rather than deleted. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
 
 ---
 

@@ -72,20 +72,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly resolveCommandPrefix: OpenCodeCommandPrefixResolver;
   private readonly spawnServerProcess: OpenCodeServerProcessSpawner;
 
-  constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings);
-  constructor(options: OpenCodeServerManagerOptions);
-  constructor(
-    loggerOrOptions: Logger | OpenCodeServerManagerOptions,
-    runtimeSettings?: ProviderRuntimeSettings,
-  ) {
-    const options =
-      "logger" in loggerOrOptions
-        ? loggerOrOptions
-        : {
-            logger: loggerOrOptions,
-            runtimeSettings,
-          };
-
+  constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(this.runtimeSettings ?? {});

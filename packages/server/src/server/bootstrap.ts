@@ -396,13 +396,9 @@ async function reconcileManagedProcessLedger(
   managedProcesses: ManagedProcessRegistry,
   logger: Logger,
 ): Promise<void> {
-  try {
-    const reapResult = await managedProcesses.reapStale();
-    if (reapResult.checked > 0 || reapResult.errors.length > 0) {
-      logger.info(reapResult, "Managed helper process ledger reconciled");
-    }
-  } catch (error) {
-    logger.warn({ err: error }, "Failed to reconcile managed helper process ledger");
+  const reapResult = await managedProcesses.reapStale();
+  if (reapResult.checked > 0 || reapResult.errors.length > 0) {
+    logger.info(reapResult, "Managed helper process ledger reconciled");
   }
 }
 
@@ -443,7 +439,12 @@ export async function createPaseoDaemon(
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
-  await reconcileManagedProcessLedger(managedProcesses, logger);
+  // Reconcile the helper-process ledger in the background so it never blocks the
+  // daemon from coming up; terminating a live leftover can take a few seconds.
+  // Best-effort, so a failure is logged here rather than crashing startup.
+  void reconcileManagedProcessLedger(managedProcesses, logger).catch((error) => {
+    logger.warn({ err: error }, "Failed to reconcile managed helper process ledger");
+  });
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;

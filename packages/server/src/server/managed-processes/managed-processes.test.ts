@@ -6,12 +6,19 @@ import { afterEach, describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   createManagedProcessRegistry,
+  createPidTarget,
   createSystemManagedProcessTable,
   type ManagedProcessCommandRunner,
+  type ManagedProcessInspection,
   type ManagedProcessSnapshot,
   type ManagedProcessTable,
 } from "./managed-processes.js";
-import type { ProcessTerminator, TreeKillTarget } from "../../utils/tree-kill.js";
+import { spawnProcess } from "../../utils/spawn.js";
+import {
+  terminateWithTreeKill,
+  type ProcessTerminator,
+  type TreeKillTarget,
+} from "../../utils/tree-kill.js";
 
 let tempHome: string | null = null;
 
@@ -159,6 +166,69 @@ describe("managed process registry", () => {
     expect(terminator.terminatedPids).toEqual([]);
     expect(await restartedRegistry.list()).toEqual([]);
   });
+
+  test("keeps a helper record when inspection fails instead of orphaning a live process", async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), "paseo-managed-processes-"));
+    const terminator = new FakeProcessTerminator();
+    const registry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable: new FakeProcessTable([
+        { pid: 4104, commandLine: "opencode serve --port 4104", startedAt: "process-start-token" },
+      ]),
+      terminateProcess: terminator.terminate,
+      logger: createTestLogger(),
+    });
+    await registry.record({
+      owner: { provider: "opencode", kind: "helper-server" },
+      pid: 4104,
+      command: "opencode",
+      args: ["serve", "--port", "4104"],
+      metadata: { port: 4104 },
+    });
+
+    const restartedRegistry = createManagedProcessRegistry({
+      paseoHome: tempHome,
+      processTable: new FakeProcessTable([], [4104]),
+      terminateProcess: terminator.terminate,
+      logger: createTestLogger(),
+    });
+    const result = await restartedRegistry.reapStale();
+
+    expect(result).toMatchObject({
+      checked: 1,
+      dead: 0,
+      mismatched: 0,
+      removed: 0,
+      terminated: 0,
+    });
+    expect(result.errors).toEqual([{ id: expect.any(String), message: "inspection failed" }]);
+    expect(terminator.terminatedPids).toEqual([]);
+    expect(await restartedRegistry.list()).toHaveLength(1);
+  });
+});
+
+describe("managed process termination", () => {
+  test("stops as soon as a terminated process exits instead of escalating to SIGKILL", async () => {
+    const child = spawnProcess(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    const pid = child.pid;
+    if (!pid) {
+      throw new Error("Failed to spawn test process");
+    }
+
+    let forced = false;
+    const result = await terminateWithTreeKill(createPidTarget(pid), {
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 1_000,
+      onForceSignal: () => {
+        forced = true;
+      },
+    });
+
+    expect(result).toBe("terminated");
+    expect(forced).toBe(false);
+  });
 });
 
 describe("system managed process table", () => {
@@ -174,12 +244,15 @@ describe("system managed process table", () => {
       commandRunner,
     });
 
-    const snapshot = await processTable.inspect(4101);
+    const inspection = await processTable.inspect(4101);
 
-    expect(snapshot).toEqual({
-      pid: 4101,
-      commandLine: "opencode serve --port 4101",
-      startedAt: "Sat Jun 20 10:30:40 2026",
+    expect(inspection).toEqual({
+      status: "alive",
+      snapshot: {
+        pid: 4101,
+        commandLine: "opencode serve --port 4101",
+        startedAt: "Sat Jun 20 10:30:40 2026",
+      },
     });
     expect(commandRunner.commands).toEqual([
       {
@@ -205,12 +278,15 @@ describe("system managed process table", () => {
       commandRunner,
     });
 
-    const snapshot = await processTable.inspect(4101);
+    const inspection = await processTable.inspect(4101);
 
-    expect(snapshot).toEqual({
-      pid: 4101,
-      commandLine: "C:\\opencode.exe serve --port 4101",
-      startedAt: "20260620103040.000000+000",
+    expect(inspection).toEqual({
+      status: "alive",
+      snapshot: {
+        pid: 4101,
+        commandLine: "C:\\opencode.exe serve --port 4101",
+        startedAt: "20260620103040.000000+000",
+      },
     });
     expect(commandRunner.commands).toEqual([
       {
@@ -228,13 +304,19 @@ describe("system managed process table", () => {
 
 class FakeProcessTable implements ManagedProcessTable {
   private readonly snapshots: Map<number, ManagedProcessSnapshot>;
+  private readonly errorPids: Set<number>;
 
-  constructor(snapshots: ManagedProcessSnapshot[]) {
+  constructor(snapshots: ManagedProcessSnapshot[], errorPids: number[] = []) {
     this.snapshots = new Map(snapshots.map((snapshot) => [snapshot.pid, snapshot]));
+    this.errorPids = new Set(errorPids);
   }
 
-  async inspect(pid: number): Promise<ManagedProcessSnapshot | null> {
-    return this.snapshots.get(pid) ?? null;
+  async inspect(pid: number): Promise<ManagedProcessInspection> {
+    if (this.errorPids.has(pid)) {
+      return { status: "error", error: new Error("inspection failed") };
+    }
+    const snapshot = this.snapshots.get(pid);
+    return snapshot ? { status: "alive", snapshot } : { status: "not-found" };
   }
 }
 
