@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import net from "node:net";
+import os from "node:os";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
@@ -201,6 +202,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         launchPrefix.command,
         [...launchPrefix.args, "serve", "--port", String(port)],
         {
+          cwd: os.homedir(),
           detached: process.platform !== "win32",
           stdio: ["ignore", "pipe", "pipe"],
           ...createProviderEnvSpec({
