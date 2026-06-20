@@ -71,6 +71,7 @@ import {
 import { isNative } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
+import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import {
   applyLegacyDaemonWorkspaceOwnership,
@@ -1951,10 +1952,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         console.warn("[Session] setAgentMode skipped: daemon unavailable");
         return;
       }
-      void client.setAgentMode(agentId, modeId).catch((error) => {
-        console.error("[Session] Failed to set agent mode:", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentMode(agentId, modeId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.error("[Session] Failed to set agent mode:", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [client, toast],
   );
@@ -1979,10 +1983,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         console.warn("[Session] setAgentThinkingOption skipped: daemon unavailable");
         return;
       }
-      void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
-        console.error("[Session] Failed to set agent thinking option:", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.error("[Session] Failed to set agent thinking option:", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [client, toast],
   );

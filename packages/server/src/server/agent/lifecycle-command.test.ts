@@ -134,8 +134,9 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     this.notifiedAgentIds.push(agentId);
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+  async setAgentMode(agentId: string, modeId: string) {
     this.modeUpdates.push({ agentId, modeId });
+    return null;
   }
 
   async updateAgentMetadata(
@@ -286,7 +287,7 @@ describe("agent lifecycle commands", () => {
 
     await expect(
       setAgentModeCommand({ agentManager: manager }, { agentId: "agent-1", modeId: "plan" }),
-    ).resolves.toEqual({ modeId: "plan" });
+    ).resolves.toEqual({ modeId: "plan", notice: null });
 
     expect(manager.modeUpdates).toEqual([{ agentId: "agent-1", modeId: "plan" }]);
   });

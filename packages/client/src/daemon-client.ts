@@ -85,6 +85,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
+  AgentProviderNotice,
   AgentProvider,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
@@ -2444,7 +2445,7 @@ export class DaemonClient {
     });
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_mode_request",
@@ -2470,6 +2471,7 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentMode rejected");
     }
+    return payload.notice ?? null;
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -2529,7 +2531,10 @@ export class DaemonClient {
     }
   }
 
-  async setAgentThinkingOption(agentId: string, thinkingOptionId: string | null): Promise<void> {
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null,
+  ): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_thinking_request",
@@ -2555,6 +2560,7 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentThinkingOption rejected");
     }
+    return payload.notice ?? null;
   }
 
   async restartServer(reason?: string, requestId?: string): Promise<RestartRequestedStatusPayload> {

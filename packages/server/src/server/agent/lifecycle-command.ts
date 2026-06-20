@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import type { ManagedAgent } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
+import type { AgentProviderNotice } from "./agent-sdk-types.js";
 
 export type LifecycleAgentSnapshot = Pick<ManagedAgent, "id" | "cwd" | "lifecycle">;
 
@@ -20,7 +21,7 @@ export interface LifecycleAgentManager {
     previousParentAgentId: string | null;
   }>;
   notifyAgentState(agentId: string): void;
-  setAgentMode(agentId: string, modeId: string): Promise<void>;
+  setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   updateAgentMetadata(
     agentId: string,
     updates: {
@@ -190,9 +191,9 @@ export async function setAgentModeCommand(
     agentId: string;
     modeId: string;
   },
-): Promise<{ modeId: string }> {
-  await dependencies.agentManager.setAgentMode(input.agentId, input.modeId);
-  return { modeId: input.modeId };
+): Promise<{ modeId: string; notice: AgentProviderNotice | null }> {
+  const notice = await dependencies.agentManager.setAgentMode(input.agentId, input.modeId);
+  return { modeId: input.modeId, notice };
 }
 
 async function archiveStoredAgent(

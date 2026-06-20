@@ -432,6 +432,29 @@ describe("ClaudeAgentClient.listModels", () => {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
   });
+
+  test("exposes Ultracode only on Claude models that support it", async () => {
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveBinary: async () => "/test/claude/bin",
+        configDir: emptyConfigDir,
+      });
+      const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
+      const getThinkingIds = (modelId: string) => {
+        return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
+      };
+
+      expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-7")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ClaudeAgentClient binary resolution", () => {
@@ -581,6 +604,61 @@ describe("ClaudeAgentSession features", () => {
 
     expect(queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({ fastMode: true });
     expect(queryMock.applyFlagSettings).toHaveBeenCalledWith({ fastMode: true });
+
+    await session.close();
+  });
+
+  test("maps Ultracode to xhigh effort and Claude ultracode settings", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      thinkingOptionId: "ultracode",
+    });
+
+    await expect(
+      (
+        session as unknown as {
+          ensureQuery(): Promise<unknown>;
+        }
+      ).ensureQuery(),
+    ).resolves.toBeDefined();
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      effort: "xhigh",
+      thinking: { type: "adaptive" },
+      settings: { ultracode: true },
+    });
+
+    await session.close();
+  });
+
+  test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
+    const client = new ClaudeAgentClient({
+      logger,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    (
+      session as unknown as {
+        activeForegroundTurnId: string | null;
+      }
+    ).activeForegroundTurnId = "turn-active";
+
+    await expect(session.setThinkingOption?.("ultracode")).resolves.toEqual({
+      type: "info",
+      message: "This change applies next turn.",
+    });
 
     await session.close();
   });

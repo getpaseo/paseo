@@ -4672,14 +4672,17 @@ export class Session {
     this.sessionLogger.info({ agentId, modeId, requestId }, "session: set_agent_mode_request");
 
     try {
-      await setAgentModeCommand({ agentManager: this.agentManager }, { agentId, modeId });
+      const result = await setAgentModeCommand(
+        { agentManager: this.agentManager },
+        { agentId, modeId },
+      );
       this.sessionLogger.info(
         { agentId, modeId, requestId },
         "session: set_agent_mode_request success",
       );
       this.emit({
         type: "set_agent_mode_response",
-        payload: { requestId, agentId, accepted: true, error: null },
+        payload: { requestId, agentId, accepted: true, error: null, notice: result.notice },
       });
     } catch (error) {
       this.sessionLogger.error(
@@ -4808,14 +4811,14 @@ export class Session {
     );
 
     try {
-      await this.agentManager.setAgentThinkingOption(agentId, thinkingOptionId);
+      const notice = await this.agentManager.setAgentThinkingOption(agentId, thinkingOptionId);
       this.sessionLogger.info(
         { agentId, thinkingOptionId, requestId },
         "session: set_agent_thinking_request success",
       );
       this.emit({
         type: "set_agent_thinking_response",
-        payload: { requestId, agentId, accepted: true, error: null },
+        payload: { requestId, agentId, accepted: true, error: null, notice },
       });
     } catch (error) {
       this.sessionLogger.error(

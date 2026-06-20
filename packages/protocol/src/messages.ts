@@ -172,6 +172,7 @@ import type {
   ProviderStatus,
   AgentRuntimeInfo,
   AgentTimelineItem,
+  AgentProviderNotice,
   ToolCallDetail,
   ToolCallTimelineItem,
   AgentUsage,
@@ -201,6 +202,12 @@ const AgentSelectOptionSchema = z.object({
   isDefault: z.boolean().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
+
+const AgentProviderNoticeSchema: z.ZodType<AgentProviderNotice> = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("info"), message: z.string() }),
+  z.object({ type: z.literal("warning"), message: z.string() }),
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
 
 export const AgentFeatureToggleSchema = z.object({
   type: z.literal("toggle"),
@@ -1264,6 +1271,7 @@ const AgentActionResponsePayloadSchema = z.object({
   agentId: z.string(),
   accepted: z.boolean(),
   error: z.string().nullable(),
+  notice: AgentProviderNoticeSchema.nullable().optional(),
 });
 
 export const SetAgentModeResponseMessageSchema = z.object({

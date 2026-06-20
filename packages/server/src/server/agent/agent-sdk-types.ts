@@ -7,6 +7,11 @@ export interface AgentMetadata {
   [key: string]: unknown;
 }
 
+export type AgentProviderNotice =
+  | { type: "info"; message: string }
+  | { type: "warning"; message: string }
+  | { type: "error"; message: string };
+
 /**
  * Stdio-based MCP server (spawns a subprocess).
  */
@@ -604,7 +609,7 @@ export interface AgentSession {
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
-  setMode(modeId: string): Promise<void>;
+  setMode(modeId: string): Promise<void | AgentProviderNotice>;
   getPendingPermissions(): AgentPermissionRequest[];
   respondToPermission(
     requestId: string,
@@ -615,7 +620,7 @@ export interface AgentSession {
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
-  setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
+  setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;

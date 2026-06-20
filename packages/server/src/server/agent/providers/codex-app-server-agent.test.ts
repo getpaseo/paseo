@@ -338,6 +338,24 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("setMode and setThinkingOption return a next-turn notice while a turn is active", async () => {
+    const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
+
+    await expect(session.setMode("full-access")).resolves.toEqual({
+      type: "info",
+      message: "This change applies next turn.",
+    });
+    await expect(session.setThinkingOption?.("high")).resolves.toEqual({
+      type: "info",
+      message: "This change applies next turn.",
+    });
+
+    session.activeForegroundTurnId = null;
+
+    await expect(session.setMode("auto")).resolves.toBeUndefined();
+    await expect(session.setThinkingOption?.("low")).resolves.toBeUndefined();
+  });
+
   test.each(["auto_review", "guardian_subagent"])(
     "parses %s thread/start response as auto-review mode",
     async (approvalsReviewer) => {

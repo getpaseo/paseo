@@ -178,6 +178,47 @@ describe("agent detach RPC", () => {
   });
 });
 
+describe("agent setting action responses", () => {
+  test("parses optional provider notices on mode and thinking responses", () => {
+    const mode = SessionOutboundMessageSchema.parse({
+      type: "set_agent_mode_response",
+      payload: {
+        requestId: "req-mode",
+        agentId: "agent-1",
+        accepted: true,
+        error: null,
+        notice: {
+          type: "info",
+          message: "This change applies next turn.",
+        },
+      },
+    });
+    const thinking = SessionOutboundMessageSchema.parse({
+      type: "set_agent_thinking_response",
+      payload: {
+        requestId: "req-thinking",
+        agentId: "agent-1",
+        accepted: true,
+        error: null,
+      },
+    });
+
+    expect(mode.type).toBe("set_agent_mode_response");
+    if (mode.type !== "set_agent_mode_response") {
+      throw new Error("Expected set_agent_mode_response");
+    }
+    expect(mode.payload.notice).toEqual({
+      type: "info",
+      message: "This change applies next turn.",
+    });
+    expect(thinking.type).toBe("set_agent_thinking_response");
+    if (thinking.type !== "set_agent_thinking_response") {
+      throw new Error("Expected set_agent_thinking_response");
+    }
+    expect(thinking.payload.notice).toBeUndefined();
+  });
+});
+
 describe("file explorer request compatibility", () => {
   test("acceptBinary is optional for old clients and accepted for new clients", () => {
     expect(

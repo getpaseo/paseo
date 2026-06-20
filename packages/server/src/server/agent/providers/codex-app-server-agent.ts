@@ -13,6 +13,7 @@ import {
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
+  type AgentProviderNotice,
   type AgentPromptContentBlock,
   type AgentPromptInput,
   type AgentRunOptions,
@@ -109,6 +110,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+const SETTING_APPLIES_NEXT_TURN_NOTICE: AgentProviderNotice = {
+  type: "info",
+  message: "This change applies next turn.",
+};
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -3654,10 +3659,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     return this.currentMode ?? null;
   }
 
-  async setMode(modeId: string): Promise<void> {
+  async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     validateCodexMode(modeId);
     this.currentMode = modeId;
     this.cachedRuntimeInfo = null;
+    if (this.activeForegroundTurnId) {
+      return SETTING_APPLIES_NEXT_TURN_NOTICE;
+    }
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -3669,10 +3677,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.cachedRuntimeInfo = null;
   }
 
-  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void | AgentProviderNotice> {
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(thinkingOptionId);
     this.refreshResolvedCollaborationMode();
     this.cachedRuntimeInfo = null;
+    if (this.activeForegroundTurnId) {
+      return SETTING_APPLIES_NEXT_TURN_NOTICE;
+    }
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
