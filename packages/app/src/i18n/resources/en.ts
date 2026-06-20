@@ -169,6 +169,7 @@ export const en = {
   agentStream: {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
+    scrollToPinnedUserInput: "Scroll to pinned user input",
     permission: {
       plan: "Plan",
       required: "Permission Required",
@@ -1494,6 +1495,13 @@ export const en = {
           ghostty: "Ghostty",
           auto: "System",
         },
+      },
+      messages: {
+        title: "Messages",
+      },
+      pinUserInputs: {
+        label: "Pin user inputs",
+        description: "Keep the relevant user prompt visible while scrolling through responses",
       },
       fonts: {
         title: "Fonts",

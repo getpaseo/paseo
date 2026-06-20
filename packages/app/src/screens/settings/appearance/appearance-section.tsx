@@ -36,6 +36,7 @@ import {
 } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
 import { settingsStyles } from "@/styles/settings";
+import { Switch } from "@/components/ui/switch";
 import { AppearancePreview } from "./appearance-preview";
 
 // ---------------------------------------------------------------------------
@@ -360,6 +361,35 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+interface PinUserInputsRowProps {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}
+
+function PinUserInputsRow({ value, onChange }: PinUserInputsRowProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.pinUserInputs.label")}</Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.pinUserInputs.description")}
+        </Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={t("settings.appearance.pinUserInputs.label")}
+        testID="settings-pin-user-inputs-switch"
+      />
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -393,6 +423,13 @@ export function AppearanceSection() {
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
+    },
+    [updateSettings],
+  );
+
+  const handlePinUserInputsChange = useCallback(
+    (pinUserInputs: boolean) => {
+      void updateSettings({ pinUserInputs });
     },
     [updateSettings],
   );
@@ -475,6 +512,11 @@ export function AppearanceSection() {
       <SettingsSection title={t("settings.appearance.theme.title")}>
         <View style={settingsStyles.card}>
           <ThemeRow value={settings.theme} onChange={handleThemeChange} />
+        </View>
+      </SettingsSection>
+      <SettingsSection title={t("settings.appearance.messages.title")}>
+        <View style={settingsStyles.card}>
+          <PinUserInputsRow value={settings.pinUserInputs} onChange={handlePinUserInputsChange} />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>

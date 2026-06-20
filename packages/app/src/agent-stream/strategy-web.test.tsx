@@ -1,8 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import React from "react";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
@@ -33,6 +32,15 @@ function userMessage(index: number): StreamItem {
     id: `message-${index}`,
     text: `Message ${index}`,
     timestamp: new Date(`2026-04-20T00:00:${String(index % 60).padStart(2, "0")}.000Z`),
+  };
+}
+
+function assistantMessage(index: number): StreamItem {
+  return {
+    kind: "assistant_message",
+    id: `assistant-${index}`,
+    text: `Assistant ${index}`,
+    timestamp: new Date(`2026-04-20T00:01:${String(index % 60).padStart(2, "0")}.000Z`),
   };
 }
 
@@ -133,6 +141,9 @@ describe("createWebStreamStrategy", () => {
             isAuthoritativeHistoryReady: true,
             onNearBottomChange: vi.fn(),
             onNearHistoryStart: vi.fn(),
+            pinUserInputsEnabled: false,
+            onPinnedUserInputChange: vi.fn(),
+            pinnedUserInputOverlay: null,
             isLoadingOlderHistory: false,
             hasOlderHistory: false,
             scrollEnabled: true,
@@ -178,6 +189,9 @@ describe("createWebStreamStrategy", () => {
             isAuthoritativeHistoryReady: true,
             onNearBottomChange: vi.fn(),
             onNearHistoryStart,
+            pinUserInputsEnabled: false,
+            onPinnedUserInputChange: vi.fn(),
+            pinnedUserInputOverlay: null,
             isLoadingOlderHistory: false,
             hasOlderHistory: true,
             scrollEnabled: true,
@@ -204,5 +218,99 @@ describe("createWebStreamStrategy", () => {
     });
 
     expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a pinned user input and scrolls to its source row", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const onPinnedUserInputChange = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <>
+          {strategy.render({
+            agentId: "agent",
+            segments: {
+              historyVirtualized: [],
+              historyMounted: [
+                userMessage(1),
+                assistantMessage(1),
+                userMessage(2),
+                assistantMessage(2),
+              ],
+              liveHead: [],
+            },
+            boundary: {
+              hasVirtualizedHistory: false,
+              hasMountedHistory: true,
+              hasLiveHead: false,
+            },
+            renderers: createRenderers(vi.fn()),
+            listEmptyComponent: null,
+            viewportRef,
+            routeBottomAnchorRequest: null,
+            isAuthoritativeHistoryReady: true,
+            onNearBottomChange: vi.fn(),
+            onNearHistoryStart: vi.fn(),
+            pinUserInputsEnabled: true,
+            onPinnedUserInputChange,
+            pinnedUserInputOverlay: <div data-testid="pinned-user-input-overlay" />,
+            isLoadingOlderHistory: false,
+            hasOlderHistory: false,
+            scrollEnabled: true,
+            listStyle: null,
+            baseListContentContainerStyle: null,
+            forwardListContentContainerStyle: null,
+          })}
+        </>,
+      );
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    const firstUserRow = container.querySelector('[data-stream-item-id="message-1"]');
+    const firstAssistantRow = container.querySelector('[data-stream-item-id="assistant-1"]');
+    const secondUserRow = container.querySelector('[data-stream-item-id="message-2"]');
+    const secondAssistantRow = container.querySelector('[data-stream-item-id="assistant-2"]');
+
+    expect(scrollContainer).toBeInstanceOf(HTMLElement);
+    expect(firstUserRow).toBeInstanceOf(HTMLElement);
+    expect(firstAssistantRow).toBeInstanceOf(HTMLElement);
+    expect(secondUserRow).toBeInstanceOf(HTMLElement);
+    expect(secondAssistantRow).toBeInstanceOf(HTMLElement);
+    expect(
+      scrollContainer?.querySelector('[data-testid="pinned-user-input-overlay"]'),
+    ).toBeInstanceOf(HTMLElement);
+
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 300 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 120 });
+    Object.defineProperty(firstUserRow, "offsetTop", { configurable: true, value: 16 });
+    Object.defineProperty(firstUserRow, "offsetHeight", { configurable: true, value: 80 });
+    Object.defineProperty(firstAssistantRow, "offsetTop", { configurable: true, value: 120 });
+    Object.defineProperty(firstAssistantRow, "offsetHeight", { configurable: true, value: 320 });
+    Object.defineProperty(secondUserRow, "offsetTop", { configurable: true, value: 500 });
+    Object.defineProperty(secondUserRow, "offsetHeight", { configurable: true, value: 80 });
+    Object.defineProperty(secondAssistantRow, "offsetTop", { configurable: true, value: 610 });
+    Object.defineProperty(secondAssistantRow, "offsetHeight", { configurable: true, value: 320 });
+
+    act(() => {
+      scrollContainer?.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(onPinnedUserInputChange).toHaveBeenLastCalledWith({
+      item: expect.objectContaining({ id: "message-1" }),
+    });
+
+    act(() => {
+      viewportRef.current?.scrollToStreamItemTop("message-1");
+    });
+
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenLastCalledWith({
+      top: 1,
+      behavior: "smooth",
+    });
   });
 });

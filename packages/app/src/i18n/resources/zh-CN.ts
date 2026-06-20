@@ -171,6 +171,7 @@ export const zhCN: TranslationResources = {
   agentStream: {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
+    scrollToPinnedUserInput: "滚动到固定的用户输入",
     permission: {
       plan: "Plan",
       required: "需要权限",
@@ -1470,6 +1471,13 @@ export const zhCN: TranslationResources = {
           ghostty: "Ghostty",
           auto: "系统",
         },
+      },
+      messages: {
+        title: "消息",
+      },
+      pinUserInputs: {
+        label: "固定用户输入",
+        description: "滚动查看回复时保持相关用户提示可见",
       },
       fonts: {
         title: "字体",

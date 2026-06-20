@@ -172,6 +172,7 @@ export const fr: TranslationResources = {
   agentStream: {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
+    scrollToPinnedUserInput: "Aller à la saisie utilisateur épinglée",
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -1529,6 +1530,14 @@ export const fr: TranslationResources = {
           ghostty: "Fantôme",
           auto: "Système",
         },
+      },
+      messages: {
+        title: "Messages",
+      },
+      pinUserInputs: {
+        label: "Épingler les saisies utilisateur",
+        description:
+          "Garde visible le prompt utilisateur pertinent pendant le défilement des réponses",
       },
       fonts: {
         title: "Polices",

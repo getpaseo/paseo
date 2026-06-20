@@ -171,6 +171,7 @@ export const es: TranslationResources = {
   agentStream: {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
+    scrollToPinnedUserInput: "Ir a la entrada de usuario fijada",
     permission: {
       plan: "Plan",
       required: "Permiso requerido",
@@ -1525,6 +1526,14 @@ export const es: TranslationResources = {
           ghostty: "fantasmal",
           auto: "Sistema",
         },
+      },
+      messages: {
+        title: "Mensajes",
+      },
+      pinUserInputs: {
+        label: "Fijar entradas del usuario",
+        description:
+          "Mantiene visible el prompt relevante del usuario al desplazarte por las respuestas",
       },
       fonts: {
         title: "Fuentes",

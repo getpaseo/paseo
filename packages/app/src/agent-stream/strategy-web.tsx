@@ -1,6 +1,6 @@
 import React, {
-  Fragment,
   type CSSProperties,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,9 +10,16 @@ import React, {
 } from "react";
 import { ActivityIndicator } from "react-native";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
+import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { estimateStreamItemHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
-import { createStreamStrategy } from "./strategy";
+import { createStreamStrategy, PINNED_USER_INPUT_SCROLL_TOP_OFFSET } from "./strategy";
+import {
+  collectEstimatedPinnedUserInputCandidates,
+  findEstimatedStreamItemTop,
+  selectPinnedUserInput,
+  type PinnedUserInputCandidate,
+} from "./pinned-user-input";
 
 interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
@@ -25,7 +32,56 @@ const USER_SCROLL_DELTA_EPSILON = 1;
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
 const HISTORY_START_THRESHOLD_PX = 96;
-import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
+
+interface StreamItemElementProps {
+  children: ReactNode;
+  itemId: string;
+  setStreamItemElement: (itemId: string, node: HTMLDivElement | null) => void;
+}
+
+function StreamItemElement({ children, itemId, setStreamItemElement }: StreamItemElementProps) {
+  const handleRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setStreamItemElement(itemId, node);
+    },
+    [itemId, setStreamItemElement],
+  );
+
+  return (
+    <div key={itemId} data-stream-item-id={itemId} ref={handleRef} style={streamItemElementStyle}>
+      {children}
+    </div>
+  );
+}
+
+interface VirtualStreamItemElementProps extends StreamItemElementProps {
+  index: number;
+  measureElement: (node: HTMLDivElement | null) => void;
+  style: CSSProperties;
+}
+
+function VirtualStreamItemElement({
+  children,
+  index,
+  itemId,
+  measureElement,
+  setStreamItemElement,
+  style,
+}: VirtualStreamItemElementProps) {
+  const handleRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      measureElement(node);
+      setStreamItemElement(itemId, node);
+    },
+    [itemId, measureElement, setStreamItemElement],
+  );
+
+  return (
+    <div data-index={index} data-stream-item-id={itemId} ref={handleRef} style={style}>
+      {children}
+    </div>
+  );
+}
 
 const historyStartSlotStyle: CSSProperties = {
   display: "flex",
@@ -34,6 +90,26 @@ const historyStartSlotStyle: CSSProperties = {
   minHeight: 32,
   paddingTop: 4,
   paddingBottom: 8,
+};
+
+const pinnedUserInputStickySlotStyle: CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 4,
+  height: 0,
+  pointerEvents: "none",
+};
+
+const pinnedUserInputStickyLayerStyle: CSSProperties = {
+  position: "relative",
+  height: 0,
+  pointerEvents: "auto",
+};
+
+const streamItemElementStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  width: "100%",
 };
 
 function isScrollContainerNearBottom(
@@ -103,6 +179,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isAuthoritativeHistoryReady,
     onNearBottomChange,
     onNearHistoryStart,
+    pinUserInputsEnabled,
+    onPinnedUserInputChange,
+    pinnedUserInputOverlay,
     isLoadingOlderHistory,
     hasOlderHistory,
     scrollEnabled,
@@ -110,11 +189,24 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   } = props;
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
+  const virtualRowsContainerRef = useRef<HTMLDivElement | null>(null);
+  const streamItemElementByIdRef = useRef(new Map<string, HTMLElement>());
   const handleScrollContainerRef = useCallback((node: HTMLElement | null) => {
     scrollContainerRef.current = node;
   }, []);
   const handleContentRef = useCallback((node: HTMLElement | null) => {
     contentRef.current = node;
+  }, []);
+  const handleVirtualRowsContainerRef = useCallback((node: HTMLDivElement | null) => {
+    virtualRowsContainerRef.current = node;
+  }, []);
+  const setStreamItemElement = useCallback((itemId: string, node: HTMLElement | null) => {
+    const elements = streamItemElementByIdRef.current;
+    if (node) {
+      elements.set(itemId, node);
+      return;
+    }
+    elements.delete(itemId);
   }, []);
   const [followOutput, setFollowOutputr] = useState(true);
   const setFollowOutput = (value: boolean) => {
@@ -267,6 +359,48 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     syncNearBottom(scrollContainer, onNearBottomChange);
   }, [onNearBottomChange]);
 
+  const collectPinnedUserInputCandidates = useCallback((): PinnedUserInputCandidate[] => {
+    const virtualContainerTop = virtualRowsContainerRef.current?.offsetTop ?? 0;
+    const candidates = collectEstimatedPinnedUserInputCandidates({
+      items: segments.historyVirtualized,
+      estimateHeight: estimateStreamItemHeight,
+      initialTop: virtualContainerTop,
+    });
+
+    const mountedItems = [...segments.historyMounted, ...segments.liveHead];
+    for (const item of mountedItems) {
+      if (item.kind !== "user_message") {
+        continue;
+      }
+      const element = streamItemElementByIdRef.current.get(item.id);
+      if (!element) {
+        continue;
+      }
+      candidates.push({
+        item,
+        top: element.offsetTop,
+        bottom: element.offsetTop + element.offsetHeight,
+      });
+    }
+    return candidates.toSorted((left, right) => left.top - right.top);
+  }, [segments.historyMounted, segments.historyVirtualized, segments.liveHead]);
+
+  const updatePinnedUserInput = useCallback(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      onPinnedUserInputChange(null);
+      return;
+    }
+    onPinnedUserInputChange(
+      selectPinnedUserInput({
+        enabled: pinUserInputsEnabled,
+        candidates: collectPinnedUserInputCandidates(),
+        viewportTop: scrollContainer.scrollTop,
+        viewportBottom: scrollContainer.scrollTop + scrollContainer.clientHeight,
+      }),
+    );
+  }, [collectPinnedUserInputCandidates, onPinnedUserInputChange, pinUserInputsEnabled]);
+
   const handleDomScroll = useCallback(() => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) {
@@ -295,6 +429,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
     lastKnownScrollTopRef.current = currentScrollTop;
     updateScrollMetrics();
+    updatePinnedUserInput();
     if (
       historyStartReadyRef.current &&
       hasOlderHistory &&
@@ -302,7 +437,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     ) {
       onNearHistoryStart();
     }
-  }, [cancelPendingStickToBottom, hasOlderHistory, onNearHistoryStart, updateScrollMetrics]);
+  }, [
+    cancelPendingStickToBottom,
+    hasOlderHistory,
+    onNearHistoryStart,
+    updatePinnedUserInput,
+    updateScrollMetrics,
+  ]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -359,11 +500,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   useEffect(() => {
     updateScrollMetrics();
+    updatePinnedUserInput();
   }, [
     segments.historyMounted.length,
     segments.historyVirtualized.length,
     segments.liveHead.length,
     updateScrollMetrics,
+    updatePinnedUserInput,
     virtualTotalSize,
   ]);
 
@@ -377,6 +520,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     updateScrollMetrics();
     const observer = new ResizeObserver(() => {
       updateScrollMetrics();
+      updatePinnedUserInput();
       if (!followOutputRef.current) {
         return;
       }
@@ -389,7 +533,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       observer.disconnect();
     };
-  }, [scheduleStickToBottom, updateScrollMetrics]);
+  }, [scheduleStickToBottom, updatePinnedUserInput, updateScrollMetrics]);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -462,6 +606,35 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         cancelPendingStickToBottom();
         forceStickToBottom();
       },
+      scrollToStreamItemTop: (itemId: string) => {
+        const scrollContainer = scrollContainerRef.current;
+        if (!scrollContainer) {
+          return;
+        }
+        const element = streamItemElementByIdRef.current.get(itemId);
+        if (element) {
+          setFollowOutput(false);
+          scrollContainer.scrollTo({
+            top: Math.max(0, element.offsetTop - PINNED_USER_INPUT_SCROLL_TOP_OFFSET),
+            behavior: "smooth",
+          });
+          return;
+        }
+        const estimatedTop = findEstimatedStreamItemTop({
+          items: segments.historyVirtualized,
+          itemId,
+          estimateHeight: estimateStreamItemHeight,
+          initialTop: virtualRowsContainerRef.current?.offsetTop ?? 0,
+        });
+        if (estimatedTop === null) {
+          return;
+        }
+        setFollowOutput(false);
+        scrollContainer.scrollTo({
+          top: Math.max(0, estimatedTop - PINNED_USER_INPUT_SCROLL_TOP_OFFSET),
+          behavior: "smooth",
+        });
+      },
       prepareForViewportChange: () => {
         if (!followOutputRef.current) {
           return;
@@ -476,7 +649,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       }
       cancelPendingStickToBottom();
     };
-  }, [cancelPendingStickToBottom, forceStickToBottom, scheduleStickToBottom, viewportRef]);
+  }, [
+    cancelPendingStickToBottom,
+    forceStickToBottom,
+    scheduleStickToBottom,
+    segments.historyVirtualized,
+    viewportRef,
+  ]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
     return {
@@ -520,16 +699,18 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
   const mountedHistoryRows = useMemo(() => {
     return segments.historyMounted.map((item, index) => (
-      <Fragment key={item.id}>
+      <StreamItemElement key={item.id} itemId={item.id} setStreamItemElement={setStreamItemElement}>
         {renderHistoryMountedRow(item, index, segments.historyMounted)}
-      </Fragment>
+      </StreamItemElement>
     ));
-  }, [renderHistoryMountedRow, segments.historyMounted]);
+  }, [renderHistoryMountedRow, segments.historyMounted, setStreamItemElement]);
   const liveHeadRows = useMemo(() => {
     return segments.liveHead.map((item, index) => (
-      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
+      <StreamItemElement key={item.id} itemId={item.id} setStreamItemElement={setStreamItemElement}>
+        {renderLiveHeadRow(item, index, segments.liveHead)}
+      </StreamItemElement>
     ));
-  }, [renderLiveHeadRow, segments.liveHead]);
+  }, [renderLiveHeadRow, segments.liveHead, setStreamItemElement]);
   const liveAuxiliary = useMemo(() => {
     return renderLiveAuxiliary();
   }, [renderLiveAuxiliary]);
@@ -557,20 +738,27 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         id={`agent-chat-scroll-${shouldUseVirtualizer ? "web-dom-virtualized" : "web-dom-scroll"}`}
         style={scrollContainerStyle}
       >
+        {pinnedUserInputOverlay ? (
+          <div style={pinnedUserInputStickySlotStyle}>
+            <div style={pinnedUserInputStickyLayerStyle}>{pinnedUserInputOverlay}</div>
+          </div>
+        ) : null}
         <div ref={handleContentRef} style={contentContainerStyle}>
           {historyStartSlot}
           {shouldUseVirtualizer ? (
-            <div style={virtualRowsContainerStyle}>
+            <div ref={handleVirtualRowsContainerRef} style={virtualRowsContainerStyle}>
               {virtualRows.map((virtualRow) => {
                 const item = segments.historyVirtualized[virtualRow.index];
                 if (!item) {
                   return null;
                 }
                 return (
-                  <div
+                  <VirtualStreamItemElement
                     key={virtualRow.key}
-                    data-index={virtualRow.index}
-                    ref={measureVirtualizedRowElement}
+                    index={virtualRow.index}
+                    itemId={item.id}
+                    measureElement={measureVirtualizedRowElement}
+                    setStreamItemElement={setStreamItemElement}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >
                     {renderHistoryVirtualizedRow(
@@ -578,7 +766,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                       virtualRow.index,
                       segments.historyVirtualized,
                     )}
-                  </div>
+                  </VirtualStreamItemElement>
                 );
               })}
             </div>

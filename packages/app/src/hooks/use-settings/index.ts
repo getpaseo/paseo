@@ -151,6 +151,9 @@ export function useSettings(): UseSettingsReturn {
       if (updates.sendBehavior !== undefined) {
         appUpdates.sendBehavior = updates.sendBehavior;
       }
+      if (updates.pinUserInputs !== undefined) {
+        appUpdates.pinUserInputs = updates.pinUserInputs;
+      }
       if (updates.serviceUrlBehavior !== undefined) {
         appUpdates.serviceUrlBehavior = updates.serviceUrlBehavior;
       }

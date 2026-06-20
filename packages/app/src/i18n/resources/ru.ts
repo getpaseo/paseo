@@ -171,6 +171,7 @@ export const ru: TranslationResources = {
   agentStream: {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
+    scrollToPinnedUserInput: "Перейти к закрепленному вводу пользователя",
     permission: {
       plan: "План",
       required: "Требуется разрешение",
@@ -1516,6 +1517,13 @@ export const ru: TranslationResources = {
           ghostty: "Призрачный",
           auto: "Система",
         },
+      },
+      messages: {
+        title: "Сообщения",
+      },
+      pinUserInputs: {
+        label: "Закреплять ввод пользователя",
+        description: "Показывает связанный запрос пользователя при прокрутке ответов",
       },
       fonts: {
         title: "Шрифты",

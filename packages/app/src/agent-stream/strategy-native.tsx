@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Keyboard,
   View,
+  StyleSheet,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
   type NativeScrollEvent,
@@ -20,10 +21,17 @@ import {
 import type { StreamItem } from "@/types/stream";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
+import { estimateStreamItemHeight } from "./web-virtualization";
+import {
+  collectEstimatedPinnedUserInputCandidates,
+  findEstimatedStreamItemTop,
+  selectPinnedUserInput,
+} from "./pinned-user-input";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import {
   createStreamStrategy,
   isNearBottomForStreamRenderStrategy,
+  PINNED_USER_INPUT_SCROLL_TOP_OFFSET,
   resolveBottomAnchorTransportBehavior,
 } from "./strategy";
 
@@ -32,6 +40,16 @@ const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   autoscrollToTopThreshold: 0,
 });
 const HISTORY_START_THRESHOLD_PX = 96;
+
+const nativeStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    position: "relative",
+  },
+  list: {
+    flex: 1,
+  },
+});
 
 function keyExtractor(item: { id: string }): string {
   return item.id;
@@ -49,6 +67,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     isAuthoritativeHistoryReady,
     onNearBottomChange,
     onNearHistoryStart,
+    pinUserInputsEnabled,
+    onPinnedUserInputChange,
+    pinnedUserInputOverlay,
     isLoadingOlderHistory,
     hasOlderHistory,
     scrollEnabled,
@@ -79,6 +100,45 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     }
     return [...segments.historyVirtualized, ...segments.historyMounted];
   }, [segments.historyMounted, segments.historyVirtualized]);
+
+  const collectPinnedUserInputCandidates = useCallback(() => {
+    return collectEstimatedPinnedUserInputCandidates({
+      items: historyRows,
+      estimateHeight: estimateStreamItemHeight,
+    });
+  }, [historyRows]);
+
+  const findEstimatedNormalTop = useCallback(
+    (itemId: string): number | null => {
+      return findEstimatedStreamItemTop({
+        items: historyRows,
+        itemId,
+        estimateHeight: estimateStreamItemHeight,
+      });
+    },
+    [historyRows],
+  );
+
+  const updatePinnedUserInput = useCallback(() => {
+    const metrics = streamViewportMetricsRef.current;
+    if (metrics.viewportHeight <= 0 || metrics.contentHeight <= 0) {
+      onPinnedUserInputChange(null);
+      return;
+    }
+    const viewportTop = Math.max(
+      0,
+      metrics.contentHeight - metrics.offsetY - metrics.viewportHeight,
+    );
+    const viewportBottom = Math.max(viewportTop, metrics.contentHeight - metrics.offsetY);
+    onPinnedUserInputChange(
+      selectPinnedUserInput({
+        enabled: pinUserInputsEnabled,
+        candidates: collectPinnedUserInputCandidates(),
+        viewportTop,
+        viewportBottom,
+      }),
+    );
+  }, [collectPinnedUserInputCandidates, onPinnedUserInputChange, pinUserInputsEnabled]);
 
   const clearNativeViewportSettling = useCallback(() => {
     if (nativeViewportSettlingFrameIdRef.current !== null) {
@@ -205,6 +265,25 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
           reason,
         });
       },
+      scrollToStreamItemTop: (itemId: string) => {
+        const metrics = streamViewportMetricsRef.current;
+        const itemTop = findEstimatedNormalTop(itemId);
+        if (itemTop === null || metrics.viewportHeight <= 0 || metrics.contentHeight <= 0) {
+          return;
+        }
+        const offset = Math.max(
+          0,
+          metrics.contentHeight -
+            itemTop -
+            metrics.viewportHeight +
+            PINNED_USER_INPUT_SCROLL_TOP_OFFSET,
+        );
+        programmaticScrollEventBudgetRef.current = 3;
+        flatListRef.current?.scrollToOffset({
+          offset,
+          animated: true,
+        });
+      },
       prepareForViewportChange: () => {
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
@@ -216,7 +295,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
+  }, [
+    agentId,
+    bottomAnchorController,
+    findEstimatedNormalTop,
+    markNativeViewportSettling,
+    viewportRef,
+  ]);
 
   const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -240,6 +325,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       viewportHeight: streamViewportMetricsRef.current.viewportHeight,
     });
     onNearBottomChange(nearBottom);
+    updatePinnedUserInput();
 
     const distanceFromOldestEdge =
       streamViewportMetricsRef.current.contentHeight -
@@ -288,6 +374,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousViewportHeight,
       viewportHeight,
     });
+    updatePinnedUserInput();
   });
 
   const handleContentSizeChange = useStableEvent((_width: number, height: number) => {
@@ -303,7 +390,14 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       previousContentHeight,
       contentHeight: nextContentHeight,
     });
+    updatePinnedUserInput();
   });
+
+  useEffect(() => {
+    updatePinnedUserInput();
+  }, [historyRows, pinUserInputsEnabled, updatePinnedUserInput]);
+
+  const containerStyle = useMemo(() => [nativeStyles.container, listStyle], [listStyle]);
 
   const renderItem = useStableEvent(
     ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
@@ -345,31 +439,34 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   }, [isLoadingOlderHistory]);
 
   return (
-    <FlatList
-      ref={flatListRef}
-      data={historyRows}
-      renderItem={renderItem}
-      keyExtractor={keyExtractor}
-      testID="agent-chat-scroll"
-      nativeID="agent-chat-scroll-native-virtualized"
-      ListHeaderComponent={liveHeaderContent ?? undefined}
-      ListFooterComponent={historyFooterContent ?? undefined}
-      contentContainerStyle={baseListContentContainerStyle}
-      style={listStyle}
-      onLayout={handleListLayout}
-      onScroll={handleScroll}
-      scrollEventThrottle={16}
-      onContentSizeChange={handleContentSizeChange}
-      maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
-      initialNumToRender={40}
-      maxToRenderPerBatch={40}
-      updateCellsBatchingPeriod={0}
-      windowSize={21}
-      removeClippedSubviews={false}
-      scrollEnabled={scrollEnabled}
-      showsVerticalScrollIndicator
-      inverted
-    />
+    <View style={containerStyle}>
+      <FlatList
+        ref={flatListRef}
+        data={historyRows}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        testID="agent-chat-scroll"
+        nativeID="agent-chat-scroll-native-virtualized"
+        ListHeaderComponent={liveHeaderContent ?? undefined}
+        ListFooterComponent={historyFooterContent ?? undefined}
+        contentContainerStyle={baseListContentContainerStyle}
+        style={nativeStyles.list}
+        onLayout={handleListLayout}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        onContentSizeChange={handleContentSizeChange}
+        maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
+        initialNumToRender={40}
+        maxToRenderPerBatch={40}
+        updateCellsBatchingPeriod={0}
+        windowSize={21}
+        removeClippedSubviews={false}
+        scrollEnabled={scrollEnabled}
+        showsVerticalScrollIndicator
+        inverted
+      />
+      {pinnedUserInputOverlay}
+    </View>
   );
 }
 

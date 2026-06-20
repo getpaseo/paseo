@@ -65,7 +65,7 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
@@ -97,7 +97,6 @@ import {
   type AssistantFileLinkSource,
   AssistantMarkdownCodeLink,
   AssistantMarkdownLink,
-  type InlinePathTarget,
   useAssistantFileLinkActions,
   useAssistantLinkPress,
 } from "@/assistant-file-links";
@@ -113,7 +112,6 @@ import {
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
-import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 export type { InlinePathTarget } from "@/assistant-file-links";
@@ -131,7 +129,22 @@ interface UserMessageProps {
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   disableOuterSpacing?: boolean;
+  presentation?: UserMessagePresentation;
 }
+
+type UserMessagePresentation = "inline" | "placeholder";
+
+interface UserMessageBubbleContentProps {
+  message: string;
+  images: UserMessageImageAttachment[];
+  attachments: AgentAttachment[];
+  onOpenImage?: (image: UserMessageImageAttachment) => void;
+  textNumberOfLines?: number;
+  selectable?: boolean;
+}
+
+const EMPTY_USER_MESSAGE_IMAGES: UserMessageImageAttachment[] = [];
+const EMPTY_USER_MESSAGE_ATTACHMENTS: AgentAttachment[] = [];
 
 const MessageOuterSpacingContext = createContext(false);
 
@@ -358,6 +371,13 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
   },
+  pinnedBubble: {
+    maxHeight: 118,
+    overflow: "hidden",
+  },
+  placeholder: {
+    opacity: 0,
+  },
   text: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
@@ -433,6 +453,85 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   );
 }
 
+function UserMessageBubbleContent({
+  message,
+  images,
+  attachments,
+  onOpenImage,
+  textNumberOfLines,
+  selectable = true,
+}: UserMessageBubbleContentProps) {
+  const { t } = useTranslation();
+  const hasText = message.trim().length > 0;
+  const hasImages = images.length > 0;
+  const hasAttachments = attachments.length > 0;
+  const imagePreviewContainerStyle = useMemo(
+    () => [
+      userMessageStylesheet.imagePreviewContainer,
+      hasText || hasAttachments ? userMessageStylesheet.imagePreviewSpacing : undefined,
+    ],
+    [hasAttachments, hasText],
+  );
+  const attachmentPreviewContainerStyle = useMemo(
+    () => [
+      userMessageStylesheet.attachmentPreviewContainer,
+      hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
+    ],
+    [hasText],
+  );
+
+  return (
+    <>
+      {hasImages ? (
+        <View style={imagePreviewContainerStyle}>
+          {images.map((image) =>
+            onOpenImage ? (
+              <UserMessageImagePill
+                key={image.id}
+                image={image}
+                onOpen={onOpenImage}
+                accessibilityLabel={t("composer.attachments.openImage")}
+              />
+            ) : (
+              <AttachmentFrame key={image.id}>
+                <AttachmentThumbnail metadata={image} />
+              </AttachmentFrame>
+            ),
+          )}
+        </View>
+      ) : null}
+      {hasAttachments ? (
+        <View style={attachmentPreviewContainerStyle}>
+          {attachments.map((attachment, index) => {
+            const content = getUserMessageAttachmentContent(attachment, t);
+            return (
+              <AttachmentFrame
+                key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+              >
+                <AttachmentLabel
+                  icon={content.icon}
+                  title={content.title}
+                  subtitle={content.subtitle}
+                />
+              </AttachmentFrame>
+            );
+          })}
+        </View>
+      ) : null}
+      {hasText ? (
+        <Text
+          selectable={selectable}
+          style={userMessageStylesheet.text}
+          numberOfLines={textNumberOfLines}
+          ellipsizeMode="tail"
+        >
+          {message}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 interface UserMessageAttachmentContent {
   icon: ReactNode;
   title: string;
@@ -480,6 +579,8 @@ function getUserMessageAttachmentContent(
         subtitle: getFileTypeLabel(attachment.fileName) ?? t("message.attachments.file"),
       };
   }
+  const exhaustive: never = attachment;
+  return exhaustive;
 }
 
 export const UserMessage = memo(function UserMessage({
@@ -487,14 +588,15 @@ export const UserMessage = memo(function UserMessage({
   agentId,
   messageId,
   message,
-  images = [],
-  attachments = [],
+  images = EMPTY_USER_MESSAGE_IMAGES,
+  attachments = EMPTY_USER_MESSAGE_ATTACHMENTS,
   timestamp,
   capabilities,
   client,
   isFirstInGroup = true,
   isLastInGroup = true,
   disableOuterSpacing,
+  presentation = "inline",
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
@@ -502,9 +604,8 @@ export const UserMessage = memo(function UserMessage({
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
+  const isPlaceholder = presentation === "placeholder";
   const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
-  const hasAttachments = attachments.length > 0;
   const showTrailingRow = hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
@@ -530,23 +631,11 @@ export const UserMessage = memo(function UserMessage({
         isLastInGroup ? userMessageStylesheet.containerLastInGroup : null,
         !isFirstInGroup || !isLastInGroup ? userMessageStylesheet.containerSpacing : null,
       ],
+      isPlaceholder ? userMessageStylesheet.placeholder : null,
     ],
-    [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup],
+    [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup, isPlaceholder],
   );
-  const imagePreviewContainerStyle = useMemo(
-    () => [
-      userMessageStylesheet.imagePreviewContainer,
-      hasText || hasAttachments ? userMessageStylesheet.imagePreviewSpacing : undefined,
-    ],
-    [hasAttachments, hasText],
-  );
-  const attachmentPreviewContainerStyle = useMemo(
-    () => [
-      userMessageStylesheet.attachmentPreviewContainer,
-      hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
-    ],
-    [hasText],
-  );
+  const bubbleStyle = userMessageStylesheet.bubble;
   const trailingRowStyle = useMemo(
     () => [
       userMessageStylesheet.trailingRow,
@@ -558,48 +647,25 @@ export const UserMessage = memo(function UserMessage({
   );
 
   return (
-    <View style={containerStyle} testID="user-message">
+    <View
+      style={containerStyle}
+      testID="user-message"
+      pointerEvents={isPlaceholder ? "none" : "auto"}
+      accessibilityElementsHidden={isPlaceholder}
+      importantForAccessibility={isPlaceholder ? "no-hide-descendants" : "auto"}
+    >
       <View
         style={userMessageStylesheet.content}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <View style={userMessageStylesheet.bubble}>
-          {hasImages ? (
-            <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
-                <UserMessageImagePill
-                  key={image.id}
-                  image={image}
-                  onOpen={setLightboxMetadata}
-                  accessibilityLabel={t("composer.attachments.openImage")}
-                />
-              ))}
-            </View>
-          ) : null}
-          {hasAttachments ? (
-            <View style={attachmentPreviewContainerStyle}>
-              {attachments.map((attachment, index) => {
-                const content = getUserMessageAttachmentContent(attachment, t);
-                return (
-                  <AttachmentFrame
-                    key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                  >
-                    <AttachmentLabel
-                      icon={content.icon}
-                      title={content.title}
-                      subtitle={content.subtitle}
-                    />
-                  </AttachmentFrame>
-                );
-              })}
-            </View>
-          ) : null}
-          {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
-              {message}
-            </Text>
-          ) : null}
+        <View style={bubbleStyle}>
+          <UserMessageBubbleContent
+            message={message}
+            images={images}
+            attachments={attachments}
+            onOpenImage={isPlaceholder ? undefined : setLightboxMetadata}
+          />
         </View>
         {hasText ? (
           <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
@@ -620,7 +686,42 @@ export const UserMessage = memo(function UserMessage({
           </View>
         ) : null}
       </View>
-      <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+      {!isPlaceholder ? (
+        <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+      ) : null}
+    </View>
+  );
+});
+
+interface PinnedUserMessageProps {
+  message: string;
+  images?: UserMessageImageAttachment[];
+  attachments?: AgentAttachment[];
+}
+
+export const PinnedUserMessage = memo(function PinnedUserMessage({
+  message,
+  images = EMPTY_USER_MESSAGE_IMAGES,
+  attachments = EMPTY_USER_MESSAGE_ATTACHMENTS,
+}: PinnedUserMessageProps) {
+  const bubbleStyle = useMemo(
+    () => [userMessageStylesheet.bubble, userMessageStylesheet.pinnedBubble],
+    [],
+  );
+
+  return (
+    <View style={userMessageStylesheet.container} testID="pinned-user-message" pointerEvents="none">
+      <View style={userMessageStylesheet.content}>
+        <View style={bubbleStyle}>
+          <UserMessageBubbleContent
+            message={message}
+            images={images}
+            attachments={attachments}
+            textNumberOfLines={4}
+            selectable={false}
+          />
+        </View>
+      </View>
     </View>
   );
 });

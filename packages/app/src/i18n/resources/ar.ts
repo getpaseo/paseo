@@ -171,6 +171,7 @@ export const ar: TranslationResources = {
   agentStream: {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
+    scrollToPinnedUserInput: "انتقل إلى إدخال المستخدم المثبت",
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",
@@ -1488,6 +1489,13 @@ export const ar: TranslationResources = {
           ghostty: "شبحي",
           auto: "نظام",
         },
+      },
+      messages: {
+        title: "الرسائل",
+      },
+      pinUserInputs: {
+        label: "تثبيت إدخالات المستخدم",
+        description: "يبقي مطالبة المستخدم ذات الصلة مرئية أثناء التمرير عبر الردود",
       },
       fonts: {
         title: "الخطوط",
