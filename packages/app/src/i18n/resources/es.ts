@@ -171,6 +171,11 @@ export const es: TranslationResources = {
   agentStream: {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
+    thinking: {
+      label: "Pensamiento",
+      workedFor: "Trabajó durante {{duration}}",
+      workingFor: "Trabajando durante {{duration}}",
+    },
     permission: {
       plan: "Plan",
       required: "Permiso requerido",
@@ -1524,6 +1529,19 @@ export const es: TranslationResources = {
           claude: "claudio",
           ghostty: "fantasmal",
           auto: "Sistema",
+        },
+      },
+      messages: {
+        title: "Mensajes",
+        collapseThinking: {
+          label: "Contraer pensamiento",
+          description: "Oculta razonamiento, llamadas a herramientas y salida intermedia",
+          accessibilityLabel: "Contraer pensamiento ({{value}})",
+          options: {
+            never: "Nunca",
+            completed: "Respuestas completadas",
+            completedAndActive: "Respuestas completadas y activas",
+          },
         },
       },
       fonts: {

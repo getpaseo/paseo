@@ -20,14 +20,16 @@ import {
   ActivityIndicator,
   type PressableStateCallbackType,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { Check, ChevronDown, X } from "lucide-react-native";
+import { Check, ChevronDown, ChevronRight, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
+import { useAppSettings } from "@/hooks/use-settings";
 import {
   AssistantMessage,
   SpeakMessage,
@@ -56,6 +58,11 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
 import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
+import {
+  buildCollapseThinkingGroups,
+  type ThinkingGroup,
+  type ThinkingGroupIndex,
+} from "./collapse-thinking";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
@@ -81,6 +88,8 @@ import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { MountedTabActiveContext } from "@/components/split-container";
+import { formatDuration } from "@/utils/time";
+import type { TurnTiming } from "@/timeline/turn-time";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -205,6 +214,7 @@ function renderLiveHeadStreamItem(input: {
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
+  pauseBottomAnchoringForNextLayoutChange(): void;
 }
 
 export interface AgentStreamViewProps {
@@ -232,6 +242,12 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
+
+const EMPTY_THINKING_GROUP_INDEX: ThinkingGroupIndex = {
+  groups: [],
+  groupByAnchorItemId: new Map(),
+  groupByItemId: new Map(),
+};
 
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
@@ -263,8 +279,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(
       new Set(),
     );
+    const [expandedThinkingGroupIds, setExpandedThinkingGroupIds] = useState<Map<string, boolean>>(
+      new Map(),
+    );
     const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
     const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
+    const collapseThinkingBehavior = useAppSettings().settings.collapseThinking;
 
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? agent.serverId ?? "";
@@ -298,6 +318,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     useEffect(() => {
       setIsNearBottom(true);
       setExpandedInlineToolCallIds(new Set());
+      setExpandedThinkingGroupIds(new Map());
     }, [agentId]);
 
     const handleInlinePathPress = useStableEvent(
@@ -374,6 +395,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }
     const effectiveStreamItems = isActive ? streamItems : frozenStreamItemsRef.current;
     const effectiveStreamHead = isActive ? streamHead : frozenStreamHeadRef.current;
+    const chronologicalStreamItems = useMemo(
+      () => [...effectiveStreamItems, ...(effectiveStreamHead ?? EMPTY_STREAM_HEAD)],
+      [effectiveStreamHead, effectiveStreamItems],
+    );
+    const thinkingGroupIndex = useMemo(() => {
+      if (collapseThinkingBehavior === "never") {
+        return EMPTY_THINKING_GROUP_INDEX;
+      }
+      return buildCollapseThinkingGroups({
+        items: chronologicalStreamItems,
+        behavior: collapseThinkingBehavior,
+      });
+    }, [chronologicalStreamItems, collapseThinkingBehavior]);
 
     const baseRenderModel = useMemo(() => {
       return buildAgentStreamRenderModel({
@@ -410,12 +444,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
         },
+        pauseBottomAnchoringForNextLayoutChange() {
+          viewportRef.current?.pauseBottomAnchoringForNextLayoutChange();
+        },
       }),
       [],
     );
 
     const scrollToBottom = useCallback(() => {
       viewportRef.current?.scrollToBottom("jump-to-bottom");
+    }, []);
+    const pauseBottomAnchoringForNextLayoutChange = useCallback(() => {
+      viewportRef.current?.pauseBottomAnchoringForNextLayoutChange();
     }, []);
 
     const setInlineDetailsExpanded = useCallback(
@@ -595,8 +635,38 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;
 
+    const layoutItemById = useMemo(() => {
+      const itemById = new Map<string, StreamLayoutItem>();
+      for (const item of streamLayout.history) {
+        itemById.set(item.item.id, item);
+      }
+      for (const item of streamLayout.liveHead) {
+        itemById.set(item.item.id, item);
+      }
+      return itemById;
+    }, [streamLayout.history, streamLayout.liveHead]);
+
     const renderStreamItem = useCallback(
       (layoutItem: StreamLayoutItem) => {
+        const thinkingGroup = thinkingGroupIndex.groupByItemId.get(layoutItem.item.id);
+        if (thinkingGroup) {
+          if (thinkingGroup.anchorItemId !== layoutItem.item.id) {
+            return null;
+          }
+          return (
+            <ThinkingGroupRow
+              group={thinkingGroup}
+              layoutItemById={layoutItemById}
+              expanded={expandedThinkingGroupIds.get(thinkingGroup.id)}
+              onExpandedChange={setExpandedThinkingGroupIds}
+              onExpandStart={pauseBottomAnchoringForNextLayoutChange}
+              runningStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+              timingByAssistantId={baseRenderModel.turnTiming.byAssistantId}
+              renderStreamItemContent={renderStreamItemContent}
+            />
+          );
+        }
+
         const content = renderStreamItemContent(layoutItem);
         return renderStreamItemWithTurnFooter({
           content,
@@ -604,7 +674,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           strategy: streamRenderStrategy,
         });
       },
-      [renderStreamItemContent, streamRenderStrategy],
+      [
+        expandedThinkingGroupIds,
+        baseRenderModel.turnTiming.byAssistantId,
+        baseRenderModel.turnTiming.runningStartedAt,
+        layoutItemById,
+        pauseBottomAnchoringForNextLayoutChange,
+        renderStreamItemContent,
+        streamRenderStrategy,
+        thinkingGroupIndex,
+      ],
     );
 
     const pendingPermissionItems = useMemo(
@@ -864,6 +943,212 @@ function ToolCallSlot({
   );
   return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
 }
+
+interface ThinkingGroupRowProps {
+  group: ThinkingGroup;
+  layoutItemById: Map<string, StreamLayoutItem>;
+  expanded: boolean | undefined;
+  onExpandedChange: (updater: (previous: Map<string, boolean>) => Map<string, boolean>) => void;
+  onExpandStart: () => void;
+  runningStartedAt: Date | null;
+  timingByAssistantId: Map<string, TurnTiming>;
+  renderStreamItemContent: (layoutItem: StreamLayoutItem) => ReactNode;
+}
+
+function ThinkingGroupRow({
+  group,
+  layoutItemById,
+  expanded,
+  onExpandedChange,
+  onExpandStart,
+  runningStartedAt,
+  timingByAssistantId,
+  renderStreamItemContent,
+}: ThinkingGroupRowProps) {
+  const groupLayouts = useMemo(() => {
+    const layouts: StreamLayoutItem[] = [];
+    for (const itemId of group.itemIds) {
+      const layoutItem = layoutItemById.get(itemId);
+      if (layoutItem) {
+        layouts.push(layoutItem);
+      }
+    }
+    return layouts;
+  }, [group.itemIds, layoutItemById]);
+
+  const lastLayout = groupLayouts.at(-1);
+  const gapBelow = lastLayout?.gapBelow ?? 0;
+  const isExpanded = expanded ?? group.defaultExpanded;
+  const completedTiming = group.finalAssistantItemId
+    ? timingByAssistantId.get(group.finalAssistantItemId)
+    : undefined;
+
+  const handleExpandedChange = useCallback(
+    (nextExpanded: boolean) => {
+      onExpandedChange((previous) => {
+        const next = new Map(previous);
+        next.set(group.id, nextExpanded);
+        return next;
+      });
+    },
+    [group.id, onExpandedChange],
+  );
+
+  if (groupLayouts.length === 0) {
+    return null;
+  }
+
+  return (
+    <StreamItemWrapper gapBelow={gapBelow}>
+      <CollapsibleThinkingGroup
+        completedTiming={completedTiming}
+        expanded={isExpanded}
+        groupStatus={group.status}
+        runningStartedAt={runningStartedAt}
+        onExpandStart={onExpandStart}
+        onExpandedChange={handleExpandedChange}
+      >
+        {groupLayouts.map((layoutItem, index) => {
+          return (
+            <ThinkingGroupContentItem
+              key={layoutItem.item.id}
+              layoutItem={layoutItem}
+              isLast={index === groupLayouts.length - 1}
+              renderStreamItemContent={renderStreamItemContent}
+            />
+          );
+        })}
+      </CollapsibleThinkingGroup>
+    </StreamItemWrapper>
+  );
+}
+
+function ThinkingGroupContentItem({
+  layoutItem,
+  isLast,
+  renderStreamItemContent,
+}: {
+  layoutItem: StreamLayoutItem;
+  isLast: boolean;
+  renderStreamItemContent: (layoutItem: StreamLayoutItem) => ReactNode;
+}) {
+  const content = renderStreamItemContent(layoutItem);
+  const itemStyle = useMemo(
+    () => (isLast ? undefined : { marginBottom: layoutItem.gapBelow }),
+    [isLast, layoutItem.gapBelow],
+  );
+  if (!content) {
+    return null;
+  }
+  return <View style={itemStyle}>{content}</View>;
+}
+
+function CollapsibleThinkingGroup({
+  completedTiming,
+  expanded,
+  groupStatus,
+  runningStartedAt,
+  onExpandStart,
+  onExpandedChange,
+  children,
+}: {
+  completedTiming?: TurnTiming;
+  expanded: boolean;
+  groupStatus: ThinkingGroup["status"];
+  runningStartedAt: Date | null;
+  onExpandStart: () => void;
+  onExpandedChange: (expanded: boolean) => void;
+  children: ReactNode;
+}) {
+  const handlePress = useCallback(() => {
+    if (!expanded) {
+      onExpandStart();
+    }
+    onExpandedChange(!expanded);
+  }, [expanded, onExpandStart, onExpandedChange]);
+  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  const Icon = expanded ? ChevronDown : ChevronRight;
+
+  return (
+    <View style={thinkingGroupStyles.container}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        onPress={handlePress}
+        style={thinkingGroupStyles.header}
+      >
+        <Icon size={14} color={thinkingGroupStyles.chevron.color} />
+        <ThinkingGroupHeaderTitle
+          completedTiming={completedTiming}
+          expanded={expanded}
+          groupStatus={groupStatus}
+          runningStartedAt={runningStartedAt}
+          style={thinkingGroupStyles.title}
+        />
+      </Pressable>
+      {expanded ? <View style={thinkingGroupStyles.content}>{children}</View> : null}
+    </View>
+  );
+}
+
+function ThinkingGroupHeaderTitle({
+  completedTiming,
+  expanded,
+  groupStatus,
+  runningStartedAt,
+  style,
+}: {
+  completedTiming?: TurnTiming;
+  expanded: boolean;
+  groupStatus: ThinkingGroup["status"];
+  runningStartedAt: Date | null;
+  style: StyleProp<TextStyle>;
+}) {
+  const { t } = useTranslation();
+
+  if (expanded) {
+    return <Text style={style}>{t("agentStream.thinking.label")}</Text>;
+  }
+  if (groupStatus === "completed" && completedTiming) {
+    return (
+      <Text style={style}>
+        {t("agentStream.thinking.workedFor", {
+          duration: formatDuration(completedTiming.durationMs),
+        })}
+      </Text>
+    );
+  }
+  if (groupStatus === "active" && runningStartedAt) {
+    return <LiveThinkingGroupHeaderTitle startedAt={runningStartedAt} style={style} />;
+  }
+  return <Text style={style}>{t("agentStream.thinking.label")}</Text>;
+}
+
+const LiveThinkingGroupHeaderTitle = memo(function LiveThinkingGroupHeaderTitle({
+  startedAt,
+  style,
+}: {
+  startedAt: Date;
+  style: StyleProp<TextStyle>;
+}) {
+  const { t } = useTranslation();
+  const startedAtMs = startedAt.getTime();
+  const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - startedAtMs));
+
+  useEffect(() => {
+    setElapsedMs(Math.max(0, Date.now() - startedAtMs));
+    const handle = setInterval(() => {
+      setElapsedMs(Math.max(0, Date.now() - startedAtMs));
+    }, 100);
+    return () => clearInterval(handle);
+  }, [startedAtMs]);
+
+  return (
+    <Text style={style}>
+      {t("agentStream.thinking.workingFor", { duration: formatDuration(elapsedMs) })}
+    </Text>
+  );
+});
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCheckIcon = withUnistyles(Check);
@@ -1301,6 +1586,38 @@ const permissionStyles = StyleSheet.create((theme) => ({
 }));
 
 const optionTextPrimaryStyle = [permissionStyles.optionText, permissionStyles.optionTextPrimary];
+
+const thinkingGroupStyles = StyleSheet.create((theme) => ({
+  container: {
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface1,
+    overflow: "hidden",
+  },
+  header: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+  },
+  chevron: {
+    color: theme.colors.foregroundMuted,
+  },
+  title: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  content: {
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+    padding: theme.spacing[3],
+  },
+}));
 
 interface StreamItemWrapperProps {
   gapBelow: number;

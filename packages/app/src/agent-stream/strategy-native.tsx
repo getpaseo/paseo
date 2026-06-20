@@ -209,6 +209,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      pauseBottomAnchoringForNextLayoutChange: () => {
+        bottomAnchorController.pauseStickyContentAnchoringForNextLayoutChange();
+      },
     };
     viewportRef.current = handle;
     return () => {

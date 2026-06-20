@@ -172,6 +172,11 @@ export const fr: TranslationResources = {
   agentStream: {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
+    thinking: {
+      label: "Réflexion",
+      workedFor: "A travaillé pendant {{duration}}",
+      workingFor: "Travaille depuis {{duration}}",
+    },
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -1528,6 +1533,19 @@ export const fr: TranslationResources = {
           claude: "Claude",
           ghostty: "Fantôme",
           auto: "Système",
+        },
+      },
+      messages: {
+        title: "Messages",
+        collapseThinking: {
+          label: "Réduire la réflexion",
+          description: "Masque le raisonnement, les appels d'outils et les sorties intermédiaires",
+          accessibilityLabel: "Réduire la réflexion ({{value}})",
+          options: {
+            never: "Jamais",
+            completed: "Réponses terminées",
+            completedAndActive: "Réponses terminées et actives",
+          },
         },
       },
       fonts: {

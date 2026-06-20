@@ -26,6 +26,7 @@ import {
   sanitizeFontFamily,
   useAppSettings,
   type AppSettings,
+  type CollapseThinkingBehavior,
 } from "@/hooks/use-settings";
 import {
   DEFAULT_MONO_FONT_STACK,
@@ -64,12 +65,27 @@ function getThemeLabel(t: TFunction, value: AppSettings["theme"]): string {
   return t(labelKeys[value]);
 }
 
+function getCollapseThinkingLabel(t: TFunction, value: CollapseThinkingBehavior): string {
+  const labelKeys: Record<CollapseThinkingBehavior, string> = {
+    never: "settings.appearance.messages.collapseThinking.options.never",
+    completed: "settings.appearance.messages.collapseThinking.options.completed",
+    "completed-and-active":
+      "settings.appearance.messages.collapseThinking.options.completedAndActive",
+  };
+  return t(labelKeys[value]);
+}
+
 const PRIMARY_THEMES: readonly AppSettings["theme"][] = ["light", "dark", "auto"];
 const DARK_VARIANT_THEMES: readonly AppSettings["theme"][] = [
   "zinc",
   "midnight",
   "claude",
   "ghostty",
+];
+const COLLAPSE_THINKING_OPTIONS: readonly CollapseThinkingBehavior[] = [
+  "never",
+  "completed",
+  "completed-and-active",
 ];
 
 // Platform default stacks can be the bare native tokens ("normal"/"monospace");
@@ -186,6 +202,68 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
         </DropdownMenuContent>
       </DropdownMenu>
     </View>
+  );
+}
+
+interface CollapseThinkingRowProps {
+  value: CollapseThinkingBehavior;
+  onChange: (value: CollapseThinkingBehavior) => void;
+}
+
+function CollapseThinkingRow({ value, onChange }: CollapseThinkingRowProps) {
+  const { t } = useTranslation();
+  const selectedLabel = getCollapseThinkingLabel(t, value);
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.appearance.messages.collapseThinking.label")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.messages.collapseThinking.description")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          style={dropdownTriggerStyle}
+          accessibilityLabel={t(
+            "settings.appearance.messages.collapseThinking.accessibilityLabel",
+            { value: selectedLabel },
+          )}
+        >
+          <Text style={styles.triggerText}>{selectedLabel}</Text>
+          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={240}>
+          {COLLAPSE_THINKING_OPTIONS.map((option) => (
+            <CollapseThinkingMenuItem
+              key={option}
+              option={option}
+              selected={value === option}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+function CollapseThinkingMenuItem({
+  option,
+  selected,
+  onChange,
+}: {
+  option: CollapseThinkingBehavior;
+  selected: boolean;
+  onChange: (value: CollapseThinkingBehavior) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(option), [onChange, option]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {getCollapseThinkingLabel(t, option)}
+    </DropdownMenuItem>
   );
 }
 
@@ -390,6 +468,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleCollapseThinkingChange = useCallback(
+    (collapseThinking: CollapseThinkingBehavior) => {
+      void updateSettings({ collapseThinking });
+    },
+    [updateSettings],
+  );
+
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
@@ -475,6 +560,14 @@ export function AppearanceSection() {
       <SettingsSection title={t("settings.appearance.theme.title")}>
         <View style={settingsStyles.card}>
           <ThemeRow value={settings.theme} onChange={handleThemeChange} />
+        </View>
+      </SettingsSection>
+      <SettingsSection title={t("settings.appearance.messages.title")}>
+        <View style={settingsStyles.card}>
+          <CollapseThinkingRow
+            value={settings.collapseThinking}
+            onChange={handleCollapseThinkingChange}
+          />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>

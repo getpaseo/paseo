@@ -85,6 +85,7 @@ interface BottomAnchorControllerDriver {
     nextIsNearBottom: boolean;
     scrollDelta: number;
   }) => void;
+  pauseStickyContentAnchoringForNextLayoutChange: () => void;
   notifyAuthoritativeHistoryMaybeChanged: () => void;
   reevaluate: (animated?: boolean) => void;
 }
@@ -243,6 +244,8 @@ function createBottomAnchorControllerDriver(
   let lastRouteRequestKey: string | null = null;
   let stickyMeasurementRevision = 0;
   let lastVerifiedStickyMeasurementRevision = 0;
+  let isStickyContentAnchoringPausedForNextLayoutChange = false;
+  let shouldIgnoreNextPausedLayoutScrollAway = false;
 
   const setBlockedReason = (nextBlockedReason: BottomAnchorBlockedReason | null) => {
     if (blockedReason === nextBlockedReason) {
@@ -481,6 +484,8 @@ function createBottomAnchorControllerDriver(
       cancelPendingAttempt();
       stickyMeasurementRevision = 0;
       lastVerifiedStickyMeasurementRevision = 0;
+      isStickyContentAnchoringPausedForNextLayoutChange = false;
+      shouldIgnoreNextPausedLayoutScrollAway = false;
       mode = "sticky-bottom";
       input.onModeChange("sticky-bottom");
     },
@@ -529,6 +534,17 @@ function createBottomAnchorControllerDriver(
       if (params.previousContentHeight !== params.contentHeight) {
         markStickyMeasurementChanged();
       }
+      if (
+        isStickyContentAnchoringPausedForNextLayoutChange &&
+        params.contentHeight > params.previousContentHeight
+      ) {
+        isStickyContentAnchoringPausedForNextLayoutChange = false;
+        shouldIgnoreNextPausedLayoutScrollAway = true;
+        markStickyMeasurementVerified();
+        cancelPendingAttempt();
+        setBlockedReason(null);
+        return;
+      }
       const shouldRestick = __private__.shouldRestickOnContentChange({
         mode,
         previousContentHeight: params.previousContentHeight,
@@ -557,6 +573,9 @@ function createBottomAnchorControllerDriver(
       if (mode !== "sticky-bottom") {
         return;
       }
+      if (isStickyContentAnchoringPausedForNextLayoutChange) {
+        return;
+      }
       markStickyMeasurementChanged();
       if (!pendingRequest) {
         pendingVerification = { requestId: null, retries: 0 };
@@ -571,6 +590,12 @@ function createBottomAnchorControllerDriver(
     },
     handleScrollNearBottomChange(params) {
       const { nextIsNearBottom, scrollDelta } = params;
+      if (shouldIgnoreNextPausedLayoutScrollAway) {
+        shouldIgnoreNextPausedLayoutScrollAway = false;
+        if (!nextIsNearBottom) {
+          return;
+        }
+      }
       if (
         nextIsNearBottom &&
         mode === "sticky-bottom" &&
@@ -603,6 +628,15 @@ function createBottomAnchorControllerDriver(
       if (nextIsNearBottom && pendingRequest) {
         evaluate(false, "scroll_near_bottom_change");
       }
+    },
+    pauseStickyContentAnchoringForNextLayoutChange() {
+      if (mode !== "sticky-bottom") {
+        return;
+      }
+      isStickyContentAnchoringPausedForNextLayoutChange = true;
+      shouldIgnoreNextPausedLayoutScrollAway = false;
+      cancelPendingAttempt();
+      setBlockedReason(null);
     },
     notifyAuthoritativeHistoryMaybeChanged() {
       if (!pendingVerification && !pendingRequest) {
@@ -760,6 +794,9 @@ export function useBottomAnchorController(input: {
     },
     handleScrollNearBottomChange(params: { nextIsNearBottom: boolean; scrollDelta: number }) {
       driverRef.current?.handleScrollNearBottomChange(params);
+    },
+    pauseStickyContentAnchoringForNextLayoutChange() {
+      driverRef.current?.pauseStickyContentAnchoringForNextLayoutChange();
     },
     reevaluate(animated = false) {
       driverRef.current?.reevaluate(animated);

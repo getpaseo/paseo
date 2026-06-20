@@ -295,6 +295,41 @@ describe("bottom anchor controller driver", () => {
     expect(harness.scrollToBottom).toHaveBeenCalledTimes(2);
   });
 
+  it("pauses sticky content anchoring for a user-expanded layout change", () => {
+    const harness = createDriverHarness();
+
+    harness.driver.pauseStickyContentAnchoringForNextLayoutChange();
+    harness.driver.prepareForStickyContentChange();
+    harness.scheduler.flushAll();
+
+    harness.context.measurementState.contentHeight = 1600;
+    harness.context.nearBottom = false;
+    harness.driver.handleContentSizeChange({
+      previousContentHeight: 1200,
+      contentHeight: 1600,
+    });
+    harness.scheduler.flushAll();
+
+    expect(harness.scrollToBottom).not.toHaveBeenCalled();
+    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
+
+    harness.driver.handleScrollNearBottomChange({
+      nextIsNearBottom: false,
+      scrollDelta: 0,
+    });
+
+    expect(harness.driver.getSnapshot().mode).toBe("sticky-bottom");
+
+    harness.context.measurementState.contentHeight = 1800;
+    harness.driver.handleContentSizeChange({
+      previousContentHeight: 1600,
+      contentHeight: 1800,
+    });
+    harness.scheduler.flushAll();
+
+    expect(harness.scrollToBottom).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a pending request blocked when stale container measurements arrive", () => {
     const harness = createDriverHarness({
       measurementState: createMeasurementState({

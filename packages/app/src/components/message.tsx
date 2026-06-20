@@ -663,12 +663,6 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
 
 const TIMESTAMP_REVEAL_MS = 3000;
 
-/**
- * Footer rendered next to the copy button at the end of an assistant turn.
- * Always shows the turn duration; swaps to the end timestamp on hover (web)
- * or tap (native). The hidden sizer keeps the label width stable while the
- * visible text swaps.
- */
 export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
   completedAt,
@@ -702,11 +696,13 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
   const handlePress = useCallback(() => {
-    if (isWeb || !canSwap) return;
+    if (isWeb || !canSwap) {
+      return;
+    }
     if (revealTimerRef.current) {
       clearTimeout(revealTimerRef.current);
     }
-    setPressedReveal((prev) => !prev);
+    setPressedReveal((previous) => !previous);
     revealTimerRef.current = setTimeout(() => {
       setPressedReveal(false);
       revealTimerRef.current = null;
@@ -728,8 +724,6 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
           accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : durationLabel}
         >
           <View style={assistantTurnFooterStylesheet.labelWrapper}>
-            {/* Sizer reserves space for whichever label is longer so the
-                container width is stable across hover transitions. */}
             <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
               {durationLabel.length >= timestampLabel.length ? durationLabel : timestampLabel}
             </Text>

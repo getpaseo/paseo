@@ -171,6 +171,11 @@ export const ru: TranslationResources = {
   agentStream: {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
+    thinking: {
+      label: "Размышления",
+      workedFor: "Работал {{duration}}",
+      workingFor: "Работает {{duration}}",
+    },
     permission: {
       plan: "План",
       required: "Требуется разрешение",
@@ -1515,6 +1520,19 @@ export const ru: TranslationResources = {
           claude: "Клод",
           ghostty: "Призрачный",
           auto: "Система",
+        },
+      },
+      messages: {
+        title: "Сообщения",
+        collapseThinking: {
+          label: "Сворачивать размышления",
+          description: "Скрывать рассуждения, вызовы инструментов и промежуточный вывод",
+          accessibilityLabel: "Сворачивать размышления ({{value}})",
+          options: {
+            never: "Никогда",
+            completed: "Завершенные ответы",
+            completedAndActive: "Завершенные и активные ответы",
+          },
         },
       },
       fonts: {
