@@ -4,7 +4,23 @@ export type SherpaOnnxModelKind = "stt-offline" | "tts";
 
 type DefaultModelRole = "stt" | "tts";
 
-interface SherpaOnnxCatalogEntry {
+export type SherpaOfflineRecognizerModelSpec =
+  | {
+      kind: "nemo_transducer";
+      encoder: string;
+      decoder: string;
+      joiner: string;
+      tokens: string;
+    }
+  | {
+      kind: "sense_voice";
+      model: string;
+      tokens: string;
+      language: "auto";
+      useInverseTextNormalization: boolean;
+    };
+
+interface SherpaOnnxCatalogEntryBase {
   kind: SherpaOnnxModelKind;
   archiveUrl: string;
   extractedDir: string;
@@ -13,6 +29,15 @@ interface SherpaOnnxCatalogEntry {
   defaultFor?: DefaultModelRole;
 }
 
+type SherpaOnnxCatalogEntry =
+  | (SherpaOnnxCatalogEntryBase & {
+      kind: "stt-offline";
+      recognizer: SherpaOfflineRecognizerModelSpec;
+    })
+  | (SherpaOnnxCatalogEntryBase & {
+      kind: "tts";
+    });
+
 export const SHERPA_ONNX_MODEL_CATALOG = {
   "parakeet-tdt-0.6b-v2-int8": {
     kind: "stt-offline",
@@ -20,6 +45,13 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
     extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+    recognizer: {
+      kind: "nemo_transducer",
+      encoder: "encoder.int8.onnx",
+      decoder: "decoder.int8.onnx",
+      joiner: "joiner.int8.onnx",
+      tokens: "tokens.txt",
+    },
     description: "NVIDIA Parakeet TDT v2 (offline NeMo transducer, English).",
     defaultFor: "stt",
   },
@@ -29,8 +61,31 @@ export const SHERPA_ONNX_MODEL_CATALOG = {
       "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
     extractedDir: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
     requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+    recognizer: {
+      kind: "nemo_transducer",
+      encoder: "encoder.int8.onnx",
+      decoder: "decoder.int8.onnx",
+      joiner: "joiner.int8.onnx",
+      tokens: "tokens.txt",
+    },
     description:
       "NVIDIA Parakeet TDT v3 (offline NeMo transducer, 25 European languages, auto-detected).",
+  },
+  "sense-voice-zh-en-ja-ko-yue-int8-2025-09-09": {
+    kind: "stt-offline",
+    archiveUrl:
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2",
+    extractedDir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09",
+    requiredFiles: ["model.int8.onnx", "tokens.txt"],
+    recognizer: {
+      kind: "sense_voice",
+      model: "model.int8.onnx",
+      tokens: "tokens.txt",
+      language: "auto",
+      useInverseTextNormalization: true,
+    },
+    description:
+      "SenseVoice int8 (offline, Chinese/English/Japanese/Korean/Cantonese, auto-detected).",
   },
   "kokoro-en-v0_19": {
     kind: "tts",

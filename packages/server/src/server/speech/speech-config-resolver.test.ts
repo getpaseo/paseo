@@ -5,6 +5,8 @@ import { describe, expect, test } from "vitest";
 import { PersistedConfigSchema } from "../persisted-config.js";
 import { resolveSpeechConfig } from "./speech-config-resolver.js";
 
+const SENSE_VOICE_MODEL = "sense-voice-zh-en-ja-ko-yue-int8-2025-09-09";
+
 describe("resolveSpeechConfig", () => {
   test("resolves local-first defaults without env overrides", () => {
     const paseoHome = "/tmp/paseo-home";
@@ -131,6 +133,35 @@ describe("resolveSpeechConfig", () => {
     });
     expect(result.openai?.apiKey).toBe("env-key");
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
+  });
+
+  test("accepts SenseVoice as a local STT model for dictation and voice mode", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: {
+          stt: {
+            provider: "local",
+            model: SENSE_VOICE_MODEL,
+          },
+        },
+        voiceMode: {
+          stt: {
+            provider: "local",
+            model: SENSE_VOICE_MODEL,
+          },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.speech.local?.models.dictationStt).toBe(SENSE_VOICE_MODEL);
+    expect(result.speech.local?.models.voiceStt).toBe(SENSE_VOICE_MODEL);
+    expect(result.speech.local?.models.voiceTts).toBe("kokoro-en-v0_19");
   });
 
   test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {
