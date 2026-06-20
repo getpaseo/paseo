@@ -37,6 +37,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
   let client: WorkspaceSetupDaemonClient | null = null;
   const repos: Array<{ cleanup: () => Promise<void> }> = [];
   const worktrees: WorktreeRecord[] = [];
+  const projectIds = new Set<string>();
 
   const withWorkspace: WithWorkspace = async (options) => {
     if (!client) {
@@ -64,6 +65,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
       if (!added.project) {
         throw new Error(added.error ?? `Failed to add project ${repo.path}`);
       }
+      projectIds.add(added.project.projectId);
     }
 
     const created = await client.createWorkspace({
@@ -73,6 +75,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
       throw new Error(created.error ?? `Failed to create workspace ${workspacePath}`);
     }
     const workspaceId = created.workspace.id;
+    projectIds.add(created.workspace.projectId);
 
     return {
       workspaceId,
@@ -88,6 +91,11 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
   return {
     withWorkspace,
     cleanup: async () => {
+      if (client) {
+        for (const projectId of projectIds) {
+          await client.removeProject(projectId).catch(() => undefined);
+        }
+      }
       for (const { repoPath, worktreePath } of worktrees) {
         try {
           execSync(`git worktree remove ${JSON.stringify(worktreePath)} --force`, {

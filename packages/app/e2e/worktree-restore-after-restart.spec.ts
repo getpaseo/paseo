@@ -58,6 +58,7 @@ test.describe("Worktree restore after daemon restart", () => {
 
     const agent = await createIdleAgent(client, {
       cwd: worktree.workspaceDirectory,
+      workspaceId: worktree.workspaceId,
       title: `restart-restore-${randomUUID().slice(0, 8)}`,
     });
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);

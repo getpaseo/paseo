@@ -57,6 +57,7 @@ test.describe("Worktree restore", () => {
 
     const agent = await createIdleAgent(client, {
       cwd: worktree.workspaceDirectory,
+      workspaceId: worktree.workspaceId,
       title: `restore-inplace-${randomUUID().slice(0, 8)}`,
     });
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);
@@ -99,6 +100,7 @@ test.describe("Worktree restore", () => {
 
     const agent = await createIdleAgent(client, {
       cwd: worktree.workspaceDirectory,
+      workspaceId: worktree.workspaceId,
       title: `restore-recreate-${randomUUID().slice(0, 8)}`,
     });
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);

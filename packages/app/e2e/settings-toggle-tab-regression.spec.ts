@@ -54,10 +54,12 @@ test.describe("Settings toggle tab regression", () => {
     try {
       const firstAgent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `settings-toggle-a-${Date.now()}`,
       });
       const secondAgent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `settings-toggle-b-${Date.now()}`,
       });
 
@@ -95,10 +97,12 @@ test.describe("Settings toggle tab regression", () => {
     try {
       const firstAgent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `agent-route-refresh-a-${Date.now()}`,
       });
       const secondAgent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `agent-route-refresh-b-${Date.now()}`,
       });
 

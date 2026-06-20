@@ -14,6 +14,7 @@ export interface AgentHandle {
   page: Page;
   client: SeedDaemonClient;
   agentId: string;
+  projectId: string;
   workspaceId: string;
   cwd: string;
   provider: RewindFlowProvider;
@@ -187,6 +188,7 @@ export async function launchAgent(input: {
     page: input.page,
     client,
     agentId: agent.id,
+    projectId: createdWorkspace.workspace.projectId,
     workspaceId: createdWorkspace.workspace.id,
     cwd: input.cwd,
     provider: input.provider,
@@ -196,6 +198,7 @@ export async function launchAgent(input: {
 }
 
 export async function closeAgent(handle: AgentHandle): Promise<void> {
+  await handle.client.removeProject(handle.projectId).catch(() => undefined);
   await handle.client.close().catch(() => undefined);
 }
 

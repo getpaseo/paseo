@@ -30,6 +30,7 @@ export interface SeedDaemonClient {
     } | null;
     error: string | null;
   }>;
+  removeProject(projectId: string): Promise<{ removedWorkspaceIds: string[] }>;
   fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{
     entries: SeedWorkspaceDescriptor[];
   }>;
@@ -199,15 +200,17 @@ export async function seedWorkspace(options: {
     if (!created.workspace) {
       throw new Error(created.error ?? `Failed to create workspace ${project.path}`);
     }
+    const workspace = created.workspace;
     return {
       client,
       repoPath: project.path,
-      workspaceId: created.workspace.id,
-      workspaceName: created.workspace.name,
-      workspaceDirectory: created.workspace.workspaceDirectory,
-      projectId: created.workspace.projectId,
-      projectDisplayName: created.workspace.projectDisplayName,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      workspaceDirectory: workspace.workspaceDirectory,
+      projectId: workspace.projectId,
+      projectDisplayName: workspace.projectDisplayName,
       cleanup: async () => {
+        await client.removeProject(workspace.projectId).catch(() => undefined);
         await client.close().catch(() => undefined);
         await project.cleanup().catch(() => undefined);
       },

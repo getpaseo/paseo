@@ -4,7 +4,7 @@ import { gotoAppShell } from "./helpers/app";
 import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 import { createTempGitRepo } from "./helpers/workspace";
-import { waitForNoProjectsInSidebar, waitForSidebarHydration } from "./helpers/workspace-ui";
+import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -51,6 +51,10 @@ async function addProjectFromPicker(page: Page, projectPath: string): Promise<st
   await page.getByTestId("sidebar-add-project").click();
 
   const input = page.getByPlaceholder("Type a directory path...");
+  await input.waitFor({ state: "visible", timeout: 2_000 }).catch(() => undefined);
+  if (!(await input.isVisible().catch(() => false))) {
+    await page.getByText("Open a folder on your machine", { exact: true }).click();
+  }
   await expect(input).toBeVisible({ timeout: 30_000 });
   await input.fill(projectPath);
   await page.keyboard.press("Enter");
@@ -66,6 +70,13 @@ async function addProjectFromPicker(page: Page, projectPath: string): Promise<st
   return testId!.replace("sidebar-project-row-", "");
 }
 
+async function waitForSidebarProjectListReady(page: Page): Promise<void> {
+  await page
+    .locator('[data-testid="sidebar-project-empty-state"], [data-testid^="sidebar-project-row-"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 60_000 });
+}
+
 // Projects are parents in the sidebar. Archiving the last workspace leaves the
 // project row in place with a ghost "+ New workspace" child row.
 test.describe("Project with no workspaces persists", () => {
@@ -76,7 +87,7 @@ test.describe("Project with no workspaces persists", () => {
 
     try {
       await gotoAppShell(page);
-      await waitForNoProjectsInSidebar(page);
+      await waitForSidebarProjectListReady(page);
 
       projectId = await addProjectFromPicker(page, repo.path);
       const projectRow = page.getByTestId(`sidebar-project-row-${projectId}`);
@@ -163,7 +174,7 @@ test.describe("Project remove", () => {
       await expect(projectRow).toHaveCount(0, { timeout: 30_000 });
 
       await page.reload();
-      await waitForSidebarHydration(page);
+      await waitForSidebarProjectListReady(page);
       await expect(projectRow).toHaveCount(0, { timeout: 30_000 });
 
       const readded = await workspace.client.addProject(workspace.repoPath);
