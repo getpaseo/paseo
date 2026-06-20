@@ -252,6 +252,7 @@ export default function TerminalEmulator({
   const scrollVisibilityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollActiveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastObservedOffsetRef = useRef<number | null>(null);
+  const lastMetricsRef = useRef({ offset: 0, viewportSize: 0, contentSize: 0 });
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
@@ -581,18 +582,36 @@ export default function TerminalEmulator({
 
     viewportRef.current = viewportElement;
 
+    const lastMetrics = lastMetricsRef.current;
+
     const updateViewportMetrics = () => {
-      setViewportMetrics({
-        offset: Math.max(0, viewportElement.scrollTop),
-        viewportSize: Math.max(0, viewportElement.clientHeight),
-        contentSize: Math.max(0, viewportElement.scrollHeight),
-      });
+      const offset = Math.max(0, viewportElement.scrollTop);
+      const viewportSize = Math.max(0, viewportElement.clientHeight);
+      const contentSize = Math.max(0, viewportElement.scrollHeight);
+      if (
+        offset === lastMetrics.offset &&
+        viewportSize === lastMetrics.viewportSize &&
+        contentSize === lastMetrics.contentSize
+      ) {
+        return;
+      }
+      lastMetrics.offset = offset;
+      lastMetrics.viewportSize = viewportSize;
+      lastMetrics.contentSize = contentSize;
+      setViewportMetrics({ offset, viewportSize, contentSize });
     };
 
     updateViewportMetrics();
 
+    let scrollRafId: number | null = null;
     const handleViewportScroll = () => {
-      updateViewportMetrics();
+      if (scrollRafId !== null) {
+        return;
+      }
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        updateViewportMetrics();
+      });
     };
 
     const resizeObserver = new ResizeObserver(() => {
@@ -604,22 +623,15 @@ export default function TerminalEmulator({
       resizeObserver.observe(scrollAreaElement);
     }
 
-    const mutationObserver = new MutationObserver(() => {
-      updateViewportMetrics();
-    });
-    mutationObserver.observe(host, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class"],
-    });
-
     viewportElement.addEventListener("scroll", handleViewportScroll, { passive: true });
 
     return () => {
+      if (scrollRafId !== null) {
+        cancelAnimationFrame(scrollRafId);
+        scrollRafId = null;
+      }
       viewportElement.removeEventListener("scroll", handleViewportScroll);
       resizeObserver.disconnect();
-      mutationObserver.disconnect();
       if (viewportRef.current === viewportElement) {
         viewportRef.current = null;
       }
