@@ -27,6 +27,9 @@ $PASEO_HOME/
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   └── workspaces.json                  # Workspace registry
+├── runtime/
+│   └── managed-processes/
+│       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
 └── push-tokens.json                     # Expo push notification tokens
 ```
 

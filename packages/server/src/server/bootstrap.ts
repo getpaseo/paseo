@@ -142,6 +142,12 @@ import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./servi
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import {
+  createManagedProcessRegistry,
+  createSystemManagedProcessTable,
+  type ManagedProcessRegistry,
+} from "./managed-processes/managed-processes.js";
+import { terminateWithTreeKill } from "../utils/tree-kill.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
@@ -355,6 +361,7 @@ export interface PaseoDaemonConfig {
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
   pushNotificationSender?: PushNotificationSender;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 export interface PaseoDaemon {
@@ -367,6 +374,36 @@ export interface PaseoDaemon {
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
+}
+
+function createBootstrapManagedProcessRegistry(
+  config: Pick<PaseoDaemonConfig, "paseoHome" | "managedProcesses">,
+  logger: Logger,
+): ManagedProcessRegistry {
+  if (config.managedProcesses) {
+    return config.managedProcesses;
+  }
+
+  return createManagedProcessRegistry({
+    paseoHome: config.paseoHome,
+    processTable: createSystemManagedProcessTable(),
+    terminateProcess: terminateWithTreeKill,
+    logger,
+  });
+}
+
+async function reconcileManagedProcessLedger(
+  managedProcesses: ManagedProcessRegistry,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const reapResult = await managedProcesses.reapStale();
+    if (reapResult.checked > 0 || reapResult.errors.length > 0) {
+      logger.info(reapResult, "Managed helper process ledger reconciled");
+    }
+  } catch (error) {
+    logger.warn({ err: error }, "Failed to reconcile managed helper process ledger");
+  }
 }
 
 export async function createPaseoDaemon(
@@ -405,6 +442,8 @@ export async function createPaseoDaemon(
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
+  const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
+  await reconcileManagedProcessLedger(managedProcesses, logger);
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;
@@ -645,6 +684,7 @@ export async function createPaseoDaemon(
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,
+    managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
   });

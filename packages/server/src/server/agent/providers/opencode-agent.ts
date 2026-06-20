@@ -84,6 +84,7 @@ import {
 } from "./opencode/runtime.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -1214,6 +1215,7 @@ export const __openCodeInternals = {
 
 interface OpenCodeAgentClientDeps {
   runtime?: OpenCodeRuntime;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 class ProductionOpenCodeRuntime implements OpenCodeRuntime {
@@ -1260,7 +1262,9 @@ export class OpenCodeAgentClient implements AgentClient {
     this.runtime =
       deps.runtime ??
       new ProductionOpenCodeRuntime(
-        OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+        OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
+          managedProcesses: deps.managedProcesses,
+        }),
       );
   }
 

@@ -38,6 +38,12 @@ Draft metadata lookups should avoid creating provider sessions when the upstream
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
 
+## Provider Helper Processes
+
+Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
+
+Daemon bootstrap reconciles that ledger before provider clients are created: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, and only positively matched Paseo-owned leftovers are terminated. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
+
 ---
 
 ## Provider Snapshot Refresh Contract
