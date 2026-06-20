@@ -229,6 +229,30 @@ function preserveWorkspaceMapIdentity(
   return changed ? next : existing;
 }
 
+function emptyProjectDescriptorFromWorkspace(
+  workspace: WorkspaceDescriptor,
+): EmptyProjectDescriptor {
+  return {
+    projectId: workspace.projectId,
+    projectDisplayName: workspace.projectDisplayName,
+    projectCustomName: workspace.projectCustomName ?? null,
+    projectRootPath: workspace.projectRootPath,
+    projectKind: workspace.projectKind,
+  };
+}
+
+function hasWorkspaceInProject(
+  workspaces: ReadonlyMap<string, WorkspaceDescriptor>,
+  projectId: string,
+): boolean {
+  for (const workspace of workspaces.values()) {
+    if (workspace.projectId === projectId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
 export type ExplorerEncoding = "utf-8" | "base64" | "none";
@@ -1393,13 +1417,31 @@ export const useSessionStore = create<SessionStore>()(
           if (!session || !workspaceKey) {
             return prev;
           }
+          const removedWorkspace = session.workspaces.get(workspaceKey);
+          if (!removedWorkspace) {
+            return prev;
+          }
           const next = new Map(session.workspaces);
           next.delete(workspaceKey);
+          let nextEmptyProjects = session.emptyProjects;
+          if (hasWorkspaceInProject(next, removedWorkspace.projectId)) {
+            if (nextEmptyProjects.has(removedWorkspace.projectId)) {
+              nextEmptyProjects = new Map(nextEmptyProjects);
+              nextEmptyProjects.delete(removedWorkspace.projectId);
+            }
+          } else {
+            const emptyProject = emptyProjectDescriptorFromWorkspace(removedWorkspace);
+            const existing = nextEmptyProjects.get(emptyProject.projectId);
+            if (!existing || !equal(existing, emptyProject)) {
+              nextEmptyProjects = new Map(nextEmptyProjects);
+              nextEmptyProjects.set(emptyProject.projectId, emptyProject);
+            }
+          }
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, workspaces: next },
+              [serverId]: { ...session, workspaces: next, emptyProjects: nextEmptyProjects },
             },
           };
         });
