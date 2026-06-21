@@ -244,15 +244,16 @@ export class CheckoutSession {
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {
     const { cwd, requestId } = msg;
+    const resolvedCwd = expandTilde(cwd);
 
     try {
-      this.github.invalidate({ cwd });
-      await this.workspaceGitService.getSnapshot(cwd, {
+      this.github.invalidate({ cwd: resolvedCwd });
+      await this.workspaceGitService.getSnapshot(resolvedCwd, {
         force: true,
         includeGitHub: true,
         reason: "manual-refresh",
       });
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.checkoutDiffManager.scheduleRefreshForCwd(resolvedCwd);
       this.host.emit({
         type: "checkout.refresh.response",
         payload: {

@@ -19,6 +19,7 @@ import {
   createNoGitWorkspaceRuntimeSnapshot,
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
+import { expandTilde } from "../../../utils/path.js";
 
 interface FakeDiffSubscription {
   cwd: string;
@@ -302,6 +303,34 @@ describe("CheckoutSession", () => {
           payload: { cwd: "/repo", success: true, error: null, requestId: "r7" },
         },
       ]);
+    });
+
+    it("expands a tilde cwd before refreshing git and diffs", async () => {
+      const snapshotCalls: string[] = [];
+      const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+        cwd: "",
+        files: [],
+        error: null,
+      });
+      const { checkout } = makeCheckoutSession({
+        git: {
+          getSnapshot: async (cwd) => {
+            snapshotCalls.push(cwd);
+            return createNoGitWorkspaceRuntimeSnapshot(cwd);
+          },
+        },
+        diff: subscriber,
+      });
+
+      await checkout.handleRefreshRequest({
+        type: "checkout.refresh.request",
+        cwd: "~/repo",
+        requestId: "r-tilde",
+      });
+
+      const resolvedCwd = expandTilde("~/repo");
+      expect(snapshotCalls).toEqual([resolvedCwd]);
+      expect(refreshedCwds).toEqual([resolvedCwd]);
     });
   });
 
