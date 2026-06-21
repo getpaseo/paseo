@@ -9,9 +9,12 @@ import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
+  encodeFileTransferFrame,
   FileTransferOpcode,
+  type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -213,6 +216,7 @@ interface SessionForTestOptions {
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
+  downloadTokenStore?: SessionOptions["downloadTokenStore"];
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
 }
@@ -247,7 +251,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     onMessage: (message) => messages.push(message),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
-    downloadTokenStore: asDownloadTokenStore(),
+    downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
     pushTokenStore: asPushTokenStore(),
     paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
@@ -392,6 +396,200 @@ describe("file explorer binary responses", () => {
       requestId: "req-new-client",
       payload: new Uint8Array(),
     });
+  });
+});
+
+describe("workspace file access (behavior preservation)", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeDir(prefix: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  function uploadFrame(args: Parameters<typeof encodeFileTransferFrame>[0]): FileTransferFrame {
+    const frame = decodeFileTransferFrame(encodeFileTransferFrame(args));
+    if (!frame) {
+      throw new Error("Expected a file transfer frame");
+    }
+    return frame;
+  }
+
+  test("file_explorer list returns directory entries", async () => {
+    const cwd = makeDir("file-access-list-");
+    writeFileSync(join(cwd, "a.txt"), "alpha");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "file_explorer_request",
+      cwd,
+      path: ".",
+      mode: "list",
+      requestId: "req-list",
+    });
+
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    if (message.type !== "file_explorer_response") {
+      throw new Error(`expected file_explorer_response, got ${message.type}`);
+    }
+    expect(message.payload.error).toBeNull();
+    expect(message.payload.directory).not.toBeNull();
+  });
+
+  test("file_explorer rejects an empty cwd with an error envelope", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "file_explorer_request",
+      cwd: "   ",
+      path: ".",
+      mode: "list",
+      requestId: "req-empty",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "file_explorer_response",
+        payload: expect.objectContaining({
+          error: "cwd is required",
+          directory: null,
+          file: null,
+          requestId: "req-empty",
+        }),
+      },
+    ]);
+  });
+
+  test("file_download_token issues a token for a real file", async () => {
+    const cwd = makeDir("file-access-token-");
+    writeFileSync(join(cwd, "report.txt"), "hello world");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
+    });
+
+    await session.handleMessage({
+      type: "file_download_token_request",
+      cwd,
+      path: "report.txt",
+      requestId: "req-token",
+    });
+
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    if (message.type !== "file_download_token_response") {
+      throw new Error(`expected file_download_token_response, got ${message.type}`);
+    }
+    expect(message.payload.error).toBeNull();
+    expect(typeof message.payload.token).toBe("string");
+    expect(message.payload.fileName).toBe("report.txt");
+    expect(message.payload.size).toBe(11);
+  });
+
+  test("file_download_token rejects an empty cwd with an error envelope", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "file_download_token_request",
+      cwd: "",
+      path: "report.txt",
+      requestId: "req-token-empty",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "file_download_token_response",
+        payload: expect.objectContaining({
+          token: null,
+          error: "cwd is required",
+          requestId: "req-token-empty",
+        }),
+      },
+    ]);
+  });
+
+  test("project_icon responds for a workspace cwd", async () => {
+    const cwd = makeDir("file-access-icon-");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "project_icon_request",
+      cwd,
+      requestId: "req-icon",
+    });
+
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    if (message.type !== "project_icon_response") {
+      throw new Error(`expected project_icon_response, got ${message.type}`);
+    }
+    expect(message.payload.cwd).toBe(cwd);
+    expect(message.payload.error).toBeNull();
+  });
+
+  test("file upload round-trips bytes through binary frames", async () => {
+    const paseoHome = makeDir("file-access-upload-");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, paseoHome });
+
+    await session.handleMessage({
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-upload",
+    });
+    await session.handleBinaryFrame({
+      kind: "file_transfer",
+      frame: uploadFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId: "req-upload",
+        metadata: {
+          mime: "text/plain",
+          size: 11,
+          encoding: "binary",
+          modifiedAt: "2026-05-02T00:00:00.000Z",
+          fileName: "notes.txt",
+        },
+      }),
+    });
+    await session.handleBinaryFrame({
+      kind: "file_transfer",
+      frame: uploadFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId: "req-upload",
+        payload: new TextEncoder().encode("hello world"),
+      }),
+    });
+    await session.handleBinaryFrame({
+      kind: "file_transfer",
+      frame: uploadFrame({
+        opcode: FileTransferOpcode.FileEnd,
+        requestId: "req-upload",
+      }),
+    });
+
+    const response = messages.find((message) => message.type === "file.upload.response");
+    if (response?.type !== "file.upload.response") {
+      throw new Error("expected a file.upload.response message");
+    }
+    expect(response.payload.error).toBeNull();
+    expect(response.payload.file?.fileName).toBe("notes.txt");
+    expect(response.payload.file?.size).toBe(11);
   });
 });
 

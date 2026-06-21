@@ -15,9 +15,6 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
-  type FileExplorerRequest,
-  type FileDownloadTokenRequest,
-  type FileUploadRequest,
   type GitSetupOptions,
   type StartWorkspaceScriptRequest,
   type CloseItemsRequest,
@@ -32,13 +29,7 @@ import type {
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
-import {
-  type BinaryFrame,
-  encodeFileTransferFrame,
-  FileTransferOpcode,
-  type FileTransferFrame,
-} from "@getpaseo/protocol/binary-frames/index";
-import { FileUploadStore } from "./file-upload/index.js";
+import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
@@ -164,12 +155,7 @@ import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
-import {
-  listDirectoryEntries,
-  readExplorerFile,
-  readExplorerFileBytes,
-  getDownloadableFileInfo,
-} from "./file-explorer/service.js";
+import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
@@ -190,7 +176,6 @@ import {
   type GitMutationRefreshReason,
   renameCurrentBranch as renameCurrentBranchDefault,
 } from "../utils/checkout-git.js";
-import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -649,7 +634,6 @@ export class Session {
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly mcpBaseUrl: string | null;
-  private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
@@ -683,12 +667,12 @@ export class Session {
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
-  private readonly fileUploads: FileUploadStore;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
   private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
+  private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
   private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
@@ -752,15 +736,23 @@ export class Session {
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
-    this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
-    this.fileUploads = new FileUploadStore({ paseoHome });
     this.paseoHome = paseoHome;
     this.worktreesRoot = worktreesRoot;
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
       sessionId: this.sessionId,
+    });
+    this.workspaceFilesSession = new WorkspaceFilesSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        emitBinary: (frame) => this.emitBinary(frame),
+        hasBinaryChannel: () => this.onBinaryMessage !== null,
+      },
+      downloadTokenStore,
+      paseoHome,
+      logger: this.sessionLogger,
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -2038,13 +2030,13 @@ export class Session {
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "file_explorer_request":
-        return this.handleFileExplorerRequest(msg);
+        return this.workspaceFilesSession.handleFileExplorerRequest(msg);
       case "project_icon_request":
-        return this.handleProjectIconRequest(msg);
+        return this.workspaceFilesSession.handleProjectIconRequest(msg);
       case "file_download_token_request":
-        return this.handleFileDownloadTokenRequest(msg);
+        return this.workspaceFilesSession.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
-        this.handleFileUploadRequest(msg);
+        this.workspaceFilesSession.handleFileUploadRequest(msg);
         return undefined;
       default:
         return undefined;
@@ -2148,7 +2140,7 @@ export class Session {
 
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
     if (binaryFrame.kind === "file_transfer") {
-      await this.handleFileTransferFrame(binaryFrame.frame);
+      await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame);
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame);
@@ -4362,238 +4354,6 @@ export class Session {
       },
       msg,
     );
-  }
-
-  /**
-   * Handle read-only file explorer requests scoped to a workspace cwd
-   */
-  private async handleFileExplorerRequest(request: FileExplorerRequest): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      this.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd: workspaceCwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: "cwd is required",
-          requestId,
-        },
-      });
-      return;
-    }
-
-    try {
-      if (mode === "list") {
-        const directory = await listDirectoryEntries({
-          root: cwd,
-          relativePath: requestedPath,
-        });
-
-        this.emit({
-          type: "file_explorer_response",
-          payload: {
-            cwd,
-            path: directory.path,
-            mode,
-            directory,
-            file: null,
-            error: null,
-            requestId,
-          },
-        });
-      } else {
-        if (request.acceptBinary && this.onBinaryMessage) {
-          const file = await readExplorerFileBytes({
-            root: cwd,
-            relativePath: requestedPath,
-          });
-
-          this.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileBegin,
-              requestId,
-              metadata: {
-                mime: file.mimeType,
-                size: file.size,
-                encoding: file.encoding,
-                modifiedAt: file.modifiedAt,
-              },
-            }),
-          );
-          this.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileChunk,
-              requestId,
-              payload: file.bytes,
-            }),
-          );
-          this.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileEnd,
-              requestId,
-            }),
-          );
-        } else {
-          const file = await readExplorerFile({
-            root: cwd,
-            relativePath: requestedPath,
-          });
-
-          this.emit({
-            type: "file_explorer_response",
-            payload: {
-              cwd,
-              path: file.path,
-              mode,
-              directory: null,
-              file,
-              error: null,
-              requestId,
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, cwd, path: requestedPath },
-        `Failed to fulfill file explorer request for workspace ${cwd}`,
-      );
-      this.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: getErrorMessage(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private handleFileUploadRequest(request: FileUploadRequest): void {
-    this.fileUploads.beginUpload(request);
-  }
-
-  private async handleFileTransferFrame(frame: FileTransferFrame): Promise<void> {
-    const response = await this.fileUploads.receiveFrame(frame);
-    if (response) {
-      this.emit(response);
-    }
-  }
-
-  /**
-   * Handle project icon request for a given cwd
-   */
-  private async handleProjectIconRequest(
-    request: Extract<SessionInboundMessage, { type: "project_icon_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = request;
-
-    try {
-      const icon = await getProjectIcon(cwd);
-      this.emit({
-        type: "project_icon_response",
-        payload: {
-          cwd,
-          icon,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "project_icon_response",
-        payload: {
-          cwd,
-          icon: null,
-          error: getErrorMessage(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  /**
-   * Handle file download token request scoped to a workspace cwd
-   */
-  private async handleFileDownloadTokenRequest(request: FileDownloadTokenRequest): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      this.emit({
-        type: "file_download_token_response",
-        payload: {
-          cwd: workspaceCwd,
-          path: requestedPath,
-          token: null,
-          fileName: null,
-          mimeType: null,
-          size: null,
-          error: "cwd is required",
-          requestId,
-        },
-      });
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { cwd, path: requestedPath },
-      `Handling file download token request for workspace ${cwd} (${requestedPath})`,
-    );
-
-    try {
-      const info = await getDownloadableFileInfo({
-        root: cwd,
-        relativePath: requestedPath,
-      });
-
-      const entry = this.downloadTokenStore.issueToken({
-        path: info.path,
-        absolutePath: info.absolutePath,
-        fileName: info.fileName,
-        mimeType: info.mimeType,
-        size: info.size,
-      });
-
-      this.emit({
-        type: "file_download_token_response",
-        payload: {
-          cwd,
-          path: info.path,
-          token: entry.token,
-          fileName: entry.fileName,
-          mimeType: entry.mimeType,
-          size: entry.size,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, cwd, path: requestedPath },
-        `Failed to issue download token for workspace ${cwd}`,
-      );
-      this.emit({
-        type: "file_download_token_response",
-        payload: {
-          cwd,
-          path: requestedPath,
-          token: null,
-          fileName: null,
-          mimeType: null,
-          size: null,
-          error: getErrorMessage(error),
-          requestId,
-        },
-      });
-    }
   }
 
   private async listTerminalActivityContributions(): Promise<
