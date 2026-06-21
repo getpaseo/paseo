@@ -1063,7 +1063,7 @@ describe("session checkout merge handling", () => {
 
     checkoutGitMocks.mergeToBase.mockResolvedValue("/tmp/base-worktree");
 
-    await asSessionInternals(session).handleCheckoutMergeRequest({
+    await session.handleMessage({
       type: "checkout_merge_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1111,7 +1111,7 @@ describe("session checkout merge handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
+    await session.handleMessage({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1149,7 +1149,7 @@ describe("session checkout merge handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.mergeFromBase.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
+    await session.handleMessage({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1241,7 +1241,7 @@ diff --git a/file.txt b/file.txt
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService });
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: join(repoRoot, "nested"),
       message: "",
@@ -1262,7 +1262,7 @@ diff --git a/file.txt b/file.txt
 
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -1316,7 +1316,7 @@ diff --git a/file.txt b/file.txt
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "",
@@ -1421,7 +1421,7 @@ diff --git a/file.txt b/file.txt
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "",
@@ -1450,7 +1450,7 @@ diff --git a/file.txt b/file.txt
     const session = createSessionForTest({ workspaceGitService, messages });
     checkoutGitMocks.commitChanges.mockRejectedValue(new Error("nothing to commit"));
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -1540,7 +1540,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ workspaceGitService });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: join(repoRoot, "nested"),
       baseRef: "main",
@@ -1585,7 +1585,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1724,7 +1724,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1766,7 +1766,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1828,7 +1828,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "squash",
@@ -1925,7 +1925,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "squash",
@@ -1978,7 +1978,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "squash",
@@ -2040,7 +2040,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "merge",
@@ -2103,7 +2103,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: true,
@@ -2169,7 +2169,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: false,
@@ -2232,7 +2232,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: true,
@@ -2281,7 +2281,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: true,
@@ -2337,7 +2337,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: false,
@@ -2392,7 +2392,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: false,
@@ -2426,7 +2426,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pullCurrentBranch.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutPullRequest({
+    await session.handleMessage({
       type: "checkout_pull_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-pull",
@@ -2456,7 +2456,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pushCurrentBranch.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutPushRequest({
+    await session.handleMessage({
       type: "checkout_push_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-push",
@@ -3034,7 +3034,7 @@ describe("session checkout switch branch handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.checkoutResolvedBranch.mockResolvedValue({ source: "local" });
 
-    await asSessionInternals(session).handleCheckoutSwitchBranchRequest({
+    await session.handleMessage({
       type: "checkout_switch_branch_request",
       cwd: "/tmp/repo",
       branch: "release",
@@ -3323,7 +3323,7 @@ describe("session stash list handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleStashListRequest({
+    await session.handleMessage({
       type: "stash_list_request",
       cwd: "/tmp/repo",
       paseoOnly: true,
@@ -3354,7 +3354,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await asSessionInternals(session).handleStashSaveRequest({
+    await session.handleMessage({
       type: "stash_save_request",
       cwd: "/tmp/repo",
       branch: "feature",
@@ -3388,7 +3388,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await asSessionInternals(session).handleStashPopRequest({
+    await session.handleMessage({
       type: "stash_pop_request",
       cwd: "/tmp/repo",
       stashIndex: 0,

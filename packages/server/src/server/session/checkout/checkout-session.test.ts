@@ -5,7 +5,7 @@ import {
   CheckoutSession,
   type CheckoutSessionHost,
 } from "./checkout-session.js";
-import { createGitHubService } from "../../../services/github-service.js";
+import { createGitHubService, type GitHubService } from "../../../services/github-service.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   CheckoutDiffCompareInput,
@@ -54,24 +54,84 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
   return { subscriber, subscriptions, refreshedCwds };
 }
 
+interface RecordedHostCalls {
+  notifyGitMutation: Array<{
+    cwd: string;
+    reason: string;
+    options?: { invalidateGithub?: boolean };
+  }>;
+  emitWorkspaceUpdateForCwd: string[];
+  handleWorkspaceGitBranchSnapshot: Array<{ cwd: string; branchName: string | null }>;
+  renameCurrentBranch: Array<{ cwd: string; branch: string }>;
+  checkoutExistingBranch: Array<{ cwd: string; branch: string }>;
+  generateCommitMessage: string[];
+  generatePullRequestText: Array<{ cwd: string; baseRef?: string }>;
+}
+
 function makeCheckoutSession(options?: {
   git?: Partial<WorkspaceGitService>;
   diff?: CheckoutDiffSubscriber;
+  github?: Partial<GitHubService>;
+  host?: Partial<CheckoutSessionHost>;
 }) {
   const emitted: SessionOutboundMessage[] = [];
-  const host: CheckoutSessionHost = { emit: (msg) => emitted.push(msg) };
+  const hostCalls: RecordedHostCalls = {
+    notifyGitMutation: [],
+    emitWorkspaceUpdateForCwd: [],
+    handleWorkspaceGitBranchSnapshot: [],
+    renameCurrentBranch: [],
+    checkoutExistingBranch: [],
+    generateCommitMessage: [],
+    generatePullRequestText: [],
+  };
+  const host: CheckoutSessionHost = {
+    emit: (msg) => emitted.push(msg),
+    notifyGitMutation: async (cwd, reason, opts) => {
+      hostCalls.notifyGitMutation.push({ cwd, reason, options: opts });
+    },
+    emitWorkspaceUpdateForCwd: async (cwd) => {
+      hostCalls.emitWorkspaceUpdateForCwd.push(cwd);
+    },
+    handleWorkspaceGitBranchSnapshot: (cwd, branchName) => {
+      hostCalls.handleWorkspaceGitBranchSnapshot.push({ cwd, branchName });
+    },
+    renameCurrentBranch: async (cwd, branch) => {
+      hostCalls.renameCurrentBranch.push({ cwd, branch });
+      return { previousBranch: null, currentBranch: branch };
+    },
+    checkoutExistingBranch: async (cwd, branch) => {
+      hostCalls.checkoutExistingBranch.push({ cwd, branch });
+      return { source: "local" };
+    },
+    generateCommitMessage: async (cwd) => {
+      hostCalls.generateCommitMessage.push(cwd);
+      return "";
+    },
+    generatePullRequestText: async (cwd, baseRef) => {
+      hostCalls.generatePullRequestText.push({ cwd, baseRef });
+      return { title: "", body: "" };
+    },
+    ...options?.host,
+  };
+  const github: GitHubService = { ...createGitHubService(), ...options?.github };
   const checkout = new CheckoutSession({
     host,
     workspaceGitService: createNoopWorkspaceGitService(options?.git),
-    github: createGitHubService(),
+    github,
     checkoutDiffManager:
       options?.diff ?? createFakeDiffSubscriber({ cwd: "", files: [], error: null }).subscriber,
+    paseoHome: "/tmp/paseo-home",
+    worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
-  return { checkout, emitted };
+  return { checkout, emitted, hostCalls };
 }
 
-function createGitSnapshot(cwd: string, currentBranch: string): WorkspaceGitRuntimeSnapshot {
+function createGitSnapshot(
+  cwd: string,
+  currentBranch: string,
+  overrides?: { isDirty?: boolean },
+): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
     git: {
@@ -81,7 +141,7 @@ function createGitSnapshot(cwd: string, currentBranch: string): WorkspaceGitRunt
       currentBranch,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
-      isDirty: false,
+      isDirty: overrides?.isDirty ?? false,
       baseRef: null,
       aheadBehind: null,
       aheadOfOrigin: null,
@@ -451,6 +511,317 @@ describe("CheckoutSession", () => {
         {
           type: "checkout_status_update",
           payload: expect.objectContaining({ cwd: "/repo", currentBranch: "main" }),
+        },
+      ]);
+    });
+  });
+
+  describe("switch branch", () => {
+    it("checks out the branch, refreshes the diff and workspace, then confirms success", async () => {
+      const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+        cwd: "",
+        files: [],
+        error: null,
+      });
+      const { checkout, emitted, hostCalls } = makeCheckoutSession({ diff: subscriber });
+
+      await checkout.handleCheckoutSwitchBranchRequest({
+        type: "checkout_switch_branch_request",
+        cwd: "/repo",
+        branch: "feature",
+        requestId: "sw1",
+      });
+
+      expect(hostCalls.checkoutExistingBranch).toEqual([{ cwd: "/repo", branch: "feature" }]);
+      expect(refreshedCwds).toEqual(["/repo"]);
+      expect(hostCalls.emitWorkspaceUpdateForCwd).toEqual(["/repo"]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout_switch_branch_response",
+          payload: {
+            cwd: "/repo",
+            success: true,
+            branch: "feature",
+            source: "local",
+            error: null,
+            requestId: "sw1",
+          },
+        },
+      ]);
+    });
+
+    it("emits an error response when the checkout fails", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        host: {
+          checkoutExistingBranch: async () => {
+            throw new Error("branch missing");
+          },
+        },
+      });
+
+      await checkout.handleCheckoutSwitchBranchRequest({
+        type: "checkout_switch_branch_request",
+        cwd: "/repo",
+        branch: "ghost",
+        requestId: "sw2",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout_switch_branch_response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            branch: "ghost",
+            error: { code: "UNKNOWN", message: "branch missing" },
+            requestId: "sw2",
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("rename branch", () => {
+    it("rejects an invalid slug without renaming", async () => {
+      const { checkout, emitted, hostCalls } = makeCheckoutSession();
+
+      await checkout.handleCheckoutRenameBranchRequest({
+        type: "checkout.rename_branch.request",
+        cwd: "/repo",
+        branch: "bad branch!",
+        requestId: "rn1",
+      });
+
+      expect(hostCalls.renameCurrentBranch).toEqual([]);
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]).toMatchObject({
+        type: "checkout.rename_branch.response",
+        payload: { cwd: "/repo", success: false, currentBranch: null, requestId: "rn1" },
+      });
+    });
+
+    it("renames, refreshes git state, and confirms the new branch", async () => {
+      const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+        cwd: "",
+        files: [],
+        error: null,
+      });
+      const { checkout, emitted, hostCalls } = makeCheckoutSession({ diff: subscriber });
+
+      await checkout.handleCheckoutRenameBranchRequest({
+        type: "checkout.rename_branch.request",
+        cwd: "/repo",
+        branch: "feature-renamed",
+        requestId: "rn2",
+      });
+
+      expect(hostCalls.renameCurrentBranch).toEqual([{ cwd: "/repo", branch: "feature-renamed" }]);
+      expect(hostCalls.notifyGitMutation).toEqual([
+        { cwd: "/repo", reason: "rename-branch", options: { invalidateGithub: true } },
+      ]);
+      expect(refreshedCwds).toEqual(["/repo"]);
+      expect(hostCalls.handleWorkspaceGitBranchSnapshot).toEqual([
+        { cwd: "/repo", branchName: "feature-renamed" },
+      ]);
+      expect(hostCalls.emitWorkspaceUpdateForCwd).toEqual(["/repo"]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout.rename_branch.response",
+          payload: {
+            cwd: "/repo",
+            success: true,
+            currentBranch: "feature-renamed",
+            error: null,
+            requestId: "rn2",
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("commit", () => {
+    it("fails when no message is supplied and none can be generated", async () => {
+      const { checkout, emitted, hostCalls } = makeCheckoutSession();
+
+      await checkout.handleCheckoutCommitRequest({
+        type: "checkout_commit_request",
+        cwd: "/repo",
+        message: "",
+        addAll: true,
+        requestId: "c1",
+      });
+
+      expect(hostCalls.generateCommitMessage).toEqual(["/repo"]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout_commit_response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            error: { code: "UNKNOWN", message: "Commit message is required" },
+            requestId: "c1",
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("merge preflight", () => {
+    it("fails when the target is not a git repository", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: { getSnapshot: async (cwd) => createNoGitWorkspaceRuntimeSnapshot(cwd) },
+      });
+
+      await checkout.handleCheckoutMergeRequest({
+        type: "checkout_merge_request",
+        cwd: "/repo",
+        baseRef: "main",
+        requestId: "m1",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout_merge_response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            error: { code: "UNKNOWN", message: "Not a git repository: /repo" },
+            requestId: "m1",
+          },
+        },
+      ]);
+    });
+
+    it("fails a clean-required merge when the working tree is dirty", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: { getSnapshot: async () => createGitSnapshot("/repo", "feature", { isDirty: true }) },
+      });
+
+      await checkout.handleCheckoutMergeRequest({
+        type: "checkout_merge_request",
+        cwd: "/repo",
+        baseRef: "main",
+        requireCleanTarget: true,
+        requestId: "m2",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout_merge_response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            error: { code: "UNKNOWN", message: "Working directory has uncommitted changes." },
+            requestId: "m2",
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("pr merge", () => {
+    it("fails when no pull request number can be determined", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: { getSnapshot: async (cwd) => createGitSnapshot(cwd, "feature") },
+      });
+
+      await checkout.handleCheckoutPrMergeRequest({
+        type: "checkout_pr_merge_request",
+        cwd: "/repo",
+        mergeMethod: "merge",
+        requestId: "pm1",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout_pr_merge_response",
+          payload: {
+            cwd: "/repo",
+            success: false,
+            error: {
+              code: "UNKNOWN",
+              message: "Unable to determine GitHub pull request number for merge",
+            },
+            requestId: "pm1",
+          },
+        },
+      ]);
+    });
+  });
+
+  describe("stash list", () => {
+    it("returns stash entries scoped to paseo stashes by default", async () => {
+      const listStashesCalls: Array<{ cwd: string; paseoOnly: boolean | undefined }> = [];
+      const { checkout, emitted } = makeCheckoutSession({
+        git: {
+          listStashes: async (cwd, opts) => {
+            listStashesCalls.push({ cwd, paseoOnly: opts?.paseoOnly });
+            return [];
+          },
+        },
+      });
+
+      await checkout.handleStashListRequest({
+        type: "stash_list_request",
+        cwd: "/repo",
+        requestId: "sl1",
+      });
+
+      expect(listStashesCalls).toEqual([{ cwd: "/repo", paseoOnly: true }]);
+      expect(emitted).toEqual([
+        {
+          type: "stash_list_response",
+          payload: { cwd: "/repo", entries: [], error: null, requestId: "sl1" },
+        },
+      ]);
+    });
+  });
+
+  describe("pr status", () => {
+    it("builds a pr status response from the git snapshot", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: { getSnapshot: async (cwd) => createGitSnapshot(cwd, "main") },
+      });
+
+      await checkout.handleCheckoutPrStatusRequest({
+        type: "checkout_pr_status_request",
+        cwd: "/repo",
+        requestId: "ps1",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "checkout_pr_status_response",
+          payload: expect.objectContaining({ cwd: "/repo", requestId: "ps1" }),
+        },
+      ]);
+    });
+  });
+
+  describe("github search", () => {
+    it("returns search results and the github-features flag", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        github: {
+          searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: false }),
+        },
+      });
+
+      await checkout.handleGitHubSearchRequest({
+        type: "github_search_request",
+        cwd: "/repo",
+        query: "fix",
+        requestId: "gs1",
+      });
+
+      expect(emitted).toEqual([
+        {
+          type: "github_search_response",
+          payload: {
+            items: [],
+            githubFeaturesEnabled: false,
+            error: null,
+            requestId: "gs1",
+          },
         },
       ]);
     });

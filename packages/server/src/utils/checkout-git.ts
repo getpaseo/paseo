@@ -25,6 +25,28 @@ const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
 
+/**
+ * Why a git mutation is forcing a workspace snapshot refresh. Shared between the
+ * Session shell (which owns the refresh primitive) and the checkout subsystem
+ * (which triggers most of these reasons after a write).
+ */
+export type GitMutationRefreshReason =
+  | "commit-changes"
+  | "pull"
+  | "push"
+  | "merge-to-base"
+  | "merge-from-base"
+  | "merge-pr"
+  | "enable-pr-auto-merge"
+  | "disable-pr-auto-merge"
+  | "create-pr"
+  | "switch-branch"
+  | "rename-branch"
+  | "create-branch"
+  | "stash-push"
+  | "stash-pop"
+  | "create-worktree";
+
 const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
 const DEFAULT_SHORTSTAT_CACHE_TTL_MS = 15_000;
