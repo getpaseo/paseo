@@ -216,6 +216,9 @@ interface SessionForTestOptions {
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
+  serverId?: SessionOptions["serverId"];
+  daemonVersion?: SessionOptions["daemonVersion"];
+  daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
   downloadTokenStore?: SessionOptions["downloadTokenStore"];
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
@@ -299,6 +302,9 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
     voice: options.voice,
+    serverId: options.serverId,
+    daemonVersion: options.daemonVersion,
+    daemonRuntimeConfig: options.daemonRuntimeConfig,
   });
 }
 
@@ -967,6 +973,132 @@ describe("project config RPC authorization", () => {
           repoRoot: writeFailedRoot,
           ok: false,
           error: { code: "write_failed" },
+        },
+      },
+    ]);
+  });
+});
+
+describe("daemon status + pairing RPC", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeHome(): string {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "daemon-session-test-")));
+    tempDirs.push(home);
+    return home;
+  }
+
+  test("daemon.get_status.request reports identity, runtime config, and mapped providers", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: makeHome(),
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      agentManager: {
+        listProviderAvailability: vi.fn().mockResolvedValue([
+          { provider: "claude", available: true },
+          { provider: "codex", available: false, error: "boom" },
+        ]),
+      },
+    });
+
+    await session.handleMessage({ type: "daemon.get_status.request", requestId: "status-1" });
+
+    expect(messages).toEqual([
+      {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "status-1",
+          serverId: "srv-test",
+          version: "9.9.9",
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: null,
+          listen: "127.0.0.1:6767",
+          relay: null,
+          providers: [
+            { provider: "claude", available: true, error: null },
+            { provider: "codex", available: false, error: "boom" },
+          ],
+        },
+      },
+    ]);
+  });
+
+  test("daemon.get_status.request falls back to a null/empty status when provider listing fails", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: makeHome(),
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      agentManager: {
+        listProviderAvailability: vi.fn().mockRejectedValue(new Error("provider listing failed")),
+      },
+    });
+
+    await session.handleMessage({
+      type: "daemon.get_status.request",
+      requestId: "status-fallback-1",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "status-fallback-1",
+          serverId: "srv-test",
+          version: "9.9.9",
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: null,
+          listen: null,
+          relay: null,
+          providers: [],
+        },
+      },
+    ]);
+  });
+
+  test("daemon.get_pairing_offer.request returns an empty offer when relay is disabled", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: makeHome(),
+      daemonRuntimeConfig: {
+        listen: "127.0.0.1:6767",
+        relay: {
+          enabled: false,
+          endpoint: "relay.paseo.sh:443",
+          publicEndpoint: "relay.paseo.sh:443",
+          useTls: true,
+          publicUseTls: true,
+        },
+      },
+    });
+
+    await session.handleMessage({
+      type: "daemon.get_pairing_offer.request",
+      requestId: "pairing-1",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "daemon.get_pairing_offer.response",
+        payload: {
+          requestId: "pairing-1",
+          url: "",
+          qr: null,
+          relayEnabled: false,
         },
       },
     ]);

@@ -33,8 +33,6 @@ import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
-import { getPidLockInfo } from "./pid-lock.js";
-import { generateLocalPairingOffer } from "./pairing-offer.js";
 import {
   buildConfigOverrides,
   extractTimestamps,
@@ -157,6 +155,7 @@ import { ProviderCatalogSession } from "./session/provider/provider-catalog-sess
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
+import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
@@ -495,17 +494,7 @@ export interface SessionOptions {
   };
   serverId?: string;
   daemonVersion?: string;
-  daemonRuntimeConfig?: {
-    listen: string | null;
-    appBaseUrl?: string;
-    relay: {
-      enabled: boolean;
-      endpoint: string;
-      publicEndpoint: string;
-      useTls: boolean;
-      publicUseTls: boolean;
-    } | null;
-  };
+  daemonRuntimeConfig?: DaemonRuntimeConfig;
 }
 
 export type SessionLifecycleIntent =
@@ -632,9 +621,7 @@ export class Session {
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
-  private readonly serverId: string | undefined;
-  private readonly daemonVersion: string | undefined;
-  private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
+  private readonly daemonSession: DaemonSession;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
   constructor(options: SessionOptions) {
@@ -799,6 +786,17 @@ export class Session {
       projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
+    this.daemonSession = new DaemonSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      paseoHome: this.paseoHome,
+      serverId,
+      daemonVersion,
+      daemonRuntimeConfig,
+      listProviderAvailability: () => this.agentManager.listProviderAvailability(),
+      logger: this.sessionLogger,
+    });
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl ?? null;
     this.terminalManager = terminalManager;
@@ -855,9 +853,6 @@ export class Session {
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
     this.subscribeToOptionalManagers();
-    this.serverId = serverId;
-    this.daemonVersion = daemonVersion;
-    this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
       projectRegistry: this.projectRegistry,
@@ -1775,9 +1770,9 @@ export class Session {
         });
         return undefined;
       case "daemon.get_status.request":
-        return this.handleDaemonGetStatusRequest(msg);
+        return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
-        return this.handleDaemonGetPairingOfferRequest(msg);
+        return this.daemonSession.handleGetPairingOfferRequest(msg);
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",
@@ -3245,87 +3240,6 @@ export class Session {
         }),
       { cwd: input.cwd, message: "Failed to auto-name local workspace title" },
     );
-  }
-
-  private async handleDaemonGetStatusRequest(
-    msg: Extract<SessionInboundMessage, { type: "daemon.get_status.request" }>,
-  ): Promise<void> {
-    try {
-      const pidInfo = await getPidLockInfo(this.paseoHome);
-      const providers = (await this.agentManager.listProviderAvailability()).map((p) => ({
-        provider: p.provider,
-        available: p.available,
-        error: p.error ?? null,
-      }));
-      this.emit({
-        type: "daemon.get_status.response",
-        payload: {
-          requestId: msg.requestId,
-          serverId: this.serverId ?? "",
-          version: this.daemonVersion ?? null,
-          pid: process.pid,
-          nodePath: process.execPath,
-          startedAt: pidInfo?.startedAt ?? null,
-          listen: this.daemonRuntimeConfig?.listen ?? null,
-          relay: this.daemonRuntimeConfig?.relay ?? null,
-          providers,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error({ err: error }, "Failed to handle daemon status request");
-      this.emit({
-        type: "daemon.get_status.response",
-        payload: {
-          requestId: msg.requestId,
-          serverId: this.serverId ?? "",
-          version: this.daemonVersion ?? null,
-          pid: process.pid,
-          nodePath: process.execPath,
-          startedAt: null,
-          listen: null,
-          relay: null,
-          providers: [],
-        },
-      });
-    }
-  }
-
-  private async handleDaemonGetPairingOfferRequest(
-    msg: Extract<SessionInboundMessage, { type: "daemon.get_pairing_offer.request" }>,
-  ): Promise<void> {
-    try {
-      const relay = this.daemonRuntimeConfig?.relay;
-      const pairing = await generateLocalPairingOffer({
-        paseoHome: this.paseoHome,
-        relayEnabled: relay?.enabled ?? true,
-        relayEndpoint: relay?.endpoint,
-        relayPublicEndpoint: relay?.publicEndpoint,
-        relayUseTls: relay?.useTls,
-        relayPublicUseTls: relay?.publicUseTls,
-        appBaseUrl: this.daemonRuntimeConfig?.appBaseUrl,
-        includeQr: true,
-        logger: this.sessionLogger,
-      });
-      this.emit({
-        type: "daemon.get_pairing_offer.response",
-        payload: {
-          requestId: msg.requestId,
-          url: pairing.url ?? "",
-          qr: pairing.qr ?? null,
-          relayEnabled: pairing.relayEnabled,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error({ err: error }, "Failed to handle daemon pairing offer request");
-      this.emit({
-        type: "rpc_error",
-        payload: {
-          requestId: msg.requestId,
-          requestType: "daemon.get_pairing_offer.request",
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
   }
 
   private assertSafeGitRef(ref: string, label: string): void {
