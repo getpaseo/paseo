@@ -69,6 +69,28 @@ function rejectThenResolve() {
   };
 }
 
+function nullThenResolve() {
+  let attempt = 0;
+  return (workspaceId: string): Promise<WorkspaceSetupStatusResult> => {
+    attempt += 1;
+    if (attempt === 1) {
+      return Promise.resolve(setupResult(workspaceId, null));
+    }
+    return resolveDefault(workspaceId);
+  };
+}
+
+function mismatchThenResolve() {
+  let attempt = 0;
+  return (workspaceId: string): Promise<WorkspaceSetupStatusResult> => {
+    attempt += 1;
+    if (attempt === 1) {
+      return Promise.resolve(setupResult("999"));
+    }
+    return resolveDefault(workspaceId);
+  };
+}
+
 function ensureSetupStatus(client: WorkspaceSetupStatusClient) {
   useWorkspaceSetupStore.getState().ensureSetupStatus({
     serverId: "server-1",
@@ -233,6 +255,34 @@ describe("workspace-setup-store", () => {
     await flush();
 
     expect(storedSnapshots()).toHaveLength(0);
+  });
+
+  it("ensureSetupStatus retries after a null-snapshot response", async () => {
+    const { client, calls } = makeClient(nullThenResolve());
+
+    ensureSetupStatus(client);
+    await flush();
+    expect(calls).toEqual(["42"]);
+    expect(storedSnapshots()).toHaveLength(0);
+
+    ensureSetupStatus(client);
+    await flush();
+    expect(calls).toEqual(["42", "42"]);
+    expect(storedSnapshots()).toHaveLength(1);
+  });
+
+  it("ensureSetupStatus retries after a mismatched-workspace response", async () => {
+    const { client, calls } = makeClient(mismatchThenResolve());
+
+    ensureSetupStatus(client);
+    await flush();
+    expect(calls).toEqual(["42"]);
+    expect(storedSnapshots()).toHaveLength(0);
+
+    ensureSetupStatus(client);
+    await flush();
+    expect(calls).toEqual(["42", "42"]);
+    expect(storedSnapshots()).toHaveLength(1);
   });
 
   it("ensureSetupStatus clears the in-flight marker on error so a later call retries", async () => {

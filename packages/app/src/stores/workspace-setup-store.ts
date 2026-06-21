@@ -57,15 +57,6 @@ function buildWorkspaceSetupKey(input: { serverId: string; workspaceId: string }
   return buildWorkspaceTabPersistenceKey(input);
 }
 
-function forgetRequestedKey(requestedKeys: Set<string>, key: string): Set<string> {
-  if (!requestedKeys.has(key)) {
-    return requestedKeys;
-  }
-  const next = new Set(requestedKeys);
-  next.delete(key);
-  return next;
-}
-
 export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, get) => ({
   pendingWorkspaceSetup: null,
   snapshots: {},
@@ -102,6 +93,10 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
       return;
     }
 
+    // requestedKeys is a pure in-flight marker: it dedupes concurrent fetches and is
+    // released once the request settles. A settle that stored no snapshot (null snapshot,
+    // mismatched workspace, or error) leaves no marker, so a later call can retry; once a
+    // snapshot lands, the snapshots[key] guard above prevents redundant refetches.
     set((current) => ({ requestedKeys: new Set(current.requestedKeys).add(key) }));
 
     try {
@@ -113,7 +108,13 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
         });
       }
     } catch {
-      set((current) => ({ requestedKeys: forgetRequestedKey(current.requestedKeys, key) }));
+      // Swallowed: the finally clears the in-flight marker so a later call retries.
+    } finally {
+      set((current) => {
+        const next = new Set(current.requestedKeys);
+        next.delete(key);
+        return { requestedKeys: next };
+      });
     }
   },
   removeWorkspace: ({ serverId, workspaceId }) => {
@@ -123,32 +124,23 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, g
     }
 
     set((state) => {
-      if (!(key in state.snapshots) && !state.requestedKeys.has(key)) {
+      if (!(key in state.snapshots)) {
         return state;
       }
       const next = { ...state.snapshots };
       delete next[key];
-      return { snapshots: next, requestedKeys: forgetRequestedKey(state.requestedKeys, key) };
+      return { snapshots: next };
     });
   },
   clearServer: (serverId) => {
     set((state) => {
-      const prefix = `${serverId}:`;
       const nextEntries = Object.entries(state.snapshots).filter(
-        ([key]) => !key.startsWith(prefix),
+        ([key]) => !key.startsWith(`${serverId}:`),
       );
-      const nextRequestedKeys = new Set(
-        Array.from(state.requestedKeys).filter((key) => !key.startsWith(prefix)),
-      );
-      const snapshotsUnchanged = nextEntries.length === Object.keys(state.snapshots).length;
-      const requestedUnchanged = nextRequestedKeys.size === state.requestedKeys.size;
-      if (snapshotsUnchanged && requestedUnchanged) {
+      if (nextEntries.length === Object.keys(state.snapshots).length) {
         return state;
       }
-      return {
-        snapshots: Object.fromEntries(nextEntries),
-        requestedKeys: nextRequestedKeys,
-      };
+      return { snapshots: Object.fromEntries(nextEntries) };
     });
   },
 }));
