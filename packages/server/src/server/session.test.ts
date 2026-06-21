@@ -4125,3 +4125,251 @@ describe("chat/schedule/loop dispatch routing (behavior preservation)", () => {
     expect(routed?.payload.code).toBe(code);
   });
 });
+
+describe("agent config setters", () => {
+  test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const notice = { type: "info", message: "Switched to plan mode" } as const;
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentMode: vi.fn().mockResolvedValue(notice) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_mode_request",
+      agentId: "agent-1",
+      modeId: "plan",
+      requestId: "req-mode-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_mode_response",
+        payload: {
+          requestId: "req-mode-ok",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          notice,
+        },
+      },
+    ]);
+  });
+
+  test("set_agent_mode_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentMode: vi.fn().mockRejectedValue(new Error("mode boom")) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_mode_request",
+      agentId: "agent-1",
+      modeId: "plan",
+      requestId: "req-mode-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_mode_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent mode: mode boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_mode_response",
+      payload: {
+        requestId: "req-mode-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "mode boom",
+      },
+    });
+  });
+
+  test("set_agent_model_request: success emits accepted response with no notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentModel: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_model_request",
+      agentId: "agent-1",
+      modelId: "claude-opus-4-8",
+      requestId: "req-model-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_model_response",
+        payload: { requestId: "req-model-ok", agentId: "agent-1", accepted: true, error: null },
+      },
+    ]);
+  });
+
+  test("set_agent_model_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentModel: vi.fn().mockRejectedValue(new Error("model boom")) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_model_request",
+      agentId: "agent-1",
+      modelId: "claude-opus-4-8",
+      requestId: "req-model-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_model_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent model: model boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_model_response",
+      payload: {
+        requestId: "req-model-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "model boom",
+      },
+    });
+  });
+
+  test("set_agent_feature_request: success emits accepted response with no notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentFeature: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_feature_request",
+      agentId: "agent-1",
+      featureId: "web_search",
+      value: true,
+      requestId: "req-feature-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_feature_response",
+        payload: { requestId: "req-feature-ok", agentId: "agent-1", accepted: true, error: null },
+      },
+    ]);
+  });
+
+  test("set_agent_feature_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_feature_request",
+      agentId: "agent-1",
+      featureId: "web_search",
+      value: true,
+      requestId: "req-feature-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_feature_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent feature: feature boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_feature_response",
+      payload: {
+        requestId: "req-feature-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "feature boom",
+      },
+    });
+  });
+
+  test("set_agent_thinking_request: success emits accepted response carrying the notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const notice = { type: "warning", message: "Thinking budget reduced" } as const;
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentThinkingOption: vi.fn().mockResolvedValue(notice) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_thinking_request",
+      agentId: "agent-1",
+      thinkingOptionId: "high",
+      requestId: "req-thinking-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_thinking_response",
+        payload: {
+          requestId: "req-thinking-ok",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          notice,
+        },
+      },
+    ]);
+  });
+
+  test("set_agent_thinking_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        setAgentThinkingOption: vi.fn().mockRejectedValue(new Error("thinking boom")),
+      },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_thinking_request",
+      agentId: "agent-1",
+      thinkingOptionId: "high",
+      requestId: "req-thinking-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_thinking_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent thinking option: thinking boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_thinking_response",
+      payload: {
+        requestId: "req-thinking-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "thinking boom",
+      },
+    });
+  });
+});

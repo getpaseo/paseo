@@ -156,6 +156,7 @@ import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import {
@@ -673,6 +674,7 @@ export class Session {
   private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
+  private readonly agentConfigSession: AgentConfigSession;
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
   private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
@@ -816,6 +818,21 @@ export class Session {
       },
       providerSnapshotManager,
       providerUsageService,
+      logger: this.sessionLogger,
+    });
+    this.agentConfigSession = new AgentConfigSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      operations: {
+        setMode: async (agentId, modeId) =>
+          (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
+        setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
+        setFeature: (agentId, featureId, value) =>
+          agentManager.setAgentFeature(agentId, featureId, value),
+        setThinking: (agentId, thinkingOptionId) =>
+          agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+      },
       logger: this.sessionLogger,
     });
     this.daemonConfigStore = daemonConfigStore;
@@ -1780,18 +1797,13 @@ export class Session {
   private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
-        return this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
+        return this.agentConfigSession.handleSetAgentModeRequest(msg);
       case "set_agent_model_request":
-        return this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
+        return this.agentConfigSession.handleSetAgentModelRequest(msg);
       case "set_agent_feature_request":
-        return this.handleSetAgentFeatureRequest(
-          msg.agentId,
-          msg.featureId,
-          msg.value,
-          msg.requestId,
-        );
+        return this.agentConfigSession.handleSetAgentFeatureRequest(msg);
       case "set_agent_thinking_request":
-        return this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
+        return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -3735,191 +3747,6 @@ export class Session {
         { err: error, cwd, reason },
         "Failed to force-refresh workspace git snapshot after mutation",
       );
-    }
-  }
-
-  /**
-   * Handle set agent mode request
-   */
-  private async handleSetAgentModeRequest(
-    agentId: string,
-    modeId: string,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info({ agentId, modeId, requestId }, "session: set_agent_mode_request");
-
-    try {
-      const result = await setAgentModeCommand(
-        { agentManager: this.agentManager },
-        { agentId, modeId },
-      );
-      this.sessionLogger.info(
-        { agentId, modeId, requestId },
-        "session: set_agent_mode_request success",
-      );
-      this.emit({
-        type: "set_agent_mode_response",
-        payload: { requestId, agentId, accepted: true, error: null, notice: result.notice },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, modeId, requestId },
-        "session: set_agent_mode_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent mode: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_mode_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent mode"),
-        },
-      });
-    }
-  }
-
-  private async handleSetAgentModelRequest(
-    agentId: string,
-    modelId: string | null,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info({ agentId, modelId, requestId }, "session: set_agent_model_request");
-
-    try {
-      await this.agentManager.setAgentModel(agentId, modelId);
-      this.sessionLogger.info(
-        { agentId, modelId, requestId },
-        "session: set_agent_model_request success",
-      );
-      this.emit({
-        type: "set_agent_model_response",
-        payload: { requestId, agentId, accepted: true, error: null },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, modelId, requestId },
-        "session: set_agent_model_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent model: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_model_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent model"),
-        },
-      });
-    }
-  }
-
-  private async handleSetAgentFeatureRequest(
-    agentId: string,
-    featureId: string,
-    value: unknown,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info(
-      { agentId, featureId, value, requestId },
-      "session: set_agent_feature_request",
-    );
-
-    try {
-      await this.agentManager.setAgentFeature(agentId, featureId, value);
-      this.sessionLogger.info(
-        { agentId, featureId, value, requestId },
-        "session: set_agent_feature_request success",
-      );
-      this.emit({
-        type: "set_agent_feature_response",
-        payload: { requestId, agentId, accepted: true, error: null },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, featureId, value, requestId },
-        "session: set_agent_feature_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent feature: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_feature_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent feature"),
-        },
-      });
-    }
-  }
-
-  private async handleSetAgentThinkingRequest(
-    agentId: string,
-    thinkingOptionId: string | null,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info(
-      { agentId, thinkingOptionId, requestId },
-      "session: set_agent_thinking_request",
-    );
-
-    try {
-      const notice = await this.agentManager.setAgentThinkingOption(agentId, thinkingOptionId);
-      this.sessionLogger.info(
-        { agentId, thinkingOptionId, requestId },
-        "session: set_agent_thinking_request success",
-      );
-      this.emit({
-        type: "set_agent_thinking_response",
-        payload: { requestId, agentId, accepted: true, error: null, notice },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, thinkingOptionId, requestId },
-        "session: set_agent_thinking_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent thinking option: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_thinking_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent thinking option"),
-        },
-      });
     }
   }
 
