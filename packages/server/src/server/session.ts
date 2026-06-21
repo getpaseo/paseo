@@ -169,7 +169,7 @@ import {
 } from "./workspace-registry.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
-import { VoiceSession } from "./voice-session.js";
+import { VoiceSession } from "./voice/voice-session.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
