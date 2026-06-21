@@ -2,25 +2,25 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 import type pino from "pino";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
-import type { SessionInboundMessage, SessionOutboundMessage } from "../messages.js";
-import { TTSManager } from "../agent/tts-manager.js";
-import { STTManager } from "../agent/stt-manager.js";
-import type { SpeechToTextProvider, TextToSpeechProvider } from "../speech/speech-provider.js";
-import type { TurnDetectionProvider } from "../speech/turn-detection-provider.js";
-import { maybePersistTtsDebugAudio } from "../agent/tts-debug.js";
-import { isPaseoDictationDebugEnabled } from "../agent/recordings-debug.js";
+import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
+import { TTSManager } from "../../agent/tts-manager.js";
+import { STTManager } from "../../agent/stt-manager.js";
+import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech/speech-provider.js";
+import type { TurnDetectionProvider } from "../../speech/turn-detection-provider.js";
+import { maybePersistTtsDebugAudio } from "../../agent/tts-debug.js";
+import { isPaseoDictationDebugEnabled } from "../../agent/recordings-debug.js";
 import {
   DictationStreamManager,
   type DictationStreamOutboundMessage,
-} from "../dictation/dictation-stream-manager.js";
+} from "../../dictation/dictation-stream-manager.js";
 import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
-import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../voice-config.js";
-import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
-import type { ManagedAgent } from "../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
-import type { LocalSpeechModelId } from "../speech/providers/local/models.js";
-import { toResolver, type Resolvable } from "../speech/provider-resolver.js";
-import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../speech/speech-runtime.js";
+import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../../voice-config.js";
+import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
+import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
+import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
+import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
+import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
 
 const PCM_SAMPLE_RATE = 16000;
 const PCM_CHANNELS = 1;

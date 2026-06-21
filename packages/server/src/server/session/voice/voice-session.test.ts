@@ -3,18 +3,18 @@ import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
 import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
-import type { ManagedAgent } from "../agent/agent-manager.js";
-import type { SessionOutboundMessage } from "../messages.js";
+import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   SpeechToTextProvider,
   StreamingTranscriptionCommittedEvent,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
-} from "../speech/speech-provider.js";
+} from "../../speech/speech-provider.js";
 import type {
   TurnDetectionProvider,
   TurnDetectionSession,
-} from "../speech/turn-detection-provider.js";
+} from "../../speech/turn-detection-provider.js";
 
 const VOICE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
 
