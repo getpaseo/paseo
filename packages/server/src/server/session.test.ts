@@ -2493,7 +2493,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh",
@@ -2531,7 +2531,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh-error",
@@ -2559,7 +2559,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/service-worktree",
       requestId: "request-status",
@@ -2608,7 +2608,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/cold-worktree",
       requestId: "request-cold-status",
@@ -2856,7 +2856,7 @@ describe("session branch validation", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleValidateBranchRequest({
+    await session.handleMessage({
       type: "validate_branch_request",
       cwd: "/tmp/repo",
       branchName: "feature",
@@ -3279,7 +3279,7 @@ describe("session branch suggestions handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleBranchSuggestionsRequest({
+    await session.handleMessage({
       type: "branch_suggestions_request",
       cwd: "/tmp/repo",
       query: "service",
