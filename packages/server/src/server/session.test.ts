@@ -50,8 +50,6 @@ import type {
 } from "../services/github-service.js";
 
 interface SessionHandlerInternals {
-  startVoiceTurnController(): Promise<void>;
-  stopVoiceTurnController(): Promise<void>;
   handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -82,13 +80,25 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+}
+
+function asSessionInternals(session: Session): SessionHandlerInternals {
+  return asSessionInternalsHelper<SessionHandlerInternals>(session);
+}
+
+interface VoiceSessionInternals {
+  isVoiceMode: boolean;
+  voiceModeAgentId: string | null;
+  startVoiceTurnController(): Promise<void>;
+  stopVoiceTurnController(): Promise<void>;
   sttManager: {
     transcribe(audio: Buffer, format: string): Promise<unknown>;
   };
 }
 
-function asSessionInternals(session: Session): SessionHandlerInternals {
-  return asSessionInternalsHelper<SessionHandlerInternals>(session);
+function asVoiceSessionInternals(session: Session): VoiceSessionInternals {
+  const { voiceSession } = asSessionInternalsHelper<{ voiceSession: unknown }>(session);
+  return voiceSession as VoiceSessionInternals;
 }
 
 function createBinaryMessageHandler(
@@ -366,7 +376,8 @@ function createVoiceSessionHarness() {
     stt: sttProvider,
     voice: { turnDetection },
   });
-  Object.assign(session, {
+  const voiceInternals = asVoiceSessionInternals(session);
+  Object.assign(voiceInternals, {
     isVoiceMode: true,
     voiceModeAgentId: "11111111-1111-4111-8111-111111111111",
   });
@@ -374,11 +385,12 @@ function createVoiceSessionHarness() {
   const sendAgentMessage = vi
     .spyOn(internals, "handleSendAgentMessage")
     .mockResolvedValue({ ok: true });
-  const transcribe = vi.spyOn(asSessionInternals(session).sttManager, "transcribe");
+  const transcribe = vi.spyOn(voiceInternals.sttManager, "transcribe");
 
   return {
     session,
     internals,
+    voiceInternals,
     messages,
     detector,
     sttSession,
@@ -397,7 +409,7 @@ describe("session voice mode streaming transcription", () => {
   test("submits the streaming final transcript to the agent without batch transcribe", async () => {
     const harness = createVoiceSessionHarness();
 
-    await harness.internals.startVoiceTurnController();
+    await harness.voiceInternals.startVoiceTurnController();
     harness.detector.emit("speech_started");
     await settleVoiceSession();
     harness.detector.emit("speech_stopped");
@@ -435,7 +447,7 @@ describe("session voice mode streaming transcription", () => {
       }),
     );
 
-    await harness.internals.stopVoiceTurnController();
+    await harness.voiceInternals.stopVoiceTurnController();
   });
 
   test("uses the finalization timeout empty transcript path without agent submission", async () => {
@@ -443,7 +455,7 @@ describe("session voice mode streaming transcription", () => {
     try {
       const harness = createVoiceSessionHarness();
 
-      await harness.internals.startVoiceTurnController();
+      await harness.voiceInternals.startVoiceTurnController();
       harness.detector.emit("speech_started");
       await settleVoiceSession();
       harness.detector.emit("speech_stopped");
@@ -464,7 +476,7 @@ describe("session voice mode streaming transcription", () => {
         }),
       );
 
-      await harness.internals.stopVoiceTurnController();
+      await harness.voiceInternals.stopVoiceTurnController();
     } finally {
       vi.useRealTimers();
     }
@@ -473,7 +485,7 @@ describe("session voice mode streaming transcription", () => {
   test("filters low-confidence streaming finals without agent submission", async () => {
     const harness = createVoiceSessionHarness();
 
-    await harness.internals.startVoiceTurnController();
+    await harness.voiceInternals.startVoiceTurnController();
     harness.detector.emit("speech_started");
     await settleVoiceSession();
     harness.detector.emit("speech_stopped");
@@ -501,7 +513,7 @@ describe("session voice mode streaming transcription", () => {
       }),
     );
 
-    await harness.internals.stopVoiceTurnController();
+    await harness.voiceInternals.stopVoiceTurnController();
   });
 });
 
