@@ -164,6 +164,7 @@ import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
+import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
@@ -197,12 +198,7 @@ import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 import type pino from "pino";
-import {
-  ChatServiceError,
-  FileBackedChatService,
-  parseMentionAgentIds,
-} from "./chat/chat-service.js";
-import { notifyChatMentions, prepareChatMentionFanout } from "./chat/chat-mentions.js";
+import { FileBackedChatService } from "./chat/chat-service.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { execCommand } from "../utils/spawn.js";
@@ -656,9 +652,6 @@ export class Session {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly filesystem: SessionFileSystem;
-  private readonly chatService: FileBackedChatService;
-  private readonly scheduleService: ScheduleService;
-  private readonly loopService: LoopService;
   private readonly github: GitHubService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
   private readonly generateWorkspaceName: typeof generateBranchNameFromFirstAgentContext;
@@ -705,6 +698,7 @@ export class Session {
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
+  private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
   private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
@@ -783,9 +777,6 @@ export class Session {
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
-    this.chatService = chatService;
-    this.scheduleService = scheduleService;
-    this.loopService = loopService;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.generateWorkspaceName = generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
@@ -808,6 +799,29 @@ export class Session {
       checkoutDiffManager,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
+      logger: this.sessionLogger,
+    });
+    this.chatScheduleLoopSession = new ChatScheduleLoopSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        listStoredAgents: () => this.agentStorage.list(),
+        listLiveAgents: () => this.agentManager.listAgents(),
+        resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
+        sendAgentMessage: async (agentId, text) => {
+          await sendPromptToAgent({
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            agentId,
+            prompt: formatSystemNotificationPrompt(text),
+            unarchive: false,
+            logger: this.sessionLogger,
+          });
+        },
+      },
+      chatService,
+      scheduleService,
+      loopService,
+      clientId: this.clientId,
       logger: this.sessionLogger,
     });
     this.daemonConfigStore = daemonConfigStore;
@@ -2103,57 +2117,51 @@ export class Session {
     return this.terminalController.dispatch(msg);
   }
 
+  // eslint-disable-next-line complexity
   private dispatchChatScheduleLoopMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "chat/create":
-        return this.handleChatCreateRequest(msg);
+        return this.chatScheduleLoopSession.handleChatCreateRequest(msg);
       case "chat/list":
-        return this.handleChatListRequest(msg);
+        return this.chatScheduleLoopSession.handleChatListRequest(msg);
       case "chat/inspect":
-        return this.handleChatInspectRequest(msg);
+        return this.chatScheduleLoopSession.handleChatInspectRequest(msg);
       case "chat/delete":
-        return this.handleChatDeleteRequest(msg);
+        return this.chatScheduleLoopSession.handleChatDeleteRequest(msg);
       case "chat/post":
-        return this.handleChatPostRequest(msg);
+        return this.chatScheduleLoopSession.handleChatPostRequest(msg);
       case "chat/read":
-        return this.handleChatReadRequest(msg);
+        return this.chatScheduleLoopSession.handleChatReadRequest(msg);
       case "chat/wait":
-        return this.handleChatWaitRequest(msg);
+        return this.chatScheduleLoopSession.handleChatWaitRequest(msg);
       case "loop/run":
-        return this.handleLoopRunRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopRunRequest(msg);
       case "loop/list":
-        return this.handleLoopListRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopListRequest(msg);
       case "loop/inspect":
-        return this.handleLoopInspectRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopInspectRequest(msg);
       case "loop/logs":
-        return this.handleLoopLogsRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopLogsRequest(msg);
       case "loop/stop":
-        return this.handleLoopStopRequest(msg);
-      default:
-        return this.dispatchScheduleMessage(msg);
-    }
-  }
-
-  private dispatchScheduleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    switch (msg.type) {
+        return this.chatScheduleLoopSession.handleLoopStopRequest(msg);
       case "schedule/create":
-        return this.handleScheduleCreateRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleCreateRequest(msg);
       case "schedule/list":
-        return this.handleScheduleListRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleListRequest(msg);
       case "schedule/inspect":
-        return this.handleScheduleInspectRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleInspectRequest(msg);
       case "schedule/logs":
-        return this.handleScheduleLogsRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleLogsRequest(msg);
       case "schedule/pause":
-        return this.handleSchedulePauseRequest(msg);
+        return this.chatScheduleLoopSession.handleSchedulePauseRequest(msg);
       case "schedule/resume":
-        return this.handleScheduleResumeRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleResumeRequest(msg);
       case "schedule/delete":
-        return this.handleScheduleDeleteRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleDeleteRequest(msg);
       case "schedule/run-once":
-        return this.handleScheduleRunOnceRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
-        return this.handleScheduleUpdateRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -7676,559 +7684,5 @@ export class Session {
       unsubscribe();
     }
     this.workspaceGitSubscriptions.clear();
-  }
-
-  private emitChatRpcError(request: { requestId: string; type: string }, error: unknown): void {
-    const message = error instanceof Error ? error.message : "Chat request failed";
-    const code = error instanceof ChatServiceError ? error.code : "chat_request_failed";
-    this.sessionLogger.error({ err: error, requestType: request.type }, "Chat request failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: request.requestId,
-        requestType: request.type,
-        error: message,
-        code,
-      },
-    });
-  }
-
-  private async handleChatCreateRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/create" }>,
-  ): Promise<void> {
-    try {
-      const room = await this.chatService.createRoom({
-        name: request.name,
-        purpose: request.purpose,
-      });
-      this.emit({
-        type: "chat/create/response",
-        payload: {
-          requestId: request.requestId,
-          room,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatListRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/list" }>,
-  ): Promise<void> {
-    try {
-      const rooms = await this.chatService.listRooms();
-      this.emit({
-        type: "chat/list/response",
-        payload: {
-          requestId: request.requestId,
-          rooms,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatInspectRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/inspect" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.chatService.inspectRoom({
-        room: request.room,
-      });
-      this.emit({
-        type: "chat/inspect/response",
-        payload: {
-          requestId: request.requestId,
-          room: result.room,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatDeleteRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/delete" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.chatService.deleteRoom({
-        room: request.room,
-      });
-      this.emit({
-        type: "chat/delete/response",
-        payload: {
-          requestId: request.requestId,
-          room: result.room,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatPostRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/post" }>,
-  ): Promise<void> {
-    try {
-      const authorAgentId = request.authorAgentId?.trim() || this.clientId;
-      const mentionAgentIds = parseMentionAgentIds(request.body);
-      const storedAgents = await this.agentStorage.list();
-      const liveAgents = this.agentManager.listAgents();
-      const fanout = await prepareChatMentionFanout({
-        authorAgentId,
-        mentionAgentIds,
-        storedAgents,
-        liveAgents,
-        listRoomPosterAgentIds: () =>
-          this.chatService.listRoomPosterAgentIds({ room: request.room }),
-      });
-      if (!fanout.ok) {
-        throw new ChatServiceError("chat_mention_fanout_limit_exceeded", fanout.error);
-      }
-      const message = await this.chatService.dispatchMessage({
-        room: request.room,
-        authorAgentId,
-        body: request.body,
-        replyToMessageId: request.replyToMessageId,
-      });
-      this.emit({
-        type: "chat/post/response",
-        payload: {
-          requestId: request.requestId,
-          message,
-          error: null,
-        },
-      });
-      void notifyChatMentions({
-        room: request.room,
-        authorAgentId,
-        body: request.body,
-        mentionAgentIds: message.mentionAgentIds,
-        logger: this.sessionLogger,
-        storedAgents,
-        liveAgents,
-        prepared: fanout.prepared,
-        resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
-        sendAgentMessage: async (agentId, text) => {
-          await sendPromptToAgent({
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            agentId,
-            prompt: formatSystemNotificationPrompt(text),
-            unarchive: false,
-            logger: this.sessionLogger,
-          });
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatReadRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/read" }>,
-  ): Promise<void> {
-    try {
-      const messages = await this.chatService.readMessages({
-        room: request.room,
-        limit: request.limit,
-        since: request.since,
-        authorAgentId: request.authorAgentId,
-      });
-      this.emit({
-        type: "chat/read/response",
-        payload: {
-          requestId: request.requestId,
-          messages,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatWaitRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/wait" }>,
-  ): Promise<void> {
-    try {
-      const messages = await this.chatService.waitForMessages({
-        room: request.room,
-        afterMessageId: request.afterMessageId,
-        timeoutMs: request.timeoutMs,
-      });
-      this.emit({
-        type: "chat/wait/response",
-        payload: {
-          requestId: request.requestId,
-          messages,
-          timedOut: messages.length === 0,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private toScheduleSummary(
-    schedule: Awaited<ReturnType<ScheduleService["inspect"]>>,
-  ): Extract<
-    SessionOutboundMessage,
-    { type: "schedule/list/response" }
-  >["payload"]["schedules"][number] {
-    const { runs: _runs, ...summary } = schedule;
-    return summary;
-  }
-
-  private emitScheduleRpcError(
-    request: Extract<
-      SessionInboundMessage,
-      {
-        type:
-          | "schedule/create"
-          | "schedule/list"
-          | "schedule/inspect"
-          | "schedule/logs"
-          | "schedule/pause"
-          | "schedule/resume"
-          | "schedule/delete"
-          | "schedule/run-once"
-          | "schedule/update";
-      }
-    >,
-    error: unknown,
-  ): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.sessionLogger.error({ err: error, requestType: request.type }, "Schedule request failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: request.requestId,
-        requestType: request.type,
-        error: message,
-        code: "schedule_request_failed",
-      },
-    });
-  }
-
-  private async handleScheduleCreateRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/create" }>,
-  ): Promise<void> {
-    try {
-      const target =
-        request.target.type === "self"
-          ? { type: "agent" as const, agentId: request.target.agentId }
-          : request.target;
-      const schedule = await this.scheduleService.create({
-        prompt: request.prompt,
-        name: request.name,
-        cadence: request.cadence,
-        target,
-        maxRuns: request.maxRuns,
-        expiresAt: request.expiresAt,
-        runOnCreate: request.runOnCreate,
-      });
-      this.emit({
-        type: "schedule/create/response",
-        payload: {
-          requestId: request.requestId,
-          schedule: this.toScheduleSummary(schedule),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleListRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/list" }>,
-  ): Promise<void> {
-    try {
-      const schedules = await this.scheduleService.list();
-      this.emit({
-        type: "schedule/list/response",
-        payload: {
-          requestId: request.requestId,
-          schedules: schedules.map((schedule) => this.toScheduleSummary(schedule)),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleInspectRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/inspect" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.inspect(request.scheduleId);
-      this.emit({
-        type: "schedule/inspect/response",
-        payload: {
-          requestId: request.requestId,
-          schedule,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleLogsRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/logs" }>,
-  ): Promise<void> {
-    try {
-      const runs = await this.scheduleService.logs(request.scheduleId);
-      this.emit({
-        type: "schedule/logs/response",
-        payload: {
-          requestId: request.requestId,
-          runs,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleSchedulePauseRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/pause" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.pause(request.scheduleId);
-      this.emit({
-        type: "schedule/pause/response",
-        payload: {
-          requestId: request.requestId,
-          schedule: this.toScheduleSummary(schedule),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleResumeRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/resume" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.resume(request.scheduleId);
-      this.emit({
-        type: "schedule/resume/response",
-        payload: {
-          requestId: request.requestId,
-          schedule: this.toScheduleSummary(schedule),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleDeleteRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/delete" }>,
-  ): Promise<void> {
-    try {
-      await this.scheduleService.delete(request.scheduleId);
-      this.emit({
-        type: "schedule/delete/response",
-        payload: {
-          requestId: request.requestId,
-          scheduleId: request.scheduleId,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleRunOnceRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/run-once" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.runOnce(request.scheduleId);
-      this.emit({
-        type: "schedule/run-once/response",
-        payload: {
-          requestId: request.requestId,
-          schedule,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleUpdateRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/update" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.update({
-        id: request.scheduleId,
-        ...(request.name !== undefined ? { name: request.name } : {}),
-        ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
-        ...(request.cadence !== undefined ? { cadence: request.cadence } : {}),
-        ...(request.newAgentConfig !== undefined ? { newAgentConfig: request.newAgentConfig } : {}),
-        ...(request.maxRuns !== undefined ? { maxRuns: request.maxRuns } : {}),
-        ...(request.expiresAt !== undefined ? { expiresAt: request.expiresAt } : {}),
-      });
-      this.emit({
-        type: "schedule/update/response",
-        payload: {
-          requestId: request.requestId,
-          schedule,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private emitLoopRpcError(
-    request: Extract<
-      SessionInboundMessage,
-      {
-        type: "loop/run" | "loop/list" | "loop/inspect" | "loop/logs" | "loop/stop";
-      }
-    >,
-    error: unknown,
-  ): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.sessionLogger.error({ err: error, requestType: request.type }, "Loop request failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: request.requestId,
-        requestType: request.type,
-        error: message,
-        code: "loop_request_failed",
-      },
-    });
-  }
-
-  private async handleLoopRunRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/run" }>,
-  ): Promise<void> {
-    try {
-      const loop = await this.loopService.runLoop({
-        prompt: request.prompt,
-        cwd: request.cwd,
-        provider: request.provider,
-        model: request.model,
-        modeId: request.modeId,
-        workerProvider: request.workerProvider,
-        workerModel: request.workerModel,
-        verifierProvider: request.verifierProvider,
-        verifierModel: request.verifierModel,
-        verifierModeId: request.verifierModeId,
-        verifyPrompt: request.verifyPrompt,
-        verifyChecks: request.verifyChecks,
-        archive: request.archive,
-        name: request.name,
-        sleepMs: request.sleepMs,
-        maxIterations: request.maxIterations,
-        maxTimeMs: request.maxTimeMs,
-      });
-      this.emit({
-        type: "loop/run/response",
-        payload: {
-          requestId: request.requestId,
-          loop,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopListRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/list" }>,
-  ): Promise<void> {
-    try {
-      const loops = await this.loopService.listLoops();
-      this.emit({
-        type: "loop/list/response",
-        payload: {
-          requestId: request.requestId,
-          loops,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopInspectRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/inspect" }>,
-  ): Promise<void> {
-    try {
-      const loop = await this.loopService.inspectLoop(request.id);
-      this.emit({
-        type: "loop/inspect/response",
-        payload: {
-          requestId: request.requestId,
-          loop,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopLogsRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/logs" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.loopService.getLoopLogs(request.id, request.afterSeq ?? 0);
-      this.emit({
-        type: "loop/logs/response",
-        payload: {
-          requestId: request.requestId,
-          loop: result.loop,
-          entries: result.entries,
-          nextCursor: result.nextCursor,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopStopRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/stop" }>,
-  ): Promise<void> {
-    try {
-      const loop = await this.loopService.stopLoop(request.id);
-      this.emit({
-        type: "loop/stop/response",
-        payload: {
-          requestId: request.requestId,
-          loop,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
   }
 }

@@ -16,6 +16,7 @@ import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
+import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
 import {
   asSessionInternals as asSessionInternalsHelper,
   asAgentManager,
@@ -3816,5 +3817,113 @@ describe("session pull request timeline handling", () => {
         requestId: "request-check-details",
       },
     });
+  });
+});
+
+describe("chat/schedule/loop dispatch routing (behavior preservation)", () => {
+  // Each chat/*, loop/*, and schedule/* type must reach its domain handler. The
+  // injected service stubs are unstubbed, so every handler's own try/catch fires
+  // and emits its domain rpc_error code — proving the message routed (a dropped
+  // case would silently no-op and emit nothing). schedule/* historically routed
+  // via the chat dispatcher's fall-through arm; this guards that path explicitly.
+  // handleMessage receives already-parsed messages, so these fixtures only need to
+  // satisfy the TS union here — zod parsing happens upstream at the transport.
+  const routingCases: Array<{ msg: SessionInboundMessage; code: string }> = [
+    {
+      msg: { type: "chat/create", requestId: "rt-chat-create", name: "room" },
+      code: "chat_request_failed",
+    },
+    { msg: { type: "chat/list", requestId: "rt-chat-list" }, code: "chat_request_failed" },
+    {
+      msg: { type: "chat/inspect", requestId: "rt-chat-inspect", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/delete", requestId: "rt-chat-delete", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/post", requestId: "rt-chat-post", room: "room", body: "hi" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/read", requestId: "rt-chat-read", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/wait", requestId: "rt-chat-wait", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "loop/run", requestId: "rt-loop-run", prompt: "p", cwd: "/tmp/loop" },
+      code: "loop_request_failed",
+    },
+    { msg: { type: "loop/list", requestId: "rt-loop-list" }, code: "loop_request_failed" },
+    {
+      msg: { type: "loop/inspect", requestId: "rt-loop-inspect", id: "loop-1" },
+      code: "loop_request_failed",
+    },
+    {
+      msg: { type: "loop/logs", requestId: "rt-loop-logs", id: "loop-1" },
+      code: "loop_request_failed",
+    },
+    {
+      msg: { type: "loop/stop", requestId: "rt-loop-stop", id: "loop-1" },
+      code: "loop_request_failed",
+    },
+    {
+      msg: {
+        type: "schedule/create",
+        requestId: "rt-sched-create",
+        prompt: "p",
+        cadence: { type: "every", everyMs: 1000 },
+        target: { type: "agent", agentId: "00000000-0000-0000-0000-000000000000" },
+      },
+      code: "schedule_request_failed",
+    },
+    { msg: { type: "schedule/list", requestId: "rt-sched-list" }, code: "schedule_request_failed" },
+    {
+      msg: { type: "schedule/inspect", requestId: "rt-sched-inspect", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/logs", requestId: "rt-sched-logs", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/pause", requestId: "rt-sched-pause", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/resume", requestId: "rt-sched-resume", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/delete", requestId: "rt-sched-delete", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/run-once", requestId: "rt-sched-run-once", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/update", requestId: "rt-sched-update", scheduleId: "s1", name: "new" },
+      code: "schedule_request_failed",
+    },
+  ];
+
+  test.each(routingCases)("routes $msg.type to its domain handler", async ({ msg, code }) => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage(msg);
+
+    const routed = messages
+      .filter(
+        (m): m is Extract<SessionOutboundMessage, { type: "rpc_error" }> => m.type === "rpc_error",
+      )
+      .find((m) => m.payload.requestId === msg.requestId);
+    expect(routed, `${msg.type} did not route to a handler (silent no-op)`).toBeDefined();
+    expect(routed?.payload.code).toBe(code);
   });
 });
