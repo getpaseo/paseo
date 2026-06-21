@@ -17,6 +17,15 @@ export type WorkspaceSetupProgressPayload = Extract<
   { type: "workspace_setup_progress" }
 >["payload"];
 
+export type WorkspaceSetupStatusResult = Extract<
+  SessionOutboundMessage,
+  { type: "workspace_setup_status_response" }
+>["payload"];
+
+export interface WorkspaceSetupStatusClient {
+  fetchWorkspaceSetupStatus: (workspaceId: string) => Promise<WorkspaceSetupStatusResult>;
+}
+
 export interface WorkspaceSetupSnapshot extends WorkspaceSetupProgressPayload {
   updatedAt: number;
 }
@@ -31,9 +40,15 @@ export function shouldShowWorkspaceSetup(snapshot: WorkspaceSetupSnapshot | null
 interface WorkspaceSetupStoreState {
   pendingWorkspaceSetup: PendingWorkspaceSetup | null;
   snapshots: Record<string, WorkspaceSetupSnapshot>;
+  requestedKeys: Set<string>;
   beginWorkspaceSetup: (value: PendingWorkspaceSetup) => void;
   clearWorkspaceSetup: () => void;
   upsertProgress: (input: { serverId: string; payload: WorkspaceSetupProgressPayload }) => void;
+  ensureSetupStatus: (input: {
+    serverId: string;
+    workspaceId: string;
+    client: WorkspaceSetupStatusClient;
+  }) => void;
   removeWorkspace: (input: { serverId: string; workspaceId: string }) => void;
   clearServer: (serverId: string) => void;
 }
@@ -42,9 +57,19 @@ function buildWorkspaceSetupKey(input: { serverId: string; workspaceId: string }
   return buildWorkspaceTabPersistenceKey(input);
 }
 
-export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set) => ({
+function forgetRequestedKey(requestedKeys: Set<string>, key: string): Set<string> {
+  if (!requestedKeys.has(key)) {
+    return requestedKeys;
+  }
+  const next = new Set(requestedKeys);
+  next.delete(key);
+  return next;
+}
+
+export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set, get) => ({
   pendingWorkspaceSetup: null,
   snapshots: {},
+  requestedKeys: new Set(),
   beginWorkspaceSetup: (value) => {
     set({ pendingWorkspaceSetup: value });
   },
@@ -67,6 +92,30 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set) =
       },
     }));
   },
+  ensureSetupStatus: async ({ serverId, workspaceId, client }) => {
+    const key = buildWorkspaceSetupKey({ serverId, workspaceId });
+    if (!key) {
+      return;
+    }
+    const state = get();
+    if (state.snapshots[key] || state.requestedKeys.has(key)) {
+      return;
+    }
+
+    set((current) => ({ requestedKeys: new Set(current.requestedKeys).add(key) }));
+
+    try {
+      const response = await client.fetchWorkspaceSetupStatus(workspaceId);
+      if (response.workspaceId === workspaceId && response.snapshot) {
+        get().upsertProgress({
+          serverId,
+          payload: { workspaceId: response.workspaceId, ...response.snapshot },
+        });
+      }
+    } catch {
+      set((current) => ({ requestedKeys: forgetRequestedKey(current.requestedKeys, key) }));
+    }
+  },
   removeWorkspace: ({ serverId, workspaceId }) => {
     const key = buildWorkspaceSetupKey({ serverId, workspaceId });
     if (!key) {
@@ -74,23 +123,32 @@ export const useWorkspaceSetupStore = create<WorkspaceSetupStoreState>()((set) =
     }
 
     set((state) => {
-      if (!(key in state.snapshots)) {
+      if (!(key in state.snapshots) && !state.requestedKeys.has(key)) {
         return state;
       }
       const next = { ...state.snapshots };
       delete next[key];
-      return { snapshots: next };
+      return { snapshots: next, requestedKeys: forgetRequestedKey(state.requestedKeys, key) };
     });
   },
   clearServer: (serverId) => {
     set((state) => {
+      const prefix = `${serverId}:`;
       const nextEntries = Object.entries(state.snapshots).filter(
-        ([key]) => !key.startsWith(`${serverId}:`),
+        ([key]) => !key.startsWith(prefix),
       );
-      if (nextEntries.length === Object.keys(state.snapshots).length) {
+      const nextRequestedKeys = new Set(
+        Array.from(state.requestedKeys).filter((key) => !key.startsWith(prefix)),
+      );
+      const snapshotsUnchanged = nextEntries.length === Object.keys(state.snapshots).length;
+      const requestedUnchanged = nextRequestedKeys.size === state.requestedKeys.size;
+      if (snapshotsUnchanged && requestedUnchanged) {
         return state;
       }
-      return { snapshots: Object.fromEntries(nextEntries) };
+      return {
+        snapshots: Object.fromEntries(nextEntries),
+        requestedKeys: nextRequestedKeys,
+      };
     });
   },
 }));
