@@ -29,6 +29,8 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   rust: "rs",
   golang: "go",
   "c++": "cpp",
+  csharp: "cs",
+  "c#": "cs",
   objc: "m",
   "objective-c": "m",
   markdown: "md",
