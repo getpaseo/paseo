@@ -111,6 +111,7 @@ function createServer(terminalManager: TerminalManager, workspaceRegistry?: Work
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     setAgentAttentionCallback: vi.fn(),
+    subscribe: vi.fn(() => () => {}),
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),
     getMetricsSnapshot: vi.fn(() => ({
@@ -200,22 +201,40 @@ function connectClient(server: VoiceAssistantWebSocketServer) {
   return ws;
 }
 
+function sentTerminalAttentionMessages(ws: ReturnType<typeof createOpenSocket>) {
+  return ws.send.mock.calls
+    .map(([rawMessage]) => {
+      expect(typeof rawMessage).toBe("string");
+      if (typeof rawMessage !== "string") throw new Error("Expected string WebSocket frame");
+      return JSON.parse(rawMessage);
+    })
+    .filter(
+      (message) =>
+        message.type === "session" && message.message.type === "terminal_attention_required",
+    )
+    .map((message) => message.message.payload as TerminalAttentionPayload);
+}
+
+interface TerminalAttentionPayload {
+  terminalId: string;
+  cwd: string;
+  workspaceId?: string;
+  shouldNotify: boolean;
+  reason: "finished" | "needs_input";
+  title: string;
+  body: string;
+}
+
 function readTerminalAttentionMessage(ws: ReturnType<typeof createOpenSocket>) {
-  const rawMessage = ws.send.mock.calls[0]?.[0];
-  expect(typeof rawMessage).toBe("string");
-  if (typeof rawMessage !== "string") throw new Error("Expected string WebSocket frame");
-  const message = JSON.parse(rawMessage);
-  expect(message.type).toBe("session");
-  expect(message.message.type).toBe("terminal_attention_required");
-  return message.message.payload as {
-    terminalId: string;
-    cwd: string;
-    workspaceId?: string;
-    shouldNotify: boolean;
-    reason: "finished" | "needs_input";
-    title: string;
-    body: string;
-  };
+  const terminalMessages = sentTerminalAttentionMessages(ws);
+  expect(terminalMessages).toHaveLength(1);
+  const [payload] = terminalMessages;
+  if (!payload) throw new Error("Expected terminal attention message");
+  return payload;
+}
+
+function expectNoTerminalAttentionMessage(ws: ReturnType<typeof createOpenSocket>) {
+  expect(sentTerminalAttentionMessages(ws)).toHaveLength(0);
 }
 
 const CWD = "/home/user/project";
@@ -357,7 +376,7 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
 
     await flushAsync();
 
-    expect(ws.send).not.toHaveBeenCalled();
+    expectNoTerminalAttentionMessage(ws);
   });
 
   it("does not broadcast on working -> unknown", async () => {
@@ -376,7 +395,7 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
 
     await flushAsync();
 
-    expect(ws.send).not.toHaveBeenCalled();
+    expectNoTerminalAttentionMessage(ws);
   });
 
   it("broadcasts needs_input after working -> attention", async () => {

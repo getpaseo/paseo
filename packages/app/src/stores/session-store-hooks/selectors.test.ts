@@ -16,7 +16,11 @@ import {
   workspaceEqualityFns,
   type SidebarOrderSnapshot,
 } from "./selectors";
-import { useSessionStore, type WorkspaceDescriptor } from "../session-store";
+import {
+  useSessionStore,
+  type EmptyProjectDescriptor,
+  type WorkspaceDescriptor,
+} from "../session-store";
 
 const SERVER_ID = "test-server";
 
@@ -85,6 +89,12 @@ function emptySidebarOrder(): SidebarOrderSnapshot {
     projectOrderByServerId: {},
     workspaceOrderByServerAndProject: {},
   };
+}
+
+function selectWorkspaceStructureProjectKeys(
+  state: Parameters<typeof selectWorkspaceStructureProjects>[0],
+): string[] {
+  return selectWorkspaceStructureProjects(state, SERVER_ID).map((project) => project.projectKey);
 }
 
 afterEach(() => {
@@ -208,6 +218,38 @@ describe("workspace structure composition", () => {
     });
   }
 
+  it("keeps a project parent visible throughout the last workspace archive transition", () => {
+    const workspace = createWorkspace({
+      id: "workspace-a",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/a",
+      workspaceDirectory: "/repo/a",
+    });
+    const emptyProject: EmptyProjectDescriptor = {
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectCustomName: null,
+      projectRootPath: "/repo/a",
+      projectKind: "git",
+    };
+    initializeWorkspaces([workspace]);
+
+    const emittedProjectKeys = [selectWorkspaceStructureProjectKeys(useSessionStore.getState())];
+    const stop = useSessionStore.subscribe((state) => {
+      emittedProjectKeys.push(selectWorkspaceStructureProjectKeys(state));
+    });
+
+    try {
+      useSessionStore.getState().removeWorkspace(SERVER_ID, workspace.id);
+      useSessionStore.getState().addEmptyProject(SERVER_ID, emptyProject);
+    } finally {
+      stop();
+    }
+
+    expect(emittedProjectKeys).toEqual([["project-a"], ["project-a"]]);
+  });
+
   it("changes for membership updates but not status-only updates", () => {
     const workspaceA = createWorkspace({ id: "workspace-a", name: "A" });
     const workspaceB = createWorkspace({ id: "workspace-b", name: "B" });
@@ -231,7 +273,7 @@ describe("workspace structure composition", () => {
     tracked.stop();
   });
 
-  it("renders a project with zero active workspaces as an empty project parent", () => {
+  it("renders a project parent with zero active workspaces", () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
     useSessionStore.getState().setWorkspaces(SERVER_ID, new Map());
     useSessionStore.getState().setEmptyProjects(SERVER_ID, [

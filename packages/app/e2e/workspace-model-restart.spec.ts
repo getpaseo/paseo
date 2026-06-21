@@ -390,7 +390,7 @@ async function expectWorkspaceRowInStatusBucket(
   page: Page,
   input: { serverId: string; workspaceId: string; bucket: string },
 ) {
-  await page.getByTestId("sidebar-grouping-selector").click();
+  await page.getByTestId("sidebar-display-preferences-menu").click();
   await page.getByTestId("sidebar-grouping-status").click();
   await expect(
     page

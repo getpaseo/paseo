@@ -229,6 +229,7 @@ export interface PaseoAgentHandle {
   refetch(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   archive(): Promise<{ archivedAt: string }>;
+  detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -482,6 +483,9 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
           latest = { ...latest, archivedAt: result.archivedAt };
         }
         return result;
+      },
+      detach: async () => {
+        await daemonClient.detachAgent(id);
       },
       subscribe: (handler) =>
         daemonClient.on("agent_update", (message) => {

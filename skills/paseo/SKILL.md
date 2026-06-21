@@ -7,34 +7,46 @@ Paseo is a daemon that supervises AI coding agents on your machine. Control it t
 
 ## Worktrees
 
-**`create_worktree`** — three modes:
+**`create_worktree`** — same target union as `create_agent.workspace.source.worktree.target`:
 
-- From a PR: `{ githubPrNumber: 503 }`.
-- Branch off a base: `{ action: "branch-off", branchName: "fix/foo", baseBranch: "main" }`.
-- Checkout an existing ref: `{ action: "checkout", refName: "feat/bar" }`.
+- From a PR: `{ target: { kind: "checkout-pr", githubPrNumber: 503 } }`.
+- Branch off a base: `{ target: { kind: "branch-off", worktreeSlug: "foo", branchName: "fix/foo", baseBranch: "main" } }`.
+- Checkout an existing branch: `{ target: { kind: "checkout-branch", branch: "feat/bar" } }`.
 
-Returns `{ branchName, worktreePath }`. Pass `cwd` to target a specific repo.
+Returns `{ branchName, worktreePath, workspaceId }`. Pass `cwd` to target a specific repo.
+
+In `branch-off`, `worktreeSlug` controls the worktree path slug and `branchName` controls the git branch. If `branchName` is omitted, Paseo defaults it from `worktreeSlug`. The returned `branchName` is authoritative; checkout and PR flows may return a branch name that differs from any requested slug.
 
 **`list_worktrees`** — current repo (or pass `cwd`).
 **`archive_worktree`** — `{ worktreePath }` or `{ worktreeSlug }`. Removes worktree and branch.
 
 ## Agents
 
-**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `cwd` (often a `worktreePath`), `notifyOnFinish`, `settings`, `detached`. Returns `{ agentId, … }`.
+**`create_agent`** — required: `relationship`, `workspace`, `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Common: `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, … }`.
 
 Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }` when creating the agent.
 
-Compose: call `create_worktree` first, then `create_agent` with `cwd` set to the returned `worktreePath`.
+To create a new worktree and launch an agent in it, use `create_agent.workspace.source.kind = "worktree"`. Use `create_worktree` separately only when you need a worktree without launching an agent, or when you need a split flow; in a split flow, pass the returned `workspaceId` to `create_agent` with `workspace: { kind: "existing", workspaceId }`.
 
 ### Agent relationships
 
-Agents you create default to **your subagents**: omit `detached` or pass `detached: false`. Use this for advisors, committee members, planners, implementers, auditors, loop workers, and any agent whose lifetime belongs to your task. Subagents appear under you and are archived with you.
+`relationship` controls parentage only:
 
-Pass `detached: true` only when the agent you create should stand on its own, not help you finish your task. Use this for handoffs and fire-and-forget delegations the user may continue after you are archived. Detached agents do not appear in your subagent track and are not archived with you.
+- `{ kind: "subagent" }` — child under your subagents track. Use for advisors, committee members, planners, implementers, auditors, loop workers, and any agent whose lifetime belongs to your task.
+- `{ kind: "detached" }` — root/sibling agent. Use for handoffs and fire-and-forget delegations the user may continue after you are archived.
 
-For subagents, leave `notifyOnFinish` omitted or set it to `true`. You will get notified when the created agent finishes, errors, or needs permission. Set `notifyOnFinish: false` only when the created agent is truly fire-and-forget and you do not need to follow up.
+`workspace` controls placement only:
 
-**`send_agent_prompt`** — `{ agentId, prompt }`. Use for follow-ups to an existing agent.
+- `{ kind: "current" }` — same workspace as the caller, with optional `cwd`.
+- `{ kind: "existing", workspaceId: string, cwd?: string }` — attach to an existing workspace, usually from `create_worktree`.
+- `{ kind: "create", source: { kind: "directory", path?: string } }` — new workspace rooted at a directory.
+- `{ kind: "create", source: { kind: "worktree", cwd?: string, target: { kind: "branch-off", worktreeSlug?: string, branchName?: string, baseBranch?: string } } }`
+- `{ kind: "create", source: { kind: "worktree", cwd?: string, target: { kind: "checkout-branch", branch: string } } }`
+- `{ kind: "create", source: { kind: "worktree", cwd?: string, target: { kind: "checkout-pr", githubPrNumber: number } } }`
+
+Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` only for truly fire-and-forget agents.
+
+**`send_agent_prompt`** — `{ agentId, prompt }`. Use for follow-ups to an existing agent. Agent-scoped prompt calls default to `background: true` and `notifyOnFinish: true`; top-level calls default to blocking with no callback. For a synchronous follow-up, pass `background: false` and use the returned result.
 
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
@@ -94,7 +106,7 @@ If the file is missing, use sensible defaults and tell the user once.
 
 Agents take time — 10–30+ minutes is routine. Favor asynchronous workflows.
 
-For `create_agent`, leave `notifyOnFinish` omitted or set it to `true` unless the created agent is truly fire-and-forget. You will get notified when the created agent finishes, errors, or needs permission. **You must not call `wait_for_agent` on a notify-on-finish agent.** Move on to other work. The notification arrives on its own.
+For agent-scoped `create_agent` and background `send_agent_prompt`, leave `notifyOnFinish` omitted or set it to `true` unless the work is truly fire-and-forget. You will get notified when the target agent finishes, errors, or needs permission. **You must not call `wait_for_agent` on a notify-on-finish agent.** Move on to other work. The notification arrives on its own.
 
 Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. The notification will tell you.
 

@@ -53,6 +53,10 @@ import {
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
+import {
+  clearHistorySyncErrorAfterSuccessfulSync,
+  reconcileMissingAgentStateWithPresentAgent,
+} from "@/panels/agent-panel-load-state";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -77,7 +81,7 @@ import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
-import { useArchiveSubagent, useSubagentsForParent } from "@/subagents";
+import { useArchiveSubagent, useDetachSubagent, useSubagentsForParent } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -847,9 +851,15 @@ function ChatAgentContent({
       if (!agentId) {
         return;
       }
-      ensureAgentIsInitialized(agentId).catch((error) => {
-        handleHistorySyncFailure({ origin, error });
-      });
+      ensureAgentIsInitialized(agentId)
+        .then(() => {
+          setMissingAgentState(clearHistorySyncErrorAfterSuccessfulSync);
+          return undefined;
+        })
+        .catch((error) => {
+          handleHistorySyncFailure({ origin, error });
+          return undefined;
+        });
     },
     [agentId, ensureAgentIsInitialized, handleHistorySyncFailure],
   );
@@ -1011,8 +1021,8 @@ function ChatAgentContent({
       return;
     }
     if (agentState.id) {
-      if (missingAgentState.kind !== "idle") {
-        setMissingAgentState({ kind: "idle" });
+      if (missingAgentState.kind === "resolving" || missingAgentState.kind === "not_found") {
+        setMissingAgentState(reconcileMissingAgentStateWithPresentAgent);
       }
       return;
     }
@@ -1442,6 +1452,9 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
+  const canDetachSubagents = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
+  );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1449,6 +1462,7 @@ function ActiveAgentComposer({
     [serverId],
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
+  const handleDetachSubagent = useDetachSubagent({ serverId });
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd,
@@ -1545,6 +1559,7 @@ function ActiveAgentComposer({
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
         onArchiveSubagent={handleArchiveSubagent}
+        onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
       />
       <Composer
         agentId={agentId}

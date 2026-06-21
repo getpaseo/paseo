@@ -436,6 +436,19 @@ describe("paseo daemon bootstrap", () => {
     });
   });
 
+  test("parses IPv6 listen targets correctly", () => {
+    expect(parseListenString("[::1]:6767")).toEqual({
+      type: "tcp",
+      host: "::1",
+      port: 6767,
+    });
+    expect(parseListenString("[::]:6767")).toEqual({
+      type: "tcp",
+      host: "::",
+      port: 6767,
+    });
+  });
+
   test("rejects Windows absolute paths that are not named pipes", () => {
     // A Windows drive path like C:\daemon must NOT be silently parsed as TCP
     // (split(":") would yield host="C" and port="\\daemon" which is nonsensical).

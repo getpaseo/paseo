@@ -27,6 +27,50 @@ describe("workspace message schemas", () => {
     expect(parsed.type).toBe("fetch_workspaces_request");
   });
 
+  test("parses project.add request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "project.add.request",
+        requestId: "req-add-project",
+        cwd: "/repo",
+      }),
+    ).toEqual({
+      type: "project.add.request",
+      requestId: "req-add-project",
+      cwd: "/repo",
+    });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "project.add.response",
+        payload: {
+          requestId: "req-add-project",
+          project: {
+            projectId: "/repo",
+            projectDisplayName: "repo",
+            projectCustomName: null,
+            projectRootPath: "/repo",
+            projectKind: "git",
+          },
+          error: null,
+        },
+      }),
+    ).toEqual({
+      type: "project.add.response",
+      payload: {
+        requestId: "req-add-project",
+        project: {
+          projectId: "/repo",
+          projectDisplayName: "repo",
+          projectCustomName: null,
+          projectRootPath: "/repo",
+          projectKind: "git",
+        },
+        error: null,
+      },
+    });
+  });
+
   test("parses active-scoped fetch_agents_request as an optional extension", () => {
     const legacy = SessionInboundMessageSchema.parse({
       type: "fetch_agents_request",

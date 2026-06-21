@@ -6,6 +6,7 @@ import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -13,6 +14,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
+import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
 import type {
@@ -199,6 +201,8 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
+  agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
   workspaceGitService?: {
@@ -264,9 +268,11 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
+      ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
       list: vi.fn().mockResolvedValue([]),
+      ...options.agentStorage,
     }),
     projectRegistry: options.projectRegistry ?? {
       list: vi.fn().mockResolvedValue([]),
@@ -592,6 +598,143 @@ describe("file explorer binary responses", () => {
       opcode: FileTransferOpcode.FileEnd,
       requestId: "req-new-client",
       payload: new Uint8Array(),
+    });
+  });
+});
+
+function createStoredAgentRecord(
+  overrides: Pick<StoredAgentRecord, "id" | "cwd"> & Partial<StoredAgentRecord>,
+): StoredAgentRecord {
+  return {
+    id: overrides.id,
+    provider: overrides.provider ?? "codex",
+    cwd: overrides.cwd,
+    workspaceId: overrides.workspaceId,
+    createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00.000Z",
+    lastUserMessageAt: overrides.lastUserMessageAt ?? null,
+    title: overrides.title ?? null,
+    labels: overrides.labels ?? {},
+    lastStatus: overrides.lastStatus ?? "idle",
+    lastModeId: overrides.lastModeId ?? null,
+    config: overrides.config ?? null,
+    runtimeInfo: overrides.runtimeInfo,
+    features: overrides.features,
+    persistence: overrides.persistence ?? null,
+    lastError: overrides.lastError,
+    requiresAttention: overrides.requiresAttention,
+    attentionReason: overrides.attentionReason,
+    attentionTimestamp: overrides.attentionTimestamp,
+    internal: overrides.internal,
+    archivedAt: overrides.archivedAt ?? null,
+  };
+}
+
+describe("agent detach RPC", () => {
+  test("detaches a stored subagent and emits the updated standalone agent", async () => {
+    const messages: unknown[] = [];
+    const childBefore = createStoredAgentRecord({
+      id: "child-agent",
+      cwd: "/tmp/child",
+      workspaceId: "workspace-child",
+      title: "Child",
+      labels: {
+        [PARENT_AGENT_ID_LABEL]: "parent-agent",
+        topic: "handoff",
+      },
+    });
+    const childAfter = createStoredAgentRecord({
+      ...childBefore,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      labels: { topic: "handoff" },
+    });
+    const workspace = {
+      workspaceId: "workspace-child",
+      projectId: "project-child",
+      cwd: "/tmp/child",
+      kind: "worktree" as const,
+      displayName: "Child workspace",
+      title: null,
+      branch: "child",
+      baseBranch: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const project = {
+      projectId: "project-child",
+      rootPath: "/tmp/child",
+      kind: "git" as const,
+      displayName: "Project",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const detachAgent = vi.fn().mockResolvedValue({
+      record: childAfter,
+      live: false,
+      previousParentAgentId: "parent-agent",
+    });
+    const getAgent = vi.fn(() => null);
+
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent,
+        detachAgent,
+      },
+      agentStorage: {
+        list: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue(null),
+      },
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue(workspace),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        get: vi.fn().mockResolvedValue(project),
+        list: vi.fn().mockResolvedValue([project]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "subscribe-agents",
+      subscribe: { subscriptionId: "agents-sub" },
+    });
+    messages.splice(0);
+
+    await session.handleMessage({
+      type: "agent.detach.request",
+      agentId: childBefore.id,
+      requestId: "detach-1",
+    });
+
+    expect(detachAgent).toHaveBeenCalledWith("child-agent");
+    expect(messages).toContainEqual({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: expect.objectContaining({
+          id: "child-agent",
+          labels: { topic: "handoff" },
+          workspaceId: "workspace-child",
+        }),
+        project: expect.objectContaining({
+          projectKey: "project-child",
+          workspaceName: "Child workspace",
+        }),
+      },
+    });
+    expect(messages).toContainEqual({
+      type: "agent.detach.response",
+      payload: {
+        requestId: "detach-1",
+        agentId: "child-agent",
+        accepted: true,
+        error: null,
+      },
     });
   });
 });

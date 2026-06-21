@@ -13,11 +13,11 @@ import {
   normalizeClaudeAskUserQuestionUpdatedInput,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
-import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../../agent-sdk-types.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
+import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
-  convertUsage(message: SDKMessage): AgentUsage | undefined;
 }
 
 afterEach(() => {
@@ -432,6 +432,29 @@ describe("ClaudeAgentClient.listModels", () => {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
   });
+
+  test("exposes Ultracode only on Claude models that support it", async () => {
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveBinary: async () => "/test/claude/bin",
+        configDir: emptyConfigDir,
+      });
+      const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
+      const getThinkingIds = (modelId: string) => {
+        return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
+      };
+
+      expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-7")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ClaudeAgentClient binary resolution", () => {
@@ -526,12 +549,27 @@ describe("ClaudeAgentSession features", () => {
   const logger = createTestLogger();
 
   function createQueryMock() {
-    const queryReturn = vi.fn(async () => undefined);
+    let endQuery: (() => void) | null = null;
+    const queryEnded = new Promise<void>((resolve) => {
+      endQuery = resolve;
+    });
+    const queryReturn = vi.fn(async () => {
+      endQuery?.();
+    });
     const queryMock = {
       close: vi.fn(),
       return: queryReturn,
       applyFlagSettings: vi.fn(async () => undefined),
       setModel: vi.fn(async () => undefined),
+      getContextUsage: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<SDKMessage, void> {
+        return {
+          next: async () => {
+            await queryEnded;
+            return { value: undefined, done: true };
+          },
+        };
+      },
     };
     const queryFactory = vi.fn(() => queryMock);
     return { queryFactory, queryMock };
@@ -581,6 +619,58 @@ describe("ClaudeAgentSession features", () => {
 
     expect(queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({ fastMode: true });
     expect(queryMock.applyFlagSettings).toHaveBeenCalledWith({ fastMode: true });
+
+    await session.close();
+  });
+
+  test("maps Ultracode to xhigh effort and Claude ultracode settings", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      thinkingOptionId: "ultracode",
+    });
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      effort: "xhigh",
+      thinking: { type: "adaptive" },
+      settings: { ultracode: true },
+    });
+
+    await session.close();
+  });
+
+  test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
+
+    await expect(session.setThinkingOption?.("ultracode")).resolves.toEqual({
+      type: "info",
+      message: "This change applies next turn.",
+    });
 
     await session.close();
   });
@@ -955,6 +1045,11 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 
+  interface QueryFactoryForTurnsOptions {
+    currentContextUsageByTurn?: Array<Record<string, unknown> | undefined>;
+    model?: string;
+  }
+
   async function createSessionForTest(): Promise<TestClaudeSession> {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
     const session = await client.createSession({
@@ -964,11 +1059,39 @@ describe("ClaudeAgentSession context window usage", () => {
     return session as unknown as TestClaudeSession;
   }
 
-  function createQueryFactoryForTurns(turns: Array<Array<Record<string, unknown>>>) {
+  async function createSessionForTurns(
+    turns: Array<Array<Record<string, unknown>>>,
+    options?: QueryFactoryForTurnsOptions,
+  ): Promise<AgentSession> {
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory: createQueryFactoryForTurns(turns, options),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    return await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: options?.model,
+    });
+  }
+
+  async function collectStreamEvents(session: AgentSession, prompt = "turn") {
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamSession(session, prompt)) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  function createQueryFactoryForTurns(
+    turns: Array<Array<Record<string, unknown>>>,
+    options?: QueryFactoryForTurnsOptions,
+  ) {
     return vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
       const queuedMessages: Array<Record<string, unknown>> = [];
       const waiters: Array<() => void> = [];
       let turnIndex = 0;
+      let contextUsageIndex = 0;
       const closedRef = { value: false };
 
       function wakeNextWaiter() {
@@ -1017,6 +1140,11 @@ describe("ClaudeAgentSession context window usage", () => {
         }),
         setPermissionMode: vi.fn(async () => undefined),
         setModel: vi.fn(async () => undefined),
+        getContextUsage: vi.fn(async () => {
+          const usage = options?.currentContextUsageByTurn?.[contextUsageIndex];
+          contextUsageIndex += 1;
+          return usage;
+        }),
         supportedModels: vi.fn(async () => []),
         supportedCommands: vi.fn(async () => []),
         rewindFiles: vi.fn(async () => ({ canRewind: true })),
@@ -1025,6 +1153,133 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       };
     });
+  }
+
+  function createInitMessage(sessionId = "session-1"): Record<string, unknown> {
+    return {
+      type: "system",
+      subtype: "init",
+      session_id: sessionId,
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+    };
+  }
+
+  function createClaudeCurrentContextUsage(
+    totalTokens: number,
+    maxTokens: number,
+  ): Record<string, unknown> {
+    return {
+      categories: [],
+      totalTokens,
+      maxTokens,
+      rawMaxTokens: maxTokens,
+      percentage: totalTokens / maxTokens,
+      gridRows: [],
+      model: "claude-sonnet-4-6",
+      memoryFiles: [],
+      mcpTools: [],
+      agents: [],
+      isAutoCompactEnabled: true,
+      apiUsage: null,
+    };
+  }
+
+  function createSuccessResult(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      type: "result",
+      subtype: "success",
+      duration_ms: 100,
+      duration_api_ms: 75,
+      is_error: false,
+      num_turns: 1,
+      result: "done",
+      stop_reason: null,
+      total_cost_usd: 0.25,
+      usage: {
+        input_tokens: 10,
+        cache_read_input_tokens: 5,
+        output_tokens: 7,
+      },
+      modelUsage: {
+        "claude-sonnet-4-6": { contextWindow: 200_000 },
+      },
+      permission_denials: [],
+      uuid: "result-1",
+      session_id: "session-1",
+      ...overrides,
+    };
+  }
+
+  function createMessageStartEvent(
+    usage: Record<string, unknown> = {
+      input_tokens: 100,
+      cache_creation_input_tokens: 20,
+      cache_read_input_tokens: 30,
+    },
+  ): Record<string, unknown> {
+    return {
+      type: "stream_event",
+      event: {
+        type: "message_start",
+        message: { usage },
+      },
+      session_id: "session-1",
+    };
+  }
+
+  function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
+    return {
+      type: "stream_event",
+      event: {
+        type: "message_delta",
+        usage: {
+          output_tokens: outputTokens,
+        },
+      },
+      session_id: "session-1",
+    };
+  }
+
+  function createAgentToolStartEvent(): Record<string, unknown> {
+    return {
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "toolu-agent-1",
+          name: "Agent",
+          input: {
+            description: "Check something in a subagent",
+            prompt: "Return a short answer",
+          },
+        },
+      },
+      session_id: "session-1",
+    };
+  }
+
+  function createSubagentTaskNotification(): Record<string, unknown> {
+    return {
+      type: "system",
+      subtype: "task_notification",
+      uuid: "task-note-1",
+      task_id: "task-1",
+      tool_use_id: "toolu-agent-1",
+      status: "running",
+      summary: "Subagent is working",
+      usage: {
+        total_tokens: 18_876,
+        tool_uses: 1,
+        duration_ms: 50,
+        input_tokens: 12_000,
+        cache_read_input_tokens: 6_000,
+        output_tokens: 876,
+      },
+      session_id: "session-1",
+    };
   }
 
   test("passes persistSession through to the Claude SDK query options", async () => {
@@ -1101,6 +1356,7 @@ describe("ClaudeAgentSession context window usage", () => {
         close: () => undefined,
         setPermissionMode: async () => undefined,
         setModel: async () => undefined,
+        getContextUsage: async () => undefined,
         supportedModels: async () => [],
         supportedCommands: async () => [
           {
@@ -1300,357 +1556,152 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
-  test("convertUsage includes contextWindowMaxTokens and derives used tokens from result usage as initial fallback", async () => {
-    const session = await createSessionForTest();
-
-    const usage = session.convertUsage(
+  test("reports Claude's current context usage after an Agent subagent runs", async () => {
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent(),
+          createAgentToolStartEvent(),
+          createSubagentTaskNotification(),
+          createMessageDeltaEvent(25),
+          createSuccessResult({
+            usage: {
+              input_tokens: 9_000,
+              cache_creation_input_tokens: 300,
+              cache_read_input_tokens: 700,
+              output_tokens: 400,
+            },
+          }),
+        ],
+      ],
       {
-        type: "result",
-        subtype: "success",
-        usage: {
-          input_tokens: 10,
-          cache_read_input_tokens: 5,
-          output_tokens: 7,
-        },
-        total_cost_usd: 0.12,
-      },
-      {
-        "claude-sonnet-4-6": { contextWindow: 200_000 },
-        "claude-opus-4-6": { contextWindow: 1_000_000 },
+        currentContextUsageByTurn: [createClaudeCurrentContextUsage(12_345, 200_000)],
       },
     );
 
-    expect(usage).toEqual({
-      inputTokens: 10,
-      cachedInputTokens: 5,
-      outputTokens: 7,
-      totalCostUsd: 0.12,
-      contextWindowMaxTokens: 1_000_000,
-      contextWindowUsedTokens: 22,
-    });
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 9_000,
+        cachedInputTokens: 700,
+        outputTokens: 400,
+        totalCostUsd: 0.25,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 12_345,
+      });
+    } finally {
+      await session.close();
+    }
   });
 
-  test("contextWindowUsedTokens falls back to result usage when no task_progress was received", async () => {
-    const session = await createSessionForTest();
+  test("does not report task notification tokens as parent context usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createAgentToolStartEvent(),
+        createSubagentTaskNotification(),
+        {
+          type: "system",
+          subtype: "task_progress",
+          task_id: "task-1",
+          description: "Subagent progress",
+          usage: {
+            total_tokens: 9_999,
+            tool_uses: 1,
+            duration_ms: 50,
+          },
+          uuid: "task-progress-1",
+          session_id: "session-1",
+        },
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+    ]);
 
-    const usage = session.convertUsage({
-      type: "result",
-      subtype: "success",
-      usage: {
-        input_tokens: 10,
-        cache_creation_input_tokens: 3,
-        cache_read_input_tokens: 5,
-        output_tokens: 7,
-      },
-      total_cost_usd: 0.12,
-    });
+    try {
+      const result = await session.run("turn");
 
-    expect(usage).toEqual({
-      inputTokens: 10,
-      cachedInputTokens: 5,
-      outputTokens: 7,
-      totalCostUsd: 0.12,
-      contextWindowUsedTokens: 25,
-    });
-  });
-
-  test("contextWindowUsedTokens is populated from task_progress usage data", async () => {
-    const session = await createSessionForTest();
-
-    session.translateMessageToEvents({
-      type: "system",
-      subtype: "task_progress",
-      task_id: "task-1",
-      description: "Processing",
-      usage: {
-        total_tokens: 999,
-        tool_uses: 1,
-        duration_ms: 50,
-        input_tokens: 345,
-        cache_read_input_tokens: 55,
-      },
-      uuid: "task-progress-1",
-      session_id: "session-1",
-    });
-
-    const events = session.translateMessageToEvents({
-      type: "result",
-      subtype: "success",
-      duration_ms: 100,
-      duration_api_ms: 75,
-      is_error: false,
-      num_turns: 1,
-      result: "done",
-      stop_reason: null,
-      total_cost_usd: 0.25,
-      usage: {
-        input_tokens: 10,
-        cache_read_input_tokens: 5,
-        output_tokens: 7,
-      },
-      modelUsage: {
-        "claude-sonnet-4-6": { contextWindow: 200_000 },
-      },
-      permission_denials: [],
-      uuid: "result-1",
-      session_id: "session-1",
-    });
-
-    expect(events).toContainEqual({
-      type: "turn_completed",
-      provider: "claude",
-      usage: {
+      expect(result.usage).toEqual({
         inputTokens: 10,
         cachedInputTokens: 5,
         outputTokens: 7,
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 999,
-      },
-    });
-  });
-
-  test("task_progress emits a usage_updated event", async () => {
-    const session = await createSessionForTest();
-
-    const events = session.translateMessageToEvents({
-      type: "system",
-      subtype: "task_progress",
-      task_id: "task-1",
-      description: "Processing",
-      usage: {
-        total_tokens: 999,
-        tool_uses: 1,
-        duration_ms: 50,
-      },
-      uuid: "task-progress-1",
-      session_id: "session-1",
-    });
-
-    expect(events).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
-        contextWindowUsedTokens: 999,
-      },
-    });
-  });
-
-  test("task_notification emits a usage_updated event", async () => {
-    const session = await createSessionForTest();
-
-    const events = session.translateMessageToEvents({
-      type: "system",
-      subtype: "task_notification",
-      uuid: "task-note-1",
-      task_id: "task-1",
-      status: "running",
-      summary: "Background task still running",
-      usage: {
-        total_tokens: 777,
-        tool_uses: 1,
-        duration_ms: 50,
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    expect(events).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
-        contextWindowUsedTokens: 777,
-      },
-    });
-  });
-
-  test("message_start stream events emit usage_updated with per-request usage", async () => {
-    const session = await createSessionForTest();
-
-    const events = session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_start",
-        message: {
-          usage: {
-            input_tokens: 100,
-            cache_creation_input_tokens: 20,
-            cache_read_input_tokens: 30,
-          },
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    expect(events).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
-        contextWindowUsedTokens: 150,
-      },
-    });
-  });
-
-  test("message_delta stream events update per-request usage", async () => {
-    const session = await createSessionForTest();
-
-    session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_start",
-        message: {
-          usage: {
-            input_tokens: 100,
-            cache_creation_input_tokens: 20,
-            cache_read_input_tokens: 30,
-          },
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    const events = session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_delta",
-        usage: {
-          output_tokens: 25,
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    expect(events).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
         contextWindowUsedTokens: 175,
-      },
-    });
+      });
+    } finally {
+      await session.close();
+    }
   });
 
-  test("task_progress usage takes priority over derived result usage", async () => {
-    const session = await createSessionForTest();
-
-    session.translateMessageToEvents({
-      type: "system",
-      subtype: "task_progress",
-      task_id: "task-1",
-      description: "Processing",
-      usage: {
-        total_tokens: 999,
-        tool_uses: 1,
-        duration_ms: 50,
-        input_tokens: 345,
-        cache_read_input_tokens: 55,
-      },
-      uuid: "task-progress-1",
-      session_id: "session-1",
-    });
-
-    const usage = session.convertUsage({
-      type: "result",
-      subtype: "success",
-      usage: {
-        input_tokens: 10,
-        cache_creation_input_tokens: 3,
-        cache_read_input_tokens: 5,
-        output_tokens: 7,
-      },
-      total_cost_usd: 0.12,
-    });
-
-    expect(usage).toEqual({
-      inputTokens: 10,
-      cachedInputTokens: 5,
-      outputTokens: 7,
-      totalCostUsd: 0.12,
-      contextWindowUsedTokens: 999,
-    });
-  });
-
-  test("contextWindowUsedTokens persists across turns from last task_progress", async () => {
-    const queryFactory = createQueryFactoryForTurns([
+  test("falls back to the active result iteration when current and stream usage are unavailable", async () => {
+    const session = await createSessionForTurns([
       [
-        {
-          type: "system",
-          subtype: "init",
-          session_id: "session-1",
-          permissionMode: "default",
-          model: "claude-sonnet-4-6",
-        },
-        {
-          type: "system",
-          subtype: "task_progress",
-          task_id: "task-1",
-          description: "Processing",
+        createInitMessage(),
+        createSuccessResult({
           usage: {
-            total_tokens: 999,
-            tool_uses: 1,
-            duration_ms: 50,
-            input_tokens: 345,
-            cache_read_input_tokens: 55,
+            input_tokens: 5_000,
+            cache_creation_input_tokens: 500,
+            cache_read_input_tokens: 600,
+            output_tokens: 700,
+            iterations: [
+              {
+                input_tokens: 100,
+                cache_creation_input_tokens: 10,
+                cache_read_input_tokens: 20,
+                output_tokens: 30,
+              },
+              {
+                input_tokens: 2,
+                cache_creation_input_tokens: 10,
+                cache_read_input_tokens: 100,
+                output_tokens: 5,
+              },
+            ],
           },
-          uuid: "task-progress-1",
-          session_id: "session-1",
-        },
-        {
-          type: "result",
-          subtype: "success",
-          duration_ms: 100,
-          duration_api_ms: 75,
-          is_error: false,
-          num_turns: 1,
-          result: "done",
-          stop_reason: null,
-          total_cost_usd: 0.25,
-          usage: {
-            input_tokens: 10,
-            cache_read_input_tokens: 5,
-            output_tokens: 7,
-          },
-          modelUsage: {
-            "claude-sonnet-4-6": { contextWindow: 200_000 },
-          },
-          permission_denials: [],
-          uuid: "result-1",
-          session_id: "session-1",
-        },
-      ],
-      [
-        {
-          type: "result",
-          subtype: "success",
-          duration_ms: 110,
-          duration_api_ms: 80,
-          is_error: false,
-          num_turns: 1,
-          result: "still done",
-          stop_reason: null,
-          total_cost_usd: 0.1,
-          usage: {
-            input_tokens: 11,
-            cache_creation_input_tokens: 3,
-            cache_read_input_tokens: 6,
-            output_tokens: 8,
-          },
-          modelUsage: {
-            "claude-sonnet-4-6": { contextWindow: 200_000 },
-          },
-          permission_denials: [],
-          uuid: "result-2",
-          session_id: "session-1",
-        },
+        }),
       ],
     ]);
-    const client = new ClaudeAgentClient({
-      logger,
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage).toEqual({
+        inputTokens: 5_000,
+        cachedInputTokens: 600,
+        outputTokens: 700,
+        totalCostUsd: 0.25,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 117,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not use aggregate result totals after the first result turn", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+      [
+        createSuccessResult({
+          total_cost_usd: 0.1,
+          usage: {
+            input_tokens: 1_000,
+            cache_read_input_tokens: 200,
+            output_tokens: 300,
+          },
+          uuid: "result-2",
+        }),
+      ],
+    ]);
 
     try {
       const firstTurn = await session.run("turn 1");
@@ -1662,175 +1713,133 @@ describe("ClaudeAgentSession context window usage", () => {
         outputTokens: 7,
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 999,
+        contextWindowUsedTokens: 175,
       });
-      // Turn 2 has no task_progress, so contextWindowUsedTokens retains the
-      // last known value from turn 1 rather than deriving from accumulated
-      // result.usage (which would be incorrect — those are session-level totals).
       expect(secondTurn.usage).toEqual({
-        inputTokens: 11,
-        cachedInputTokens: 6,
-        outputTokens: 8,
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 300,
         totalCostUsd: 0.1,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 999,
       });
     } finally {
       await session.close();
     }
   });
 
-  test("convertUsage derives used tokens from result usage as fallback when task_progress is missing", async () => {
-    const session = await createSessionForTest();
+  test("message_start stream events emit usage_updated with per-request usage", async () => {
+    const session = await createSessionForTurns([
+      [createInitMessage(), createMessageStartEvent(), createSuccessResult()],
+    ]);
 
-    const usage = session.convertUsage({
-      type: "result",
-      subtype: "success",
-      usage: {
-        input_tokens: 10,
-        cache_read_input_tokens: 5,
-        output_tokens: 7,
-      },
-      total_cost_usd: 0.12,
-    });
+    try {
+      const events = await collectStreamEvents(session);
 
-    expect(usage).toEqual({
-      inputTokens: 10,
-      cachedInputTokens: 5,
-      outputTokens: 7,
-      totalCostUsd: 0.12,
-      contextWindowUsedTokens: 22,
-    });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowUsedTokens: 150,
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
   });
 
-  test("convertUsage uses per-request stream usage when no task_progress is available", async () => {
-    const session = await createSessionForTest();
+  test("selected Claude models seed active context window usage with max tokens", async () => {
+    const session = await createSessionForTurns(
+      [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
+      { model: "claude-sonnet-4-6" },
+    );
 
-    session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_start",
-        message: {
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
           usage: {
-            input_tokens: 100,
-            cache_creation_input_tokens: 20,
-            cache_read_input_tokens: 30,
+            contextWindowMaxTokens: 200_000,
+            contextWindowUsedTokens: 150,
           },
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-    session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_delta",
-        usage: {
-          output_tokens: 25,
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
 
-    const usage = session.convertUsage({
-      type: "result",
-      subtype: "success",
-      usage: {
-        input_tokens: 10,
-        cache_read_input_tokens: 5,
-        output_tokens: 7,
-      },
-      total_cost_usd: 0.12,
-    });
+  test("message_delta stream events update per-request usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createSuccessResult(),
+      ],
+    ]);
 
-    expect(usage).toEqual({
-      inputTokens: 10,
-      cachedInputTokens: 5,
-      outputTokens: 7,
-      totalCostUsd: 0.12,
-      contextWindowUsedTokens: 175,
-    });
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowUsedTokens: 175,
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
   });
 
   test("per-request stream usage is not cumulative across API calls in a turn", async () => {
-    const session = await createSessionForTest();
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createMessageStartEvent({
+          input_tokens: 40,
+          cache_creation_input_tokens: 5,
+          cache_read_input_tokens: 10,
+        }),
+        createMessageDeltaEvent(7),
+        createSuccessResult(),
+      ],
+    ]);
 
-    session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_start",
-        message: {
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
           usage: {
-            input_tokens: 100,
-            cache_creation_input_tokens: 20,
-            cache_read_input_tokens: 30,
+            contextWindowUsedTokens: 55,
           },
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-    session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_delta",
-        usage: {
-          output_tokens: 25,
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    const secondStartEvents = session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_start",
-        message: {
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
           usage: {
-            input_tokens: 40,
-            cache_creation_input_tokens: 5,
-            cache_read_input_tokens: 10,
+            contextWindowUsedTokens: 62,
           },
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    expect(secondStartEvents).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
-        contextWindowUsedTokens: 55,
-      },
-    });
-
-    session.translateMessageToEvents({
-      type: "stream_event",
-      event: {
-        type: "message_delta",
-        usage: {
-          output_tokens: 7,
-        },
-      },
-      session_id: "session-1",
-    } as unknown as SDKMessage);
-
-    const usage = session.convertUsage({
-      type: "result",
-      subtype: "success",
-      usage: {
-        input_tokens: 10,
-        cache_read_input_tokens: 5,
-        output_tokens: 7,
-      },
-      total_cost_usd: 0.12,
-    });
-
-    expect(usage).toEqual({
-      inputTokens: 10,
-      cachedInputTokens: 5,
-      outputTokens: 7,
-      totalCostUsd: 0.12,
-      contextWindowUsedTokens: 62,
-    });
+        }),
+      );
+    } finally {
+      await session.close();
+    }
   });
 
   test("result.result is surfaced as an assistant message when no model output was produced", async () => {

@@ -204,6 +204,7 @@ test.describe("Workspace navigation regression", () => {
     try {
       const agent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `workspace-reconnect-${Date.now()}`,
       });
 
@@ -306,6 +307,7 @@ test.describe("Workspace navigation regression", () => {
     try {
       const agent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `workspace-refresh-route-${Date.now()}`,
       });
       await injectDesktopBridge(page, {
@@ -344,10 +346,12 @@ test.describe("Workspace navigation regression", () => {
     try {
       const firstAgent = await createIdleAgent(firstWorkspace.client, {
         cwd: firstWorkspace.repoPath,
+        workspaceId: firstWorkspace.workspaceId,
         title: `workspace-nav-a-${Date.now()}`,
       });
       const secondAgent = await createIdleAgent(secondWorkspace.client, {
         cwd: secondWorkspace.repoPath,
+        workspaceId: secondWorkspace.workspaceId,
         title: `workspace-nav-b-${Date.now()}`,
       });
 

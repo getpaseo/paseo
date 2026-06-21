@@ -13,6 +13,7 @@ import {
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
+  type AgentProviderNotice,
   type AgentPromptContentBlock,
   type AgentPromptInput,
   type AgentRunOptions,
@@ -87,10 +88,12 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
+import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../provider-notices.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 
 function assertChildWithPipes(
@@ -103,6 +106,11 @@ function assertChildWithPipes(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(`no archived rollout found for thread id ${threadId}`);
 }
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
@@ -3653,10 +3661,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     return this.currentMode ?? null;
   }
 
-  async setMode(modeId: string): Promise<void> {
+  async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     validateCodexMode(modeId);
     this.currentMode = modeId;
     this.cachedRuntimeInfo = null;
+    if (this.activeForegroundTurnId) {
+      return SETTING_APPLIES_NEXT_TURN_NOTICE;
+    }
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -3668,10 +3679,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.cachedRuntimeInfo = null;
   }
 
-  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void | AgentProviderNotice> {
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(thinkingOptionId);
     this.refreshResolvedCollaborationMode();
     this.cachedRuntimeInfo = null;
+    if (this.activeForegroundTurnId) {
+      return SETTING_APPLIES_NEXT_TURN_NOTICE;
+    }
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
@@ -5594,6 +5608,33 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
+  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    const threadId = handle.nativeHandle ?? handle.sessionId;
+    if (!threadId) return;
+
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+      try {
+        await client.request("thread/unarchive", { threadId });
+      } catch (error) {
+        if (!isCodexAlreadyUnarchivedError(error, threadId)) {
+          throw error;
+        }
+        try {
+          await client.request("thread/read", { threadId });
+        } catch {
+          throw error;
+        }
+      }
+    } finally {
+      await client.dispose();
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     const launch = await resolveCodexLaunch(this.runtimeSettings);
     const availability = await checkCodexLaunchAvailable(launch);
@@ -5606,6 +5647,9 @@ export class CodexAppServerAgentClient implements AgentClient {
       const availability = await checkCodexLaunchAvailable(launch);
       const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
+        ...(await buildCommandResolutionDiagnosticRows(launch, {
+          knownBinaryNames: ["codex"],
+        })),
         ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
       let status = formatDiagnosticStatus(available);

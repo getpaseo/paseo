@@ -1454,6 +1454,62 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("sends project.add.request without creating a workspace", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const addPromise = client.addProject("/tmp/project", "req-add-project");
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.add.request",
+    requestId: "req-add-project",
+    cwd: "/tmp/project",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.add.response",
+      payload: {
+        requestId: "req-add-project",
+        project: {
+          projectId: "/tmp/project",
+          projectDisplayName: "project",
+          projectCustomName: null,
+          projectRootPath: "/tmp/project",
+          projectKind: "git",
+        },
+        error: null,
+      },
+    }),
+  );
+
+  await expect(addPromise).resolves.toEqual({
+    requestId: "req-add-project",
+    project: {
+      projectId: "/tmp/project",
+      projectDisplayName: "project",
+      projectCustomName: null,
+      projectRootPath: "/tmp/project",
+      projectKind: "git",
+    },
+    error: null,
+  });
+});
+
 test("sends first-agent prompt context with workspace.create.request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -2762,6 +2818,48 @@ test("fetches agents via RPC with filters, sort, and pagination", async () => {
   });
 });
 
+test("detaches an agent through the namespaced detach RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.detachAgent("child-agent");
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.detach.request",
+    agentId: "child-agent",
+  });
+  expect(typeof request.requestId).toBe("string");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.detach.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "child-agent",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toBeUndefined();
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -4026,6 +4124,81 @@ test("dispatches terminals_changed events to typed listeners", async () => {
       names: ["Dev Server"],
     },
   ]);
+});
+
+test("sends provider.usage.list.request and resolves provider.usage.list.response", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const usagePromise = client.listProviderUsage({ requestId: "usage-1" });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.usage.list.request",
+      requestId: "usage-1",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-1",
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "glm",
+            displayName: "GLM coding plan",
+            status: "available",
+            planLabel: "GLM coding plan",
+            windows: [
+              {
+                id: "biweekly",
+                label: "Biweekly",
+                usedPct: 23,
+                remainingPct: 77,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "usage-1",
+    fetchedAt: "2026-06-19T00:00:00.000Z",
+    providers: [
+      {
+        providerId: "glm",
+        displayName: "GLM coding plan",
+        status: "available",
+        planLabel: "GLM coding plan",
+        windows: [
+          {
+            id: "biweekly",
+            label: "Biweekly",
+            usedPct: 23,
+            remainingPct: 77,
+          },
+        ],
+      },
+    ],
+  });
 });
 
 test("sends close_items_request and resolves close_items_response", async () => {

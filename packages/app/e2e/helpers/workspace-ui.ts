@@ -8,14 +8,18 @@ export async function openNewAgentComposer(page: Page): Promise<void> {
 }
 
 /**
- * Wait for the sidebar to show at least one project row, indicating that the
- * WebSocket connection is up and workspace hydration has completed.
+ * Wait for the sidebar to show at least one project row. Use this after a spec
+ * seeds a workspace/project; zero-project flows need their own assertion.
  */
 export async function waitForSidebarHydration(page: Page, timeout = 60_000): Promise<void> {
   await page
     .locator('[data-testid^="sidebar-project-row-"]')
     .first()
     .waitFor({ state: "visible", timeout });
+}
+
+export async function waitForNoProjectsInSidebar(page: Page, timeout = 60_000): Promise<void> {
+  await page.getByTestId("sidebar-project-empty-state").waitFor({ state: "visible", timeout });
 }
 
 function workspaceRowLocator(page: Page, serverId: string, workspaceId: string) {

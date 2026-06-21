@@ -58,9 +58,11 @@ async function seedPaseoWorkspaceWithOpenCodeSession(): Promise<OpenCodeImportSc
   await launchOpenCodeSessionInWorkspace(PASEO_REPO_PATH, prompt);
   const client = await connectSeedClient();
   try {
-    const opened = await client.openProject(PASEO_REPO_PATH);
-    if (!opened.workspace) {
-      throw new Error(opened.error ?? `Failed to open project ${PASEO_REPO_PATH}`);
+    const createdWorkspace = await client.createWorkspace({
+      source: { kind: "directory", path: PASEO_REPO_PATH },
+    });
+    if (!createdWorkspace.workspace) {
+      throw new Error(createdWorkspace.error ?? `Failed to create workspace ${PASEO_REPO_PATH}`);
     }
     return {
       prompt,
@@ -69,11 +71,11 @@ async function seedPaseoWorkspaceWithOpenCodeSession(): Promise<OpenCodeImportSc
       workspace: {
         client,
         repoPath: PASEO_REPO_PATH,
-        workspaceId: opened.workspace.id,
-        workspaceName: opened.workspace.name,
-        workspaceDirectory: opened.workspace.workspaceDirectory,
-        projectId: opened.workspace.projectId,
-        projectDisplayName: opened.workspace.projectDisplayName,
+        workspaceId: createdWorkspace.workspace.id,
+        workspaceName: createdWorkspace.workspace.name,
+        workspaceDirectory: createdWorkspace.workspace.workspaceDirectory,
+        projectId: createdWorkspace.workspace.projectId,
+        projectDisplayName: createdWorkspace.workspace.projectDisplayName,
         cleanup: async () => {
           await client.close().catch(() => undefined);
         },

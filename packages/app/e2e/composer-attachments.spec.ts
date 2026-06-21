@@ -193,7 +193,7 @@ test.describe("Composer attachments", () => {
     page,
   }) => {
     test.setTimeout(120_000);
-    const { client, repo } = await startRunningMockAgent(page, {
+    const agent = await startRunningMockAgent(page, {
       prefix: "attach-queue-",
       model: "one-minute-stream",
       prompt: "Stay running for queue test.",
@@ -205,8 +205,7 @@ test.describe("Composer attachments", () => {
       await expectQueuedMessageButton(page);
       await expectComposerDraft(page, "");
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await agent.cleanup();
     }
   });
 
@@ -214,7 +213,7 @@ test.describe("Composer attachments", () => {
     page,
   }) => {
     test.setTimeout(120_000);
-    const { client, repo } = await startRunningMockAgent(page, {
+    const agent = await startRunningMockAgent(page, {
       prefix: "attach-interrupt-",
       model: "ten-second-stream",
       prompt: "Stay running for interrupt test.",
@@ -226,8 +225,7 @@ test.describe("Composer attachments", () => {
       await expectAgentIdle(page, 15_000);
       await expectComposerDraft(page, "preserve me");
     } finally {
-      await client.close();
-      await repo.cleanup();
+      await agent.cleanup();
     }
   });
 

@@ -35,7 +35,7 @@ export class MockSlowProviderClient implements AgentClient {
   readonly capabilities = CAPABILITIES;
 
   async isAvailable(): Promise<boolean> {
-    return true;
+    return process.env.PASEO_ENABLE_MOCK_SLOW === "true";
   }
 
   listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {

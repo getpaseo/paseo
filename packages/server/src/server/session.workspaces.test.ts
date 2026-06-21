@@ -543,6 +543,7 @@ function createSessionForWorkspaceTests(
         getAgent: () => null,
         archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
         archiveSnapshot: async () => ({}),
+        unarchiveSnapshot: async () => true,
         clearAgentAttention: async () => {},
         notifyAgentState: () => {},
       }),

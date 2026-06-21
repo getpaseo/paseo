@@ -125,6 +125,30 @@ function parseSentEnvelope(data: unknown): z.infer<typeof WireEnvelopeSchema> {
   return WireEnvelopeSchema.parse(JSON.parse(data));
 }
 
+function sentEnvelopes(socket: MockSocket): z.infer<typeof WireEnvelopeSchema>[] {
+  return socket.sent.filter((data) => typeof data === "string").map(parseSentEnvelope);
+}
+
+function sentServerInfoEnvelopes(socket: MockSocket): z.infer<typeof WireEnvelopeSchema>[] {
+  return sentEnvelopes(socket).filter(
+    (envelope) => parseServerInfoStatusPayload(envelope.message?.payload) !== null,
+  );
+}
+
+function sentBinaryFrames(socket: MockSocket): Uint8Array[] {
+  return socket.sent.map(asUint8Array).filter((frame): frame is Uint8Array => frame !== null);
+}
+
+function sentTerminalFrames(
+  socket: MockSocket,
+): NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>[] {
+  return sentBinaryFrames(socket)
+    .map(decodeTerminalStreamFrame)
+    .filter(
+      (frame): frame is NonNullable<ReturnType<typeof decodeTerminalStreamFrame>> => frame !== null,
+    );
+}
+
 const BinaryFrameSchema = z.object({
   kind: z.literal("terminal"),
   frame: z.object({
@@ -201,6 +225,7 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     createStub<pino.Logger>(createLogger()),
     "srv_test",
     createStub<AgentManager>({
+      subscribe: vi.fn(() => () => {}),
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
@@ -705,20 +730,20 @@ describe("relay external socket reconnect behavior", () => {
       socket,
       clientId: "cid-server-info-broadcast",
     });
-    expect(socket.sent).toHaveLength(1);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(1);
 
     const speechReadiness = createReadySpeechReadinessSnapshot();
     server.publishSpeechReadiness(speechReadiness);
-    expect(socket.sent).toHaveLength(2);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
-    const secondEnvelope = parseSentEnvelope(socket.sent[1]);
+    const secondEnvelope = sentServerInfoEnvelopes(socket)[1];
     const secondPayload = parseServerInfoStatusPayload(secondEnvelope.message?.payload);
     expect(secondPayload?.capabilities?.voice?.dictation.enabled).toBe(true);
     expect(secondPayload?.capabilities?.voice?.voice.enabled).toBe(true);
 
     // Same readiness should not produce another server_info broadcast.
     server.publishSpeechReadiness(speechReadiness);
-    expect(socket.sent).toHaveLength(2);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
     await server.close();
   });
@@ -731,12 +756,12 @@ describe("relay external socket reconnect behavior", () => {
       socket,
       clientId: "cid-server-info-download-guidance",
     });
-    expect(socket.sent).toHaveLength(1);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(1);
 
     server.publishSpeechReadiness(createDownloadInProgressSpeechReadinessSnapshot());
-    expect(socket.sent).toHaveLength(2);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
-    const envelope = parseSentEnvelope(socket.sent[1]);
+    const envelope = sentServerInfoEnvelopes(socket)[1];
     const payload = parseServerInfoStatusPayload(envelope.message?.payload);
     expect(payload?.capabilities?.voice?.dictation.enabled).toBe(true);
     expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
@@ -797,14 +822,12 @@ describe("relay external socket reconnect behavior", () => {
       onBinaryMessage(new Uint8Array([TerminalStreamOpcode.Output, 12, 0x6f, 0x6b]));
     }
 
-    expect(socket.sent).toHaveLength(2);
-    const binaryPayload = asUint8Array(socket.sent[1]);
-    expect(binaryPayload).not.toBeNull();
-    const frame = decodeTerminalStreamFrame(binaryPayload!);
-    expect(frame).not.toBeNull();
-    expect(frame!.opcode).toBe(TerminalStreamOpcode.Output);
-    expect(frame!.slot).toBe(12);
-    expect(new TextDecoder().decode(frame!.payload ?? new Uint8Array())).toBe("ok");
+    const terminalFrames = sentTerminalFrames(socket);
+    expect(terminalFrames).toHaveLength(1);
+    const frame = terminalFrames[0];
+    expect(frame.opcode).toBe(TerminalStreamOpcode.Output);
+    expect(frame.slot).toBe(12);
+    expect(new TextDecoder().decode(frame.payload ?? new Uint8Array())).toBe("ok");
 
     await server.close();
   });

@@ -183,6 +183,7 @@ describe("host settings section slugs", () => {
     expect(normalizeHostSectionSlug("agents")).toBe("agents");
     expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
     expect(normalizeHostSectionSlug("providers")).toBe("providers");
+    expect(normalizeHostSectionSlug("usage")).toBe("usage");
     expect(normalizeHostSectionSlug("host")).toBe("host");
   });
 

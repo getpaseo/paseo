@@ -71,6 +71,7 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
@@ -83,6 +84,7 @@ import {
 } from "./opencode/runtime.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -1213,6 +1215,7 @@ export const __openCodeInternals = {
 
 interface OpenCodeAgentClientDeps {
   runtime?: OpenCodeRuntime;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 class ProductionOpenCodeRuntime implements OpenCodeRuntime {
@@ -1259,7 +1262,9 @@ export class OpenCodeAgentClient implements AgentClient {
     this.runtime =
       deps.runtime ??
       new ProductionOpenCodeRuntime(
-        OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+        OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
+          managedProcesses: deps.managedProcesses,
+        }),
       );
   }
 
@@ -1609,6 +1614,9 @@ export class OpenCodeAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("OpenCode", [
+          ...(await buildCommandResolutionDiagnosticRows(launch, {
+            knownBinaryNames: ["opencode"],
+          })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Server", value: serverStatus },
           { label: "Auth", value: authValue },

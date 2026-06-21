@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.98 - 2026-06-21
+
+### Added
+
+- See plan usage in-app for Claude, Codex, Copilot, Cursor, Z.AI, Grok, and Kimi ([#1278](https://github.com/getpaseo/paseo/pull/1278) by [@ABorakati](https://github.com/ABorakati))
+- Added Ultracode for Claude ([#1625](https://github.com/getpaseo/paseo/pull/1625))
+- Detach a subagent to run it on its own ([#1612](https://github.com/getpaseo/paseo/pull/1612))
+- Add a project without creating a workspace
+- Add a setting to show branch names instead of titles in the sidebar
+
+### Improved
+
+- Mid-turn thinking and mode changes now say they apply next turn
+- PR merge options name their method: squash, merge, or rebase ([#1608](https://github.com/getpaseo/paseo/pull/1608) by [@mcowger](https://github.com/mcowger))
+- A running agent's mode change is remembered for new agents
+- Copy a provider's launch diagnostic in one tap ([#1611](https://github.com/getpaseo/paseo/pull/1611))
+
+### Fixed
+
+- OpenCode no longer scans your whole disk on macOS desktop ([#1626](https://github.com/getpaseo/paseo/pull/1626))
+- Daemon no longer crashes when OpenAI speech has no API key ([#1368](https://github.com/getpaseo/paseo/pull/1368) by [@mcowger](https://github.com/mcowger))
+- Reopening an archived Codex agent no longer hangs
+- Claude's context meter no longer jumps to subagent usage
+- Claude's context meter fills from the first message in a new session
+- OpenCode's mode picker now respects your disabled modes ([#1366](https://github.com/getpaseo/paseo/pull/1366) by [@mcowger](https://github.com/mcowger))
+- File links and @-mentions find files in dot-folders and deep paths ([#1609](https://github.com/getpaseo/paseo/pull/1609))
+- Archiving a project's last workspace no longer makes it vanish ([#1631](https://github.com/getpaseo/paseo/pull/1631))
+- Collapsed sidebar projects stay collapsed
+
 ## 0.1.97 - 2026-06-18
 
 ### Added
