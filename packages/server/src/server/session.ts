@@ -1,6 +1,5 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { realpathSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, normalize, resolve, sep } from "path";
@@ -157,13 +156,9 @@ import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-sessi
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
+import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import {
-  readPaseoConfigForEdit,
-  writePaseoConfigForEdit,
-  type ProjectConfigRpcError,
-} from "../utils/paseo-config-file.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import {
   archivePersistedWorkspaceRecord,
@@ -229,45 +224,6 @@ import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
-
-interface ResolveKnownProjectRootForConfigInput {
-  repoRoot: string;
-  projectRegistry: Pick<ProjectRegistry, "list">;
-}
-
-async function resolveKnownProjectRootForConfig(
-  input: ResolveKnownProjectRootForConfigInput,
-): Promise<string | null> {
-  const requestedRoot = canonicalizeConfigRoot(input.repoRoot);
-  const projects = await input.projectRegistry.list();
-  for (const project of projects) {
-    if (project.archivedAt !== null) {
-      continue;
-    }
-    const projectRoot = canonicalizeConfigRoot(project.rootPath);
-    if (requestedRoot === projectRoot) {
-      return projectRoot;
-    }
-  }
-  return null;
-}
-
-function canonicalizeConfigRoot(repoRoot: string): string {
-  const resolved = resolve(repoRoot);
-  try {
-    return stripTrailingPathSeparators(realpathSync(resolved));
-  } catch {
-    return stripTrailingPathSeparators(resolved);
-  }
-}
-
-function stripTrailingPathSeparators(path: string): string {
-  let normalized = path;
-  while (normalized.length > 1 && normalized.endsWith(sep)) {
-    normalized = normalized.slice(0, -1);
-  }
-  return normalized;
-}
 
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
@@ -675,6 +631,7 @@ export class Session {
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
+  private readonly projectConfigSession: ProjectConfigSession;
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
   private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
@@ -833,6 +790,13 @@ export class Session {
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
       },
+      logger: this.sessionLogger,
+    });
+    this.projectConfigSession = new ProjectConfigSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
     this.daemonConfigStore = daemonConfigStore;
@@ -1824,131 +1788,12 @@ export class Session {
         });
         return undefined;
       case "read_project_config_request":
-        return this.handleReadProjectConfigRequest(msg);
+        return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
-        return this.handleWriteProjectConfigRequest(msg);
+        return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
         return undefined;
     }
-  }
-
-  private async handleReadProjectConfigRequest(
-    msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
-  ): Promise<void> {
-    const repoRoot = await resolveKnownProjectRootForConfig({
-      repoRoot: msg.repoRoot,
-      projectRegistry: this.projectRegistry,
-    });
-    if (!repoRoot) {
-      this.emitProjectConfigReadFailure(msg, { code: "project_not_found" });
-      return;
-    }
-
-    const result = readPaseoConfigForEdit(repoRoot);
-    if (!result.ok) {
-      this.sessionLogger.warn(
-        { repoRoot, requestId: msg.requestId, outcome: result.error.code },
-        "Failed to read project config",
-      );
-      this.emitProjectConfigReadFailure(msg, result.error, repoRoot);
-      return;
-    }
-
-    if (result.config === null) {
-      this.sessionLogger.debug(
-        { repoRoot, requestId: msg.requestId, outcome: "missing_project_config" },
-        "Project config missing",
-      );
-    }
-
-    this.emit({
-      type: "read_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: true,
-        config: result.config,
-        revision: result.revision,
-      },
-    });
-  }
-
-  private async handleWriteProjectConfigRequest(
-    msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
-  ): Promise<void> {
-    const repoRoot = await resolveKnownProjectRootForConfig({
-      repoRoot: msg.repoRoot,
-      projectRegistry: this.projectRegistry,
-    });
-    if (!repoRoot) {
-      this.emitProjectConfigWriteFailure(msg, { code: "project_not_found" });
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { repoRoot, requestId: msg.requestId, outcome: "write_attempt" },
-      "Writing project config",
-    );
-    const result = writePaseoConfigForEdit({
-      repoRoot,
-      config: msg.config,
-      expectedRevision: msg.expectedRevision,
-    });
-    if (!result.ok) {
-      this.sessionLogger.debug(
-        { repoRoot, requestId: msg.requestId, outcome: result.error.code },
-        "Project config write did not complete",
-      );
-      this.emitProjectConfigWriteFailure(msg, result.error, repoRoot);
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { repoRoot, requestId: msg.requestId, outcome: "written" },
-      "Project config written",
-    );
-    this.emit({
-      type: "write_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: true,
-        config: result.config,
-        revision: result.revision,
-      },
-    });
-  }
-
-  private emitProjectConfigReadFailure(
-    msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
-    error: ProjectConfigRpcError,
-    repoRoot = msg.repoRoot,
-  ): void {
-    this.emit({
-      type: "read_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: false,
-        error,
-      },
-    });
-  }
-
-  private emitProjectConfigWriteFailure(
-    msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
-    error: ProjectConfigRpcError,
-    repoRoot = msg.repoRoot,
-  ): void {
-    this.emit({
-      type: "write_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: false,
-        error,
-      },
-    });
   }
 
   // eslint-disable-next-line complexity
