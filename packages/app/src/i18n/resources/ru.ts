@@ -588,6 +588,8 @@ export const ru: TranslationResources = {
           success: "Вытащил и толкнул",
         },
         viewPr: "Посмотреть PR",
+        copyPrUrl: "Скопировать URL PR",
+        copyPrUrlSuccess: "URL скопирован",
         createPr: {
           label: "Создать PR",
           pending: "Создание PR...",

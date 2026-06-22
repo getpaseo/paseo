@@ -182,10 +182,11 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
                     needsSeparator={action.startsGroup}
                     showSeparator={index > 0}
                     closeOnSelect={
-                      action.status === "idle" &&
-                      action.id === "pr" &&
-                      action.label === action.pendingLabel &&
-                      action.label === action.successLabel
+                      action.id === "copy-pr-url" ||
+                      (action.status === "idle" &&
+                        action.id === "pr" &&
+                        action.label === action.pendingLabel &&
+                        action.label === action.successLabel)
                     }
                   />
                 ))}

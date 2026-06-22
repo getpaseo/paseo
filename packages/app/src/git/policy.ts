@@ -23,7 +23,8 @@ export type GitActionId =
   | "disable-pr-auto-merge"
   | "merge-branch"
   | "merge-from-base"
-  | "archive-worktree";
+  | "archive-worktree"
+  | "copy-pr-url";
 
 export interface GitAction {
   id: GitActionId;
@@ -298,12 +299,31 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     handler: input.runtime["archive-worktree"].handler,
   });
 
+  if (input.hasPullRequest && input.pullRequestUrl) {
+    allActions.set("copy-pr-url", {
+      id: "copy-pr-url",
+      label: i18n.t("workspace.git.actions.copyPrUrl"),
+      pendingLabel: i18n.t("workspace.git.actions.copyPrUrl"),
+      successLabel: i18n.t("workspace.git.actions.copyPrUrl"),
+      disabled: input.runtime["copy-pr-url"].disabled,
+      status: input.runtime["copy-pr-url"].status,
+      icon: input.runtime["copy-pr-url"].icon,
+      startsGroup: false,
+      handler: input.runtime["copy-pr-url"].handler,
+    });
+  }
+
   const primaryActionId = getPrimaryActionId(input);
   const primary = primaryActionId ? (allActions.get(primaryActionId) ?? null) : null;
 
   const secondaryIds = [...REMOTE_ACTION_IDS];
   if (!input.isOnBaseBranch) {
-    secondaryIds.push(...getFeatureActionIds(input));
+    for (const id of getFeatureActionIds(input)) {
+      secondaryIds.push(id);
+      if (id === "pr" && input.hasPullRequest && input.pullRequestUrl) {
+        secondaryIds.push("copy-pr-url");
+      }
+    }
   }
   if (input.isPaseoOwnedWorktree) {
     secondaryIds.push("archive-worktree");

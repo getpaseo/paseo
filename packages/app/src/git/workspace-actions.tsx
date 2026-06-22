@@ -2,6 +2,7 @@ import { withUnistyles } from "react-native-unistyles";
 import {
   Archive,
   ArrowDownUp,
+  Copy,
   Download,
   GitCommitHorizontal,
   GitMerge,
@@ -27,6 +28,7 @@ const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
+const ThemedCopy = withUnistyles(Copy);
 
 const mutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -45,6 +47,7 @@ const ICONS = {
   merge: <ThemedGitMerge size={16} uniProps={mutedColorMapping} />,
   mergeFromBase: <ThemedRefreshCcw size={16} uniProps={mutedColorMapping} />,
   archive: <ThemedArchive size={16} uniProps={mutedColorMapping} />,
+  copyPrUrl: <ThemedCopy size={16} uniProps={mutedColorMapping} />,
 };
 
 export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitActionsProps) {

@@ -589,6 +589,8 @@ export const fr: TranslationResources = {
           success: "Tiré et poussé",
         },
         viewPr: "VoirPR",
+        copyPrUrl: "Copier l'URL du PR",
+        copyPrUrlSuccess: "URL copiée",
         createPr: {
           label: "CréerPR",
           pending: "Création dePR...",

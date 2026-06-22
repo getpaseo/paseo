@@ -581,6 +581,8 @@ export const zhCN: TranslationResources = {
           success: "已 pull 并 push",
         },
         viewPr: "查看 PR",
+        copyPrUrl: "复制 PR 链接",
+        copyPrUrlSuccess: "链接已复制",
         createPr: {
           label: "创建 PR",
           pending: "正在创建 PR...",

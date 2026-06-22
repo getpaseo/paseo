@@ -127,6 +127,11 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
         status: "idle",
         handler: () => undefined,
       },
+      "copy-pr-url": {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
     },
     ...overrides,
   };

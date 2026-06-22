@@ -583,6 +583,8 @@ export const ar: TranslationResources = {
           success: "سحبت ودفعت",
         },
         viewPr: "عرض PR",
+        copyPrUrl: "نسخ رابط PR",
+        copyPrUrlSuccess: "تم نسخ الرابط",
         createPr: {
           label: "إنشاء PR",
           pending: "إنشاء PR...",

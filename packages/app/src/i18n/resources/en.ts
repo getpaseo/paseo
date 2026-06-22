@@ -582,6 +582,8 @@ export const en = {
           success: "Pulled and pushed",
         },
         viewPr: "View PR",
+        copyPrUrl: "Copy PR URL",
+        copyPrUrlSuccess: "URL copied",
         createPr: {
           label: "Create PR",
           pending: "Creating PR...",

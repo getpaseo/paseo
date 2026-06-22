@@ -35,6 +35,7 @@ import {
   ArrowDownUp,
   ChevronDown,
   Columns2,
+  Copy,
   Download,
   GitCommitHorizontal,
   GitMerge,
@@ -1111,6 +1112,7 @@ const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedGitMerge = withUnistyles(GitMerge);
 const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
+const ThemedCopy = withUnistyles(Copy);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 interface DiffLayoutToggleGroupProps {
@@ -2100,6 +2102,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       merge: <ThemedGitMerge size={16} uniProps={foregroundMutedIconColorMapping} />,
       mergeFromBase: <ThemedRefreshCcw size={16} uniProps={foregroundMutedIconColorMapping} />,
       archive: <ThemedArchive size={16} uniProps={foregroundMutedIconColorMapping} />,
+      copyPrUrl: <ThemedCopy size={16} uniProps={foregroundMutedIconColorMapping} />,
     }),
     [],
   );
