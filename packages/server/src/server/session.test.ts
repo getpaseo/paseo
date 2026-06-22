@@ -1,5 +1,4 @@
 import { execSync } from "child_process";
-import { EventEmitter } from "events";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
@@ -17,16 +16,6 @@ import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
-import type {
-  SpeechToTextProvider,
-  StreamingTranscriptionCommittedEvent,
-  StreamingTranscriptionEvent,
-  StreamingTranscriptionSession,
-} from "./speech/speech-provider.js";
-import type {
-  TurnDetectionProvider,
-  TurnDetectionSession,
-} from "./speech/turn-detection-provider.js";
 import {
   asSessionInternals as asSessionInternalsHelper,
   asAgentManager,
@@ -50,8 +39,6 @@ import type {
 } from "../services/github-service.js";
 
 interface SessionHandlerInternals {
-  startVoiceTurnController(): Promise<void>;
-  stopVoiceTurnController(): Promise<void>;
   handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -82,9 +69,6 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
-  sttManager: {
-    transcribe(audio: Buffer, format: string): Promise<unknown>;
-  };
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -312,198 +296,6 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     voice: options.voice,
   });
 }
-
-class FakeVoiceTurnDetectionSession extends EventEmitter implements TurnDetectionSession {
-  public readonly requiredSampleRate = 16000;
-
-  async connect(): Promise<void> {}
-
-  appendPcm16(_chunk: Buffer): void {}
-
-  flush(): void {}
-  reset(): void {}
-  close(): void {}
-}
-
-class FakeVoiceSttSession extends EventEmitter implements StreamingTranscriptionSession {
-  public readonly requiredSampleRate = 16000;
-  public commitCount = 0;
-
-  async connect(): Promise<void> {}
-
-  appendPcm16(_pcm16le: Buffer): void {}
-
-  commit(): void {
-    this.commitCount += 1;
-  }
-
-  clear(): void {}
-  close(): void {}
-
-  emitCommitted(event: StreamingTranscriptionCommittedEvent): void {
-    this.emit("committed", event);
-  }
-
-  emitTranscript(event: StreamingTranscriptionEvent): void {
-    this.emit("transcript", event);
-  }
-}
-
-function createVoiceSessionHarness() {
-  const messages: unknown[] = [];
-  const detector = new FakeVoiceTurnDetectionSession();
-  const sttSession = new FakeVoiceSttSession();
-  const sttProvider: SpeechToTextProvider = {
-    id: "local",
-    createSession: vi.fn(() => sttSession),
-  };
-  const turnDetection: TurnDetectionProvider = {
-    id: "local",
-    createSession: vi.fn(() => detector),
-  };
-  const session = createSessionForTest({
-    messages,
-    stt: sttProvider,
-    voice: { turnDetection },
-  });
-  Object.assign(session, {
-    isVoiceMode: true,
-    voiceModeAgentId: "11111111-1111-4111-8111-111111111111",
-  });
-  const internals = asSessionInternals(session);
-  const sendAgentMessage = vi
-    .spyOn(internals, "handleSendAgentMessage")
-    .mockResolvedValue({ ok: true });
-  const transcribe = vi.spyOn(asSessionInternals(session).sttManager, "transcribe");
-
-  return {
-    session,
-    internals,
-    messages,
-    detector,
-    sttSession,
-    sendAgentMessage,
-    transcribe,
-  };
-}
-
-async function settleVoiceSession(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-describe("session voice mode streaming transcription", () => {
-  test("submits the streaming final transcript to the agent without batch transcribe", async () => {
-    const harness = createVoiceSessionHarness();
-
-    await harness.internals.startVoiceTurnController();
-    harness.detector.emit("speech_started");
-    await settleVoiceSession();
-    harness.detector.emit("speech_stopped");
-    await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-    harness.sttSession.emitTranscript({
-      segmentId: "segment-1",
-      transcript: "ship the streaming final",
-      isFinal: true,
-      language: "en",
-      avgLogprob: -0.1,
-      isLowConfidence: false,
-    });
-    await settleVoiceSession();
-
-    expect(harness.sttSession.commitCount).toBe(1);
-    expect(harness.transcribe).not.toHaveBeenCalled();
-    expect(harness.sendAgentMessage).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      "ship the streaming final",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { spokenInput: true },
-    );
-    expect(harness.messages).toContainEqual(
-      expect.objectContaining({
-        type: "transcription_result",
-        payload: expect.objectContaining({
-          text: "ship the streaming final",
-          language: "en",
-          avgLogprob: -0.1,
-        }),
-      }),
-    );
-
-    await harness.internals.stopVoiceTurnController();
-  });
-
-  test("uses the finalization timeout empty transcript path without agent submission", async () => {
-    vi.useFakeTimers();
-    try {
-      const harness = createVoiceSessionHarness();
-
-      await harness.internals.startVoiceTurnController();
-      harness.detector.emit("speech_started");
-      await settleVoiceSession();
-      harness.detector.emit("speech_stopped");
-      await settleVoiceSession();
-      harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-
-      await vi.advanceTimersByTimeAsync(10_000);
-      await settleVoiceSession();
-
-      expect(harness.transcribe).not.toHaveBeenCalled();
-      expect(harness.sendAgentMessage).not.toHaveBeenCalled();
-      expect(harness.messages).toContainEqual(
-        expect.objectContaining({
-          type: "transcription_result",
-          payload: expect.objectContaining({
-            text: "",
-          }),
-        }),
-      );
-
-      await harness.internals.stopVoiceTurnController();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("filters low-confidence streaming finals without agent submission", async () => {
-    const harness = createVoiceSessionHarness();
-
-    await harness.internals.startVoiceTurnController();
-    harness.detector.emit("speech_started");
-    await settleVoiceSession();
-    harness.detector.emit("speech_stopped");
-    await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-    harness.sttSession.emitTranscript({
-      segmentId: "segment-1",
-      transcript: "background noise",
-      isFinal: true,
-      avgLogprob: -2.5,
-      isLowConfidence: true,
-    });
-    await settleVoiceSession();
-
-    expect(harness.transcribe).not.toHaveBeenCalled();
-    expect(harness.sendAgentMessage).not.toHaveBeenCalled();
-    expect(harness.messages).toContainEqual(
-      expect.objectContaining({
-        type: "transcription_result",
-        payload: expect.objectContaining({
-          text: "",
-          avgLogprob: -2.5,
-          isLowConfidence: true,
-        }),
-      }),
-    );
-
-    await harness.internals.stopVoiceTurnController();
-  });
-});
 
 describe("file explorer binary responses", () => {
   const tempDirs: string[] = [];
@@ -2701,7 +2493,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh",
@@ -2739,7 +2531,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh-error",
@@ -2767,7 +2559,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/service-worktree",
       requestId: "request-status",
@@ -2816,7 +2608,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/cold-worktree",
       requestId: "request-cold-status",
@@ -3064,7 +2856,7 @@ describe("session branch validation", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleValidateBranchRequest({
+    await session.handleMessage({
       type: "validate_branch_request",
       cwd: "/tmp/repo",
       branchName: "feature",
@@ -3487,7 +3279,7 @@ describe("session branch suggestions handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleBranchSuggestionsRequest({
+    await session.handleMessage({
       type: "branch_suggestions_request",
       cwd: "/tmp/repo",
       query: "service",
