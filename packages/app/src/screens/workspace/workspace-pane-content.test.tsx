@@ -65,6 +65,8 @@ function buildContent(tab: WorkspaceTabDescriptor = agentTab) {
     onRetargetCurrentTab: vi.fn(),
     onOpenWorkspaceFile: vi.fn(),
     onOpenImportSheet: vi.fn(),
+    onOpenArchivedSheet: vi.fn(),
+    archivedSessionCount: 0,
   });
 }
 

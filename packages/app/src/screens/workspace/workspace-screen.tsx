@@ -65,7 +65,12 @@ import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-
 import { WorkspaceGitActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
+import {
+  ArchivedSessionsSheet,
+  selectArchivedAgentsForCwd,
+} from "@/components/archived-sessions-sheet";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { useAgentHistory } from "@/hooks/use-agent-history";
 import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import { useToast } from "@/contexts/toast-context";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
@@ -198,6 +203,9 @@ import {
 import { RenderProfile } from "@/utils/render-profiler";
 
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
+// Archived-count history stays fresh for 5 minutes: long enough that a single
+// fetch on first workspace focus covers many activations without re-polling.
+const ARCHIVED_COUNT_STALE_TIME_MS = 5 * 60_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
@@ -1768,6 +1776,28 @@ function WorkspaceScreenContent({
   const closeImportSheet = useCallback(() => {
     setIsImportSheetVisible(false);
   }, []);
+  const [isArchivedSheetVisible, setIsArchivedSheetVisible] = useState(false);
+  const openArchivedSheet = useCallback(() => {
+    setIsArchivedSheetVisible(true);
+  }, []);
+  const closeArchivedSheet = useCallback(() => {
+    setIsArchivedSheetVisible(false);
+  }, []);
+  // Fetch agent history once per focused workspace to derive the archived
+  // count that gates the "Archived Sessions(N)" pill. A long staleTime means
+  // the first focus issues a single fetch and subsequent activations read the
+  // cache instead of revalidating — avoiding the per-activation / 30s-poll
+  // cost an eager default-staleTime fetch would incur, while still breaking
+  // the chicken-and-egg where a cache-only read can never populate itself.
+  const { agents: agentHistoryForCount } = useAgentHistory({
+    serverId: normalizedServerId,
+    enabled: isRouteFocused,
+    staleTimeMs: ARCHIVED_COUNT_STALE_TIME_MS,
+  });
+  const archivedSessionCount = useMemo(
+    () => selectArchivedAgentsForCwd(agentHistoryForCount, workspaceDirectory).length,
+    [agentHistoryForCount, workspaceDirectory],
+  );
 
   // Warm the workspace-scoped provider snapshot so the model picker is ready when opened.
   useProvidersSnapshot(normalizedServerId, {
@@ -3177,14 +3207,18 @@ function WorkspaceScreenContent({
           });
         },
         onOpenImportSheet: openImportSheet,
+        onOpenArchivedSheet: openArchivedSheet,
+        archivedSessionCount,
       }),
     [
+      archivedSessionCount,
       handleCloseTabById,
       focusWorkspacePane,
       handleOpenWorkspaceFileFromPane,
       navigateToTabId,
       normalizedServerId,
       normalizedWorkspaceId,
+      openArchivedSheet,
       openImportSheet,
       openWorkspaceChildTabFocused,
       persistenceKey,
@@ -3743,6 +3777,13 @@ function WorkspaceScreenContent({
               cwd={workspaceDirectory}
               onClose={closeImportSheet}
               onImportedAgent={handleImportedAgent}
+            />
+            <ArchivedSessionsSheet
+              visible={isArchivedSheetVisible}
+              serverId={normalizedServerId}
+              cwd={workspaceDirectory}
+              onClose={closeArchivedSheet}
+              onUnarchivedAgent={handleImportedAgent}
             />
             <WorkspaceTabRenameModal
               renamingTab={renamingTab}

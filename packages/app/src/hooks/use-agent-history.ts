@@ -75,9 +75,17 @@ export async function fetchAgentHistoryPage(input: {
   };
 }
 
+const DEFAULT_AGENT_HISTORY_STALE_TIME_MS = 30_000;
+
 export function useAgentHistory(options: {
   serverId?: string | null;
   enabled?: boolean;
+  /**
+   * How long fetched history stays fresh before a focus/mount triggers a
+   * refetch. Callers that only need an occasional count (not a live list) can
+   * pass a long value so a single fetch covers many screen activations.
+   */
+  staleTimeMs?: number;
 }): AgentHistoryResult {
   const { t } = useTranslation();
   const daemons = useHosts();
@@ -86,6 +94,7 @@ export function useAgentHistory(options: {
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
   }, [options.serverId]);
   const enabled = options.enabled ?? true;
+  const staleTimeMs = options.staleTimeMs ?? DEFAULT_AGENT_HISTORY_STALE_TIME_MS;
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const queryKey = useMemo(() => agentHistoryQueryKey(serverId), [serverId]);
@@ -100,7 +109,7 @@ export function useAgentHistory(options: {
   >({
     queryKey,
     enabled: Boolean(enabled && serverId && client && isConnected),
-    staleTime: 30_000,
+    staleTime: staleTimeMs,
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.pageInfo.hasMore ? lastPage.pageInfo.nextCursor : null,
