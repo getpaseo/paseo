@@ -1,31 +1,13 @@
-import { useEffect, useMemo, useRef } from "react";
-import { Animated, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { PrActivitySkeleton } from "./activity-skeleton";
+import { useTranslation } from "react-i18next";
+import { PrActivitySkeleton, SkeletonPulse, useSkeletonPulse } from "./activity-skeleton";
 
 const CHECK_ROW_KEYS = [0, 1, 2].map((i) => `pr-pane-skeleton-check-${i}`);
 
-function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StyleProp<ViewStyle> }) {
-  const opacity = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.4, 0.8],
-  });
-  const pulseStyle = useMemo(() => [style, { opacity }], [style, opacity]);
-  return <Animated.View style={pulseStyle} />;
-}
-
 export function PullRequestPaneSkeleton() {
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 1000, useNativeDriver: true }),
-      ]),
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [pulse]);
+  const { t } = useTranslation();
+  const pulse = useSkeletonPulse();
 
   return (
     <View style={styles.root} testID="pr-pane-skeleton">
@@ -40,7 +22,7 @@ export function PullRequestPaneSkeleton() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Checks</Text>
+        <Text style={styles.sectionTitle}>{t("workspace.git.pr.sections.checks")}</Text>
         <View style={styles.checks}>
           {CHECK_ROW_KEYS.map((key) => (
             <View key={key} style={styles.checkRow}>

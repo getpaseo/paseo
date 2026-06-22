@@ -25,11 +25,11 @@ import { useTranslation } from "react-i18next";
 import {
   formatPrTabLabel,
   PullRequestPane,
+  PullRequestPaneError,
+  PullRequestPaneSkeleton,
   PullRequestTabIcon,
   usePrPaneData,
 } from "@/git/pull-request-panel";
-import { PullRequestPaneError } from "@/git/pull-request-panel/pane-error";
-import { PullRequestPaneSkeleton } from "@/git/pull-request-panel/pane-skeleton";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { useGitActions } from "@/git/use-actions";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";

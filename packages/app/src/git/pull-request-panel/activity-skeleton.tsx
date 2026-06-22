@@ -4,16 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 
 const ROW_KEYS = [0, 1, 2].map((i) => `pr-activity-skeleton-row-${i}`);
 
-function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StyleProp<ViewStyle> }) {
-  const opacity = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.4, 0.8],
-  });
-  const pulseStyle = useMemo(() => [style, { opacity }], [style, opacity]);
-  return <Animated.View style={pulseStyle} />;
-}
-
-export function PrActivitySkeleton() {
+export function useSkeletonPulse(): Animated.Value {
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const animation = Animated.loop(
@@ -25,6 +16,26 @@ export function PrActivitySkeleton() {
     animation.start();
     return () => animation.stop();
   }, [pulse]);
+  return pulse;
+}
+
+export function SkeletonPulse({
+  pulse,
+  style,
+}: {
+  pulse: Animated.Value;
+  style: StyleProp<ViewStyle>;
+}) {
+  const opacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.4, 0.8],
+  });
+  const pulseStyle = useMemo(() => [style, { opacity }], [style, opacity]);
+  return <Animated.View style={pulseStyle} />;
+}
+
+export function PrActivitySkeleton() {
+  const pulse = useSkeletonPulse();
 
   return (
     <View style={styles.container} testID="pr-pane-activity-skeleton">
