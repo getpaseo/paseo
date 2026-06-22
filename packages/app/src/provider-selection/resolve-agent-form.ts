@@ -144,15 +144,15 @@ export function resolveThinkingOptionId(args: {
   return effectiveModel?.defaultThinkingOptionId ?? thinkingOptions[0]?.id ?? "";
 }
 
-function normalizeSelectedModeId(modeId: string | null | undefined): string {
-  return typeof modeId === "string" ? modeId.trim() : "";
-}
+const normalizeSelectedModeId = normalizeSelectedModelId;
 
 function resolvePreferredModeId(input: {
   initialModeId?: string | null;
   preferredModeId?: string | null;
   providerDef: AgentProviderDefinition | undefined;
 }): string {
+  // Saved modes are user intent. Provider create config validates unknown modes
+  // at submission time, so background form resolution should not erase them.
   const initialModeId = normalizeSelectedModeId(input.initialModeId);
   if (initialModeId) return initialModeId;
 
