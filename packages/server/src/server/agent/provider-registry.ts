@@ -565,9 +565,15 @@ function createRegistryEntry(
       if (catalogClient.fetchCatalog) {
         const catalog = await catalogClient.fetchCatalog(options);
         return {
-          models: mergeModels(provider, [], resolved.additionalModels, catalog.models, {
-            profileModelsAreAdditive: true,
-          }),
+          models: mergeModels(
+            provider,
+            resolved.profileModels,
+            resolved.additionalModels,
+            catalog.models,
+            {
+              profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+            },
+          ),
           modes: decorateModes(catalog.modes),
         };
       }
