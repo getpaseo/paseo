@@ -92,15 +92,17 @@ function useActiveCompactExplorerSidebarModel(
   return selection ? (resolvedModel ?? (isExplorerOpen ? retainedModelRef.current : null)) : null;
 }
 
-export function CompactExplorerSidebarGestureHost({
-  children,
-  enabled,
-}: {
+interface CompactExplorerSidebarHostProps {
   children: ReactNode;
   enabled: boolean;
-}) {
+}
+
+export function CompactExplorerSidebarHost({ children, enabled }: CompactExplorerSidebarHostProps) {
   const model = useActiveCompactExplorerSidebarModel(enabled);
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
+  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
+  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
+  const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
 
   const handleOpenExplorer = useCallback(() => {
     if (!model?.workspaceRoot) {
@@ -115,22 +117,6 @@ export function CompactExplorerSidebarGestureHost({
       },
     });
   }, [model, openFileExplorerForCheckout]);
-
-  return (
-    <CompactExplorerOpenGestureSurface
-      enabled={enabled && Boolean(model?.workspaceRoot)}
-      onOpenExplorer={handleOpenExplorer}
-    >
-      {children}
-    </CompactExplorerOpenGestureSurface>
-  );
-}
-
-export function CompactExplorerSidebarHost({ enabled }: { enabled: boolean }) {
-  const model = useActiveCompactExplorerSidebarModel(enabled);
-  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
-  const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
 
   const handleOpenFile = useCallback(
     (filePath: string) => {
@@ -148,18 +134,24 @@ export function CompactExplorerSidebarHost({ enabled }: { enabled: boolean }) {
     [focusWorkspaceTab, model, openWorkspaceTabFocused, showMobileAgent],
   );
 
-  if (!enabled || !model) {
-    return null;
-  }
-
   return (
-    <CompactExplorerSidebar
-      serverId={model.serverId}
-      workspaceId={model.workspaceId}
-      workspaceRoot={model.workspaceRoot}
-      isGit={model.isGit}
-      onOpenFile={handleOpenFile}
-    />
+    <>
+      <CompactExplorerOpenGestureSurface
+        enabled={enabled && Boolean(model?.workspaceRoot)}
+        onOpenExplorer={handleOpenExplorer}
+      >
+        {children}
+      </CompactExplorerOpenGestureSurface>
+      {enabled && model ? (
+        <CompactExplorerSidebar
+          serverId={model.serverId}
+          workspaceId={model.workspaceId}
+          workspaceRoot={model.workspaceRoot}
+          isGit={model.isGit}
+          onOpenFile={handleOpenFile}
+        />
+      ) : null}
+    </>
   );
 }
 

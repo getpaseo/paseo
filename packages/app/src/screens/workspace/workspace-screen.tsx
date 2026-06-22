@@ -191,7 +191,6 @@ import {
 } from "@/workspace/file-open";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
-import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
@@ -2194,16 +2193,6 @@ function WorkspaceScreenContent({
 
   const handleOpenFileFromExplorer = useCallback(
     function handleOpenFileFromExplorer(filePath: string) {
-      if (isMobile) {
-        openWorkspaceFileFromExplorer({
-          filePath,
-          persistenceKey,
-          showMobileAgent,
-          openWorkspaceTabFocused,
-          focusWorkspaceTab,
-        });
-        return;
-      }
       if (!persistenceKey) {
         return;
       }
@@ -2216,14 +2205,7 @@ function WorkspaceScreenContent({
         navigateToTabId(tabId);
       }
     },
-    [
-      focusWorkspaceTab,
-      isMobile,
-      navigateToTabId,
-      openWorkspaceTabFocused,
-      persistenceKey,
-      showMobileAgent,
-    ],
+    [navigateToTabId, openWorkspaceTabFocused, persistenceKey],
   );
 
   const handleOpenFileFromChat = useCallback(
