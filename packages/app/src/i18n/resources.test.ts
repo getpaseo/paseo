@@ -120,6 +120,7 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
   it("preserves interpolation placeholders in every language", () => {
