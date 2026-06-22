@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import {
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
@@ -38,6 +37,7 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -47,6 +47,7 @@ import {
   type ListModelsOptions,
   type ListModesOptions,
   type McpServerConfig,
+  type ProviderCatalog,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -67,7 +68,6 @@ import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display"
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
 import {
-  formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
@@ -1371,63 +1371,7 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      // Background model discovery can be legitimately slow while OpenCode refreshes
-      // provider state, so allow longer than turn execution paths.
-      const response = await openCodeMetadataLimit(() =>
-        withTimeout(
-          client.provider.list({ directory: options.cwd }),
-          OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
-          `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
-        ),
-      );
-
-      if (response.error) {
-        throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
-      }
-
-      const providers = response.data;
-      if (!providers) {
-        return [];
-      }
-
-      const connectedProviderIds = new Set(providers.connected);
-
-      // Providers with source "api" are managed by the OpenCode console/subscription (e.g. Pi
-      // coding agent). They do not appear in `connected` (which only lists env/config providers)
-      // but are fully usable — OpenCode authenticates them internally via the console session.
-      const isAccessible = (provider: { id: string; source: string }): boolean =>
-        connectedProviderIds.has(provider.id) || provider.source === "api";
-
-      // Fail fast if no providers are accessible at all
-      if (!providers.all.some(isAccessible)) {
-        throw new Error(
-          "OpenCode has no connected providers. Please authenticate with at least one provider " +
-            "(e.g., openai, anthropic), set appropriate environment variables (e.g., OPENAI_API_KEY), " +
-            "or log in to OpenCode Go via the console.",
-        );
-      }
-
-      const models: AgentModelDefinition[] = [];
-      this.modelContextWindows.clear();
-      for (const provider of providers.all) {
-        if (!isAccessible(provider)) {
-          continue;
-        }
-
-        for (const [modelId, model] of Object.entries(provider.models)) {
-          const definition = buildOpenCodeModelDefinition(provider, modelId, model);
-          const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
-          if (contextWindowMaxTokens !== undefined) {
-            this.modelContextWindows.set(
-              buildOpenCodeModelLookupKey(provider.id, modelId),
-              contextWindowMaxTokens,
-            );
-          }
-          models.push(definition);
-        }
-      }
-
-      return models;
+      return await this.fetchModelsFromClient(client, options.cwd);
     } finally {
       acquisition.release();
     }
@@ -1457,6 +1401,23 @@ export class OpenCodeAgentClient implements AgentClient {
         .map(mapOpenCodeAgentToMode);
 
       return mergeOpenCodeModes(discovered);
+    } finally {
+      acquisition.release();
+    }
+  }
+
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const acquisition = await this.runtime.acquireServer({ force: options.force });
+    const { url } = acquisition.server;
+    const directory = options.cwd;
+    const client = this.runtime.createClient({ baseUrl: url, directory });
+
+    try {
+      const [models, modes] = await Promise.all([
+        this.fetchModelsFromClient(client, directory),
+        this.fetchModesFromClient(client, directory),
+      ]);
+      return { models, modes };
     } finally {
       acquisition.release();
     }
@@ -1555,17 +1516,6 @@ export class OpenCodeAgentClient implements AgentClient {
         defaultBinary: "opencode",
       });
       const availability = await checkProviderLaunchAvailable(launch);
-      const available = availability.available;
-      let serverStatus = "Not running";
-      let modelsValue = "Not checked";
-      let status = formatDiagnosticStatus(available);
-
-      try {
-        const { url } = await this.runtime.ensureServerRunning();
-        serverStatus = `Running (${url})`;
-      } catch (error) {
-        serverStatus = `Unavailable (${toDiagnosticErrorMessage(error)})`;
-      }
 
       let authValue = "Not checked";
       const authCommand = availability.available
@@ -1588,40 +1538,13 @@ export class OpenCodeAgentClient implements AgentClient {
         }
       }
 
-      if (available) {
-        try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
-          modelsValue = String(models.length);
-        } catch (error) {
-          modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
-          status = formatDiagnosticStatus(available, {
-            source: "model fetch",
-            cause: error,
-          });
-        }
-
-        if (!modelsValue.startsWith("Error -")) {
-          try {
-            await this.listModes({ cwd: homedir(), force: false });
-          } catch (error) {
-            status = formatDiagnosticStatus(available, {
-              source: "mode fetch",
-              cause: error,
-            });
-          }
-        }
-      }
-
       return {
         diagnostic: formatProviderDiagnostic("OpenCode", [
           ...(await buildCommandResolutionDiagnosticRows(launch, {
             knownBinaryNames: ["opencode"],
           })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
-          { label: "Server", value: serverStatus },
           { label: "Auth", value: authValue },
-          { label: "Models", value: modelsValue },
-          { label: "Status", value: status },
         ]),
       };
     } catch (error) {
@@ -1629,6 +1552,83 @@ export class OpenCodeAgentClient implements AgentClient {
         diagnostic: formatProviderDiagnosticError("OpenCode", error),
       };
     }
+  }
+
+  private async fetchModelsFromClient(
+    client: OpencodeClient,
+    directory: string,
+  ): Promise<AgentModelDefinition[]> {
+    const response = await openCodeMetadataLimit(() =>
+      withTimeout(
+        client.provider.list({ directory }),
+        OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
+        `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
+      ),
+    );
+
+    if (response.error) {
+      throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
+    }
+
+    const providers = response.data;
+    if (!providers) {
+      return [];
+    }
+
+    const connectedProviderIds = new Set(providers.connected);
+
+    const isAccessible = (provider: { id: string; source: string }): boolean =>
+      connectedProviderIds.has(provider.id) || provider.source === "api";
+
+    if (!providers.all.some(isAccessible)) {
+      throw new Error(
+        "OpenCode has no connected providers. Please authenticate with at least one provider " +
+          "(e.g., openai, anthropic), set appropriate environment variables (e.g., OPENAI_API_KEY), " +
+          "or log in to OpenCode Go via the console.",
+      );
+    }
+
+    const models: AgentModelDefinition[] = [];
+    this.modelContextWindows.clear();
+    for (const provider of providers.all) {
+      if (!isAccessible(provider)) {
+        continue;
+      }
+
+      for (const [modelId, model] of Object.entries(provider.models)) {
+        const definition = buildOpenCodeModelDefinition(provider, modelId, model);
+        const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
+        if (contextWindowMaxTokens !== undefined) {
+          this.modelContextWindows.set(
+            buildOpenCodeModelLookupKey(provider.id, modelId),
+            contextWindowMaxTokens,
+          );
+        }
+        models.push(definition);
+      }
+    }
+
+    return models;
+  }
+
+  private async fetchModesFromClient(
+    client: OpencodeClient,
+    directory: string,
+  ): Promise<AgentMode[]> {
+    const response = await openCodeMetadataLimit(() =>
+      withTimeout(
+        client.app.agents({ directory }),
+        10_000,
+        "OpenCode app.agents timed out after 10s",
+      ),
+    );
+
+    if (response.error || !response.data) {
+      return DEFAULT_MODES;
+    }
+
+    const discovered = response.data.filter(isSelectableOpenCodeAgent).map(mapOpenCodeAgentToMode);
+    return mergeOpenCodeModes(discovered);
   }
   private assertConfig(config: AgentSessionConfig): OpenCodeAgentConfig {
     if (config.provider !== "opencode") {

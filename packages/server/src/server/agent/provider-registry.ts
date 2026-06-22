@@ -10,8 +10,10 @@ import type {
   AgentRuntimeInfo,
   AgentSession,
   AgentStreamEvent,
+  FetchCatalogOptions,
   ListModelsOptions,
   ListModesOptions,
+  ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
 } from "./agent-sdk-types.js";
@@ -66,6 +68,11 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   isCreateConfigUnattended: (input: AgentCreateConfigUnattendedInput) => boolean;
   fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
+  /**
+   * Single catalog discovery call used by ProviderSnapshotManager. Should spawn
+   * at most one provider runtime process and return both models and modes.
+   */
+  fetchCatalog: (options: FetchCatalogOptions, client?: AgentClient) => Promise<ProviderCatalog>;
 }
 
 export interface BuildProviderRegistryOptions {
@@ -429,6 +436,17 @@ function wrapClientProvider(
         profileModelsAreAdditive,
       }),
     listModes: inner.listModes?.bind(inner),
+    fetchCatalog: inner.fetchCatalog
+      ? async (options) => {
+          const catalog = await inner.fetchCatalog!(options);
+          return {
+            models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
+              profileModelsAreAdditive,
+            }),
+            modes: catalog.modes,
+          };
+        }
+      : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listImportableSessions: listImportableSessions
@@ -473,6 +491,46 @@ function createRegistryEntry(
   resolved: ResolvedProvider,
 ): ProviderDefinition {
   const modelClient = resolved.createBaseClient(logger);
+  const hasReplacementModels =
+    resolved.profileModels.length > 0 && !resolved.profileModelsAreAdditive;
+  const replacementModels = hasReplacementModels
+    ? resolved.profileModels.map((model) => mapModel(provider, model))
+    : [];
+
+  const decorateModes = (modes: AgentMode[]): AgentMode[] =>
+    modes.map((mode) => {
+      if (mode.icon && mode.colorTier) return mode;
+      const definitionMode = resolved.definition.modes.find((d) => d.id === mode.id);
+      if (!definitionMode) return mode;
+      return Object.assign({}, mode, {
+        icon: mode.icon ?? definitionMode.icon,
+        colorTier: mode.colorTier ?? definitionMode.colorTier,
+      });
+    });
+
+  const fetchModelsFromClient = async (
+    options: ListModelsOptions,
+    catalogClient: AgentClient = modelClient,
+  ) =>
+    mergeModels(
+      provider,
+      resolved.profileModels,
+      resolved.additionalModels,
+      await catalogClient.listModels(options),
+      {
+        profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+      },
+    );
+
+  const fetchModesFromClient = async (
+    options: ListModesOptions,
+    catalogClient: AgentClient = modelClient,
+  ) => {
+    const modes = catalogClient.listModes
+      ? await catalogClient.listModes(options)
+      : resolved.definition.modes;
+    return decorateModes(modes);
+  };
 
   return {
     ...resolved.definition,
@@ -483,29 +541,42 @@ function createRegistryEntry(
     resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,
     isCreateConfigUnattended:
       modelClient.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended,
-    fetchModels: async (options: ListModelsOptions) =>
-      mergeModels(
-        provider,
-        resolved.profileModels,
-        resolved.additionalModels,
-        await modelClient.listModels(options),
-        {
-          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-        },
-      ),
-    fetchModes: async (options: ListModesOptions) => {
-      const modes = modelClient.listModes
-        ? await modelClient.listModes(options)
-        : resolved.definition.modes;
-      return modes.map((mode) => {
-        if (mode.icon && mode.colorTier) return mode;
-        const definitionMode = resolved.definition.modes.find((d) => d.id === mode.id);
-        if (!definitionMode) return mode;
-        return Object.assign({}, mode, {
-          icon: mode.icon ?? definitionMode.icon,
-          colorTier: mode.colorTier ?? definitionMode.colorTier,
-        });
-      });
+    fetchModels: fetchModelsFromClient,
+    fetchModes: fetchModesFromClient,
+    fetchCatalog: async (options: FetchCatalogOptions, client?: AgentClient) => {
+      const catalogClient = client ?? modelClient;
+      if (hasReplacementModels) {
+        // Replacement models skip runtime model discovery, but additionalModels
+        // must still be merged on top. If modes are dynamic, probe for modes only;
+        // otherwise use static/empty modes with no runtime.
+        const models = mergeModelAdditions(provider, replacementModels, resolved.additionalModels);
+        if (!catalogClient.listModes) {
+          return {
+            models,
+            modes: decorateModes(resolved.definition.modes),
+          };
+        }
+        return {
+          models,
+          modes: await fetchModesFromClient(options, catalogClient),
+        };
+      }
+
+      if (catalogClient.fetchCatalog) {
+        const catalog = await catalogClient.fetchCatalog(options);
+        return {
+          models: mergeModels(provider, [], resolved.additionalModels, catalog.models, {
+            profileModelsAreAdditive: true,
+          }),
+          modes: decorateModes(catalog.modes),
+        };
+      }
+
+      const [models, modes] = await Promise.all([
+        fetchModelsFromClient(options, catalogClient),
+        fetchModesFromClient(options, catalogClient),
+      ]);
+      return { models, modes };
     },
   };
 }

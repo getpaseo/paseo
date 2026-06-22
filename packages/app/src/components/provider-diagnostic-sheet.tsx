@@ -600,13 +600,22 @@ export function ProviderDiagnosticSheet({
   const modelsRefreshing = isRefreshing || providerSnapshotRefreshing;
 
   const stableDiscoveredRef = useRef<AgentModelDefinition[]>([]);
-  if (providerEntry?.models && providerEntry.models.length > 0) {
-    stableDiscoveredRef.current = providerEntry.models;
-  }
-  const discoveredModels =
-    providerEntry?.models && providerEntry.models.length > 0
-      ? providerEntry.models
-      : stableDiscoveredRef.current;
+  const currentModels = providerEntry?.models;
+  useEffect(() => {
+    if (currentModels && currentModels.length > 0) {
+      stableDiscoveredRef.current = currentModels;
+    }
+  }, [currentModels]);
+
+  const discoveredModels = useMemo(() => {
+    if (currentModels && currentModels.length > 0) {
+      return currentModels;
+    }
+    if (providerSnapshotRefreshing) {
+      return stableDiscoveredRef.current;
+    }
+    return [];
+  }, [currentModels, providerSnapshotRefreshing]);
 
   const [clockTick, setClockTick] = useState(0);
   useEffect(() => {

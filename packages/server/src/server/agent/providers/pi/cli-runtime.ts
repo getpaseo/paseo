@@ -153,8 +153,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return data.messages ?? [];
   }
 
-  async getAvailableModels(): Promise<PiModel[]> {
-    const data = (await this.request({ type: "get_available_models" })) as { models?: PiModel[] };
+  async getAvailableModels(timeoutMs?: number): Promise<PiModel[]> {
+    const data = (await this.request({ type: "get_available_models" }, timeoutMs)) as {
+      models?: PiModel[];
+    };
     return data.models ?? [];
   }
 

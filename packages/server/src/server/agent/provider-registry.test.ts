@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentModelDefinition } from "./agent-sdk-types.js";
+import type { AgentClient, AgentModelDefinition, AgentMode } from "./agent-sdk-types.js";
 
 const mockState = vi.hoisted(() => {
   interface ConstructorEntry {
@@ -1284,5 +1284,119 @@ describe("model merging", () => {
 
     expect(models.map((model) => model.id)).toEqual(["MiniMax-M2.7", "MiniMax-M3"]);
     expect(models.find((model) => model.isDefault)?.id).toBe("MiniMax-M3");
+  });
+});
+
+describe("fetchCatalog", () => {
+  test("returns merged models and modes from listModels/listModes fallback", async () => {
+    mockState.runtimeModels.set("codex", [
+      { provider: "codex", id: "codex-runtime", label: "Codex Runtime" },
+    ]);
+
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.codex.fetchCatalog({
+      cwd: "/tmp/catalog",
+      force: false,
+    });
+
+    expect(catalog.models.map((model) => model.id)).toEqual(["codex-runtime"]);
+    expect(catalog.modes).toEqual([]);
+  });
+
+  test("replacement models skip runtime model discovery but preserve additionalModels", async () => {
+    mockState.runtimeModels.set("codex", [
+      { provider: "codex", id: "codex-runtime", label: "Codex Runtime" },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          models: [{ id: "profile-model", label: "Profile Model" }],
+          additionalModels: [{ id: "extra-model", label: "Extra Model" }],
+        },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog({
+      cwd: "/tmp/catalog",
+      force: false,
+    });
+
+    expect(catalog.models.map((model) => model.id)).toEqual(["profile-model", "extra-model"]);
+  });
+
+  test("additionalModels can override replacement model fields", async () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          models: [{ id: "shared-model", label: "Profile Label" }],
+          additionalModels: [{ id: "shared-model", label: "Additional Label" }],
+        },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog({
+      cwd: "/tmp/catalog",
+      force: false,
+    });
+
+    expect(catalog.models).toEqual([
+      {
+        provider: "codex",
+        id: "shared-model",
+        label: "Additional Label",
+      },
+    ]);
+  });
+
+  test("uses injected client instead of base client when provided", async () => {
+    const injectedModels: AgentModelDefinition[] = [
+      { provider: "codex", id: "injected-model", label: "Injected Model" },
+    ];
+    const injectedModes: AgentMode[] = [{ id: "agent", label: "Agent" }];
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      listModels: vi.fn(async () => injectedModels),
+      listModes: vi.fn(async () => injectedModes),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.codex.fetchCatalog(
+      { cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(injectedClient.listModels).toHaveBeenCalledTimes(1);
+    expect(injectedClient.listModes).toHaveBeenCalledTimes(1);
+    expect(catalog.models.map((model) => model.id)).toEqual(["injected-model"]);
+    expect(catalog.modes).toEqual(injectedModes);
+  });
+
+  test("uses injected client fetchCatalog when available", async () => {
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      fetchCatalog: vi.fn(async () => ({
+        models: [{ provider: "codex", id: "catalog-model", label: "Catalog Model" }],
+        modes: [{ id: "ask", label: "Ask" }],
+      })),
+      listModels: vi.fn(async () => []),
+      listModes: vi.fn(async () => []),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.codex.fetchCatalog(
+      { cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(injectedClient.fetchCatalog).toHaveBeenCalledTimes(1);
+    expect(injectedClient.listModels).not.toHaveBeenCalled();
+    expect(injectedClient.listModes).not.toHaveBeenCalled();
+    expect(catalog.models.map((model) => model.id)).toEqual(["catalog-model"]);
+    expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
   });
 });

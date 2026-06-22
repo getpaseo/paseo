@@ -26,11 +26,13 @@ import {
   type AgentTimelineItem,
   type ToolCallTimelineItem,
   type AgentUsage,
+  type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ListModelsOptions,
+  type ProviderCatalog,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import type { Logger } from "pino";
@@ -84,13 +86,11 @@ import {
 } from "./provider-image-output.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import {
-  formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
   resolveBinaryVersion,
-  toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../provider-notices.js";
@@ -5592,6 +5592,11 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
+  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const models = await this.listModels({ cwd: homedir(), force: false });
+    return { models, modes: CODEX_MODES };
+  }
+
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
@@ -5645,34 +5650,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     try {
       const launch = await resolveCodexLaunch(this.runtimeSettings);
       const availability = await checkCodexLaunchAvailable(launch);
-      const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
         ...(await buildCommandResolutionDiagnosticRows(launch, {
           knownBinaryNames: ["codex"],
         })),
         ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
-      let status = formatDiagnosticStatus(available);
-
-      if (!available) {
-        entries.push({ label: "Models", value: "Not checked" });
-      } else {
-        try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
-          entries.push({ label: "Models", value: String(models.length) });
-        } catch (error) {
-          entries.push({
-            label: "Models",
-            value: `Error - ${toDiagnosticErrorMessage(error)}`,
-          });
-          status = formatDiagnosticStatus(available, {
-            source: "model fetch",
-            cause: error,
-          });
-        }
-      }
-
-      entries.push({ label: "Status", value: status });
 
       return {
         diagnostic: formatProviderDiagnostic("Codex", entries),

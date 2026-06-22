@@ -431,7 +431,7 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("getProviderDiagnostic returns the diagnostic from the injected client", async () => {
+  test("getProviderDiagnostic returns the diagnostic from the injected client and appends snapshot models/status", async () => {
     const getDiagnostic = vi.fn(async () => ({ diagnostic: "codex is ready" }));
     const client = createExtraClient("codex", { getDiagnostic });
     const manager = new ProviderSnapshotManager({
@@ -440,14 +440,50 @@ describe("ProviderSnapshotManager public surface", () => {
     });
     try {
       const result = await manager.getProviderDiagnostic("codex");
-      expect(result).toEqual({ provider: "codex", diagnostic: "codex is ready" });
+      expect(result.provider).toBe("codex");
+      expect(result.diagnostic).toContain("codex is ready");
+      expect(result.diagnostic).toContain("Models:");
+      expect(result.diagnostic).toContain("Status:");
       expect(getDiagnostic).toHaveBeenCalledTimes(1);
     } finally {
       manager.destroy();
     }
   });
 
-  test("getProviderDiagnostic falls back to a default message when the client has no getDiagnostic", async () => {
+  test("getProviderDiagnostic force-refreshes the snapshot via a single fetchCatalog call", async () => {
+    const catalogModels: AgentModelDefinition[] = [
+      { provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
+    ];
+    const catalogModes: AgentMode[] = [{ id: "agent", label: "Agent" }];
+    const fetchCatalog = vi.fn(async () => ({
+      models: catalogModels,
+      modes: catalogModes,
+    }));
+    const listModels = vi.fn(async () => [] as AgentModelDefinition[]);
+    const listModes = vi.fn(async () => [] as AgentMode[]);
+    const client = createExtraClient("codex", {
+      isAvailable: async () => true,
+      fetchCatalog,
+      listModels,
+      listModes,
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: { codex: client },
+    });
+    try {
+      const result = await manager.getProviderDiagnostic("codex");
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
+      expect(listModels).not.toHaveBeenCalled();
+      expect(listModes).not.toHaveBeenCalled();
+      expect(result.diagnostic).toContain("Models: 1");
+      expect(result.diagnostic).toContain("Status: Ready");
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("getProviderDiagnostic falls back to a default message when the client has no getDiagnostic and appends snapshot models/status", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       extraClients: { codex: createExtraClient("codex") },
@@ -456,6 +492,8 @@ describe("ProviderSnapshotManager public surface", () => {
       const result = await manager.getProviderDiagnostic("codex");
       expect(result.provider).toBe("codex");
       expect(result.diagnostic).toMatch(/no diagnostic/i);
+      expect(result.diagnostic).toContain("Models:");
+      expect(result.diagnostic).toContain("Status:");
     } finally {
       manager.destroy();
     }

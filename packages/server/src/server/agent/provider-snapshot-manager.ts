@@ -27,6 +27,7 @@ import {
   type ProviderDefinition,
 } from "./provider-registry.js";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
+import { formatProviderDiagnostic } from "./providers/diagnostic-utils.js";
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
@@ -312,13 +313,26 @@ export class ProviderSnapshotManager {
   }
 
   async getProviderDiagnostic(provider: AgentProvider): Promise<ProviderDiagnosticResult> {
+    const definition = this.requireProvider(provider);
     const client = this.providerClients[provider];
     if (!client) {
       throw new Error(`Provider ${provider} is not configured`);
     }
-    const diagnostic = client.getDiagnostic
+
+    // Force-refresh the snapshot so Models/Status come from the single catalog authority.
+    await this.refreshSnapshotForCwd({ cwd: homedir(), providers: [provider] });
+    const entry = await this.getProvider({ cwd: homedir(), provider, wait: true });
+
+    const modelCount = entry.status === "ready" ? String(entry.models?.length ?? 0) : "—";
+    const status = formatProviderStatus(entry);
+
+    const baseDiagnostic = client.getDiagnostic
       ? (await client.getDiagnostic()).diagnostic
-      : "No diagnostic available for this provider.";
+      : formatProviderDiagnostic(definition.label ?? provider, [
+          { label: "Diagnostic", value: "No diagnostic available" },
+        ]);
+
+    const diagnostic = `${baseDiagnostic}\n  Models: ${modelCount}\n  Status: ${status}`;
     return { provider, diagnostic };
   }
 
@@ -392,6 +406,7 @@ export class ProviderSnapshotManager {
           client.isCreateConfigUnattended?.bind(client) ?? definition.isCreateConfigUnattended,
         fetchModels: client.listModels.bind(client),
         fetchModes: client.listModes?.bind(client) ?? definition.fetchModes,
+        fetchCatalog: client.fetchCatalog?.bind(client) ?? definition.fetchCatalog,
       };
     }
 
@@ -644,11 +659,8 @@ export class ProviderSnapshotManager {
         return;
       }
 
-      const [models, modes] = await withTimeout(
-        Promise.all([
-          definition.fetchModels({ cwd, force }),
-          definition.fetchModes({ cwd, force }),
-        ]),
+      const catalog = await withTimeout(
+        definition.fetchCatalog({ cwd, force }, client),
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );
@@ -657,8 +669,8 @@ export class ProviderSnapshotManager {
         ...base,
         status: "ready",
         enabled: true,
-        models,
-        modes,
+        models: catalog.models,
+        modes: catalog.modes,
         fetchedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -805,4 +817,11 @@ function toErrorMessage(error: unknown): string {
     return error;
   }
   return "Unknown error";
+}
+
+function formatProviderStatus(entry: ProviderSnapshotEntry): string {
+  if (entry.status === "ready") return "Ready";
+  if (entry.status === "error") return `Error: ${entry.error ?? "Unknown error"}`;
+  if (entry.status === "unavailable") return "Unavailable";
+  return "Loading";
 }

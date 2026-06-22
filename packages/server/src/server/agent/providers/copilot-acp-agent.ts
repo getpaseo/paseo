@@ -1,5 +1,4 @@
 import type { Logger } from "pino";
-import { homedir } from "node:os";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
 import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
@@ -16,12 +15,10 @@ import {
   type SessionStateResponse,
 } from "./acp-agent.js";
 import {
-  formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
-  toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
 const COPILOT_CAPABILITIES: AgentCapabilityFlags = {
@@ -98,33 +95,6 @@ export class CopilotACPAgentClient extends ACPAgentClient {
         defaultBinary: "copilot",
       });
       const availability = await checkProviderLaunchAvailable(launch);
-      const available = availability.available;
-      let modelsValue = "Not checked";
-      let status = formatDiagnosticStatus(available);
-
-      if (available) {
-        try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
-          modelsValue = String(models.length);
-        } catch (error) {
-          modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
-          status = formatDiagnosticStatus(available, {
-            source: "model fetch",
-            cause: error,
-          });
-        }
-
-        if (!modelsValue.startsWith("Error -")) {
-          try {
-            await this.listModes({ cwd: homedir(), force: false });
-          } catch (error) {
-            status = formatDiagnosticStatus(available, {
-              source: "mode fetch",
-              cause: error,
-            });
-          }
-        }
-      }
 
       return {
         diagnostic: formatProviderDiagnostic("Copilot", [
@@ -132,8 +102,6 @@ export class CopilotACPAgentClient extends ACPAgentClient {
             knownBinaryNames: ["copilot"],
           })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
-          { label: "Models", value: modelsValue },
-          { label: "Status", value: status },
         ]),
       };
     } catch (error) {
