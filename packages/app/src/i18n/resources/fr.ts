@@ -695,6 +695,7 @@ export const fr: TranslationResources = {
           failedMergeFromBase: "Échec de la fusion à partir de la base",
           worktreePathUnavailable: "Chemin d'accès à l'arbre de travail indisponible",
           failedArchive: "Échec de l'archivage de l'arbre de travail",
+          failedCopyPrUrl: "Impossible de copier l'URL du PR",
         },
         archiveWarning: {
           title: "Archiver «{{worktreeName}}»?",

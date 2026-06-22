@@ -669,6 +669,7 @@ export const ar: TranslationResources = {
           failedMergeFromBase: "فشل الدمج من القاعدة",
           worktreePathUnavailable: "مسار شجرة العمل غير متوفر",
           failedArchive: "فشل في أرشفة شجرة العمل",
+          failedCopyPrUrl: "فشل في نسخ رابط PR",
         },
         archiveWarning: {
           title: 'الأرشيف "{{worktreeName}}"؟',

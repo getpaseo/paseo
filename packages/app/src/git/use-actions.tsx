@@ -571,10 +571,15 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   const handleCopyPrUrl = useCallback(() => {
     if (prStatus?.url) {
-      void copyToClipboard(prStatus.url);
-      toast.show(t("workspace.git.actions.copyPrUrlSuccess"), { variant: "success" });
+      void copyToClipboard(prStatus.url)
+        .then(() => {
+          return toast.show(t("workspace.git.actions.copyPrUrlSuccess"), { variant: "success" });
+        })
+        .catch((error: unknown) => {
+          toastActionError(error, t("workspace.git.actions.toasts.failedCopyPrUrl"));
+        });
     }
-  }, [prStatus?.url, toast, t]);
+  }, [prStatus?.url, toast, t, toastActionError]);
 
   // Build actions
   const gitActions: GitActions = useMemo(() => {

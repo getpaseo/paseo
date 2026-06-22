@@ -688,6 +688,7 @@ export const ru: TranslationResources = {
           failedMergeFromBase: "Не удалось объединиться с базой.",
           worktreePathUnavailable: "Путь к рабочему дереву недоступен.",
           failedArchive: "Не удалось заархивировать рабочее дерево.",
+          failedCopyPrUrl: "Не удалось скопировать URL PR",
         },
         archiveWarning: {
           title: 'Архив "{{worktreeName}}"?',

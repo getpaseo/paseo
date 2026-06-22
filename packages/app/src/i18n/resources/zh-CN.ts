@@ -663,6 +663,7 @@ export const zhCN: TranslationResources = {
           failedMergeFromBase: "从 base merge 失败",
           worktreePathUnavailable: "Worktree 路径不可用",
           failedArchive: "归档 worktree 失败",
+          failedCopyPrUrl: "复制 PR 链接失败",
         },
         archiveWarning: {
           title: "归档「{{worktreeName}}」？",

@@ -676,6 +676,7 @@ export const en = {
           failedMergeFromBase: "Failed to merge from base",
           worktreePathUnavailable: "Worktree path unavailable",
           failedArchive: "Failed to archive worktree",
+          failedCopyPrUrl: "Failed to copy PR URL",
         },
         archiveWarning: {
           title: 'Archive "{{worktreeName}}"?',
