@@ -35,7 +35,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
-import { SidebarGroupingSelector } from "@/components/sidebar/sidebar-grouping-selector";
+import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/sidebar-display-preferences-menu";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -213,7 +213,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     enabled: isCompactLayout || isOpen,
   });
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
-    useSidebarShortcutModel({ projects, isInitialLoad });
+    useSidebarShortcutModel({ projects });
 
   const groupMode = useSidebarViewStore((state) =>
     activeServerId ? state.getGroupMode(activeServerId) : "project",
@@ -1096,7 +1096,7 @@ function WorkspacesSectionHeader({ serverId }: { serverId: string | null }) {
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>
-              <SidebarGroupingSelector serverId={serverId} />
+              <SidebarDisplayPreferencesMenu serverId={serverId} />
             </View>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>

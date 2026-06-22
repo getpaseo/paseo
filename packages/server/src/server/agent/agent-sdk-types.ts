@@ -1,5 +1,8 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+
+export type { AgentProviderNotice };
 
 export type AgentProvider = string;
 
@@ -604,7 +607,7 @@ export interface AgentSession {
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
-  setMode(modeId: string): Promise<void>;
+  setMode(modeId: string): Promise<void | AgentProviderNotice>;
   getPendingPermissions(): AgentPermissionRequest[];
   respondToPermission(
     requestId: string,
@@ -615,7 +618,7 @@ export interface AgentSession {
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
-  setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
+  setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
@@ -680,6 +683,11 @@ export interface AgentClient {
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
   archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  /**
+   * Unarchive a persisted session in the native provider.
+   * Called before Paseo clears its archived flag so provider resume can succeed.
+   */
+  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

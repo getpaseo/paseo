@@ -12,9 +12,12 @@ interface GitHubRelease {
   draft: boolean;
 }
 
+const LINUX_APPIMAGE_ASSET_PATTERN =
+  /^Paseo-(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)-)?x86_64\.AppImage$/;
+
 const REQUIRED_ASSET_PATTERNS = [
   /Paseo-.*-arm64\.dmg$/, // Mac Apple Silicon
-  /Paseo-.*-x86_64\.AppImage$/, // Linux AppImage
+  LINUX_APPIMAGE_ASSET_PATTERN, // Linux AppImage
   /Paseo-Setup-.*\.exe$/, // Windows (any arch)
 ];
 
@@ -39,12 +42,17 @@ function pickWindowsAssets(assets: GitHubAsset[]) {
   };
 }
 
+function pickLinuxAppImageAsset(assets: GitHubAsset[]) {
+  return assets.find((a) => LINUX_APPIMAGE_ASSET_PATTERN.test(a.name))?.name ?? null;
+}
+
 function versionFromTag(tag: string): string {
   return tag.replace(/^v/, "");
 }
 
 interface ReleaseInfo {
   version: string;
+  linuxAppImageAsset: string;
   windowsX64Asset: string | null;
   windowsArm64Asset: string | null;
 }
@@ -70,8 +78,11 @@ async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
   const ready = releases.find((r) => !r.prerelease && !r.draft && hasRequiredAssets(r));
   if (!ready) throw new Error("no ready GitHub release found");
   const win = pickWindowsAssets(ready.assets);
+  const linuxAppImageAsset = pickLinuxAppImageAsset(ready.assets);
+  if (!linuxAppImageAsset) throw new Error("ready release missing Linux AppImage asset");
   return {
     version: versionFromTag(ready.tag_name),
+    linuxAppImageAsset,
     windowsX64Asset: win.x64,
     windowsArm64Asset: win.arm64,
   };
@@ -83,6 +94,11 @@ function isReleaseInfo(value: unknown): value is ReleaseInfo {
   return (
     typeof record.version === "string" &&
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(record.version) &&
+    typeof record.linuxAppImageAsset === "string" &&
+    (record.linuxAppImageAsset === "Paseo-x86_64.AppImage" ||
+      new RegExp(`^Paseo-${record.version.replaceAll(".", "\\.")}-x86_64\\.AppImage$`).test(
+        record.linuxAppImageAsset,
+      )) &&
     (typeof record.windowsX64Asset === "string" || record.windowsX64Asset === null) &&
     (typeof record.windowsArm64Asset === "string" || record.windowsArm64Asset === null) &&
     (record.windowsX64Asset === null ||

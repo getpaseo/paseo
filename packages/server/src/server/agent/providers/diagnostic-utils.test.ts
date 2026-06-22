@@ -1,6 +1,131 @@
-import { describe, expect, test } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
 
-import { toDiagnosticErrorMessage } from "./diagnostic-utils.js";
+import {
+  buildCommandResolutionDiagnosticRows,
+  toDiagnosticErrorMessage,
+} from "./diagnostic-utils.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+function makeTempDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "paseo-diagnostic-path-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeExecutable(dir: string, name: string): string {
+  const filePath = path.join(dir, name);
+  writeFileSync(filePath, "#!/bin/sh\nexit 0\n");
+  if (process.platform !== "win32") {
+    chmodSync(filePath, 0o755);
+  }
+  return filePath;
+}
+
+describe("buildCommandResolutionDiagnosticRows", () => {
+  test("reports daemon PATH matches for known binary names", async () => {
+    const binDir = makeTempDir();
+    const binaryPath = writeExecutable(binDir, "claude");
+
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "claude", args: [], source: "default" },
+      {
+        knownBinaryNames: ["claude"],
+        pathValue: binDir,
+      },
+    );
+
+    expect(rows).toContainEqual({ label: "Command source", value: "default" });
+    expect(rows).toContainEqual({ label: "Configured command", value: "claude" });
+    expect(rows).toContainEqual({
+      label: "Daemon PATH",
+      value: expect.stringContaining(binDir),
+    });
+    expect(rows).toContainEqual({
+      label: "PATH matches",
+      value: expect.stringContaining(binaryPath),
+    });
+    if (process.platform === "win32") {
+      expect(rows.some((row) => row.label === "where.exe claude")).toBe(true);
+      expect(rows.some((row) => row.label === "powershell Get-Command -All claude")).toBe(true);
+    } else {
+      expect(rows.some((row) => row.label === "which -a claude")).toBe(true);
+      expect(rows.some((row) => row.label.endsWith(" -lc type -a claude"))).toBe(true);
+    }
+  });
+
+  test("reports none when the daemon PATH has no matching executable", async () => {
+    const binDir = makeTempDir();
+
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "claude", args: [], source: "default" },
+      { knownBinaryNames: ["claude"], includeCommandProbes: false, pathValue: binDir },
+    );
+
+    expect(rows).toContainEqual({ label: "PATH matches", value: "none" });
+  });
+
+  test("truncates very long daemon PATH values", async () => {
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "claude", args: [], source: "default" },
+      {
+        knownBinaryNames: ["claude"],
+        includeCommandProbes: false,
+        pathValue: "x".repeat(5000),
+      },
+    );
+
+    expect(rows).toContainEqual({
+      label: "Daemon PATH",
+      value: expect.stringContaining("(truncated)"),
+    });
+  });
+
+  test("matches Windows PATHEXT executable names", async () => {
+    const binDir = makeTempDir();
+    const binaryPath = writeExecutable(binDir, "claude.EXE");
+
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "claude", args: [], source: "default" },
+      {
+        knownBinaryNames: ["claude"],
+        includeCommandProbes: false,
+        pathext: ".EXE;.CMD",
+        pathValue: binDir,
+        platform: "win32",
+      },
+    );
+
+    expect(rows).toContainEqual({
+      label: "PATH matches",
+      value: expect.stringContaining(binaryPath),
+    });
+  });
+
+  test("does not treat absolute configured commands as PATH binary names", async () => {
+    const rows = await buildCommandResolutionDiagnosticRows(
+      { command: "/Users/mn/.local/bin/claude", args: [], source: "override" },
+      {
+        knownBinaryNames: ["/Users/mn/.local/bin/claude"],
+        includeCommandProbes: false,
+      },
+    );
+
+    expect(rows).toContainEqual({ label: "PATH matches", value: "not checked" });
+  });
+});
 
 describe("toDiagnosticErrorMessage", () => {
   test("returns message for plain Error", () => {

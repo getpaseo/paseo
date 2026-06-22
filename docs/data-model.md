@@ -27,6 +27,9 @@ $PASEO_HOME/
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   └── workspaces.json                  # Workspace registry
+├── runtime/
+│   └── managed-processes/
+│       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
 └── push-tokens.json                     # Expo push notification tokens
 ```
 
@@ -51,7 +54,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `lastActivityAt`     | `string?` (ISO 8601)                     | Last activity timestamp                                                                                                                                                                                                                                                                                                                                                             |
 | `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                                                                                                                                                                                                                                                                                                                                         |
 | `title`              | `string?`                                | User-visible title                                                                                                                                                                                                                                                                                                                                                                  |
-| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). `paseo.parent-agent-id` set automatically when launched via the `create_agent` MCP tool — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                                                                           |
+| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). `paseo.parent-agent-id` is set automatically for `create_agent` subagent relationships — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                                                                            |
 | `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"`                                                                                                                                                                                                                                                                                                              |
 | `lastModeId`         | `string?`                                | Last active mode ID                                                                                                                                                                                                                                                                                                                                                                 |
 | `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                                                                                                                                                                                                                             |
@@ -409,6 +412,11 @@ Array of workspace records. A workspace is a specific working directory within a
 | `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. Path-derived grouping keys (e.g. `deriveWorkspaceDirectoryKey`, used at bootstrap to group agents into a workspace) are directory keys, not workspace identity, and must not be persisted or compared as ids.
+
+`projectId` is still a real FK: workspace records should have a matching project record. Read-only
+history surfaces tolerate transient orphaned workspaces by omitting those rows so one bad FK cannot
+blank the whole History screen, but mutation paths should repair or remove the orphaned state rather
+than treating it as valid.
 
 ---
 

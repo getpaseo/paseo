@@ -71,6 +71,7 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
@@ -83,6 +84,7 @@ import {
 } from "./opencode/runtime.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import { revertOpenCodeConversationAndFiles } from "./opencode/rewind.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -591,14 +593,16 @@ function mapOpenCodeAgentToMode(agent: {
 }
 
 function mergeOpenCodeModes(discoveredModes: AgentMode[]): AgentMode[] {
-  const modesById = new Map(DEFAULT_MODES.map((mode) => [mode.id, mode]));
-  for (const mode of discoveredModes) {
-    if (mode.id === OPENCODE_LEGACY_FULL_ACCESS_MODE_ID) {
-      continue;
-    }
-    modesById.set(mode.id, mode);
+  const filtered = discoveredModes.filter(
+    (mode) => mode.id !== OPENCODE_LEGACY_FULL_ACCESS_MODE_ID,
+  );
+  // When discovery returns results, trust them exactly — don't inject hardcoded
+  // defaults that the user may have intentionally disabled in their OpenCode config.
+  // Fall back to DEFAULT_MODES only when discovery produced nothing.
+  if (filtered.length > 0) {
+    return sortOpenCodeModes(filtered);
   }
-  return sortOpenCodeModes(Array.from(modesById.values()));
+  return sortOpenCodeModes([...DEFAULT_MODES]);
 }
 
 function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
@@ -1211,6 +1215,7 @@ export const __openCodeInternals = {
 
 interface OpenCodeAgentClientDeps {
   runtime?: OpenCodeRuntime;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 class ProductionOpenCodeRuntime implements OpenCodeRuntime {
@@ -1257,7 +1262,9 @@ export class OpenCodeAgentClient implements AgentClient {
     this.runtime =
       deps.runtime ??
       new ProductionOpenCodeRuntime(
-        OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+        OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
+          managedProcesses: deps.managedProcesses,
+        }),
       );
   }
 
@@ -1607,6 +1614,9 @@ export class OpenCodeAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("OpenCode", [
+          ...(await buildCommandResolutionDiagnosticRows(launch, {
+            knownBinaryNames: ["opencode"],
+          })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Server", value: serverStatus },
           { label: "Auth", value: authValue },

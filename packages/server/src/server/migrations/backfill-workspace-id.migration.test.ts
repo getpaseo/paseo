@@ -49,7 +49,11 @@ describe("backfillWorkspaceIdForLegacyAgents", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  async function seedLegacyAgent(cwd: string, id: string): Promise<void> {
+  async function seedLegacyAgent(
+    cwd: string,
+    id: string,
+    overrides?: { archivedAt?: string | null },
+  ): Promise<void> {
     await agentStorage.upsert({
       id,
       provider: "codex",
@@ -65,7 +69,7 @@ describe("backfillWorkspaceIdForLegacyAgents", () => {
       config: null,
       runtimeInfo: { provider: "codex", sessionId: null },
       persistence: null,
-      archivedAt: null,
+      archivedAt: overrides?.archivedAt ?? null,
     });
   }
 
@@ -131,6 +135,44 @@ describe("backfillWorkspaceIdForLegacyAgents", () => {
 
     expect(migrated).toBe(0);
     expect((await agentStorage.get("stamped-agent"))?.workspaceId).toBe("ws-explicit");
+  });
+
+  test("stamps archived legacy agents from archived workspace owners", async () => {
+    await workspaceRegistry.upsert(
+      workspaceRecord("/tmp/repo", "ws-archived", {
+        archivedAt: "2026-03-02T00:00:00.000Z",
+      }),
+    );
+    await seedLegacyAgent("/tmp/repo", "legacy-agent", {
+      archivedAt: "2026-03-02T12:00:00.000Z",
+    });
+
+    const migrated = await backfillWorkspaceIdForLegacyAgents({
+      agentStorage,
+      workspaceRegistry,
+      logger: createTestLogger(),
+    });
+
+    expect(migrated).toBe(1);
+    expect((await agentStorage.get("legacy-agent"))?.workspaceId).toBe("ws-archived");
+  });
+
+  test("does not stamp active legacy agents from archived workspace owners", async () => {
+    await workspaceRegistry.upsert(
+      workspaceRecord("/tmp/repo", "ws-archived", {
+        archivedAt: "2026-03-02T00:00:00.000Z",
+      }),
+    );
+    await seedLegacyAgent("/tmp/repo", "legacy-agent");
+
+    const migrated = await backfillWorkspaceIdForLegacyAgents({
+      agentStorage,
+      workspaceRegistry,
+      logger: createTestLogger(),
+    });
+
+    expect(migrated).toBe(0);
+    expect((await agentStorage.get("legacy-agent"))?.workspaceId).toBeUndefined();
   });
 
   test("does not let the home directory own descendants", async () => {

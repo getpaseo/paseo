@@ -127,7 +127,7 @@ test.describe("Model B sidebar shape", () => {
       await expect(workspaceRow(page, idleProject.workspaceId)).toBeVisible({ timeout: 30_000 });
 
       // Switch to status grouping.
-      await page.getByTestId("sidebar-grouping-selector").click();
+      await page.getByTestId("sidebar-display-preferences-menu").click();
       await page.getByTestId("sidebar-grouping-status").click();
 
       const sidebar = page.getByTestId("sidebar-sessions").filter({ visible: true }).first();

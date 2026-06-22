@@ -63,7 +63,7 @@ function questionEvent(questionOverrides: Record<string, unknown> = {}): unknown
 }
 
 describe("OpenCode auto_accept feature", () => {
-  test("lists OpenCode modes without the legacy virtual full-access mode", async () => {
+  test("lists discovered OpenCode modes without injecting defaults", async () => {
     const { runtime } = mockOpenCodeClient({
       agents: [
         { name: "build", mode: "primary", hidden: false, description: "Build agent" },
@@ -74,7 +74,16 @@ describe("OpenCode auto_accept feature", () => {
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
     const modes = await client.listModes({ cwd: "/tmp/project", force: false });
 
-    expect(modes.map((mode) => mode.id)).toEqual(["build", "plan", "paseo-custom"]);
+    expect(modes.map((mode) => mode.id)).toEqual(["build", "paseo-custom"]);
+  });
+
+  test("falls back to default OpenCode modes when discovery returns no modes", async () => {
+    const { runtime } = mockOpenCodeClient({ agents: [] });
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const modes = await client.listModes({ cwd: "/tmp/project", force: false });
+
+    expect(modes.map((mode) => mode.id)).toEqual(["build", "plan"]);
   });
 
   test("lists auto accept as a provider feature", async () => {

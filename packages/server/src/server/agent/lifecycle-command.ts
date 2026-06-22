@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 
 import type { ManagedAgent } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
+import type { AgentProviderNotice } from "./agent-sdk-types.js";
 
 export type LifecycleAgentSnapshot = Pick<ManagedAgent, "id" | "cwd" | "lifecycle">;
 
@@ -14,8 +15,13 @@ export interface LifecycleAgentManager {
   archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord>;
   closeAgent(agentId: string): Promise<void>;
   setLabels(agentId: string, labels: Record<string, string>): Promise<void>;
+  detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }>;
   notifyAgentState(agentId: string): void;
-  setAgentMode(agentId: string, modeId: string): Promise<void>;
+  setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   updateAgentMetadata(
     agentId: string,
     updates: {
@@ -161,15 +167,33 @@ export async function updateAgentCommand(
   };
 }
 
+export interface DetachAgentResult {
+  agentId: string;
+  record: StoredAgentRecord;
+  live: boolean;
+  previousParentAgentId: string | null;
+}
+
+export async function detachAgentCommand(
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
+  agentId: string,
+): Promise<DetachAgentResult> {
+  const result = await dependencies.agentManager.detachAgent(agentId);
+  return {
+    agentId,
+    ...result,
+  };
+}
+
 export async function setAgentModeCommand(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
   input: {
     agentId: string;
     modeId: string;
   },
-): Promise<{ modeId: string }> {
-  await dependencies.agentManager.setAgentMode(input.agentId, input.modeId);
-  return { modeId: input.modeId };
+): Promise<{ modeId: string; notice: AgentProviderNotice | null }> {
+  const notice = await dependencies.agentManager.setAgentMode(input.agentId, input.modeId);
+  return { modeId: input.modeId, notice };
 }
 
 async function archiveStoredAgent(

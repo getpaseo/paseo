@@ -160,8 +160,8 @@ export class WorkspaceReconciliationService {
     await this.mergeDuplicateProjectsByRoot(activeProjects, workspacesByProject, changes);
 
     // 3. Reconcile git metadata for active projects whose directories still exist.
-    //    A project with zero active workspaces is a first-class empty project — it
-    //    persists until explicitly removed and still reconciles its own metadata.
+    //    Projects persist until explicitly removed, even when they currently have
+    //    zero active workspaces, so they still reconcile their own metadata.
     //    Skip projects archived earlier in this pass (e.g. merged duplicates) so we
     //    don't resurrect them by upserting a stale, non-archived copy.
     const archivedProjectIds = new Set(

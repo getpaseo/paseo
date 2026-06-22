@@ -1,6 +1,5 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { realpathSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, normalize, resolve, sep } from "path";
@@ -15,15 +14,9 @@ import {
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
-  type FileExplorerRequest,
-  type FileDownloadTokenRequest,
-  type FileUploadRequest,
   type GitSetupOptions,
-  type CheckoutRenameBranchRequest,
   type StartWorkspaceScriptRequest,
   type CloseItemsRequest,
-  type SubscribeCheckoutDiffRequest,
-  type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
@@ -35,31 +28,11 @@ import type {
 } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
-import {
-  type BinaryFrame,
-  encodeFileTransferFrame,
-  FileTransferOpcode,
-  type FileTransferFrame,
-} from "@getpaseo/protocol/binary-frames/index";
-import { FileUploadStore } from "./file-upload/index.js";
+import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
-import { TTSManager } from "./agent/tts-manager.js";
-import { STTManager } from "./agent/stt-manager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
-import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
-import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
-import { getPidLockInfo } from "./pid-lock.js";
-import { generateLocalPairingOffer } from "./pairing-offer.js";
-import {
-  DictationStreamManager,
-  type DictationStreamOutboundMessage,
-} from "./dictation/dictation-stream-manager.js";
-import {
-  createVoiceTurnController,
-  type VoiceTurnController,
-} from "./voice/voice-turn-controller.js";
 import {
   buildConfigOverrides,
   extractTimestamps,
@@ -92,14 +65,11 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
-import type {
-  WorkspaceGitRuntimeSnapshot,
-  WorkspaceGitService,
-  WorkspaceGitSnapshotOptions,
-} from "./workspace-git-service.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 import { AgentManager } from "./agent/agent-manager.js";
-import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
+import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentManagerEvent,
   AgentTimelineCursor,
@@ -112,6 +82,7 @@ import {
   archiveAgentCommand,
   cancelAgentRunCommand,
   closeAgentCommand,
+  detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
@@ -144,12 +115,10 @@ import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
   type AgentPermissionResponse,
-  type AgentProvider,
   type AgentPromptContentBlock,
   type AgentPromptInput,
   type AgentRunOptions,
   type AgentSessionConfig,
-  type ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -177,70 +146,43 @@ import {
   type ProjectRegistry,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
-import {
-  buildVoiceModeSystemPrompt,
-  stripVoiceModeSystemPrompt,
-  wrapSpokenInput,
-} from "./voice-config.js";
+import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
-import {
-  listDirectoryEntries,
-  readExplorerFile,
-  readExplorerFileBytes,
-  getDownloadableFileInfo,
-} from "./file-explorer/service.js";
+import { VoiceSession } from "./session/voice/voice-session.js";
+import { CheckoutSession } from "./session/checkout/checkout-session.js";
+import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
+import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
+import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
+import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
+import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import {
-  readPaseoConfigForEdit,
-  writePaseoConfigForEdit,
-  type ProjectConfigRpcError,
-} from "../utils/paseo-config-file.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
-import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
+import {
+  archivePersistedWorkspaceRecord,
+  archiveWorkspaceContents,
+} from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import {
   checkoutResolvedBranch,
   type CheckoutExistingBranchResult,
-  commitChanges,
-  mergeToBase,
-  mergeFromBase,
-  pullCurrentBranch,
-  pushCurrentBranch,
-  createPullRequest,
+  type GitMutationRefreshReason,
   renameCurrentBranch as renameCurrentBranchDefault,
 } from "../utils/checkout-git.js";
-import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
-import { toCheckoutError } from "./checkout-git-utils.js";
-import { CheckoutDiffManager } from "./checkout-diff-manager.js";
-import {
-  buildCheckoutPrStatusPayloadFromSnapshot,
-  buildCheckoutStatusPayloadFromSnapshot,
-} from "./checkout/status-projection.js";
-import type { LocalSpeechModelId } from "./speech/providers/local/models.js";
-import { toResolver, type Resolvable } from "./speech/provider-resolver.js";
-import type { SpeechReadinessSnapshot, SpeechReadinessState } from "./speech/speech-runtime.js";
+import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { Resolvable } from "./speech/provider-resolver.js";
+import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 import type pino from "pino";
-import {
-  ChatServiceError,
-  FileBackedChatService,
-  parseMentionAgentIds,
-} from "./chat/chat-service.js";
-import { notifyChatMentions, prepareChatMentionFanout } from "./chat/chat-mentions.js";
+import { FileBackedChatService } from "./chat/chat-service.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { execCommand } from "../utils/spawn.js";
-import {
-  assertPullRequestAutoMergeDisableReady,
-  assertPullRequestAutoMergeEnableReady,
-  createGitHubService,
-  type GitHubService,
-  type PullRequestTimelineItem,
-} from "../services/github-service.js";
+import { createGitHubService, type GitHubService } from "../services/github-service.js";
+import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import {
   summarizeFetchWorkspacesEntries,
   workspaceIdsOnCheckout,
@@ -282,80 +224,10 @@ import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dis
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 
-type CurrentWorkspacePullRequest = NonNullable<
-  WorkspaceGitRuntimeSnapshot["github"]["pullRequest"]
-> & {
-  number: number;
-};
-
-interface ResolveKnownProjectRootForConfigInput {
-  repoRoot: string;
-  projectRegistry: Pick<ProjectRegistry, "list">;
-}
-
-async function resolveKnownProjectRootForConfig(
-  input: ResolveKnownProjectRootForConfigInput,
-): Promise<string | null> {
-  const requestedRoot = canonicalizeConfigRoot(input.repoRoot);
-  const projects = await input.projectRegistry.list();
-  for (const project of projects) {
-    if (project.archivedAt !== null) {
-      continue;
-    }
-    const projectRoot = canonicalizeConfigRoot(project.rootPath);
-    if (requestedRoot === projectRoot) {
-      return projectRoot;
-    }
-  }
-  return null;
-}
-
-function canonicalizeConfigRoot(repoRoot: string): string {
-  const resolved = resolve(repoRoot);
-  try {
-    return stripTrailingPathSeparators(realpathSync(resolved));
-  } catch {
-    return stripTrailingPathSeparators(resolved);
-  }
-}
-
-function stripTrailingPathSeparators(path: string): string {
-  let normalized = path;
-  while (normalized.length > 1 && normalized.endsWith(sep)) {
-    normalized = normalized.slice(0, -1);
-  }
-  return normalized;
-}
-
-type GitMutationRefreshReason =
-  | "commit-changes"
-  | "pull"
-  | "push"
-  | "merge-to-base"
-  | "merge-from-base"
-  | "merge-pr"
-  | "enable-pr-auto-merge"
-  | "disable-pr-auto-merge"
-  | "create-pr"
-  | "switch-branch"
-  | "rename-branch"
-  | "create-branch"
-  | "stash-push"
-  | "stash-pop"
-  | "create-worktree";
-
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
-// COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
-// other icon name is downgraded to "ShieldCheck" for those clients.
-const LEGACY_MODE_ICONS = new Set<string>([
-  "ShieldCheck",
-  "ShieldAlert",
-  "ShieldOff",
-  "ShieldQuestionMark",
-]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 
 function errorToFriendlyMessage(error: unknown): string {
@@ -466,8 +338,6 @@ export function resolveWaitForFinishError(options: {
   return typeof message === "string" && message.trim().length > 0 ? message : "Agent failed";
 }
 
-type ProcessingPhase = "idle" | "transcribing";
-
 interface WorkspaceGitWatchTarget {
   cwd: string;
   workspaceId: string;
@@ -542,26 +412,6 @@ class SessionRequestError extends Error {
   }
 }
 
-const PCM_SAMPLE_RATE = 16000;
-const PCM_CHANNELS = 1;
-const PCM_BITS_PER_SAMPLE = 16;
-const PCM_BYTES_PER_MS = (PCM_SAMPLE_RATE * PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)) / 1000;
-const MIN_STREAMING_SEGMENT_DURATION_MS = 1000;
-const MIN_STREAMING_SEGMENT_BYTES = Math.round(
-  PCM_BYTES_PER_MS * MIN_STREAMING_SEGMENT_DURATION_MS,
-);
-const AgentIdSchema = z.guid();
-interface VoiceModeBaseConfig {
-  systemPrompt?: string;
-}
-
-interface AudioBufferState {
-  chunks: Buffer[];
-  format: string;
-  isPCM: boolean;
-  totalPCMBytes: number;
-}
-
 export interface SessionFileSystem {
   isDirectory(path: string): Promise<boolean>;
 }
@@ -575,18 +425,6 @@ const nodeSessionFileSystem: SessionFileSystem = {
 
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
-
-interface VoiceTranscriptionResultPayload {
-  text: string;
-  requestId: string;
-  language?: string;
-  duration?: number;
-  avgLogprob?: number;
-  isLowConfidence?: boolean;
-  byteLength?: number;
-  format?: string;
-  debugRecordingPath?: string;
-}
 
 export interface SessionOptions {
   clientId: string;
@@ -626,6 +464,7 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
+  providerUsageService: ProviderUsageService;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -655,17 +494,7 @@ export interface SessionOptions {
   };
   serverId?: string;
   daemonVersion?: string;
-  daemonRuntimeConfig?: {
-    listen: string | null;
-    appBaseUrl?: string;
-    relay: {
-      enabled: boolean;
-      endpoint: string;
-      publicEndpoint: string;
-      useTls: boolean;
-      publicUseTls: boolean;
-    } | null;
-  };
+  daemonRuntimeConfig?: DaemonRuntimeConfig;
 }
 
 export type SessionLifecycleIntent =
@@ -680,68 +509,6 @@ export type SessionLifecycleIntent =
       requestId: string;
       reason?: string;
     };
-
-type PullRequestTimelinePayload = Extract<
-  SessionOutboundMessage,
-  { type: "pull_request_timeline_response" }
->["payload"];
-type PullRequestTimelinePayloadItem = PullRequestTimelinePayload["items"][number];
-
-interface VoiceFeatureUnavailableContext {
-  reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
-  message: string;
-  retryable: boolean;
-  missingModelIds: LocalSpeechModelId[];
-}
-
-interface VoiceFeatureUnavailableResponseMetadata {
-  reasonCode?: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
-  retryable?: boolean;
-  missingModelIds?: LocalSpeechModelId[];
-}
-
-class VoiceFeatureUnavailableError extends Error {
-  readonly reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
-  readonly retryable: boolean;
-  readonly missingModelIds: LocalSpeechModelId[];
-
-  constructor(context: VoiceFeatureUnavailableContext) {
-    super(context.message);
-    this.name = "VoiceFeatureUnavailableError";
-    this.reasonCode = context.reasonCode;
-    this.retryable = context.retryable;
-    this.missingModelIds = [...context.missingModelIds];
-  }
-}
-
-function convertPCMToWavBuffer(
-  pcmBuffer: Buffer,
-  sampleRate: number,
-  channels: number,
-  bitsPerSample: number,
-): Buffer {
-  const headerSize = 44;
-  const wavBuffer = Buffer.alloc(headerSize + pcmBuffer.length);
-  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
-  const blockAlign = (channels * bitsPerSample) / 8;
-
-  wavBuffer.write("RIFF", 0);
-  wavBuffer.writeUInt32LE(36 + pcmBuffer.length, 4);
-  wavBuffer.write("WAVE", 8);
-  wavBuffer.write("fmt ", 12);
-  wavBuffer.writeUInt32LE(16, 16);
-  wavBuffer.writeUInt16LE(1, 20);
-  wavBuffer.writeUInt16LE(channels, 22);
-  wavBuffer.writeUInt32LE(sampleRate, 24);
-  wavBuffer.writeUInt32LE(byteRate, 28);
-  wavBuffer.writeUInt16LE(blockAlign, 32);
-  wavBuffer.writeUInt16LE(bitsPerSample, 34);
-  wavBuffer.write("data", 36);
-  wavBuffer.writeUInt32LE(pcmBuffer.length, 40);
-  pcmBuffer.copy(wavBuffer, 44);
-
-  return wavBuffer;
-}
 
 function parseClientCapabilities(
   capabilities: Record<string, unknown> | null | undefined,
@@ -799,33 +566,6 @@ export class Session {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
 
-  // State machine
-  private abortController: AbortController;
-  private processingPhase: ProcessingPhase = "idle";
-
-  // Voice mode state
-  private isVoiceMode = false;
-  private speechInProgress = false;
-
-  private dictationStreamManager!: DictationStreamManager;
-  private resolveVoiceTurnDetection!: () => TurnDetectionProvider | null;
-  private voiceTurnController: VoiceTurnController | null = null;
-  private voiceInputChunkCount = 0;
-  private voiceInputBytes = 0;
-  private voiceInputWindowStartedAt = Date.now();
-
-  // Audio buffering for interruption handling
-  private pendingAudioSegments: Array<{ audio: Buffer; format: string }> = [];
-  private bufferTimeout: ReturnType<typeof setTimeout> | null = null;
-  private audioBuffer: AudioBufferState | null = null;
-
-  // Optional TTS debug capture (persisted per utterance)
-  private readonly ttsDebugStreams = new Map<string, { format: string; chunks: Buffer[] }>();
-
-  // Per-session managers
-  private ttsManager!: TTSManager;
-  private sttManager!: STTManager;
-
   // Per-session MCP client and tools
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private agentTools: ToolSet | null = null;
@@ -834,17 +574,12 @@ export class Session {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly filesystem: SessionFileSystem;
-  private readonly chatService: FileBackedChatService;
-  private readonly scheduleService: ScheduleService;
-  private readonly loopService: LoopService;
-  private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: GitHubService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
   private readonly generateWorkspaceName: typeof generateBranchNameFromFirstAgentContext;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly mcpBaseUrl: string | null;
-  private readonly downloadTokenStore: DownloadTokenStore;
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
@@ -860,7 +595,6 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
-  private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private readonly onBranchChanged?: (
@@ -875,25 +609,20 @@ export class Session {
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
-  private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>();
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
-  private readonly fileUploads: FileUploadStore;
   private readonly workspaceDirectory: WorkspaceDirectory;
-  private registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
-  private unregisterVoiceSpeakHandler?: (agentId: string) => void;
-  private registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
-  private unregisterVoiceCallerContext?: (agentId: string) => void;
-  private getSpeechReadiness?: () => SpeechReadinessSnapshot;
-  private readonly sttLanguage: string;
-  private readonly serverId: string | undefined;
-  private readonly daemonVersion: string | undefined;
-  private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
+  private readonly voiceSession: VoiceSession;
+  private readonly checkoutSession: CheckoutSession;
+  private readonly chatScheduleLoopSession: ChatScheduleLoopSession;
+  private readonly providerCatalogSession: ProviderCatalogSession;
+  private readonly workspaceFilesSession: WorkspaceFilesSession;
+  private readonly agentConfigSession: AgentConfigSession;
+  private readonly projectConfigSession: ProjectConfigSession;
+  private readonly daemonSession: DaemonSession;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
-  private voiceModeAgentId: string | null = null;
-  private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
   constructor(options: SessionOptions) {
     const {
@@ -929,6 +658,7 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
+      providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -952,9 +682,7 @@ export class Session {
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
-    this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
-    this.fileUploads = new FileUploadStore({ paseoHome });
     this.paseoHome = paseoHome;
     this.worktreesRoot = worktreesRoot;
     this.sessionLogger = logger.child({
@@ -962,19 +690,113 @@ export class Session {
       clientId: this.clientId,
       sessionId: this.sessionId,
     });
+    this.workspaceFilesSession = new WorkspaceFilesSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        emitBinary: (frame) => this.emitBinary(frame),
+        hasBinaryChannel: () => this.onBinaryMessage !== null,
+      },
+      downloadTokenStore,
+      paseoHome,
+      logger: this.sessionLogger,
+    });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
-    this.chatService = chatService;
-    this.scheduleService = scheduleService;
-    this.loopService = loopService;
-    this.checkoutDiffManager = checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.generateWorkspaceName = generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
     this.workspaceGitService = workspaceGitService;
+    this.checkoutSession = new CheckoutSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        notifyGitMutation: (cwd, reason, mutationOptions) =>
+          this.notifyGitMutation(cwd, reason, mutationOptions),
+        emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
+        handleWorkspaceGitBranchSnapshot: (cwd, branchName) =>
+          this.handleWorkspaceGitBranchSnapshot(cwd, branchName),
+        renameCurrentBranch: (cwd, branch) => this.renameCurrentBranch(cwd, branch),
+        checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
+        generateCommitMessage: (cwd) => this.generateCommitMessage(cwd),
+        generatePullRequestText: (cwd, baseRef) => this.generatePullRequestText(cwd, baseRef),
+      },
+      workspaceGitService: this.workspaceGitService,
+      github: this.github,
+      checkoutDiffManager,
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+      logger: this.sessionLogger,
+    });
+    this.chatScheduleLoopSession = new ChatScheduleLoopSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        listStoredAgents: () => this.agentStorage.list(),
+        listLiveAgents: () => this.agentManager.listAgents(),
+        resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
+        sendAgentMessage: async (agentId, text) => {
+          await sendPromptToAgent({
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            agentId,
+            prompt: formatSystemNotificationPrompt(text),
+            unarchive: false,
+            logger: this.sessionLogger,
+          });
+        },
+      },
+      chatService,
+      scheduleService,
+      loopService,
+      clientId: this.clientId,
+      logger: this.sessionLogger,
+    });
+    this.providerCatalogSession = new ProviderCatalogSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
+        supportsCustomModeIcons: () => this.supports(CLIENT_CAPS.customModeIcons),
+        listProviderAvailability: () => this.agentManager.listProviderAvailability(),
+        listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+      },
+      providerSnapshotManager,
+      providerUsageService,
+      logger: this.sessionLogger,
+    });
+    this.agentConfigSession = new AgentConfigSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      operations: {
+        setMode: async (agentId, modeId) =>
+          (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
+        setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
+        setFeature: (agentId, featureId, value) =>
+          agentManager.setAgentFeature(agentId, featureId, value),
+        setThinking: (agentId, thinkingOptionId) =>
+          agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+      },
+      logger: this.sessionLogger,
+    });
+    this.projectConfigSession = new ProjectConfigSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      projectRegistry: this.projectRegistry,
+      logger: this.sessionLogger,
+    });
+    this.daemonSession = new DaemonSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      paseoHome: this.paseoHome,
+      serverId,
+      daemonVersion,
+      daemonRuntimeConfig,
+      listProviderAvailability: () => this.agentManager.listProviderAvailability(),
+      logger: this.sessionLogger,
+    });
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl ?? null;
     this.terminalManager = terminalManager;
@@ -985,12 +807,7 @@ export class Session {
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
-      listTerminalWorkspaceRoots: async () => {
-        const workspaces = await this.workspaceRegistry.list();
-        return workspaces
-          .filter((workspace) => !workspace.archivedAt)
-          .map((workspace) => workspace.cwd);
-      },
+      listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
@@ -1035,13 +852,7 @@ export class Session {
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
-    this.sttLanguage = sttLanguage ?? "en";
     this.subscribeToOptionalManagers();
-    this.bindVoiceBridges({ voice, voiceBridge, dictation });
-    this.serverId = serverId;
-    this.daemonVersion = daemonVersion;
-    this.daemonRuntimeConfig = daemonRuntimeConfig;
-    this.abortController = new AbortController();
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
       projectRegistry: this.projectRegistry,
@@ -1052,7 +863,40 @@ export class Session {
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
-    this.initializePerSessionManagers({ tts, stt, sttLanguage, dictation });
+    this.voiceSession = new VoiceSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+        loadAgent: (agentId) =>
+          ensureAgentLoaded(agentId, {
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            logger: this.sessionLogger,
+          }),
+        reloadAgentSession: (agentId, overrides) =>
+          this.agentManager.reloadAgentSession(agentId, overrides),
+        sendSpokenInput: async (agentId, text) => {
+          await this.handleSendAgentMessage(
+            agentId,
+            text,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { spokenInput: true },
+          );
+        },
+        interruptAgentIfRunning: (agentId) => this.interruptAgentIfRunning(agentId),
+        hasActiveAgentRun: (agentId) => this.hasActiveAgentRun(agentId),
+      },
+      logger: this.sessionLogger,
+      sessionId: this.sessionId,
+      sttLanguage,
+      tts,
+      stt,
+      voice,
+      voiceBridge,
+      dictation,
+    });
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
@@ -1073,25 +917,6 @@ export class Session {
 
   supports(capability: ClientCapability): boolean {
     return this.clientCapabilities.has(capability);
-  }
-
-  // COMPAT(customModeIcons): rewrite icons unknown to v0.1.83 clients (whose MODE_ICONS
-  // map is a closed enum and would render `undefined`, crashing in render). Drop
-  // this and the cap gate when floor >= v0.1.84.
-  private downgradeModeIconsForClient<T extends { icon?: string }>(modes: T[]): T[] {
-    if (this.supports(CLIENT_CAPS.customModeIcons)) return modes;
-    return modes.map((mode) =>
-      mode.icon && !LEGACY_MODE_ICONS.has(mode.icon) ? { ...mode, icon: "ShieldCheck" } : mode,
-    );
-  }
-
-  private downgradeEntryModesForClient<T extends { modes?: { icon?: string }[] }>(
-    entries: T[],
-  ): T[] {
-    if (this.supports(CLIENT_CAPS.customModeIcons)) return entries;
-    return entries.map((entry) =>
-      entry.modes ? { ...entry, modes: this.downgradeModeIconsForClient(entry.modes) } : entry,
-    );
   }
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -1332,60 +1157,7 @@ export class Session {
           });
         });
     }
-    const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
-      // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
-      const visibleEntries = entries.filter((entry) =>
-        this.isProviderVisibleToClient(entry.provider),
-      );
-      const snapshotCwd = cwd === resolveSnapshotCwd() ? undefined : cwd;
-      this.emit({
-        type: "providers_snapshot_update",
-        payload: {
-          ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
-          entries: this.downgradeEntryModesForClient(visibleEntries),
-          generatedAt: new Date().toISOString(),
-        },
-      });
-    };
-    this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
-    this.unsubscribeProviderSnapshotEvents = () => {
-      this.providerSnapshotManager.off("change", handleProviderSnapshotChange);
-    };
-  }
-
-  private bindVoiceBridges(params: {
-    voice: SessionOptions["voice"];
-    voiceBridge: SessionOptions["voiceBridge"];
-    dictation: SessionOptions["dictation"];
-  }): void {
-    const { voice, voiceBridge, dictation } = params;
-    this.resolveVoiceTurnDetection = toResolver(voice?.turnDetection ?? null);
-    this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
-    this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
-    this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
-    this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
-    this.getSpeechReadiness = dictation?.getSpeechReadiness;
-  }
-
-  private initializePerSessionManagers(params: {
-    tts: SessionOptions["tts"];
-    stt: SessionOptions["stt"];
-    sttLanguage: SessionOptions["sttLanguage"];
-    dictation: SessionOptions["dictation"];
-  }): void {
-    const { tts, stt, sttLanguage, dictation } = params;
-    this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
-    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt, {
-      language: sttLanguage,
-    });
-    this.dictationStreamManager = new DictationStreamManager({
-      logger: this.sessionLogger,
-      sessionId: this.sessionId,
-      emit: (msg) => this.handleDictationManagerMessage(msg),
-      stt: dictation?.stt ?? null,
-      language: dictation?.sttLanguage,
-      finalTimeoutMs: dictation?.finalTimeoutMs,
-    });
+    this.providerCatalogSession.start();
   }
 
   private subscribeToAgentEvents(): void {
@@ -1411,8 +1183,7 @@ export class Session {
         }
 
         if (
-          this.isVoiceMode &&
-          this.voiceModeAgentId === event.agentId &&
+          this.voiceSession.isActiveForAgent(event.agentId) &&
           event.event.type === "permission_requested" &&
           isVoicePermissionAllowed(event.event.request)
         ) {
@@ -1623,6 +1394,45 @@ export class Session {
     });
   }
 
+  private async emitStoredAgentUpdate(record: StoredAgentRecord): Promise<AgentSnapshotPayload> {
+    const payload = this.buildStoredAgentPayload(record);
+    const subscription = this.agentUpdatesSubscription;
+    if (!subscription) {
+      return payload;
+    }
+
+    const project = payload.workspaceId
+      ? await this.buildProjectPlacementForWorkspaceId(payload.workspaceId)
+      : null;
+    if (!project) {
+      this.bufferOrEmitAgentUpdate(subscription, {
+        kind: "remove",
+        agentId: payload.id,
+      });
+      return payload;
+    }
+
+    const matches = this.matchesAgentFilter({
+      agent: payload,
+      project,
+      filter: subscription.filter,
+    });
+    this.bufferOrEmitAgentUpdate(
+      subscription,
+      matches
+        ? {
+            kind: "upsert",
+            agent: payload,
+            project,
+          }
+        : {
+            kind: "remove",
+            agentId: payload.id,
+          },
+    );
+    return payload;
+  }
+
   private flushBootstrappedAgentUpdates(options?: {
     snapshotUpdatedAtByAgentId?: Map<string, number>;
   }): void {
@@ -1701,6 +1511,17 @@ export class Session {
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) return null;
     return this.buildProjectPlacementForWorkspace(workspace);
+  }
+
+  private async buildProjectPlacementForExistingWorkspaceProject(
+    workspaceId: string,
+  ): Promise<ProjectPlacementPayload | null> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace) return null;
+
+    const project = await this.projectRegistry.get(workspace.projectId);
+    if (!project) return null;
+    return this.buildProjectPlacementForWorkspace(workspace, project);
   }
 
   private async forwardAgentUpdate(agent: ManagedAgent): Promise<void> {
@@ -1807,6 +1628,7 @@ export class Session {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg) ??
+      this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
@@ -1821,27 +1643,27 @@ export class Session {
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "voice_audio_chunk":
-        return this.handleAudioChunk(msg);
+        return this.voiceSession.handleAudioChunk(msg);
       case "abort_request":
-        return this.handleAbort();
+        return this.voiceSession.handleAbort();
       case "audio_played":
-        this.handleAudioPlayed(msg.id);
+        this.voiceSession.handleAudioPlayed(msg.id);
         return undefined;
       case "set_voice_mode":
-        return this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
+        return this.voiceSession.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
       case "dictation_stream_start":
-        return this.handleDictationStreamStart(msg);
+        return this.voiceSession.handleDictationStreamStart(msg);
       case "dictation_stream_chunk":
-        return this.dictationStreamManager.handleChunk({
+        return this.voiceSession.handleDictationChunk({
           dictationId: msg.dictationId,
           seq: msg.seq,
           audioBase64: msg.audio,
           format: msg.format,
         });
       case "dictation_stream_finish":
-        return this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
+        return this.voiceSession.handleDictationFinish(msg.dictationId, msg.finalSeq);
       case "dictation_stream_cancel":
-        this.dictationStreamManager.handleCancel(msg.dictationId);
+        this.voiceSession.handleDictationCancel(msg.dictationId);
         return undefined;
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
@@ -1877,24 +1699,13 @@ export class Session {
     }
   }
 
-  private async handleDictationStreamStart(
-    msg: Extract<SessionInboundMessage, { type: "dictation_stream_start" }>,
-  ): Promise<void> {
-    const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
-    if (unavailable) {
-      this.emit({
-        type: "dictation_stream_error",
-        payload: {
-          dictationId: msg.dictationId,
-          error: unavailable.message,
-          retryable: unavailable.retryable,
-          reasonCode: unavailable.reasonCode,
-          missingModelIds: unavailable.missingModelIds,
-        },
-      });
-      return;
+  private dispatchAgentRelationshipMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.detach.request":
+        return this.handleDetachAgentRequest(msg.agentId, msg.requestId);
+      default:
+        return undefined;
     }
-    await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
   }
 
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -1945,18 +1756,13 @@ export class Session {
   private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
-        return this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
+        return this.agentConfigSession.handleSetAgentModeRequest(msg);
       case "set_agent_model_request":
-        return this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
+        return this.agentConfigSession.handleSetAgentModelRequest(msg);
       case "set_agent_feature_request":
-        return this.handleSetAgentFeatureRequest(
-          msg.agentId,
-          msg.featureId,
-          msg.value,
-          msg.requestId,
-        );
+        return this.agentConfigSession.handleSetAgentFeatureRequest(msg);
       case "set_agent_thinking_request":
-        return this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
+        return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -1964,9 +1770,9 @@ export class Session {
         });
         return undefined;
       case "daemon.get_status.request":
-        return this.handleDaemonGetStatusRequest(msg);
+        return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
-        return this.handleDaemonGetPairingOfferRequest(msg);
+        return this.daemonSession.handleGetPairingOfferRequest(msg);
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",
@@ -1977,185 +1783,66 @@ export class Session {
         });
         return undefined;
       case "read_project_config_request":
-        return this.handleReadProjectConfigRequest(msg);
+        return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
-        return this.handleWriteProjectConfigRequest(msg);
+        return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
         return undefined;
     }
-  }
-
-  private async handleReadProjectConfigRequest(
-    msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
-  ): Promise<void> {
-    const repoRoot = await resolveKnownProjectRootForConfig({
-      repoRoot: msg.repoRoot,
-      projectRegistry: this.projectRegistry,
-    });
-    if (!repoRoot) {
-      this.emitProjectConfigReadFailure(msg, { code: "project_not_found" });
-      return;
-    }
-
-    const result = readPaseoConfigForEdit(repoRoot);
-    if (!result.ok) {
-      this.sessionLogger.warn(
-        { repoRoot, requestId: msg.requestId, outcome: result.error.code },
-        "Failed to read project config",
-      );
-      this.emitProjectConfigReadFailure(msg, result.error, repoRoot);
-      return;
-    }
-
-    if (result.config === null) {
-      this.sessionLogger.debug(
-        { repoRoot, requestId: msg.requestId, outcome: "missing_project_config" },
-        "Project config missing",
-      );
-    }
-
-    this.emit({
-      type: "read_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: true,
-        config: result.config,
-        revision: result.revision,
-      },
-    });
-  }
-
-  private async handleWriteProjectConfigRequest(
-    msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
-  ): Promise<void> {
-    const repoRoot = await resolveKnownProjectRootForConfig({
-      repoRoot: msg.repoRoot,
-      projectRegistry: this.projectRegistry,
-    });
-    if (!repoRoot) {
-      this.emitProjectConfigWriteFailure(msg, { code: "project_not_found" });
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { repoRoot, requestId: msg.requestId, outcome: "write_attempt" },
-      "Writing project config",
-    );
-    const result = writePaseoConfigForEdit({
-      repoRoot,
-      config: msg.config,
-      expectedRevision: msg.expectedRevision,
-    });
-    if (!result.ok) {
-      this.sessionLogger.debug(
-        { repoRoot, requestId: msg.requestId, outcome: result.error.code },
-        "Project config write did not complete",
-      );
-      this.emitProjectConfigWriteFailure(msg, result.error, repoRoot);
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { repoRoot, requestId: msg.requestId, outcome: "written" },
-      "Project config written",
-    );
-    this.emit({
-      type: "write_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: true,
-        config: result.config,
-        revision: result.revision,
-      },
-    });
-  }
-
-  private emitProjectConfigReadFailure(
-    msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
-    error: ProjectConfigRpcError,
-    repoRoot = msg.repoRoot,
-  ): void {
-    this.emit({
-      type: "read_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: false,
-        error,
-      },
-    });
-  }
-
-  private emitProjectConfigWriteFailure(
-    msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
-    error: ProjectConfigRpcError,
-    repoRoot = msg.repoRoot,
-  ): void {
-    this.emit({
-      type: "write_project_config_response",
-      payload: {
-        requestId: msg.requestId,
-        repoRoot,
-        ok: false,
-        error,
-      },
-    });
   }
 
   // eslint-disable-next-line complexity
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "checkout_status_request":
-        return this.handleCheckoutStatusRequest(msg);
+        return this.checkoutSession.handleStatusRequest(msg);
       case "validate_branch_request":
-        return this.handleValidateBranchRequest(msg);
+        return this.checkoutSession.handleValidateBranchRequest(msg);
       case "branch_suggestions_request":
-        return this.handleBranchSuggestionsRequest(msg);
+        return this.checkoutSession.handleBranchSuggestionsRequest(msg);
       case "directory_suggestions_request":
         return this.handleDirectorySuggestionsRequest(msg);
       case "subscribe_checkout_diff_request":
-        return this.handleSubscribeCheckoutDiffRequest(msg);
+        return this.checkoutSession.handleSubscribeDiffRequest(msg);
       case "unsubscribe_checkout_diff_request":
-        this.handleUnsubscribeCheckoutDiffRequest(msg);
+        this.checkoutSession.handleUnsubscribeDiffRequest(msg);
         return undefined;
       case "checkout_switch_branch_request":
-        return this.handleCheckoutSwitchBranchRequest(msg);
+        return this.checkoutSession.handleCheckoutSwitchBranchRequest(msg);
       case "checkout.rename_branch.request":
-        return this.handleCheckoutRenameBranchRequest(msg);
+        return this.checkoutSession.handleCheckoutRenameBranchRequest(msg);
       case "checkout_commit_request":
-        return this.handleCheckoutCommitRequest(msg);
+        return this.checkoutSession.handleCheckoutCommitRequest(msg);
       case "checkout_merge_request":
-        return this.handleCheckoutMergeRequest(msg);
+        return this.checkoutSession.handleCheckoutMergeRequest(msg);
       case "checkout_merge_from_base_request":
-        return this.handleCheckoutMergeFromBaseRequest(msg);
+        return this.checkoutSession.handleCheckoutMergeFromBaseRequest(msg);
       case "checkout_pull_request":
-        return this.handleCheckoutPullRequest(msg);
+        return this.checkoutSession.handleCheckoutPullRequest(msg);
       case "checkout_push_request":
-        return this.handleCheckoutPushRequest(msg);
+        return this.checkoutSession.handleCheckoutPushRequest(msg);
       case "checkout.refresh.request":
-        return this.handleCheckoutRefreshRequest(msg);
+        return this.checkoutSession.handleRefreshRequest(msg);
       case "checkout_pr_create_request":
-        return this.handleCheckoutPrCreateRequest(msg);
+        return this.checkoutSession.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
-        return this.handleCheckoutPrMergeRequest(msg);
+        return this.checkoutSession.handleCheckoutPrMergeRequest(msg);
       case "checkout.github.set_auto_merge.request":
-        return this.handleCheckoutGithubSetAutoMergeRequest(msg);
+        return this.checkoutSession.handleCheckoutGithubSetAutoMergeRequest(msg);
       case "checkout.github.get_check_details.request":
-        return this.handleCheckoutGithubGetCheckDetailsRequest(msg);
+        return this.checkoutSession.handleCheckoutGithubGetCheckDetailsRequest(msg);
       case "checkout_pr_status_request":
-        return this.handleCheckoutPrStatusRequest(msg);
+        return this.checkoutSession.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
-        return this.handlePullRequestTimelineRequest(msg);
+        return this.checkoutSession.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
-        return this.handleGitHubSearchRequest(msg);
+        return this.checkoutSession.handleGitHubSearchRequest(msg);
       case "stash_save_request":
-        return this.handleStashSaveRequest(msg);
+        return this.checkoutSession.handleStashSaveRequest(msg);
       case "stash_pop_request":
-        return this.handleStashPopRequest(msg);
+        return this.checkoutSession.handleStashPopRequest(msg);
       case "stash_list_request":
-        return this.handleStashListRequest(msg);
+        return this.checkoutSession.handleStashListRequest(msg);
       default:
         return undefined;
     }
@@ -2182,8 +1869,12 @@ export class Session {
         return this.handleLegacyOpenInEditorRequest(msg);
       case "open_project_request":
         return this.handleOpenProjectRequest(msg);
+      case "project.add.request":
+        return this.handleProjectAddRequest(msg);
       case "archive_workspace_request":
         return this.handleArchiveWorkspaceRequest(msg);
+      case "project.remove.request":
+        return this.handleProjectRemoveRequest(msg);
       case "workspace.create.request":
         return this.handleWorkspaceCreateRequest(msg);
       case "workspace.clear_attention.request":
@@ -2191,13 +1882,13 @@ export class Session {
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "file_explorer_request":
-        return this.handleFileExplorerRequest(msg);
+        return this.workspaceFilesSession.handleFileExplorerRequest(msg);
       case "project_icon_request":
-        return this.handleProjectIconRequest(msg);
+        return this.workspaceFilesSession.handleProjectIconRequest(msg);
       case "file_download_token_request":
-        return this.handleFileDownloadTokenRequest(msg);
+        return this.workspaceFilesSession.handleFileDownloadTokenRequest(msg);
       case "file.upload.request":
-        this.handleFileUploadRequest(msg);
+        this.workspaceFilesSession.handleFileUploadRequest(msg);
         return undefined;
       default:
         return undefined;
@@ -2207,19 +1898,21 @@ export class Session {
   private dispatchProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "list_provider_models_request":
-        return this.handleListProviderModelsRequest(msg);
+        return this.providerCatalogSession.handleListProviderModelsRequest(msg);
       case "list_provider_modes_request":
-        return this.handleListProviderModesRequest(msg);
+        return this.providerCatalogSession.handleListProviderModesRequest(msg);
       case "list_provider_features_request":
-        return this.handleListProviderFeaturesRequest(msg);
+        return this.providerCatalogSession.handleListProviderFeaturesRequest(msg);
       case "list_available_providers_request":
-        return this.handleListAvailableProvidersRequest(msg);
+        return this.providerCatalogSession.handleListAvailableProvidersRequest(msg);
       case "get_providers_snapshot_request":
-        return this.handleGetProvidersSnapshotRequest(msg);
+        return this.providerCatalogSession.handleGetProvidersSnapshotRequest(msg);
       case "refresh_providers_snapshot_request":
-        return this.handleRefreshProvidersSnapshotRequest(msg);
+        return this.providerCatalogSession.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
-        return this.handleProviderDiagnosticRequest(msg);
+        return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
+      case "provider.usage.list.request":
+        return this.providerCatalogSession.handleProviderUsageListRequest(msg);
       default:
         return undefined;
     }
@@ -2232,57 +1925,51 @@ export class Session {
     return this.terminalController.dispatch(msg);
   }
 
+  // eslint-disable-next-line complexity
   private dispatchChatScheduleLoopMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "chat/create":
-        return this.handleChatCreateRequest(msg);
+        return this.chatScheduleLoopSession.handleChatCreateRequest(msg);
       case "chat/list":
-        return this.handleChatListRequest(msg);
+        return this.chatScheduleLoopSession.handleChatListRequest(msg);
       case "chat/inspect":
-        return this.handleChatInspectRequest(msg);
+        return this.chatScheduleLoopSession.handleChatInspectRequest(msg);
       case "chat/delete":
-        return this.handleChatDeleteRequest(msg);
+        return this.chatScheduleLoopSession.handleChatDeleteRequest(msg);
       case "chat/post":
-        return this.handleChatPostRequest(msg);
+        return this.chatScheduleLoopSession.handleChatPostRequest(msg);
       case "chat/read":
-        return this.handleChatReadRequest(msg);
+        return this.chatScheduleLoopSession.handleChatReadRequest(msg);
       case "chat/wait":
-        return this.handleChatWaitRequest(msg);
+        return this.chatScheduleLoopSession.handleChatWaitRequest(msg);
       case "loop/run":
-        return this.handleLoopRunRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopRunRequest(msg);
       case "loop/list":
-        return this.handleLoopListRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopListRequest(msg);
       case "loop/inspect":
-        return this.handleLoopInspectRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopInspectRequest(msg);
       case "loop/logs":
-        return this.handleLoopLogsRequest(msg);
+        return this.chatScheduleLoopSession.handleLoopLogsRequest(msg);
       case "loop/stop":
-        return this.handleLoopStopRequest(msg);
-      default:
-        return this.dispatchScheduleMessage(msg);
-    }
-  }
-
-  private dispatchScheduleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    switch (msg.type) {
+        return this.chatScheduleLoopSession.handleLoopStopRequest(msg);
       case "schedule/create":
-        return this.handleScheduleCreateRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleCreateRequest(msg);
       case "schedule/list":
-        return this.handleScheduleListRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleListRequest(msg);
       case "schedule/inspect":
-        return this.handleScheduleInspectRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleInspectRequest(msg);
       case "schedule/logs":
-        return this.handleScheduleLogsRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleLogsRequest(msg);
       case "schedule/pause":
-        return this.handleSchedulePauseRequest(msg);
+        return this.chatScheduleLoopSession.handleSchedulePauseRequest(msg);
       case "schedule/resume":
-        return this.handleScheduleResumeRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleResumeRequest(msg);
       case "schedule/delete":
-        return this.handleScheduleDeleteRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleDeleteRequest(msg);
       case "schedule/run-once":
-        return this.handleScheduleRunOnceRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
-        return this.handleScheduleUpdateRequest(msg);
+        return this.chatScheduleLoopSession.handleScheduleUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -2305,7 +1992,7 @@ export class Session {
 
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
     if (binaryFrame.kind === "file_transfer") {
-      await this.handleFileTransferFrame(binaryFrame.frame);
+      await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame);
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame);
@@ -2443,41 +2130,66 @@ export class Session {
     );
 
     if (this.agentUpdatesSubscription) {
-      const payload = this.buildStoredAgentPayload(archivedRecord);
-      const project = payload.workspaceId
-        ? await this.buildProjectPlacementForWorkspaceId(payload.workspaceId)
-        : null;
-      if (project) {
-        const matches = this.matchesAgentFilter({
-          agent: payload,
-          project,
-          filter: this.agentUpdatesSubscription.filter,
-        });
-        this.bufferOrEmitAgentUpdate(
-          this.agentUpdatesSubscription,
-          matches
-            ? {
-                kind: "upsert",
-                agent: payload,
-                project,
-              }
-            : {
-                kind: "remove",
-                agentId,
-              },
-        );
-      } else {
-        this.bufferOrEmitAgentUpdate(this.agentUpdatesSubscription, {
-          kind: "remove",
-          agentId,
-        });
-      }
+      const payload = await this.emitStoredAgentUpdate(archivedRecord);
       if (payload.workspaceId) {
         await this.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
       }
     }
 
     return { agentId, archivedAt };
+  }
+
+  private async handleDetachAgentRequest(agentId: string, requestId: string): Promise<void> {
+    this.sessionLogger.info({ agentId, requestId }, "Detaching agent from parent");
+
+    try {
+      const result = await detachAgentCommand({ agentManager: this.agentManager }, agentId);
+      const affectedWorkspaceIds = new Set<string>();
+
+      if (!result.live) {
+        const payload = await this.emitStoredAgentUpdate(result.record);
+        if (payload.workspaceId) {
+          affectedWorkspaceIds.add(payload.workspaceId);
+        }
+      } else if (result.record.workspaceId) {
+        affectedWorkspaceIds.add(result.record.workspaceId);
+      }
+
+      if (result.previousParentAgentId) {
+        const rootWorkspaceId = await this.resolveDelegationRootWorkspaceId(
+          result.previousParentAgentId,
+        );
+        if (rootWorkspaceId) {
+          affectedWorkspaceIds.add(rootWorkspaceId);
+        }
+      }
+
+      await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds, {
+        skipReconcile: true,
+      });
+
+      this.emit({
+        type: "agent.detach.response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = getErrorMessageOr(error, "Failed to detach agent");
+      this.sessionLogger.error({ err: error, agentId, requestId }, "Failed to detach agent");
+      this.emit({
+        type: "agent.detach.response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: false,
+          error: message,
+        },
+      });
+    }
   }
 
   private async handleCloseItemsRequest(msg: CloseItemsRequest): Promise<void> {
@@ -2685,6 +2397,97 @@ export class Session {
     }
   }
 
+  private async handleProjectRemoveRequest(
+    request: Extract<SessionInboundMessage, { type: "project.remove.request" }>,
+  ): Promise<void> {
+    const { projectId, requestId } = request;
+    this.sessionLogger.info({ projectId, requestId }, "session: project.remove.request");
+
+    try {
+      const projectWorkspaces = (await this.workspaceRegistry.list()).filter(
+        (workspace) => workspace.projectId === projectId,
+      );
+      const activeWorkspaceIds = projectWorkspaces
+        .filter((workspace) => !workspace.archivedAt)
+        .map((workspace) => workspace.workspaceId);
+
+      if (activeWorkspaceIds.length > 0) {
+        this.markWorkspaceArchiving(activeWorkspaceIds, new Date().toISOString());
+        await this.emitWorkspaceUpdatesForWorkspaceIds(activeWorkspaceIds, {
+          skipReconcile: true,
+        });
+      }
+
+      const removedWorkspaceIds: string[] = [];
+      try {
+        for (const workspaceId of activeWorkspaceIds) {
+          await archiveWorkspaceContents(
+            {
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              killTerminalsForWorkspace: (id) =>
+                this.terminalController.killTerminalsForWorkspace(id),
+              sessionLogger: this.sessionLogger,
+            },
+            workspaceId,
+          );
+          await this.archiveWorkspaceRecord(workspaceId);
+          removedWorkspaceIds.push(workspaceId);
+        }
+
+        await this.projectRegistry.remove(projectId);
+      } finally {
+        if (activeWorkspaceIds.length > 0) {
+          this.clearWorkspaceArchiving(activeWorkspaceIds);
+        }
+      }
+
+      const updateIds =
+        removedWorkspaceIds.length > 0
+          ? removedWorkspaceIds
+          : [projectWorkspaces[0]?.workspaceId ?? projectId];
+      await this.emitWorkspaceUpdatesForWorkspaceIds(updateIds, {
+        skipReconcile: true,
+        removedProjectId: projectId,
+      });
+
+      this.emit({
+        type: "project.remove.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: true,
+          removedWorkspaceIds,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, projectId, requestId },
+        "session: project.remove.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to remove project: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "project.remove.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          removedWorkspaceIds: [],
+          error: getErrorMessageOr(error, "Failed to remove project"),
+        },
+      });
+    }
+  }
+
   private async handleWorkspaceTitleSetRequest(
     workspaceId: string,
     title: string | null,
@@ -2759,397 +2562,6 @@ export class Session {
         },
       });
     }
-  }
-
-  private toVoiceFeatureUnavailableContext(
-    state: SpeechReadinessState,
-  ): VoiceFeatureUnavailableContext {
-    return {
-      reasonCode: state.reasonCode,
-      message: state.message,
-      retryable: state.retryable,
-      missingModelIds: [...state.missingModelIds],
-    };
-  }
-
-  private resolveModeReadinessState(
-    readiness: SpeechReadinessSnapshot,
-    mode: "voice_mode" | "dictation",
-  ): SpeechReadinessState {
-    if (mode === "voice_mode") {
-      return readiness.realtimeVoice;
-    }
-    return readiness.dictation;
-  }
-
-  private getVoiceFeatureUnavailableResponseMetadata(
-    error: unknown,
-  ): VoiceFeatureUnavailableResponseMetadata {
-    if (!(error instanceof VoiceFeatureUnavailableError)) {
-      return {};
-    }
-    return {
-      reasonCode: error.reasonCode,
-      retryable: error.retryable,
-      missingModelIds: error.missingModelIds,
-    };
-  }
-
-  private resolveVoiceFeatureUnavailableContext(
-    mode: "voice_mode" | "dictation",
-  ): VoiceFeatureUnavailableContext | null {
-    const readiness = this.getSpeechReadiness?.();
-    if (!readiness) {
-      return null;
-    }
-
-    const modeReadiness = this.resolveModeReadinessState(readiness, mode);
-    if (!modeReadiness.enabled) {
-      return this.toVoiceFeatureUnavailableContext(modeReadiness);
-    }
-    if (!readiness.voiceFeature.available) {
-      return this.toVoiceFeatureUnavailableContext(readiness.voiceFeature);
-    }
-    if (!modeReadiness.available) {
-      return this.toVoiceFeatureUnavailableContext(modeReadiness);
-    }
-    return null;
-  }
-
-  /**
-   * Handle voice mode toggle
-   */
-  private async handleSetVoiceMode(
-    enabled: boolean,
-    agentId?: string,
-    requestId?: string,
-  ): Promise<void> {
-    const startedAt = Date.now();
-    try {
-      this.sessionLogger.info(
-        { enabled, requestedAgentId: agentId ?? null, requestId: requestId ?? null },
-        "set_voice_mode started",
-      );
-      if (enabled) {
-        const unavailable = this.resolveVoiceFeatureUnavailableContext("voice_mode");
-        if (unavailable) {
-          throw new VoiceFeatureUnavailableError(unavailable);
-        }
-
-        const normalizedAgentId = this.parseVoiceTargetAgentId(agentId ?? "", "set_voice_mode");
-
-        if (
-          this.isVoiceMode &&
-          this.voiceModeAgentId &&
-          this.voiceModeAgentId !== normalizedAgentId
-        ) {
-          this.sessionLogger.info(
-            {
-              previousAgentId: this.voiceModeAgentId,
-              nextAgentId: normalizedAgentId,
-              elapsedMs: Date.now() - startedAt,
-            },
-            "set_voice_mode disabling previous active voice agent",
-          );
-          await this.disableVoiceModeForActiveAgent(true);
-        }
-
-        if (!this.isVoiceMode || this.voiceModeAgentId !== normalizedAgentId) {
-          this.sessionLogger.info(
-            { agentId: normalizedAgentId, elapsedMs: Date.now() - startedAt },
-            "set_voice_mode enabling voice for agent",
-          );
-          const refreshedAgentId = await this.enableVoiceModeForAgent(normalizedAgentId);
-          this.voiceModeAgentId = refreshedAgentId;
-          this.sessionLogger.info(
-            { agentId: refreshedAgentId, elapsedMs: Date.now() - startedAt },
-            "set_voice_mode agent enable complete",
-          );
-        }
-
-        this.sessionLogger.info(
-          { agentId: this.voiceModeAgentId, elapsedMs: Date.now() - startedAt },
-          "set_voice_mode starting voice turn controller",
-        );
-        await this.startVoiceTurnController();
-        this.sessionLogger.info(
-          { agentId: this.voiceModeAgentId, elapsedMs: Date.now() - startedAt },
-          "set_voice_mode voice turn controller started",
-        );
-        this.isVoiceMode = true;
-        this.sessionLogger.info(
-          {
-            agentId: this.voiceModeAgentId,
-            elapsedMs: Date.now() - startedAt,
-          },
-          "Voice mode enabled for existing agent",
-        );
-        if (requestId) {
-          this.emit({
-            type: "set_voice_mode_response",
-            payload: {
-              requestId,
-              enabled: true,
-              agentId: this.voiceModeAgentId,
-              accepted: true,
-              error: null,
-            },
-          });
-        }
-        return;
-      }
-
-      this.sessionLogger.info(
-        { agentId: this.voiceModeAgentId, elapsedMs: Date.now() - startedAt },
-        "set_voice_mode disabling active voice mode",
-      );
-      await this.disableVoiceModeForActiveAgent(true);
-      this.isVoiceMode = false;
-      this.sessionLogger.info({ elapsedMs: Date.now() - startedAt }, "Voice mode disabled");
-      if (requestId) {
-        this.emit({
-          type: "set_voice_mode_response",
-          payload: {
-            requestId,
-            enabled: false,
-            agentId: null,
-            accepted: true,
-            error: null,
-          },
-        });
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to set voice mode";
-      const unavailable = this.getVoiceFeatureUnavailableResponseMetadata(error);
-      this.sessionLogger.error(
-        {
-          err: error,
-          enabled,
-          requestedAgentId: agentId ?? null,
-          elapsedMs: Date.now() - startedAt,
-        },
-        "set_voice_mode failed",
-      );
-      if (requestId) {
-        this.emit({
-          type: "set_voice_mode_response",
-          payload: {
-            requestId,
-            enabled: this.isVoiceMode,
-            agentId: this.voiceModeAgentId,
-            accepted: false,
-            error: errorMessage,
-            ...unavailable,
-          },
-        });
-        return;
-      }
-      throw error;
-    }
-  }
-
-  private parseVoiceTargetAgentId(rawId: string, source: string): string {
-    const parsed = AgentIdSchema.safeParse(rawId.trim());
-    if (!parsed.success) {
-      throw new Error(`${source}: agentId must be a UUID`);
-    }
-    return parsed.data;
-  }
-
-  private async enableVoiceModeForAgent(agentId: string): Promise<string> {
-    const startedAt = Date.now();
-    this.sessionLogger.info({ agentId }, "enableVoiceModeForAgent.ensureAgentLoaded.start");
-    const existing = await ensureAgentLoaded(agentId, {
-      agentManager: this.agentManager,
-      agentStorage: this.agentStorage,
-      logger: this.sessionLogger,
-    });
-    this.sessionLogger.info(
-      { agentId, elapsedMs: Date.now() - startedAt },
-      "enableVoiceModeForAgent.ensureAgentLoaded.done",
-    );
-
-    this.registerVoiceBridgeForAgent(agentId);
-
-    const baseConfig: VoiceModeBaseConfig = {
-      systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-    };
-    this.voiceModeBaseConfig = baseConfig;
-    const refreshOverrides: Partial<AgentSessionConfig> = {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
-    };
-
-    try {
-      this.sessionLogger.info(
-        { agentId, elapsedMs: Date.now() - startedAt },
-        "enableVoiceModeForAgent.reloadAgentSession.start",
-      );
-      const refreshed = await this.agentManager.reloadAgentSession(agentId, refreshOverrides);
-      this.sessionLogger.info(
-        { agentId, refreshedAgentId: refreshed.id, elapsedMs: Date.now() - startedAt },
-        "enableVoiceModeForAgent.reloadAgentSession.done",
-      );
-      return refreshed.id;
-    } catch (error) {
-      this.unregisterVoiceSpeakHandler?.(agentId);
-      this.unregisterVoiceCallerContext?.(agentId);
-      this.voiceModeBaseConfig = null;
-      throw error;
-    }
-  }
-
-  private async disableVoiceModeForActiveAgent(restoreAgentConfig: boolean): Promise<void> {
-    await this.stopVoiceTurnController();
-
-    const agentId = this.voiceModeAgentId;
-    if (!agentId) {
-      this.voiceModeBaseConfig = null;
-      return;
-    }
-
-    this.unregisterVoiceSpeakHandler?.(agentId);
-    this.unregisterVoiceCallerContext?.(agentId);
-
-    if (restoreAgentConfig && this.voiceModeBaseConfig) {
-      const baseConfig = this.voiceModeBaseConfig;
-      try {
-        await this.agentManager.reloadAgentSession(agentId, {
-          systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-        });
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, agentId },
-          "Failed to restore agent config while disabling voice mode",
-        );
-      }
-    }
-
-    this.voiceModeBaseConfig = null;
-    this.voiceModeAgentId = null;
-  }
-
-  private handleDictationManagerMessage(msg: DictationStreamOutboundMessage): void {
-    this.emit(msg as unknown as SessionOutboundMessage);
-  }
-
-  private async startVoiceTurnController(): Promise<void> {
-    if (this.voiceTurnController) {
-      this.sessionLogger.info("startVoiceTurnController skipped: already running");
-      return;
-    }
-
-    const turnDetection = this.resolveVoiceTurnDetection();
-    if (!turnDetection) {
-      throw new Error("Voice turn detection is not configured");
-    }
-    const stt = this.sttManager.getProvider();
-    if (!stt) {
-      throw new Error("Voice speech-to-text is not configured");
-    }
-
-    this.sessionLogger.info(
-      { providerId: turnDetection.id },
-      "startVoiceTurnController creating controller",
-    );
-
-    const controller = createVoiceTurnController({
-      logger: this.sessionLogger.child({ component: "voice-turn-controller" }),
-      turnDetection,
-      stt,
-      sttLanguage: this.sttLanguage,
-      callbacks: {
-        onSpeechStarted: async () => {
-          this.sessionLogger.debug("Voice VAD speech_started");
-        },
-        onPartialTranscript: async ({ segmentId, transcript }) => {
-          this.sessionLogger.info(
-            { segmentId, transcriptLength: transcript.trim().length },
-            "voice_input_state emitting isSpeaking=true",
-          );
-          this.emit({
-            type: "voice_input_state",
-            payload: {
-              isSpeaking: true,
-            },
-          });
-          await this.handleVoiceSpeechStart();
-        },
-        onSpeechStopped: async () => {
-          this.handleVoiceSpeechStopped();
-          this.setPhase("transcribing");
-          this.emit({
-            type: "activity_log",
-            payload: {
-              id: uuidv4(),
-              timestamp: new Date(),
-              type: "system",
-              content: "Transcribing audio...",
-            },
-          });
-        },
-        onFinalTranscript: async ({
-          transcript,
-          language,
-          durationMs,
-          avgLogprob,
-          isLowConfidence,
-        }) => {
-          const requestId = uuidv4();
-          const transcriptText = isLowConfidence ? "" : transcript.trim();
-          if (isLowConfidence) {
-            this.sessionLogger.debug(
-              { text: transcript, avgLogprob },
-              "Filtered low-confidence transcription (likely non-speech)",
-            );
-          }
-          this.sessionLogger.info(
-            {
-              requestId,
-              isVoiceMode: this.isVoiceMode,
-              transcriptLength: transcriptText.length,
-              transcript: transcriptText,
-            },
-            "Transcription result",
-          );
-          await this.handleTranscriptionResultPayload({
-            text: transcriptText,
-            requestId,
-            ...(language ? { language } : {}),
-            duration: durationMs,
-            ...(avgLogprob !== undefined ? { avgLogprob } : {}),
-            ...(isLowConfidence !== undefined ? { isLowConfidence } : {}),
-          });
-        },
-        onError: (error) => {
-          this.sessionLogger.error({ err: error }, "Voice turn controller failed");
-        },
-      },
-    });
-
-    this.sessionLogger.info("startVoiceTurnController connecting controller");
-    await controller.start();
-    this.voiceTurnController = controller;
-    this.sessionLogger.info("startVoiceTurnController connected");
-  }
-
-  private async stopVoiceTurnController(): Promise<void> {
-    if (!this.voiceTurnController) {
-      return;
-    }
-
-    const controller = this.voiceTurnController;
-    this.voiceTurnController = null;
-    await controller.stop();
-  }
-
-  private handleVoiceSpeechStopped(): void {
-    this.sessionLogger.info("voice_input_state emitting isSpeaking=false");
-    this.emit({
-      type: "voice_input_state",
-      payload: {
-        isSpeaking: false,
-      },
-    });
   }
 
   /**
@@ -3830,392 +3242,6 @@ export class Session {
     );
   }
 
-  private emitProviderDisabledResponse(
-    kind: "models" | "modes",
-    provider: AgentProvider,
-    requestId: string,
-    fetchedAt: string,
-  ): void {
-    const payload = {
-      provider,
-      error: `Provider ${provider} is disabled`,
-      fetchedAt,
-      requestId,
-    };
-    if (kind === "models") {
-      this.emit({ type: "list_provider_models_response", payload });
-    } else {
-      this.emit({ type: "list_provider_modes_response", payload });
-    }
-  }
-
-  private async handleListProviderModelsRequest(
-    msg: Extract<SessionInboundMessage, { type: "list_provider_models_request" }>,
-  ): Promise<void> {
-    const cwd = resolveSnapshotCwd(msg.cwd ? expandTilde(msg.cwd) : undefined);
-    const fetchedAt = new Date().toISOString();
-
-    const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
-
-    if (!entry) {
-      this.emit({
-        type: "list_provider_models_response",
-        payload: {
-          provider: msg.provider,
-          error: `Unknown provider: ${msg.provider}`,
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-      return;
-    }
-
-    if (!entry.enabled) {
-      this.emitProviderDisabledResponse("models", msg.provider, msg.requestId, fetchedAt);
-      return;
-    }
-
-    if (entry.status === "ready") {
-      this.emit({
-        type: "list_provider_models_response",
-        payload: {
-          provider: msg.provider,
-          models: entry.models ?? [],
-          error: null,
-          fetchedAt: entry.fetchedAt ?? fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-      return;
-    }
-
-    const errorMessage =
-      entry.status === "error"
-        ? (entry.error ?? `Failed to list models for ${msg.provider}`)
-        : `Provider ${msg.provider} is not available`;
-
-    this.emit({
-      type: "list_provider_models_response",
-      payload: {
-        provider: msg.provider,
-        error: errorMessage,
-        fetchedAt,
-        requestId: msg.requestId,
-      },
-    });
-  }
-
-  private async handleListProviderModesRequest(
-    msg: Extract<SessionInboundMessage, { type: "list_provider_modes_request" }>,
-  ): Promise<void> {
-    const fetchedAt = new Date().toISOString();
-    const cwd = resolveSnapshotCwd(msg.cwd ? expandTilde(msg.cwd) : undefined);
-    const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
-
-    if (!entry) {
-      this.emit({
-        type: "list_provider_modes_response",
-        payload: {
-          provider: msg.provider,
-          error: `Unknown provider: ${msg.provider}`,
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-      return;
-    }
-
-    if (!entry.enabled) {
-      this.emitProviderDisabledResponse("modes", msg.provider, msg.requestId, fetchedAt);
-      return;
-    }
-
-    if (entry.status === "ready") {
-      this.emit({
-        type: "list_provider_modes_response",
-        payload: {
-          provider: msg.provider,
-          modes: this.downgradeModeIconsForClient(entry.modes ?? []),
-          error: null,
-          fetchedAt: entry.fetchedAt ?? fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-      return;
-    }
-
-    const errorMessage =
-      entry.status === "error"
-        ? (entry.error ?? `Failed to list modes for ${msg.provider}`)
-        : `Provider ${msg.provider} is not available`;
-
-    this.emit({
-      type: "list_provider_modes_response",
-      payload: {
-        provider: msg.provider,
-        error: errorMessage,
-        fetchedAt,
-        requestId: msg.requestId,
-      },
-    });
-  }
-
-  private async getProviderSnapshotEntryForRead(
-    cwd: string,
-    provider: AgentProvider,
-  ): Promise<ProviderSnapshotEntry | undefined> {
-    const manager = this.providerSnapshotManager;
-    const findEntry = () =>
-      manager.getSnapshot(cwd).find((candidate) => candidate.provider === provider);
-
-    let entry = findEntry();
-    if (entry && !entry.enabled) {
-      return entry;
-    }
-    if (!entry || entry.status === "loading") {
-      // Awaits the in-flight warmup (deduped per-cwd) so old clients still get
-      // a resolved answer rather than a loading placeholder.
-      await manager.warmUpSnapshotForCwd({ cwd, providers: [provider] });
-      entry = findEntry();
-    }
-    return entry;
-  }
-
-  private buildDraftAgentSessionConfig(draftConfig: {
-    provider: AgentProvider;
-    cwd: string;
-    modeId?: string;
-    model?: string;
-    thinkingOptionId?: string;
-    featureValues?: Record<string, unknown>;
-  }): AgentSessionConfig {
-    return {
-      provider: draftConfig.provider,
-      cwd: expandTilde(draftConfig.cwd),
-      ...(draftConfig.modeId ? { modeId: draftConfig.modeId } : {}),
-      ...(draftConfig.model ? { model: draftConfig.model } : {}),
-      ...(draftConfig.thinkingOptionId ? { thinkingOptionId: draftConfig.thinkingOptionId } : {}),
-      ...(draftConfig.featureValues ? { featureValues: draftConfig.featureValues } : {}),
-    };
-  }
-
-  private async handleListProviderFeaturesRequest(
-    msg: Extract<SessionInboundMessage, { type: "list_provider_features_request" }>,
-  ): Promise<void> {
-    const fetchedAt = new Date().toISOString();
-    try {
-      const sessionConfig = this.buildDraftAgentSessionConfig(msg.draftConfig);
-      const features = await this.agentManager.listDraftFeatures(sessionConfig);
-      this.emit({
-        type: "list_provider_features_response",
-        payload: {
-          provider: msg.draftConfig.provider,
-          features,
-          error: null,
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, provider: msg.draftConfig.provider, draftConfig: msg.draftConfig },
-        `Failed to list features for ${msg.draftConfig.provider}`,
-      );
-      this.emit({
-        type: "list_provider_features_response",
-        payload: {
-          provider: msg.draftConfig.provider,
-          error: getErrorMessage(error),
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-    }
-  }
-
-  private async handleDaemonGetStatusRequest(
-    msg: Extract<SessionInboundMessage, { type: "daemon.get_status.request" }>,
-  ): Promise<void> {
-    try {
-      const pidInfo = await getPidLockInfo(this.paseoHome);
-      const providers = (await this.agentManager.listProviderAvailability()).map((p) => ({
-        provider: p.provider,
-        available: p.available,
-        error: p.error ?? null,
-      }));
-      this.emit({
-        type: "daemon.get_status.response",
-        payload: {
-          requestId: msg.requestId,
-          serverId: this.serverId ?? "",
-          version: this.daemonVersion ?? null,
-          pid: process.pid,
-          nodePath: process.execPath,
-          startedAt: pidInfo?.startedAt ?? null,
-          listen: this.daemonRuntimeConfig?.listen ?? null,
-          relay: this.daemonRuntimeConfig?.relay ?? null,
-          providers,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error({ err: error }, "Failed to handle daemon status request");
-      this.emit({
-        type: "daemon.get_status.response",
-        payload: {
-          requestId: msg.requestId,
-          serverId: this.serverId ?? "",
-          version: this.daemonVersion ?? null,
-          pid: process.pid,
-          nodePath: process.execPath,
-          startedAt: null,
-          listen: null,
-          relay: null,
-          providers: [],
-        },
-      });
-    }
-  }
-
-  private async handleDaemonGetPairingOfferRequest(
-    msg: Extract<SessionInboundMessage, { type: "daemon.get_pairing_offer.request" }>,
-  ): Promise<void> {
-    try {
-      const relay = this.daemonRuntimeConfig?.relay;
-      const pairing = await generateLocalPairingOffer({
-        paseoHome: this.paseoHome,
-        relayEnabled: relay?.enabled ?? true,
-        relayEndpoint: relay?.endpoint,
-        relayPublicEndpoint: relay?.publicEndpoint,
-        relayUseTls: relay?.useTls,
-        relayPublicUseTls: relay?.publicUseTls,
-        appBaseUrl: this.daemonRuntimeConfig?.appBaseUrl,
-        includeQr: true,
-        logger: this.sessionLogger,
-      });
-      this.emit({
-        type: "daemon.get_pairing_offer.response",
-        payload: {
-          requestId: msg.requestId,
-          url: pairing.url ?? "",
-          qr: pairing.qr ?? null,
-          relayEnabled: pairing.relayEnabled,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error({ err: error }, "Failed to handle daemon pairing offer request");
-      this.emit({
-        type: "rpc_error",
-        payload: {
-          requestId: msg.requestId,
-          requestType: "daemon.get_pairing_offer.request",
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  }
-
-  private async handleListAvailableProvidersRequest(
-    msg: Extract<SessionInboundMessage, { type: "list_available_providers_request" }>,
-  ): Promise<void> {
-    const fetchedAt = new Date().toISOString();
-    try {
-      const providers = (await this.agentManager.listProviderAvailability()).filter((provider) =>
-        this.isProviderVisibleToClient(provider.provider),
-      );
-      this.emit({
-        type: "list_available_providers_response",
-        payload: {
-          providers,
-          error: null,
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error({ err: error }, "Failed to list provider availability");
-      this.emit({
-        type: "list_available_providers_response",
-        payload: {
-          providers: [],
-          error: getErrorMessage(error),
-          fetchedAt,
-          requestId: msg.requestId,
-        },
-      });
-    }
-  }
-
-  private async handleGetProvidersSnapshotRequest(
-    msg: Extract<SessionInboundMessage, { type: "get_providers_snapshot_request" }>,
-  ): Promise<void> {
-    // COMPAT(providersSnapshot): keep legacy provider-list RPCs alongside snapshot flow.
-    const entries = this.providerSnapshotManager
-      .getSnapshot(msg.cwd ? expandTilde(msg.cwd) : undefined)
-      .filter((entry) => this.isProviderVisibleToClient(entry.provider));
-
-    this.emit({
-      type: "get_providers_snapshot_response",
-      payload: {
-        entries: this.downgradeEntryModesForClient(entries),
-        generatedAt: new Date().toISOString(),
-        requestId: msg.requestId,
-      },
-    });
-  }
-
-  private async handleRefreshProvidersSnapshotRequest(
-    msg: Extract<SessionInboundMessage, { type: "refresh_providers_snapshot_request" }>,
-  ): Promise<void> {
-    if (msg.cwd) {
-      await this.providerSnapshotManager.refreshSnapshotForCwd({
-        cwd: expandTilde(msg.cwd),
-        providers: msg.providers,
-      });
-    } else {
-      await this.providerSnapshotManager.refreshSettingsSnapshot({
-        providers: msg.providers,
-      });
-    }
-    this.emit({
-      type: "refresh_providers_snapshot_response",
-      payload: {
-        acknowledged: true,
-        requestId: msg.requestId,
-      },
-    });
-  }
-
-  private async handleProviderDiagnosticRequest(
-    msg: Extract<SessionInboundMessage, { type: "provider_diagnostic_request" }>,
-  ): Promise<void> {
-    try {
-      const { diagnostic } = await this.providerSnapshotManager.getProviderDiagnostic(msg.provider);
-      this.emit({
-        type: "provider_diagnostic_response",
-        payload: {
-          provider: msg.provider,
-          diagnostic,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.sessionLogger.error(
-        { err, provider: msg.provider },
-        `Failed to get provider diagnostic for ${msg.provider}`,
-      );
-      this.emit({
-        type: "rpc_error",
-        payload: {
-          requestId: msg.requestId,
-          requestType: msg.type,
-          error: `Failed to get provider diagnostic: ${err.message}`,
-          code: "provider_diagnostic_failed",
-        },
-      });
-    }
-  }
-
   private assertSafeGitRef(ref: string, label: string): void {
     if (!/^[A-Za-z0-9._/-]+$/.test(ref)) {
       throw new Error(`Invalid ${label}: ${ref}`);
@@ -4484,188 +3510,6 @@ export class Session {
   }
 
   /**
-   * Handle set agent mode request
-   */
-  private async handleSetAgentModeRequest(
-    agentId: string,
-    modeId: string,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info({ agentId, modeId, requestId }, "session: set_agent_mode_request");
-
-    try {
-      await setAgentModeCommand({ agentManager: this.agentManager }, { agentId, modeId });
-      this.sessionLogger.info(
-        { agentId, modeId, requestId },
-        "session: set_agent_mode_request success",
-      );
-      this.emit({
-        type: "set_agent_mode_response",
-        payload: { requestId, agentId, accepted: true, error: null },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, modeId, requestId },
-        "session: set_agent_mode_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent mode: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_mode_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent mode"),
-        },
-      });
-    }
-  }
-
-  private async handleSetAgentModelRequest(
-    agentId: string,
-    modelId: string | null,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info({ agentId, modelId, requestId }, "session: set_agent_model_request");
-
-    try {
-      await this.agentManager.setAgentModel(agentId, modelId);
-      this.sessionLogger.info(
-        { agentId, modelId, requestId },
-        "session: set_agent_model_request success",
-      );
-      this.emit({
-        type: "set_agent_model_response",
-        payload: { requestId, agentId, accepted: true, error: null },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, modelId, requestId },
-        "session: set_agent_model_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent model: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_model_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent model"),
-        },
-      });
-    }
-  }
-
-  private async handleSetAgentFeatureRequest(
-    agentId: string,
-    featureId: string,
-    value: unknown,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info(
-      { agentId, featureId, value, requestId },
-      "session: set_agent_feature_request",
-    );
-
-    try {
-      await this.agentManager.setAgentFeature(agentId, featureId, value);
-      this.sessionLogger.info(
-        { agentId, featureId, value, requestId },
-        "session: set_agent_feature_request success",
-      );
-      this.emit({
-        type: "set_agent_feature_response",
-        payload: { requestId, agentId, accepted: true, error: null },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, featureId, value, requestId },
-        "session: set_agent_feature_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent feature: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_feature_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent feature"),
-        },
-      });
-    }
-  }
-
-  private async handleSetAgentThinkingRequest(
-    agentId: string,
-    thinkingOptionId: string | null,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info(
-      { agentId, thinkingOptionId, requestId },
-      "session: set_agent_thinking_request",
-    );
-
-    try {
-      await this.agentManager.setAgentThinkingOption(agentId, thinkingOptionId);
-      this.sessionLogger.info(
-        { agentId, thinkingOptionId, requestId },
-        "session: set_agent_thinking_request success",
-      );
-      this.emit({
-        type: "set_agent_thinking_response",
-        payload: { requestId, agentId, accepted: true, error: null },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId, thinkingOptionId, requestId },
-        "session: set_agent_thinking_request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to set agent thinking option: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "set_agent_thinking_response",
-        payload: {
-          requestId,
-          agentId,
-          accepted: false,
-          error: getErrorMessageOr(error, "Failed to set agent thinking option"),
-        },
-      });
-    }
-  }
-
-  /**
    * Handle clearing agent attention flag
    */
   private async handleClearAgentAttention(
@@ -4856,179 +3700,6 @@ export class Session {
         },
       });
       throw error;
-    }
-  }
-
-  private async handleCheckoutStatusRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_status_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-    const resolvedCwd = expandTilde(cwd);
-
-    try {
-      const snapshot = await this.workspaceGitService.getSnapshot(resolvedCwd);
-      this.emit({
-        type: "checkout_status_response",
-        payload: buildCheckoutStatusPayloadFromSnapshot({
-          cwd,
-          requestId,
-          snapshot,
-        }),
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_status_response",
-        payload: {
-          cwd,
-          isGit: false,
-          repoRoot: null,
-          currentBranch: null,
-          isDirty: null,
-          baseRef: null,
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          behindOfOrigin: null,
-          hasRemote: false,
-          remoteUrl: null,
-          isPaseoOwnedWorktree: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleValidateBranchRequest(
-    msg: Extract<SessionInboundMessage, { type: "validate_branch_request" }>,
-  ): Promise<void> {
-    const { cwd, branchName, requestId } = msg;
-
-    try {
-      const resolvedCwd = expandTilde(cwd);
-      this.assertSafeGitRef(branchName, "branch");
-
-      const resolution = await this.workspaceGitService.validateBranchRef(resolvedCwd, branchName);
-      switch (resolution.kind) {
-        case "local":
-          this.emit({
-            type: "validate_branch_response",
-            payload: {
-              exists: true,
-              resolvedRef: resolution.name,
-              isRemote: false,
-              error: null,
-              requestId,
-            },
-          });
-          return;
-        case "remote-only":
-          this.emit({
-            type: "validate_branch_response",
-            payload: {
-              exists: true,
-              resolvedRef: resolution.remoteRef,
-              isRemote: true,
-              error: null,
-              requestId,
-            },
-          });
-          return;
-        case "not-found":
-          this.emit({
-            type: "validate_branch_response",
-            payload: {
-              exists: false,
-              resolvedRef: null,
-              isRemote: false,
-              error: null,
-              requestId,
-            },
-          });
-          return;
-        default: {
-          const exhaustiveCheck: never = resolution;
-          throw new Error(`Unhandled branch resolution: ${getErrorMessage(exhaustiveCheck)}`);
-        }
-      }
-    } catch (error) {
-      this.emit({
-        type: "validate_branch_response",
-        payload: {
-          exists: false,
-          resolvedRef: null,
-          isRemote: false,
-          error: error instanceof Error ? error.message : String(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleBranchSuggestionsRequest(
-    msg: Extract<SessionInboundMessage, { type: "branch_suggestions_request" }>,
-  ): Promise<void> {
-    const { cwd, query, limit, requestId } = msg;
-
-    try {
-      const resolvedCwd = expandTilde(cwd);
-      const branchDetails = await this.workspaceGitService.suggestBranchesForCwd(resolvedCwd, {
-        query,
-        limit,
-      });
-      this.emit({
-        type: "branch_suggestions_response",
-        payload: {
-          branches: branchDetails.map((branch) => branch.name),
-          branchDetails,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "branch_suggestions_response",
-        payload: {
-          branches: [],
-          branchDetails: [],
-          error: error instanceof Error ? error.message : String(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleGitHubSearchRequest(
-    msg: Extract<SessionInboundMessage, { type: "github_search_request" }>,
-  ): Promise<void> {
-    const { cwd, query, limit, kinds, requestId } = msg;
-
-    try {
-      const resolvedCwd = expandTilde(cwd);
-      const result = await this.github.searchIssuesAndPrs({
-        cwd: resolvedCwd,
-        query,
-        limit,
-        kinds,
-      });
-      this.emit({
-        type: "github_search_response",
-        payload: {
-          items: result.items,
-          githubFeaturesEnabled: result.githubFeaturesEnabled,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "github_search_response",
-        payload: {
-          items: [],
-          githubFeaturesEnabled: true,
-          error: error instanceof Error ? error.message : String(error),
-          requestId,
-        },
-      });
     }
   }
 
@@ -5224,816 +3895,10 @@ export class Session {
             "Failed to emit workspace update after git branch snapshot",
           );
         });
-        this.emitCheckoutStatusUpdate(normalizedCwd, snapshot);
+        this.checkoutSession.emitStatusUpdate(normalizedCwd, snapshot);
       },
     );
     this.workspaceGitSubscriptions.set(normalizedCwd, subscription.unsubscribe);
-  }
-
-  private async handleSubscribeCheckoutDiffRequest(
-    msg: SubscribeCheckoutDiffRequest,
-  ): Promise<void> {
-    const cwd = expandTilde(msg.cwd);
-    this.checkoutDiffSubscriptions.get(msg.subscriptionId)?.();
-    this.checkoutDiffSubscriptions.delete(msg.subscriptionId);
-    const subscription = await this.checkoutDiffManager.subscribe(
-      { cwd, compare: msg.compare },
-      (snapshot) => {
-        this.emit({
-          type: "checkout_diff_update",
-          payload: {
-            subscriptionId: msg.subscriptionId,
-            ...snapshot,
-          },
-        });
-      },
-    );
-    this.checkoutDiffSubscriptions.set(msg.subscriptionId, subscription.unsubscribe);
-
-    this.emit({
-      type: "subscribe_checkout_diff_response",
-      payload: {
-        subscriptionId: msg.subscriptionId,
-        ...subscription.initial,
-        requestId: msg.requestId,
-      },
-    });
-  }
-
-  private handleUnsubscribeCheckoutDiffRequest(msg: UnsubscribeCheckoutDiffRequest): void {
-    this.checkoutDiffSubscriptions.get(msg.subscriptionId)?.();
-    this.checkoutDiffSubscriptions.delete(msg.subscriptionId);
-  }
-
-  private emitCheckoutStatusUpdate(cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
-    try {
-      const requestId = `subscription:${cwd}`;
-      this.emit({
-        type: "checkout_status_update",
-        payload: {
-          ...buildCheckoutStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-          prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.warn(
-        { err: error, cwd },
-        "Failed to emit workspace checkout status update",
-      );
-    }
-  }
-
-  private async handleCheckoutSwitchBranchRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_switch_branch_request" }>,
-  ): Promise<void> {
-    const { cwd, branch, requestId } = msg;
-
-    try {
-      const checkoutResult = await this.checkoutExistingBranch(cwd, branch);
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-
-      // Push a workspace_update immediately so the sidebar/header reflect
-      // the new branch name without waiting for the background git watcher.
-      await this.emitWorkspaceUpdateForCwd(cwd);
-
-      this.emit({
-        type: "checkout_switch_branch_response",
-        payload: {
-          cwd,
-          success: true,
-          branch,
-          source: checkoutResult.source,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_switch_branch_response",
-        payload: {
-          cwd,
-          success: false,
-          branch,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutRenameBranchRequest(msg: CheckoutRenameBranchRequest): Promise<void> {
-    const { cwd, branch, requestId } = msg;
-    const validation = validateBranchSlug(branch);
-
-    if (!validation.valid) {
-      this.emit({
-        type: "checkout.rename_branch.response",
-        payload: {
-          cwd,
-          success: false,
-          currentBranch: null,
-          error: toCheckoutError(new Error(validation.error ?? "Invalid branch name")),
-          requestId,
-        },
-      });
-      return;
-    }
-
-    try {
-      const result = await this.renameCurrentBranch(cwd, branch);
-      await this.notifyGitMutation(cwd, "rename-branch", { invalidateGithub: true });
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-      this.handleWorkspaceGitBranchSnapshot(cwd, result.currentBranch);
-
-      // Branch is a git fact derived per-descriptor from each workspace's own
-      // live git snapshot (id → cwd); the reconciliation pass re-persists the
-      // `branch` field per workspace from its own cwd. No cwd → ids fan-out here.
-      // TODO(K10): PR-binding on branch rename is deferred — see plan K10.
-
-      // Push a workspace_update immediately so the sidebar/header reflect
-      // the new branch name without waiting for the background git watcher.
-      await this.emitWorkspaceUpdateForCwd(cwd);
-
-      this.emit({
-        type: "checkout.rename_branch.response",
-        payload: {
-          cwd,
-          success: true,
-          currentBranch: result.currentBranch,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout.rename_branch.response",
-        payload: {
-          cwd,
-          success: false,
-          currentBranch: null,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Stash handlers
-  // ---------------------------------------------------------------------------
-
-  private static readonly PASEO_STASH_PREFIX = "paseo-auto-stash:";
-
-  private async handleStashSaveRequest(
-    msg: Extract<SessionInboundMessage, { type: "stash_save_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-    try {
-      const branchLabel = msg.branch?.trim() ?? "";
-      const message = branchLabel
-        ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
-        : `${Session.PASEO_STASH_PREFIX} unnamed`;
-      await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], {
-        cwd,
-      });
-      await this.notifyGitMutation(cwd, "stash-push");
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-      this.emit({
-        type: "stash_save_response",
-        payload: { cwd, success: true, error: null, requestId },
-      });
-    } catch (error) {
-      this.emit({
-        type: "stash_save_response",
-        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
-      });
-    }
-  }
-
-  private async handleStashPopRequest(
-    msg: Extract<SessionInboundMessage, { type: "stash_pop_request" }>,
-  ): Promise<void> {
-    const { cwd, stashIndex, requestId } = msg;
-    try {
-      await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], {
-        cwd,
-      });
-      await this.notifyGitMutation(cwd, "stash-pop");
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-      this.emit({
-        type: "stash_pop_response",
-        payload: { cwd, success: true, error: null, requestId },
-      });
-    } catch (error) {
-      this.emit({
-        type: "stash_pop_response",
-        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
-      });
-    }
-  }
-
-  private async handleStashListRequest(
-    msg: Extract<SessionInboundMessage, { type: "stash_list_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-    const paseoOnly = msg.paseoOnly !== false;
-    try {
-      const entries = await this.workspaceGitService.listStashes(cwd, { paseoOnly });
-
-      this.emit({
-        type: "stash_list_response",
-        payload: { cwd, entries, error: null, requestId },
-      });
-    } catch (error) {
-      this.emit({
-        type: "stash_list_response",
-        payload: { cwd, entries: [], error: toCheckoutError(error), requestId },
-      });
-    }
-  }
-
-  private async handleCheckoutCommitRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_commit_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      let message = msg.message?.trim() ?? "";
-      if (!message) {
-        message = await this.generateCommitMessage(cwd);
-      }
-      if (!message) {
-        throw new Error("Commit message is required");
-      }
-
-      await commitChanges(cwd, {
-        message,
-        addAll: msg.addAll ?? true,
-      });
-      await this.notifyGitMutation(cwd, "commit-changes");
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-
-      this.emit({
-        type: "checkout_commit_response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_commit_response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutMergeRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_merge_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-      if (!snapshot.git.isGit) {
-        throw new Error(`Not a git repository: ${cwd}`);
-      }
-
-      if (msg.requireCleanTarget) {
-        if (snapshot.git.isDirty) {
-          throw new Error("Working directory has uncommitted changes.");
-        }
-      }
-
-      let baseRef = msg.baseRef ?? snapshot.git.baseRef;
-      if (!baseRef) {
-        throw new Error("Base branch is required for merge");
-      }
-      if (baseRef.startsWith("origin/")) {
-        baseRef = baseRef.slice("origin/".length);
-      }
-
-      const mutatedCwd = await mergeToBase(
-        cwd,
-        {
-          baseRef,
-          mode: msg.strategy === "squash" ? "squash" : "merge",
-        },
-        { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
-      );
-      await Promise.all([
-        this.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateGithub: true }),
-        ...(mutatedCwd !== cwd ? [this.notifyGitMutation(cwd, "merge-to-base")] : []),
-      ]);
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-
-      this.emit({
-        type: "checkout_merge_response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_merge_response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutMergeFromBaseRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_merge_from_base_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      if (msg.requireCleanTarget ?? true) {
-        const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-        if (snapshot.git.isDirty) {
-          throw new Error("Working directory has uncommitted changes.");
-        }
-      }
-
-      await mergeFromBase(cwd, {
-        baseRef: msg.baseRef,
-        requireCleanTarget: msg.requireCleanTarget ?? true,
-      });
-      await this.notifyGitMutation(cwd, "merge-from-base", { invalidateGithub: true });
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-
-      this.emit({
-        type: "checkout_merge_from_base_response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_merge_from_base_response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutPullRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_pull_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      await pullCurrentBranch(cwd);
-      await this.notifyGitMutation(cwd, "pull", { invalidateGithub: true });
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-
-      this.emit({
-        type: "checkout_pull_response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_pull_response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutPushRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_push_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      await pushCurrentBranch(cwd);
-      await this.notifyGitMutation(cwd, "push", { invalidateGithub: true });
-      this.emit({
-        type: "checkout_push_response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_push_response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutRefreshRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout.refresh.request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      this.github.invalidate({ cwd });
-      await this.workspaceGitService.getSnapshot(cwd, {
-        force: true,
-        includeGitHub: true,
-        reason: "manual-refresh",
-      });
-      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
-      this.emit({
-        type: "checkout.refresh.response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout.refresh.response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutPrCreateRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      let title = msg.title?.trim() ?? "";
-      let body = msg.body?.trim() ?? "";
-
-      if (!title || !body) {
-        const generated = await this.generatePullRequestText(cwd, msg.baseRef);
-        if (!title) title = generated.title;
-        if (!body) body = generated.body;
-      }
-
-      const result = await createPullRequest(
-        cwd,
-        {
-          title,
-          body,
-          base: msg.baseRef,
-        },
-        this.github,
-      );
-      await this.notifyGitMutation(cwd, "create-pr", { invalidateGithub: true });
-
-      this.emit({
-        type: "checkout_pr_create_response",
-        payload: {
-          cwd,
-          url: result.url ?? null,
-          number: result.number ?? null,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_pr_create_response",
-        payload: {
-          cwd,
-          url: null,
-          number: null,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutPrMergeRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_pr_merge_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      const pullRequest = await this.resolveCurrentPullRequest(cwd, "merge", {
-        force: true,
-        includeGitHub: true,
-        reason: "merge-pr-validation",
-      });
-      this.assertCurrentPullRequestHasGithubMergeFacts(pullRequest);
-      await this.github.mergePullRequest({
-        cwd,
-        prNumber: pullRequest.number,
-        mergeMethod: msg.mergeMethod,
-        status: pullRequest,
-      });
-      await this.notifyGitMutation(cwd, "merge-pr", { invalidateGithub: true });
-
-      this.emit({
-        type: "checkout_pr_merge_response",
-        payload: {
-          cwd,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_pr_merge_response",
-        payload: {
-          cwd,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private assertCurrentPullRequestHasGithubMergeFacts(
-    pullRequest: CurrentWorkspacePullRequest,
-  ): void {
-    if (!pullRequest.github) {
-      throw new Error("GitHub merge facts are unavailable for this pull request");
-    }
-  }
-
-  private async handleCheckoutGithubSetAutoMergeRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout.github.set_auto_merge.request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      const pullRequest = await this.resolveCurrentPullRequest(cwd, "auto-merge", {
-        force: true,
-        includeGitHub: true,
-        reason: "auto-merge-validation",
-      });
-      if (msg.enabled) {
-        const mergeMethod = msg.mergeMethod;
-        if (!mergeMethod) {
-          throw new Error("mergeMethod is required when enabling auto-merge");
-        }
-        assertPullRequestAutoMergeEnableReady({
-          mergeMethod,
-          status: pullRequest,
-        });
-        await this.github.enablePullRequestAutoMerge({
-          cwd,
-          prNumber: pullRequest.number,
-          mergeMethod,
-          status: pullRequest,
-        });
-      } else {
-        if (msg.mergeMethod) {
-          throw new Error("mergeMethod is not allowed when disabling auto-merge");
-        }
-        assertPullRequestAutoMergeDisableReady({ status: pullRequest });
-        await this.github.disablePullRequestAutoMerge({
-          cwd,
-          prNumber: pullRequest.number,
-          status: pullRequest,
-        });
-      }
-      await this.notifyGitMutation(
-        cwd,
-        msg.enabled ? "enable-pr-auto-merge" : "disable-pr-auto-merge",
-        {
-          invalidateGithub: true,
-        },
-      );
-
-      this.emit({
-        type: "checkout.github.set_auto_merge.response",
-        payload: {
-          cwd,
-          enabled: msg.enabled,
-          success: true,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout.github.set_auto_merge.response",
-        payload: {
-          cwd,
-          enabled: msg.enabled,
-          success: false,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async resolveCurrentPullRequest(
-    cwd: string,
-    operation: "merge" | "auto-merge",
-    options?: WorkspaceGitSnapshotOptions,
-  ): Promise<CurrentWorkspacePullRequest> {
-    const snapshot = await this.workspaceGitService.getSnapshot(cwd, options);
-    const pullRequest = snapshot.github.pullRequest;
-    if (!pullRequest || typeof pullRequest.number !== "number") {
-      throw new Error(`Unable to determine GitHub pull request number for ${operation}`);
-    }
-    return { ...pullRequest, number: pullRequest.number };
-  }
-
-  private async handleCheckoutPrStatusRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout_pr_status_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = msg;
-
-    try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-      this.emit({
-        type: "checkout_pr_status_response",
-        payload: buildCheckoutPrStatusPayloadFromSnapshot({
-          cwd,
-          requestId,
-          snapshot,
-        }),
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout_pr_status_response",
-        payload: {
-          cwd,
-          status: null,
-          githubFeaturesEnabled: true,
-          error: toCheckoutError(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private async handlePullRequestTimelineRequest(
-    msg: Extract<SessionInboundMessage, { type: "pull_request_timeline_request" }>,
-  ): Promise<void> {
-    const { cwd, prNumber, repoOwner, repoName, requestId } = msg;
-
-    if (!isValidPullRequestTimelineIdentity({ prNumber, repoOwner, repoName })) {
-      this.emit({
-        type: "pull_request_timeline_response",
-        payload: {
-          cwd,
-          prNumber,
-          items: [],
-          truncated: false,
-          error: {
-            kind: "unknown",
-            message: "Pull request timeline request has invalid PR identity",
-          },
-          requestId,
-          githubFeaturesEnabled: true,
-        },
-      });
-      return;
-    }
-
-    const githubFeaturesEnabled = await this.github.isAuthenticated({ cwd });
-    if (!githubFeaturesEnabled) {
-      this.emit({
-        type: "pull_request_timeline_response",
-        payload: {
-          cwd,
-          prNumber,
-          items: [],
-          truncated: false,
-          error: {
-            kind: "unknown",
-            message: "GitHub CLI is unavailable or not authenticated",
-          },
-          requestId,
-          githubFeaturesEnabled: false,
-        },
-      });
-      return;
-    }
-
-    try {
-      const timeline = await this.github.getPullRequestTimeline({
-        cwd,
-        prNumber,
-        repoOwner,
-        repoName,
-      });
-      this.emit({
-        type: "pull_request_timeline_response",
-        payload: {
-          cwd,
-          prNumber: timeline.prNumber,
-          items: timeline.items.map(toPullRequestTimelinePayloadItem),
-          truncated: timeline.truncated,
-          error: timeline.error,
-          requestId,
-          githubFeaturesEnabled: true,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "pull_request_timeline_response",
-        payload: {
-          cwd,
-          prNumber,
-          items: [],
-          truncated: false,
-          error: {
-            kind: "unknown",
-            message: error instanceof Error ? error.message : String(error),
-          },
-          requestId,
-          githubFeaturesEnabled: true,
-        },
-      });
-    }
-  }
-
-  private async handleCheckoutGithubGetCheckDetailsRequest(
-    msg: Extract<SessionInboundMessage, { type: "checkout.github.get_check_details.request" }>,
-  ): Promise<void> {
-    const { cwd, repoOwner, repoName, checkRunId, workflowRunId, requestId } = msg;
-
-    try {
-      const details = await this.github.getGitHubCheckDetails({
-        cwd,
-        repoOwner,
-        repoName,
-        checkRunId,
-        workflowRunId,
-      });
-      this.emit({
-        type: "checkout.github.get_check_details.response",
-        payload: {
-          cwd,
-          success: true,
-          details,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "checkout.github.get_check_details.response",
-        payload: {
-          cwd,
-          success: false,
-          details: null,
-          error: {
-            code: "UNKNOWN",
-            message: error instanceof Error ? error.message : String(error),
-          },
-          requestId,
-        },
-      });
-    }
   }
 
   private async handlePaseoWorktreeListRequest(
@@ -6075,238 +3940,6 @@ export class Session {
       },
       msg,
     );
-  }
-
-  /**
-   * Handle read-only file explorer requests scoped to a workspace cwd
-   */
-  private async handleFileExplorerRequest(request: FileExplorerRequest): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath = ".", mode, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      this.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd: workspaceCwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: "cwd is required",
-          requestId,
-        },
-      });
-      return;
-    }
-
-    try {
-      if (mode === "list") {
-        const directory = await listDirectoryEntries({
-          root: cwd,
-          relativePath: requestedPath,
-        });
-
-        this.emit({
-          type: "file_explorer_response",
-          payload: {
-            cwd,
-            path: directory.path,
-            mode,
-            directory,
-            file: null,
-            error: null,
-            requestId,
-          },
-        });
-      } else {
-        if (request.acceptBinary && this.onBinaryMessage) {
-          const file = await readExplorerFileBytes({
-            root: cwd,
-            relativePath: requestedPath,
-          });
-
-          this.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileBegin,
-              requestId,
-              metadata: {
-                mime: file.mimeType,
-                size: file.size,
-                encoding: file.encoding,
-                modifiedAt: file.modifiedAt,
-              },
-            }),
-          );
-          this.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileChunk,
-              requestId,
-              payload: file.bytes,
-            }),
-          );
-          this.emitBinary(
-            encodeFileTransferFrame({
-              opcode: FileTransferOpcode.FileEnd,
-              requestId,
-            }),
-          );
-        } else {
-          const file = await readExplorerFile({
-            root: cwd,
-            relativePath: requestedPath,
-          });
-
-          this.emit({
-            type: "file_explorer_response",
-            payload: {
-              cwd,
-              path: file.path,
-              mode,
-              directory: null,
-              file,
-              error: null,
-              requestId,
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, cwd, path: requestedPath },
-        `Failed to fulfill file explorer request for workspace ${cwd}`,
-      );
-      this.emit({
-        type: "file_explorer_response",
-        payload: {
-          cwd,
-          path: requestedPath,
-          mode,
-          directory: null,
-          file: null,
-          error: getErrorMessage(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  private handleFileUploadRequest(request: FileUploadRequest): void {
-    this.fileUploads.beginUpload(request);
-  }
-
-  private async handleFileTransferFrame(frame: FileTransferFrame): Promise<void> {
-    const response = await this.fileUploads.receiveFrame(frame);
-    if (response) {
-      this.emit(response);
-    }
-  }
-
-  /**
-   * Handle project icon request for a given cwd
-   */
-  private async handleProjectIconRequest(
-    request: Extract<SessionInboundMessage, { type: "project_icon_request" }>,
-  ): Promise<void> {
-    const { cwd, requestId } = request;
-
-    try {
-      const icon = await getProjectIcon(cwd);
-      this.emit({
-        type: "project_icon_response",
-        payload: {
-          cwd,
-          icon,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.emit({
-        type: "project_icon_response",
-        payload: {
-          cwd,
-          icon: null,
-          error: getErrorMessage(error),
-          requestId,
-        },
-      });
-    }
-  }
-
-  /**
-   * Handle file download token request scoped to a workspace cwd
-   */
-  private async handleFileDownloadTokenRequest(request: FileDownloadTokenRequest): Promise<void> {
-    const { cwd: workspaceCwd, path: requestedPath, requestId } = request;
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      this.emit({
-        type: "file_download_token_response",
-        payload: {
-          cwd: workspaceCwd,
-          path: requestedPath,
-          token: null,
-          fileName: null,
-          mimeType: null,
-          size: null,
-          error: "cwd is required",
-          requestId,
-        },
-      });
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { cwd, path: requestedPath },
-      `Handling file download token request for workspace ${cwd} (${requestedPath})`,
-    );
-
-    try {
-      const info = await getDownloadableFileInfo({
-        root: cwd,
-        relativePath: requestedPath,
-      });
-
-      const entry = this.downloadTokenStore.issueToken({
-        path: info.path,
-        absolutePath: info.absolutePath,
-        fileName: info.fileName,
-        mimeType: info.mimeType,
-        size: info.size,
-      });
-
-      this.emit({
-        type: "file_download_token_response",
-        payload: {
-          cwd,
-          path: info.path,
-          token: entry.token,
-          fileName: entry.fileName,
-          mimeType: entry.mimeType,
-          size: entry.size,
-          error: null,
-          requestId,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, cwd, path: requestedPath },
-        `Failed to issue download token for workspace ${cwd}`,
-      );
-      this.emit({
-        type: "file_download_token_response",
-        payload: {
-          cwd,
-          path: requestedPath,
-          token: null,
-          fileName: null,
-          mimeType: null,
-          size: null,
-          error: getErrorMessage(error),
-          requestId,
-        },
-      });
-    }
   }
 
   private async listTerminalActivityContributions(): Promise<
@@ -6452,6 +4085,33 @@ export class Session {
     return this.isProviderVisibleToClient(payload.provider) ? payload : null;
   }
 
+  private async resolveDelegationRootWorkspaceId(agentId: string): Promise<string | null> {
+    const seen = new Set<string>();
+    let currentAgentId = agentId;
+
+    while (true) {
+      if (seen.has(currentAgentId)) {
+        return null;
+      }
+      seen.add(currentAgentId);
+
+      const live = this.agentManager.getAgent(currentAgentId);
+      const source = live ?? (await this.agentStorage.get(currentAgentId));
+      if (!source) {
+        return null;
+      }
+      if ("archivedAt" in source && source.archivedAt) {
+        return null;
+      }
+
+      const parentAgentId = getParentAgentIdFromLabels(source.labels);
+      if (!parentAgentId) {
+        return source.workspaceId ?? null;
+      }
+      currentAgentId = parentAgentId;
+    }
+  }
+
   private async buildActiveProjectPlacementsByWorkspaceId(): Promise<
     Map<string, ProjectPlacementPayload>
   > {
@@ -6569,7 +4229,10 @@ export class Session {
       if (existing) {
         return existing;
       }
-      const placementPromise = this.buildProjectPlacementForWorkspaceId(workspaceId);
+      const placementPromise =
+        request.type === "fetch_agent_history_request"
+          ? this.buildProjectPlacementForExistingWorkspaceProject(workspaceId)
+          : this.buildProjectPlacementForWorkspaceId(workspaceId);
       placementByWorkspaceId.set(workspaceId, placementPromise);
       return placementPromise;
     };
@@ -7002,6 +4665,30 @@ export class Session {
     return workspaceRecord;
   }
 
+  private async findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
+    const normalizedCwd = resolve(cwd);
+    const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
+    const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
+    const projectRecord = await this.resolveProjectRecordForPlacement({
+      membership,
+      timestamp: new Date().toISOString(),
+    });
+    await this.projectRegistry.upsert(projectRecord);
+    return projectRecord;
+  }
+
+  private buildProjectDescriptor(
+    project: PersistedProjectRecord,
+  ): WorkspaceProjectDescriptorPayload {
+    return {
+      projectId: project.projectId,
+      projectDisplayName: resolveProjectDisplayName(project),
+      projectCustomName: project.customName ?? null,
+      projectRootPath: project.rootPath,
+      projectKind: project.kind,
+    };
+  }
+
   private async reclassifyOrUnarchiveWorkspaceForDirectory(input: {
     workspace: PersistedWorkspaceRecord;
     project: PersistedProjectRecord | null;
@@ -7023,6 +4710,9 @@ export class Session {
       input.workspace.kind === kind &&
       input.workspace.displayName === displayName
     ) {
+      if (!input.project) {
+        await this.projectRegistry.upsert(projectRecord);
+      }
       return this.ensureWorkspaceRecordUnarchived(input.workspace);
     }
 
@@ -7327,7 +5017,7 @@ export class Session {
 
   private async emitWorkspaceUpdatesForWorkspaceIds(
     workspaceIds: Iterable<string>,
-    options?: { skipReconcile?: boolean; dedupeGitState?: boolean },
+    options?: { skipReconcile?: boolean; dedupeGitState?: boolean; removedProjectId?: string },
   ): Promise<void> {
     const subscription = this.workspaceUpdatesSubscription;
     if (!subscription) {
@@ -7356,22 +5046,14 @@ export class Session {
       ) {
         continue;
       }
-      const watchTarget = this.resolveWorkspaceGitWatchTarget(workspaceId);
-      if (watchTarget && this.onBranchChanged) {
-        const newBranchName = nextWorkspace?.name ?? null;
-        if (newBranchName !== watchTarget.lastBranchName) {
-          this.onBranchChanged(workspaceId, watchTarget.lastBranchName, newBranchName);
-        }
-      }
-      this.rememberWorkspaceGitDescriptorState(workspaceId, nextWorkspace);
+      this.recordWorkspaceGitDescriptorState(workspaceId, nextWorkspace);
 
       if (!nextWorkspace) {
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
-        this.bufferOrEmitWorkspaceUpdate(subscription, {
-          kind: "remove",
-          id: workspaceId,
-          ...(await this.resolveEmptyProjectForArchivedWorkspace(workspaceId)),
-        });
+        this.bufferOrEmitWorkspaceUpdate(
+          subscription,
+          await this.buildWorkspaceRemoveUpdatePayload(workspaceId, options?.removedProjectId),
+        );
         continue;
       }
 
@@ -7397,20 +5079,48 @@ export class Session {
     }
   }
 
-  // When a workspace is archived its project may become empty. Resolve the
-  // now-empty project parent so the `remove` update can carry it, keeping the
-  // sidebar's empty project row in sync without a full re-hydration.
-  private async resolveEmptyProjectForArchivedWorkspace(
+  private recordWorkspaceGitDescriptorState(
+    workspaceId: string,
+    nextWorkspace: WorkspaceDescriptorPayload | null,
+  ): void {
+    const watchTarget = this.resolveWorkspaceGitWatchTarget(workspaceId);
+    if (watchTarget && this.onBranchChanged) {
+      const newBranchName = nextWorkspace?.name ?? null;
+      if (newBranchName !== watchTarget.lastBranchName) {
+        this.onBranchChanged(workspaceId, watchTarget.lastBranchName, newBranchName);
+      }
+    }
+    this.rememberWorkspaceGitDescriptorState(workspaceId, nextWorkspace);
+  }
+
+  private async buildWorkspaceRemoveUpdatePayload(
+    workspaceId: string,
+    removedProjectId?: string,
+  ): Promise<WorkspaceUpdatePayload> {
+    if (removedProjectId) {
+      return { kind: "remove", id: workspaceId, removedProjectId };
+    }
+    return {
+      kind: "remove",
+      id: workspaceId,
+      ...(await this.resolveProjectWithoutActiveWorkspacesForArchivedWorkspace(workspaceId)),
+    };
+  }
+
+  // When a workspace is archived its project may have no active workspaces left.
+  // Resolve that project parent so the `remove` update can carry it, keeping the
+  // sidebar in sync without a full re-hydration.
+  private async resolveProjectWithoutActiveWorkspacesForArchivedWorkspace(
     workspaceId: string,
   ): Promise<{ emptyProject: WorkspaceProjectDescriptorPayload } | null> {
     const archivedWorkspace = await this.workspaceRegistry.get(workspaceId);
     if (!archivedWorkspace) {
       return null;
     }
-    const emptyProject = (await this.workspaceDirectory.listEmptyProjects()).find(
+    const projectWithoutActiveWorkspaces = (await this.workspaceDirectory.listEmptyProjects()).find(
       (project) => project.projectId === archivedWorkspace.projectId,
     );
-    return emptyProject ? { emptyProject } : null;
+    return projectWithoutActiveWorkspaces ? { emptyProject: projectWithoutActiveWorkspaces } : null;
   }
 
   private async emitWorkspaceUpdateForTerminalContribution(
@@ -7958,6 +5668,69 @@ export class Session {
         payload: {
           requestId: request.requestId,
           workspace: null,
+          error: message,
+        },
+      });
+    }
+  }
+
+  private async handleProjectAddRequest(
+    request: Extract<SessionInboundMessage, { type: "project.add.request" }>,
+  ): Promise<void> {
+    const requestedCwd = request.cwd;
+    const cwd = expandTilde(requestedCwd);
+    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+    if (!directoryExists) {
+      this.sessionLogger.info(
+        { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
+        "Add project rejected",
+      );
+      this.emit({
+        type: "project.add.response",
+        payload: {
+          requestId: request.requestId,
+          project: null,
+          error: `Directory not found: ${cwd}`,
+          errorCode: "directory_not_found",
+        },
+      });
+      return;
+    }
+
+    try {
+      const projectsBefore = new Map<string, PersistedProjectRecord>();
+      for (const project of await this.projectRegistry.list()) {
+        projectsBefore.set(project.projectId, project);
+      }
+      const project = await this.findOrCreateProjectForDirectory(cwd);
+      this.sessionLogger.info(
+        {
+          requestedCwd,
+          resolvedCwd: cwd,
+          projectId: project.projectId,
+          projectKind: project.kind,
+          projectTransition: describeRegistryTransition(
+            projectsBefore.get(project.projectId) ?? null,
+          ),
+        },
+        "Project added",
+      );
+      this.emit({
+        type: "project.add.response",
+        payload: {
+          requestId: request.requestId,
+          project: this.buildProjectDescriptor(project),
+          error: null,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to add project";
+      this.sessionLogger.error({ err: error, cwd }, "Failed to add project");
+      this.emit({
+        type: "project.add.response",
+        payload: {
+          requestId: request.requestId,
+          project: null,
           error: message,
         },
       });
@@ -8819,581 +6592,6 @@ export class Session {
   }
 
   /**
-   * Handle audio chunk for buffering and transcription
-   */
-  private async ensureAudioBufferForFormat(
-    chunkFormat: string,
-    isPCMChunk: boolean,
-  ): Promise<AudioBufferState> {
-    if (!this.audioBuffer) {
-      this.audioBuffer = {
-        chunks: [],
-        format: chunkFormat,
-        isPCM: isPCMChunk,
-        totalPCMBytes: 0,
-      };
-      return this.audioBuffer;
-    }
-    if (this.audioBuffer.isPCM !== isPCMChunk) {
-      this.sessionLogger.debug(
-        {
-          oldFormat: this.audioBuffer.isPCM ? "pcm" : this.audioBuffer.format,
-          newFormat: chunkFormat,
-        },
-        `Audio format changed mid-stream, flushing current buffer`,
-      );
-      const finalized = this.finalizeBufferedAudio();
-      if (finalized) {
-        await this.processCompletedAudio(finalized.audio, finalized.format);
-      }
-      this.audioBuffer = {
-        chunks: [],
-        format: chunkFormat,
-        isPCM: isPCMChunk,
-        totalPCMBytes: 0,
-      };
-      return this.audioBuffer;
-    }
-    if (!this.audioBuffer.isPCM) {
-      this.audioBuffer.format = chunkFormat;
-    }
-    return this.audioBuffer;
-  }
-
-  private async forwardAudioChunkToVoiceTurn(
-    msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>,
-    chunkFormat: string,
-  ): Promise<void> {
-    if (!this.voiceTurnController) {
-      throw new Error("Voice mode is enabled but the voice turn controller is not running");
-    }
-    const chunkBytes = Buffer.byteLength(msg.audio, "base64");
-    this.voiceInputChunkCount += 1;
-    this.voiceInputBytes += chunkBytes;
-    const now = Date.now();
-    if (this.voiceInputChunkCount % 50 === 0 || now - this.voiceInputWindowStartedAt >= 1000) {
-      this.sessionLogger.info(
-        {
-          chunkCount: this.voiceInputChunkCount,
-          audioBytes: this.voiceInputBytes,
-          windowMs: now - this.voiceInputWindowStartedAt,
-          format: chunkFormat,
-        },
-        "Voice input chunk summary",
-      );
-      this.voiceInputWindowStartedAt = now;
-      this.voiceInputChunkCount = 0;
-      this.voiceInputBytes = 0;
-    }
-    await this.voiceTurnController.appendClientChunk({
-      audioBase64: msg.audio,
-      format: chunkFormat,
-    });
-  }
-
-  private async handleAudioChunk(
-    msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>,
-  ): Promise<void> {
-    if (!this.isVoiceMode) {
-      this.sessionLogger.warn(
-        "Received voice_audio_chunk while voice mode is disabled; transcript will be emitted but voice assistant turn is skipped",
-      );
-    }
-
-    const chunkFormat = msg.format || "audio/wav";
-
-    if (this.isVoiceMode) {
-      await this.forwardAudioChunkToVoiceTurn(msg, chunkFormat);
-      return;
-    }
-
-    const chunkBuffer = Buffer.from(msg.audio, "base64");
-    const isPCMChunk = chunkFormat.toLowerCase().includes("pcm");
-
-    const buffer = await this.ensureAudioBufferForFormat(chunkFormat, isPCMChunk);
-
-    buffer.chunks.push(chunkBuffer);
-    if (buffer.isPCM) {
-      buffer.totalPCMBytes += chunkBuffer.length;
-    }
-
-    // In non-voice mode, use streaming threshold to process chunks
-    const reachedStreamingThreshold =
-      !this.isVoiceMode && buffer.isPCM && buffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
-
-    if (!msg.isLast && reachedStreamingThreshold) {
-      return;
-    }
-
-    const bufferedState = this.audioBuffer;
-    const finalized = this.finalizeBufferedAudio();
-    if (!finalized) {
-      return;
-    }
-
-    if (!msg.isLast && reachedStreamingThreshold) {
-      this.sessionLogger.debug(
-        {
-          minDuration: MIN_STREAMING_SEGMENT_DURATION_MS,
-          pcmBytes: bufferedState?.totalPCMBytes ?? 0,
-        },
-        `Minimum chunk duration reached (~${MIN_STREAMING_SEGMENT_DURATION_MS}ms, ${
-          bufferedState?.totalPCMBytes ?? 0
-        } PCM bytes) – triggering STT`,
-      );
-    } else {
-      this.sessionLogger.debug(
-        { audioBytes: finalized.audio.length, chunks: bufferedState?.chunks.length ?? 0 },
-        `Complete audio segment (${finalized.audio.length} bytes, ${bufferedState?.chunks.length ?? 0} chunk(s))`,
-      );
-    }
-
-    await this.processCompletedAudio(finalized.audio, finalized.format);
-  }
-
-  private finalizeBufferedAudio(): { audio: Buffer; format: string } | null {
-    if (!this.audioBuffer) {
-      return null;
-    }
-
-    const bufferState = this.audioBuffer;
-    this.audioBuffer = null;
-
-    if (bufferState.isPCM) {
-      const pcmBuffer = Buffer.concat(bufferState.chunks);
-      const wavBuffer = convertPCMToWavBuffer(
-        pcmBuffer,
-        PCM_SAMPLE_RATE,
-        PCM_CHANNELS,
-        PCM_BITS_PER_SAMPLE,
-      );
-      return {
-        audio: wavBuffer,
-        format: "audio/wav",
-      };
-    }
-
-    return {
-      audio: Buffer.concat(bufferState.chunks),
-      format: bufferState.format,
-    };
-  }
-
-  private async processCompletedAudio(audio: Buffer, format: string): Promise<void> {
-    if (this.processingPhase === "transcribing") {
-      this.sessionLogger.debug(
-        { phase: this.processingPhase, segmentCount: this.pendingAudioSegments.length + 1 },
-        `Buffering audio segment (phase: ${this.processingPhase})`,
-      );
-      this.pendingAudioSegments.push({
-        audio,
-        format,
-      });
-      this.setBufferTimeout();
-      return;
-    }
-
-    if (this.pendingAudioSegments.length > 0) {
-      this.pendingAudioSegments.push({
-        audio,
-        format,
-      });
-      this.sessionLogger.debug(
-        { segmentCount: this.pendingAudioSegments.length },
-        `Processing ${this.pendingAudioSegments.length} buffered segments together`,
-      );
-
-      const pendingSegments = [...this.pendingAudioSegments];
-      this.pendingAudioSegments = [];
-      this.clearBufferTimeout();
-
-      const combinedAudio = Buffer.concat(pendingSegments.map((segment) => segment.audio));
-      const combinedFormat = pendingSegments[pendingSegments.length - 1].format;
-
-      await this.processAudio(combinedAudio, combinedFormat);
-      return;
-    }
-
-    await this.processAudio(audio, format);
-  }
-
-  private async flushPendingAudioSegments(reason: string): Promise<void> {
-    if (this.processingPhase === "transcribing" || this.pendingAudioSegments.length === 0) {
-      return;
-    }
-
-    const pendingSegments = [...this.pendingAudioSegments];
-    this.pendingAudioSegments = [];
-    this.clearBufferTimeout();
-
-    this.sessionLogger.debug(
-      { reason, segmentCount: pendingSegments.length },
-      `Flushing ${pendingSegments.length} buffered audio segment(s)`,
-    );
-
-    const combinedAudio = Buffer.concat(pendingSegments.map((segment) => segment.audio));
-    const combinedFormat = pendingSegments[pendingSegments.length - 1].format;
-
-    await this.processAudio(combinedAudio, combinedFormat);
-  }
-
-  /**
-   * Process audio through STT and then LLM
-   */
-  private async processAudio(audio: Buffer, format: string): Promise<void> {
-    this.setPhase("transcribing");
-
-    this.emit({
-      type: "activity_log",
-      payload: {
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: "system",
-        content: "Transcribing audio...",
-      },
-    });
-
-    try {
-      const requestId = uuidv4();
-      const result = await this.sttManager.transcribe(audio, format, {
-        requestId,
-        label: this.isVoiceMode ? "voice" : "buffered",
-      });
-
-      const transcriptText = result.text.trim();
-      this.sessionLogger.info(
-        {
-          requestId,
-          isVoiceMode: this.isVoiceMode,
-          transcriptLength: transcriptText.length,
-          transcript: transcriptText,
-        },
-        "Transcription result",
-      );
-
-      await this.handleTranscriptionResultPayload({
-        text: result.text,
-        language: result.language,
-        duration: result.duration,
-        requestId,
-        avgLogprob: result.avgLogprob,
-        isLowConfidence: result.isLowConfidence,
-        byteLength: result.byteLength,
-        format: result.format,
-        debugRecordingPath: result.debugRecordingPath,
-      });
-    } catch (error) {
-      this.setPhase("idle");
-      this.clearSpeechInProgress("transcription error");
-      await this.flushPendingAudioSegments("transcription error");
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Transcription error: ${getErrorMessage(error)}`,
-        },
-      });
-      throw error;
-    }
-  }
-
-  private async handleTranscriptionResultPayload(
-    result: VoiceTranscriptionResultPayload,
-  ): Promise<void> {
-    const transcriptText = result.text.trim();
-
-    this.emit({
-      type: "transcription_result",
-      payload: {
-        text: result.text,
-        ...(result.language ? { language: result.language } : {}),
-        ...(result.duration !== undefined ? { duration: result.duration } : {}),
-        requestId: result.requestId,
-        ...(result.avgLogprob !== undefined ? { avgLogprob: result.avgLogprob } : {}),
-        ...(result.isLowConfidence !== undefined
-          ? { isLowConfidence: result.isLowConfidence }
-          : {}),
-        ...(result.byteLength !== undefined ? { byteLength: result.byteLength } : {}),
-        ...(result.format ? { format: result.format } : {}),
-        ...(result.debugRecordingPath ? { debugRecordingPath: result.debugRecordingPath } : {}),
-      },
-    });
-
-    if (!transcriptText) {
-      this.sessionLogger.debug("Empty transcription (false positive), not aborting");
-      this.setPhase("idle");
-      this.clearSpeechInProgress("empty transcription");
-      await this.flushPendingAudioSegments("empty transcription");
-      return;
-    }
-
-    // Has content - abort any in-progress stream now
-    this.createAbortController();
-
-    if (result.debugRecordingPath) {
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "system",
-          content: `Saved input audio: ${result.debugRecordingPath}`,
-          metadata: {
-            recordingPath: result.debugRecordingPath,
-            ...(result.format ? { format: result.format } : {}),
-            requestId: result.requestId,
-          },
-        },
-      });
-    }
-
-    this.emit({
-      type: "activity_log",
-      payload: {
-        id: uuidv4(),
-        timestamp: new Date(),
-        type: "transcript",
-        content: result.text,
-        metadata: {
-          ...(result.language ? { language: result.language } : {}),
-          ...(result.duration !== undefined ? { duration: result.duration } : {}),
-        },
-      },
-    });
-
-    this.clearSpeechInProgress("transcription complete");
-    this.setPhase("idle");
-    if (!this.isVoiceMode) {
-      this.sessionLogger.debug(
-        { requestId: result.requestId },
-        "Skipping voice agent processing because voice mode is disabled",
-      );
-      await this.flushPendingAudioSegments("voice mode disabled");
-      return;
-    }
-
-    const agentId = this.voiceModeAgentId;
-    if (!agentId) {
-      this.sessionLogger.warn(
-        { requestId: result.requestId },
-        "Skipping voice agent processing because no agent is currently voice-enabled",
-      );
-      await this.flushPendingAudioSegments("no active voice agent");
-      return;
-    }
-
-    await this.handleSendAgentMessage(
-      agentId,
-      result.text,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { spokenInput: true },
-    );
-    await this.flushPendingAudioSegments("transcription complete");
-  }
-
-  private registerVoiceBridgeForAgent(agentId: string): void {
-    this.registerVoiceSpeakHandler?.(agentId, async ({ text, signal }) => {
-      this.sessionLogger.info(
-        {
-          agentId,
-          textLength: text.length,
-          preview: text.slice(0, 160),
-        },
-        "Voice speak tool call received by session handler",
-      );
-      const abortSignal = signal ?? this.abortController.signal;
-      await this.ttsManager.generateAndWaitForPlayback(
-        text,
-        (msg) => this.emit(msg),
-        abortSignal,
-        true,
-      );
-      this.sessionLogger.info(
-        { agentId, textLength: text.length },
-        "Voice speak tool call finished playback",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "assistant",
-          content: text,
-        },
-      });
-    });
-
-    this.registerVoiceCallerContext?.(agentId, {
-      childAgentDefaultLabels: {},
-      allowCustomCwd: false,
-      enableVoiceTools: true,
-    });
-  }
-
-  /**
-   * Handle abort request from client
-   */
-  private async handleAbort(): Promise<void> {
-    this.sessionLogger.info(
-      { phase: this.processingPhase },
-      `Abort request, phase: ${this.processingPhase}`,
-    );
-
-    this.abortController.abort();
-    this.ttsManager.cancelPendingPlaybacks("abort request");
-
-    // Voice abort should always interrupt active agent output immediately.
-    if (this.isVoiceMode && this.voiceModeAgentId) {
-      try {
-        await this.interruptAgentIfRunning(this.voiceModeAgentId);
-      } catch (error) {
-        this.sessionLogger.warn(
-          { err: error, agentId: this.voiceModeAgentId },
-          "Failed to interrupt active voice-mode agent on abort",
-        );
-      }
-    }
-
-    if (this.processingPhase === "transcribing") {
-      // Still in STT phase - we'll buffer the next audio
-      this.sessionLogger.debug("Will buffer next audio (currently transcribing)");
-      // Phase stays as 'transcribing', handleAudioChunk will handle buffering
-      return;
-    }
-
-    // Reset phase to idle and clear pending non-voice buffers.
-    this.setPhase("idle");
-    this.pendingAudioSegments = [];
-    this.clearBufferTimeout();
-  }
-
-  /**
-   * Handle audio playback confirmation from client
-   */
-  private handleAudioPlayed(id: string): void {
-    this.ttsManager.confirmAudioPlayed(id);
-  }
-
-  /**
-   * Mark speech detection start and abort any active playback/agent run.
-   */
-  private async handleVoiceSpeechStart(): Promise<void> {
-    if (this.speechInProgress) {
-      return;
-    }
-
-    const chunkReceivedAt = Date.now();
-    const phaseBeforeAbort = this.processingPhase;
-    const hadActiveStream = this.hasActiveAgentRun(this.voiceModeAgentId);
-
-    this.speechInProgress = true;
-    this.sessionLogger.debug("Voice speech detected – aborting playback and active agent run");
-
-    if (this.pendingAudioSegments.length > 0) {
-      this.sessionLogger.debug(
-        { segmentCount: this.pendingAudioSegments.length },
-        `Dropping ${this.pendingAudioSegments.length} buffered audio segment(s) due to voice speech`,
-      );
-      this.pendingAudioSegments = [];
-    }
-
-    if (this.audioBuffer) {
-      this.sessionLogger.debug(
-        { chunks: this.audioBuffer.chunks.length, pcmBytes: this.audioBuffer.totalPCMBytes },
-        `Clearing partial audio buffer (${this.audioBuffer.chunks.length} chunk(s)${
-          this.audioBuffer.isPCM ? `, ${this.audioBuffer.totalPCMBytes} PCM bytes` : ""
-        })`,
-      );
-      this.audioBuffer = null;
-    }
-
-    this.clearBufferTimeout();
-
-    this.abortController.abort();
-    await this.handleAbort();
-
-    const latencyMs = Date.now() - chunkReceivedAt;
-    this.sessionLogger.debug(
-      { latencyMs, phaseBeforeAbort, hadActiveStream },
-      "[Telemetry] barge_in.llm_abort_latency",
-    );
-  }
-
-  /**
-   * Clear speech-in-progress flag once the user turn has completed
-   */
-  private clearSpeechInProgress(reason: string): void {
-    if (!this.speechInProgress) {
-      return;
-    }
-
-    this.speechInProgress = false;
-    this.sessionLogger.debug({ reason }, `Speech turn complete (${reason}) – resuming TTS`);
-  }
-
-  /**
-   * Create new AbortController, aborting the previous one
-   */
-  private createAbortController(): AbortController {
-    this.abortController.abort();
-    this.abortController = new AbortController();
-    this.ttsDebugStreams.clear();
-    return this.abortController;
-  }
-
-  /**
-   * Set the processing phase
-   */
-  private setPhase(phase: ProcessingPhase): void {
-    this.processingPhase = phase;
-    this.sessionLogger.debug({ phase }, `Phase: ${phase}`);
-  }
-
-  /**
-   * Set timeout to process buffered audio segments
-   */
-  private setBufferTimeout(): void {
-    this.clearBufferTimeout();
-
-    this.bufferTimeout = setTimeout(async () => {
-      this.sessionLogger.debug("Buffer timeout reached, processing pending segments");
-
-      if (this.processingPhase === "transcribing") {
-        this.sessionLogger.debug(
-          { segmentCount: this.pendingAudioSegments.length },
-          "Buffer timeout deferred because transcription is still in progress",
-        );
-        this.setBufferTimeout();
-        return;
-      }
-
-      if (this.pendingAudioSegments.length > 0) {
-        const segments = [...this.pendingAudioSegments];
-        this.pendingAudioSegments = [];
-        this.bufferTimeout = null;
-
-        const combined = Buffer.concat(segments.map((s) => s.audio));
-        await this.processAudio(combined, segments[0].format);
-      }
-    }, 10000); // 10 second timeout
-  }
-
-  /**
-   * Clear buffer timeout
-   */
-  private clearBufferTimeout(): void {
-    if (this.bufferTimeout) {
-      clearTimeout(this.bufferTimeout);
-      this.bufferTimeout = null;
-    }
-  }
-
-  /**
    * Emit a message to the client
    */
   private emit(msg: SessionOutboundMessage): void {
@@ -9408,54 +6606,6 @@ export class Session {
         },
         "agent.session.outbound",
       );
-    }
-    if (
-      msg.type === "audio_output" &&
-      (process.env.TTS_DEBUG_AUDIO_DIR || isPaseoDictationDebugEnabled()) &&
-      msg.payload.groupId &&
-      typeof msg.payload.audio === "string"
-    ) {
-      const groupId = msg.payload.groupId;
-      const existing =
-        this.ttsDebugStreams.get(groupId) ??
-        ({ format: msg.payload.format, chunks: [] } satisfies {
-          format: string;
-          chunks: Buffer[];
-        });
-
-      try {
-        existing.chunks.push(Buffer.from(msg.payload.audio, "base64"));
-        existing.format = msg.payload.format;
-        this.ttsDebugStreams.set(groupId, existing);
-      } catch {
-        // ignore malformed base64
-      }
-
-      if (msg.payload.isLastChunk) {
-        const final = this.ttsDebugStreams.get(groupId);
-        this.ttsDebugStreams.delete(groupId);
-        if (final && final.chunks.length > 0) {
-          void (async () => {
-            const recordingPath = await maybePersistTtsDebugAudio(
-              Buffer.concat(final.chunks),
-              { sessionId: this.sessionId, groupId, format: final.format },
-              this.sessionLogger,
-            );
-            if (recordingPath) {
-              this.onMessage({
-                type: "activity_log",
-                payload: {
-                  id: uuidv4(),
-                  timestamp: new Date(),
-                  type: "system",
-                  content: `Saved TTS audio: ${recordingPath}`,
-                  metadata: { recordingPath, format: final.format, groupId },
-                },
-              });
-            }
-          })();
-        }
-      }
     }
     this.onMessage(msg);
   }
@@ -9485,26 +6635,9 @@ export class Session {
       this.unsubscribeTerminalWorkspaceContributionEvents();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
     }
-    if (this.unsubscribeProviderSnapshotEvents) {
-      this.unsubscribeProviderSnapshotEvents();
-      this.unsubscribeProviderSnapshotEvents = null;
-    }
+    this.providerCatalogSession.dispose();
 
-    // Abort any ongoing operations
-    this.abortController.abort();
-
-    // Clear timeouts
-    this.clearBufferTimeout();
-
-    // Clear buffers
-    this.pendingAudioSegments = [];
-    this.audioBuffer = null;
-    await this.stopVoiceTurnController();
-
-    // Cleanup managers
-    this.ttsManager.cleanup();
-    this.sttManager.cleanup();
-    this.dictationStreamManager.cleanupAll();
+    await this.voiceSession.cleanup();
 
     // Close MCP clients
     if (this.agentMcpClient) {
@@ -9517,594 +6650,13 @@ export class Session {
       this.agentTools = null;
     }
 
-    await this.disableVoiceModeForActiveAgent(true);
-    this.isVoiceMode = false;
-
     this.terminalController.dispose();
 
-    for (const unsubscribe of this.checkoutDiffSubscriptions.values()) {
-      unsubscribe();
-    }
-    this.checkoutDiffSubscriptions.clear();
+    this.checkoutSession.cleanup();
 
     for (const unsubscribe of this.workspaceGitSubscriptions.values()) {
       unsubscribe();
     }
     this.workspaceGitSubscriptions.clear();
   }
-
-  private emitChatRpcError(request: { requestId: string; type: string }, error: unknown): void {
-    const message = error instanceof Error ? error.message : "Chat request failed";
-    const code = error instanceof ChatServiceError ? error.code : "chat_request_failed";
-    this.sessionLogger.error({ err: error, requestType: request.type }, "Chat request failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: request.requestId,
-        requestType: request.type,
-        error: message,
-        code,
-      },
-    });
-  }
-
-  private async handleChatCreateRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/create" }>,
-  ): Promise<void> {
-    try {
-      const room = await this.chatService.createRoom({
-        name: request.name,
-        purpose: request.purpose,
-      });
-      this.emit({
-        type: "chat/create/response",
-        payload: {
-          requestId: request.requestId,
-          room,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatListRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/list" }>,
-  ): Promise<void> {
-    try {
-      const rooms = await this.chatService.listRooms();
-      this.emit({
-        type: "chat/list/response",
-        payload: {
-          requestId: request.requestId,
-          rooms,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatInspectRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/inspect" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.chatService.inspectRoom({
-        room: request.room,
-      });
-      this.emit({
-        type: "chat/inspect/response",
-        payload: {
-          requestId: request.requestId,
-          room: result.room,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatDeleteRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/delete" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.chatService.deleteRoom({
-        room: request.room,
-      });
-      this.emit({
-        type: "chat/delete/response",
-        payload: {
-          requestId: request.requestId,
-          room: result.room,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatPostRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/post" }>,
-  ): Promise<void> {
-    try {
-      const authorAgentId = request.authorAgentId?.trim() || this.clientId;
-      const mentionAgentIds = parseMentionAgentIds(request.body);
-      const storedAgents = await this.agentStorage.list();
-      const liveAgents = this.agentManager.listAgents();
-      const fanout = await prepareChatMentionFanout({
-        authorAgentId,
-        mentionAgentIds,
-        storedAgents,
-        liveAgents,
-        listRoomPosterAgentIds: () =>
-          this.chatService.listRoomPosterAgentIds({ room: request.room }),
-      });
-      if (!fanout.ok) {
-        throw new ChatServiceError("chat_mention_fanout_limit_exceeded", fanout.error);
-      }
-      const message = await this.chatService.dispatchMessage({
-        room: request.room,
-        authorAgentId,
-        body: request.body,
-        replyToMessageId: request.replyToMessageId,
-      });
-      this.emit({
-        type: "chat/post/response",
-        payload: {
-          requestId: request.requestId,
-          message,
-          error: null,
-        },
-      });
-      void notifyChatMentions({
-        room: request.room,
-        authorAgentId,
-        body: request.body,
-        mentionAgentIds: message.mentionAgentIds,
-        logger: this.sessionLogger,
-        storedAgents,
-        liveAgents,
-        prepared: fanout.prepared,
-        resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
-        sendAgentMessage: async (agentId, text) => {
-          await sendPromptToAgent({
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            agentId,
-            prompt: formatSystemNotificationPrompt(text),
-            unarchive: false,
-            logger: this.sessionLogger,
-          });
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatReadRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/read" }>,
-  ): Promise<void> {
-    try {
-      const messages = await this.chatService.readMessages({
-        room: request.room,
-        limit: request.limit,
-        since: request.since,
-        authorAgentId: request.authorAgentId,
-      });
-      this.emit({
-        type: "chat/read/response",
-        payload: {
-          requestId: request.requestId,
-          messages,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private async handleChatWaitRequest(
-    request: Extract<SessionInboundMessage, { type: "chat/wait" }>,
-  ): Promise<void> {
-    try {
-      const messages = await this.chatService.waitForMessages({
-        room: request.room,
-        afterMessageId: request.afterMessageId,
-        timeoutMs: request.timeoutMs,
-      });
-      this.emit({
-        type: "chat/wait/response",
-        payload: {
-          requestId: request.requestId,
-          messages,
-          timedOut: messages.length === 0,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitChatRpcError(request, error);
-    }
-  }
-
-  private toScheduleSummary(
-    schedule: Awaited<ReturnType<ScheduleService["inspect"]>>,
-  ): Extract<
-    SessionOutboundMessage,
-    { type: "schedule/list/response" }
-  >["payload"]["schedules"][number] {
-    const { runs: _runs, ...summary } = schedule;
-    return summary;
-  }
-
-  private emitScheduleRpcError(
-    request: Extract<
-      SessionInboundMessage,
-      {
-        type:
-          | "schedule/create"
-          | "schedule/list"
-          | "schedule/inspect"
-          | "schedule/logs"
-          | "schedule/pause"
-          | "schedule/resume"
-          | "schedule/delete"
-          | "schedule/run-once"
-          | "schedule/update";
-      }
-    >,
-    error: unknown,
-  ): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.sessionLogger.error({ err: error, requestType: request.type }, "Schedule request failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: request.requestId,
-        requestType: request.type,
-        error: message,
-        code: "schedule_request_failed",
-      },
-    });
-  }
-
-  private async handleScheduleCreateRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/create" }>,
-  ): Promise<void> {
-    try {
-      const target =
-        request.target.type === "self"
-          ? { type: "agent" as const, agentId: request.target.agentId }
-          : request.target;
-      const schedule = await this.scheduleService.create({
-        prompt: request.prompt,
-        name: request.name,
-        cadence: request.cadence,
-        target,
-        maxRuns: request.maxRuns,
-        expiresAt: request.expiresAt,
-        runOnCreate: request.runOnCreate,
-      });
-      this.emit({
-        type: "schedule/create/response",
-        payload: {
-          requestId: request.requestId,
-          schedule: this.toScheduleSummary(schedule),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleListRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/list" }>,
-  ): Promise<void> {
-    try {
-      const schedules = await this.scheduleService.list();
-      this.emit({
-        type: "schedule/list/response",
-        payload: {
-          requestId: request.requestId,
-          schedules: schedules.map((schedule) => this.toScheduleSummary(schedule)),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleInspectRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/inspect" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.inspect(request.scheduleId);
-      this.emit({
-        type: "schedule/inspect/response",
-        payload: {
-          requestId: request.requestId,
-          schedule,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleLogsRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/logs" }>,
-  ): Promise<void> {
-    try {
-      const runs = await this.scheduleService.logs(request.scheduleId);
-      this.emit({
-        type: "schedule/logs/response",
-        payload: {
-          requestId: request.requestId,
-          runs,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleSchedulePauseRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/pause" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.pause(request.scheduleId);
-      this.emit({
-        type: "schedule/pause/response",
-        payload: {
-          requestId: request.requestId,
-          schedule: this.toScheduleSummary(schedule),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleResumeRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/resume" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.resume(request.scheduleId);
-      this.emit({
-        type: "schedule/resume/response",
-        payload: {
-          requestId: request.requestId,
-          schedule: this.toScheduleSummary(schedule),
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleDeleteRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/delete" }>,
-  ): Promise<void> {
-    try {
-      await this.scheduleService.delete(request.scheduleId);
-      this.emit({
-        type: "schedule/delete/response",
-        payload: {
-          requestId: request.requestId,
-          scheduleId: request.scheduleId,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleRunOnceRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/run-once" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.runOnce(request.scheduleId);
-      this.emit({
-        type: "schedule/run-once/response",
-        payload: {
-          requestId: request.requestId,
-          schedule,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private async handleScheduleUpdateRequest(
-    request: Extract<SessionInboundMessage, { type: "schedule/update" }>,
-  ): Promise<void> {
-    try {
-      const schedule = await this.scheduleService.update({
-        id: request.scheduleId,
-        ...(request.name !== undefined ? { name: request.name } : {}),
-        ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
-        ...(request.cadence !== undefined ? { cadence: request.cadence } : {}),
-        ...(request.newAgentConfig !== undefined ? { newAgentConfig: request.newAgentConfig } : {}),
-        ...(request.maxRuns !== undefined ? { maxRuns: request.maxRuns } : {}),
-        ...(request.expiresAt !== undefined ? { expiresAt: request.expiresAt } : {}),
-      });
-      this.emit({
-        type: "schedule/update/response",
-        payload: {
-          requestId: request.requestId,
-          schedule,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitScheduleRpcError(request, error);
-    }
-  }
-
-  private emitLoopRpcError(
-    request: Extract<
-      SessionInboundMessage,
-      {
-        type: "loop/run" | "loop/list" | "loop/inspect" | "loop/logs" | "loop/stop";
-      }
-    >,
-    error: unknown,
-  ): void {
-    const message = error instanceof Error ? error.message : String(error);
-    this.sessionLogger.error({ err: error, requestType: request.type }, "Loop request failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: request.requestId,
-        requestType: request.type,
-        error: message,
-        code: "loop_request_failed",
-      },
-    });
-  }
-
-  private async handleLoopRunRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/run" }>,
-  ): Promise<void> {
-    try {
-      const loop = await this.loopService.runLoop({
-        prompt: request.prompt,
-        cwd: request.cwd,
-        provider: request.provider,
-        model: request.model,
-        modeId: request.modeId,
-        workerProvider: request.workerProvider,
-        workerModel: request.workerModel,
-        verifierProvider: request.verifierProvider,
-        verifierModel: request.verifierModel,
-        verifierModeId: request.verifierModeId,
-        verifyPrompt: request.verifyPrompt,
-        verifyChecks: request.verifyChecks,
-        archive: request.archive,
-        name: request.name,
-        sleepMs: request.sleepMs,
-        maxIterations: request.maxIterations,
-        maxTimeMs: request.maxTimeMs,
-      });
-      this.emit({
-        type: "loop/run/response",
-        payload: {
-          requestId: request.requestId,
-          loop,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopListRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/list" }>,
-  ): Promise<void> {
-    try {
-      const loops = await this.loopService.listLoops();
-      this.emit({
-        type: "loop/list/response",
-        payload: {
-          requestId: request.requestId,
-          loops,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopInspectRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/inspect" }>,
-  ): Promise<void> {
-    try {
-      const loop = await this.loopService.inspectLoop(request.id);
-      this.emit({
-        type: "loop/inspect/response",
-        payload: {
-          requestId: request.requestId,
-          loop,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopLogsRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/logs" }>,
-  ): Promise<void> {
-    try {
-      const result = await this.loopService.getLoopLogs(request.id, request.afterSeq ?? 0);
-      this.emit({
-        type: "loop/logs/response",
-        payload: {
-          requestId: request.requestId,
-          loop: result.loop,
-          entries: result.entries,
-          nextCursor: result.nextCursor,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-
-  private async handleLoopStopRequest(
-    request: Extract<SessionInboundMessage, { type: "loop/stop" }>,
-  ): Promise<void> {
-    try {
-      const loop = await this.loopService.stopLoop(request.id);
-      this.emit({
-        type: "loop/stop/response",
-        payload: {
-          requestId: request.requestId,
-          loop,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.emitLoopRpcError(request, error);
-    }
-  }
-}
-
-function isValidPullRequestTimelineIdentity(options: {
-  prNumber: number;
-  repoOwner: string;
-  repoName: string;
-}): boolean {
-  if (!Number.isInteger(options.prNumber) || options.prNumber <= 0) {
-    return false;
-  }
-  return isValidGitHubRepoSegment(options.repoOwner) && isValidGitHubRepoSegment(options.repoName);
-}
-
-function isValidGitHubRepoSegment(value: string): boolean {
-  return /^[A-Za-z0-9._-]+$/.test(value);
-}
-
-function toPullRequestTimelinePayloadItem(
-  item: PullRequestTimelineItem,
-): PullRequestTimelinePayloadItem {
-  return item;
 }

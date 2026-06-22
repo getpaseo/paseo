@@ -2,14 +2,14 @@ import { Buffer } from "node:buffer";
 import type { Logger } from "pino";
 import { v4 as uuidv4 } from "uuid";
 
-import { Pcm16MonoResampler } from "../agent/pcm16-resampler.js";
-import { parsePcmRateFromFormat } from "../speech/audio.js";
+import { Pcm16MonoResampler } from "../../agent/pcm16-resampler.js";
+import { parsePcmRateFromFormat } from "../../speech/audio.js";
 import type {
   SpeechToTextProvider,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
-} from "../speech/speech-provider.js";
-import type { TurnDetectionProvider } from "../speech/turn-detection-provider.js";
+} from "../../speech/speech-provider.js";
+import type { TurnDetectionProvider } from "../../speech/turn-detection-provider.js";
 
 const VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS = 10_000;
 

@@ -34,7 +34,7 @@ import {
   type ArchiveDependencies,
 } from "../workspace-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
-import { createAgentCommand } from "./create-agent/create.js";
+import { createAgentCommand, type CreateAgentFromMcpInput } from "./create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../path-utils.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -100,8 +100,7 @@ export interface AgentMcpServerOptions {
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
-  // Mints a fresh workspace for a cwd and returns its id, used when an agent is
-  // created with no parent and no worktree.
+  // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
   paseoHome?: string;
   worktreesRoot?: string;
@@ -747,11 +746,107 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         .describe("Draft provider feature values."),
     })
     .strict();
-  const agentToAgentInputSchema = {
-    cwd: z
-      .string()
-      .optional()
-      .describe("Optional working directory. Defaults to your current working directory."),
+  const AgentRelationshipInputSchema = z.discriminatedUnion("kind", [
+    z
+      .object({ kind: z.literal("subagent") })
+      .strict()
+      .describe("Create a child agent under this agent's subagent track."),
+    z
+      .object({ kind: z.literal("detached") })
+      .strict()
+      .describe("Create a root agent that does not appear in this agent's subagent track."),
+  ]);
+  const AgentCreateWorktreeTargetInputSchema = z.discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("branch-off"),
+        worktreeSlug: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional worktree slug/path label. Omit to let Paseo generate one."),
+        branchName: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional git branch name. Defaults to the worktree slug."),
+        baseBranch: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Optional base branch. Defaults to the repository default branch."),
+      })
+      .strict()
+      .describe("Create a new branch in a new Paseo worktree."),
+    z
+      .object({
+        kind: z.literal("checkout-branch"),
+        branch: z.string().min(1).describe("Existing branch to check out."),
+      })
+      .strict()
+      .describe("Check out an existing branch in a new Paseo worktree."),
+    z
+      .object({
+        kind: z.literal("checkout-pr"),
+        githubPrNumber: z.number().int().positive().describe("GitHub pull request number."),
+      })
+      .strict()
+      .describe("Check out a GitHub pull request in a new Paseo worktree."),
+  ]);
+  const AgentWorkspaceInputSchema = z.discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("current"),
+        cwd: z.string().optional().describe("Optional runtime cwd. Defaults to the caller's cwd."),
+      })
+      .strict()
+      .describe("Use the caller's current workspace."),
+    z
+      .object({
+        kind: z.literal("existing"),
+        workspaceId: z.string().min(1).describe("Existing workspace id to attach the agent to."),
+        cwd: z
+          .string()
+          .optional()
+          .describe("Optional runtime cwd. Defaults to the existing workspace cwd."),
+      })
+      .strict()
+      .describe("Attach the agent to an existing workspace."),
+    z
+      .object({
+        kind: z.literal("create"),
+        source: z.discriminatedUnion("kind", [
+          z
+            .object({
+              kind: z.literal("directory"),
+              path: z
+                .string()
+                .optional()
+                .describe("Optional directory path. Defaults to the caller's cwd."),
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal("worktree"),
+              cwd: z
+                .string()
+                .optional()
+                .describe("Optional source repository. Defaults to the caller's cwd."),
+              target: AgentCreateWorktreeTargetInputSchema,
+            })
+            .strict(),
+        ]),
+      })
+      .strict()
+      .describe("Create a new workspace for the agent."),
+  ]);
+  const commonCreateAgentInputSchema = {
+    relationship: AgentRelationshipInputSchema.describe(
+      "Whether the created agent is a subagent under you or a detached root agent.",
+    ),
+    workspace: AgentWorkspaceInputSchema.describe(
+      "Workspace ownership/location for the created agent.",
+    ),
     title: z
       .string()
       .trim()
@@ -770,13 +865,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
-    detached: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "If true, the created agent stands on its own: it does not appear in your subagent track and is not archived with you.",
-      ),
+  };
+  const agentToAgentInputSchema = {
+    ...commonCreateAgentInputSchema,
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -785,48 +876,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         "Get notified when the created agent finishes, errors, or needs permission. Set false only for truly fire-and-forget agents.",
       ),
   };
-
   const topLevelInputSchema = {
-    cwd: z
-      .string()
-      .describe("Required working directory for the agent (absolute, relative, or ~)."),
-    title: z
-      .string()
-      .trim()
-      .min(1, "Title is required")
-      .max(60, "Title must be 60 characters or fewer")
-      .describe("Short descriptive title (<= 60 chars) summarizing the agent's focus."),
-    provider: ProviderModelInputSchema.describe(
-      "Required provider/model pair, for example codex/gpt-5.4.",
-    ),
-    labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
-    settings: CreateAgentSettingsInputSchema.optional().describe(
-      "Initial runtime settings for the new agent.",
-    ),
-    initialPrompt: z
-      .string()
-      .trim()
-      .min(1, "initialPrompt is required")
-      .describe("Required first task to run immediately after creation."),
-    worktreeName: z
-      .string()
-      .optional()
-      .describe("Optional git worktree branch name (lowercase alphanumerics + hyphen)."),
-    baseBranch: z
-      .string()
-      .optional()
-      .describe("Required when worktreeName is set: the base branch to diff/merge against."),
-    refName: z.string().min(1).optional().describe("Optional source ref for worktree creation."),
-    action: z
-      .enum(["branch-off", "checkout"])
-      .optional()
-      .describe("Optional worktree creation action."),
-    githubPrNumber: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe("Optional GitHub pull request number to checkout."),
+    ...commonCreateAgentInputSchema,
     background: z
       .boolean()
       .optional()
@@ -846,6 +897,48 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   const createAgentInputSchema = callerAgentId ? agentToAgentInputSchema : topLevelInputSchema;
   const agentToAgentCreateAgentArgsSchema = z.object(agentToAgentInputSchema).strict();
   const topLevelCreateAgentArgsSchema = z.object(topLevelInputSchema).strict();
+  const commonSendAgentPromptInputSchema = {
+    agentId: z.string(),
+    prompt: z.string(),
+    sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
+  };
+  const agentToAgentSendAgentPromptInputSchema = {
+    ...commonSendAgentPromptInputSchema,
+    background: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe(
+        "Run agent in background. Agent-scoped default is true so you can continue until the finish notification arrives. Set false only when you need a blocking response.",
+      ),
+    notifyOnFinish: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe(
+        "Get notified when the prompted agent finishes, errors, or needs permission. Set false only for truly fire-and-forget prompts.",
+      ),
+  };
+  const topLevelSendAgentPromptInputSchema = {
+    ...commonSendAgentPromptInputSchema,
+    background: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
+      ),
+    notifyOnFinish: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Agent-scoped only: get notified when the prompted agent finishes, errors, or needs permission.",
+      ),
+  };
+  const sendAgentPromptInputSchema = callerAgentId
+    ? agentToAgentSendAgentPromptInputSchema
+    : topLevelSendAgentPromptInputSchema;
   const inspectProviderInputSchema = {
     provider: ProviderOrProviderModelInputSchema.describe(
       "Provider ID, optionally with a model ID (for example codex or codex/gpt-5.4).",
@@ -909,13 +1002,14 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     {
       title: "Create agent",
       description:
-        "Create an agent tied to a working directory. Requires provider/model, for example codex/gpt-5.4. Do not guess; call list_providers and list_models first if uncertain. Optionally run an initial prompt immediately or create a git worktree for the agent.",
+        "Create an agent. Requires relationship, workspace, provider/model (for example codex/gpt-5.4), and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
         type: AgentProviderEnum,
         status: AgentStatusEnum,
         cwd: z.string(),
+        workspaceId: z.string().optional(),
         currentModeId: z.string().nullable(),
         availableModes: z.array(ProviderModeSchema),
         lastMessage: z.string().nullable().optional(),
@@ -924,19 +1018,19 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async (args: unknown) => {
-      const resolvedArgs = resolveCreateAgentToolArgs(args);
+      const resolvedArgs = await resolveCreateAgentToolArgs(args);
       const { parsedArgs, worktree } = resolvedArgs;
       let requestedBackground: boolean;
       let notifyOnFinish: boolean;
       let detached: boolean;
       if (resolvedArgs.kind === "agent-scoped") {
         requestedBackground = true;
-        notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish;
-        detached = resolvedArgs.parsedArgs.detached;
+        notifyOnFinish = parsedArgs.notifyOnFinish;
+        detached = resolvedArgs.relationship.kind === "detached";
       } else {
         requestedBackground = resolvedArgs.parsedArgs.background;
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
-        detached = false;
+        detached = resolvedArgs.parsedArgs.relationship.kind === "detached";
       }
       const {
         snapshot,
@@ -961,7 +1055,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           provider: parsedArgs.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,
-          cwd: parsedArgs.cwd,
+          cwd: resolvedArgs.cwd,
+          workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
           features: parsedArgs.settings?.features,
           labels: parsedArgs.labels,
@@ -987,6 +1082,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
             type: snapshot.provider,
             status: result.status,
             cwd: liveSnapshot.cwd,
+            ...(liveSnapshot.workspaceId ? { workspaceId: liveSnapshot.workspaceId } : {}),
             currentModeId: liveSnapshot.currentModeId,
             availableModes: liveSnapshot.availableModes,
             lastMessage: result.lastMessage,
@@ -1018,6 +1114,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           type: snapshot.provider,
           status: currentSnapshot.lifecycle,
           cwd: currentSnapshot.cwd,
+          ...(currentSnapshot.workspaceId ? { workspaceId: currentSnapshot.workspaceId } : {}),
           currentModeId: currentSnapshot.currentModeId,
           availableModes: currentSnapshot.availableModes,
           lastMessage: null,
@@ -1033,46 +1130,136 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     | {
         kind: "agent-scoped";
         parsedArgs: AgentToAgentCreateAgentArgs;
-        worktree: undefined;
+        relationship: AgentToAgentCreateAgentArgs["relationship"];
+        cwd: string | undefined;
+        workspaceId: string | undefined;
+        worktree: CreateAgentFromMcpInput["worktree"];
       }
     | {
         kind: "top-level";
         parsedArgs: TopLevelCreateAgentArgs;
-        worktree: ReturnType<typeof resolveTopLevelCreateAgentWorktree>;
+        cwd: string | undefined;
+        workspaceId: string | undefined;
+        worktree: CreateAgentFromMcpInput["worktree"];
       };
 
-  function resolveCreateAgentToolArgs(args: unknown): ResolvedCreateAgentToolArgs {
+  async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
     if (callerAgentId) {
+      const parsed = agentToAgentCreateAgentArgsSchema.parse(args);
+      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace);
       return {
         kind: "agent-scoped",
-        parsedArgs: agentToAgentCreateAgentArgsSchema.parse(args),
-        worktree: undefined,
+        parsedArgs: parsed,
+        relationship: parsed.relationship,
+        cwd,
+        workspaceId,
+        worktree,
       };
     }
     const parsedArgs = topLevelCreateAgentArgsSchema.parse(args);
+    if (parsedArgs.relationship.kind === "subagent") {
+      throw new Error("relationship subagent requires an agent-scoped MCP session");
+    }
+    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsedArgs.workspace);
     return {
       kind: "top-level",
       parsedArgs,
-      worktree: resolveTopLevelCreateAgentWorktree(parsedArgs),
+      cwd,
+      workspaceId,
+      worktree,
     };
   }
 
-  function resolveTopLevelCreateAgentWorktree(args: TopLevelCreateAgentArgs):
-    | {
-        worktreeName?: string;
-        baseBranch?: string;
-        refName?: string;
-        action?: "branch-off" | "checkout";
-        githubPrNumber?: number;
+  async function resolveCreateAgentWorkspace(
+    workspace: AgentToAgentCreateAgentArgs["workspace"] | TopLevelCreateAgentArgs["workspace"],
+  ): Promise<{
+    cwd: string | undefined;
+    workspaceId: string | undefined;
+    worktree: CreateAgentFromMcpInput["worktree"];
+  }> {
+    if (workspace.kind === "current") {
+      if (!callerAgentId) {
+        throw new Error("workspace current requires an agent-scoped MCP session");
       }
-    | undefined {
+      const callerAgent = resolveCallerAgent();
+      if (!callerAgent?.workspaceId) {
+        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      }
+      return {
+        cwd: workspace.cwd,
+        workspaceId: callerAgent.workspaceId,
+        worktree: undefined,
+      };
+    }
+
+    if (workspace.kind === "existing") {
+      if (!options.listActiveWorkspaces) {
+        throw new Error("Workspace lookup is not configured");
+      }
+      const existingWorkspace = (await options.listActiveWorkspaces()).find(
+        (candidate) => candidate.workspaceId === workspace.workspaceId,
+      );
+      if (!existingWorkspace) {
+        throw new Error(`Workspace ${workspace.workspaceId} not found`);
+      }
+      const cwd = workspace.cwd
+        ? resolveScopedCwd(workspace.cwd, { required: true })
+        : existingWorkspace.cwd;
+      const lockedCwd = callerContext?.lockedCwd?.trim();
+      if (lockedCwd && !isSameOrDescendantPath(expandUserPath(lockedCwd), cwd)) {
+        throw new Error(`Workspace ${workspace.workspaceId} is outside the allowed cwd`);
+      }
+      return {
+        cwd,
+        workspaceId: workspace.workspaceId,
+        worktree: undefined,
+      };
+    }
+
+    if (workspace.source.kind === "directory") {
+      const cwd = resolveScopedCwd(workspace.source.path, { required: true });
+      if (!options.ensureWorkspaceForCreate) {
+        throw new Error("Workspace creation is not configured");
+      }
+      return {
+        cwd,
+        workspaceId: await options.ensureWorkspaceForCreate(cwd),
+        worktree: undefined,
+      };
+    }
+
+    const cwd = resolveScopedCwd(workspace.source.cwd, { required: true });
     return {
-      worktreeName: args.worktreeName,
-      baseBranch: args.baseBranch,
-      refName: args.refName,
-      action: args.action,
-      githubPrNumber: args.githubPrNumber,
+      cwd,
+      workspaceId: undefined,
+      worktree: resolveCreateAgentWorktree(workspace.source.target),
     };
+  }
+
+  function resolveCreateAgentWorktree(
+    target: z.infer<typeof AgentCreateWorktreeTargetInputSchema>,
+  ): NonNullable<CreateAgentFromMcpInput["worktree"]> {
+    switch (target.kind) {
+      case "branch-off":
+        return {
+          action: "branch-off",
+          worktreeName: target.worktreeSlug,
+          branchName: target.branchName,
+          baseBranch: target.baseBranch,
+        };
+      case "checkout-branch":
+        return {
+          action: "checkout",
+          refName: target.branch,
+        };
+      case "checkout-pr":
+        return {
+          action: "checkout",
+          githubPrNumber: target.githubPrNumber,
+        };
+      default:
+        throw new Error("unreachable");
+    }
   }
 
   registerTool(
@@ -1157,40 +1344,27 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     {
       title: "Send agent prompt",
       description:
-        "Send a task to a running agent. Returns immediately after the agent begins processing.",
-      inputSchema: {
-        agentId: z.string(),
-        prompt: z.string(),
-        sessionMode: z
-          .string()
-          .optional()
-          .describe("Optional mode to set before running the prompt."),
-        background: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe(
-            "Run agent in background. If false (default), waits for completion or permission request. If true, returns immediately.",
-          ),
-        notifyOnFinish: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe(
-            "Agent-scoped only: get notified when this run finishes, errors, or needs permission.",
-          ),
-      },
+        "Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default.",
+      inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         status: AgentStatusEnum,
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
+        guidance: z.string().optional(),
       },
     },
-    async ({ agentId, prompt, sessionMode, background = false, notifyOnFinish = false }) => {
+    async ({
+      agentId,
+      prompt,
+      sessionMode,
+      background = Boolean(callerAgentId),
+      notifyOnFinish = Boolean(callerAgentId),
+    }) => {
       if (agentManager.hasInFlightRun(agentId)) {
         waitTracker.cancel(agentId, "Agent run interrupted by new prompt");
       }
+      const shouldNotifyOnFinish = Boolean(callerAgentId && notifyOnFinish && background);
 
       await sendPromptToAgent({
         agentManager,
@@ -1201,7 +1375,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         logger: childLogger,
       });
 
-      if (notifyOnFinish && callerAgentId) {
+      if (shouldNotifyOnFinish && callerAgentId) {
         setupFinishNotification({
           agentManager,
           agentStorage,
@@ -1241,6 +1415,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         status: currentSnapshot?.lifecycle ?? "idle",
         lastMessage: null,
         permission: null,
+        ...(shouldNotifyOnFinish
+          ? {
+              guidance:
+                "You will get notified when the prompted agent finishes, errors, or needs permission. Do not call wait_for_agent or poll for status; continue with other work until the notification arrives.",
+            }
+          : {}),
       };
       const validJson = ensureValidJson(responseData);
 
@@ -2151,37 +2331,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         "Create a Paseo-managed git worktree. Branch off a new branch, check out an existing branch, or check out a GitHub PR.",
       inputSchema: {
         cwd: z.string().optional().describe("Repository directory. Defaults to the agent's cwd."),
-        target: z
-          .discriminatedUnion("mode", [
-            z
-              .object({
-                mode: z.literal("branch-off"),
-                newBranch: z.string().min(1).describe("Name for the new branch."),
-                base: z
-                  .string()
-                  .min(1)
-                  .optional()
-                  .describe("Base ref. Defaults to the repo's default branch."),
-              })
-              .describe("Create a new branch off a base."),
-            z
-              .object({
-                mode: z.literal("checkout-branch"),
-                branch: z.string().min(1).describe("Existing branch to check out."),
-              })
-              .describe("Check out an existing branch."),
-            z
-              .object({
-                mode: z.literal("checkout-pr"),
-                prNumber: z.number().int().positive().describe("Pull request number."),
-              })
-              .describe("Check out a GitHub pull request."),
-          ])
-          .describe("What the worktree should contain."),
+        target: AgentCreateWorktreeTargetInputSchema.describe("What the worktree should contain."),
       },
       outputSchema: {
         branchName: z.string(),
         worktreePath: z.string(),
+        workspaceId: z.string(),
       },
     },
     async ({ cwd, target }) => {
@@ -2197,7 +2352,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!commandResult.ok) {
         throw new WorktreeRequestError(commandResult.error);
       }
-      const { worktree } = commandResult.createdWorktree;
+      const { worktree, workspace } = commandResult.createdWorktree;
       await options.workspaceGitService?.listWorktrees?.(repoRoot, {
         force: true,
         reason: "mcp:create-worktree",
@@ -2208,6 +2363,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         structuredContent: ensureValidJson({
           branchName: worktree.branchName,
           worktreePath: worktree.worktreePath,
+          workspaceId: workspace.workspaceId,
         }),
       };
     },
@@ -2420,9 +2576,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 }
 
 type McpCreateWorktreeTarget =
-  | { mode: "branch-off"; newBranch: string; base?: string }
-  | { mode: "checkout-branch"; branch: string }
-  | { mode: "checkout-pr"; prNumber: number };
+  | { kind: "branch-off"; worktreeSlug?: string; branchName?: string; baseBranch?: string }
+  | { kind: "checkout-branch"; branch: string }
+  | { kind: "checkout-pr"; githubPrNumber: number };
 
 interface ArchiveWorktreeCommandContext {
   agentManager: AgentManager;
@@ -2489,18 +2645,19 @@ function createMcpWorktreeCommandInput(
   target: McpCreateWorktreeTarget,
 ): CreatePaseoWorktreeCommandInput {
   const base = { cwd: repoRoot } as const;
-  switch (target.mode) {
+  switch (target.kind) {
     case "branch-off":
       return {
         ...base,
-        worktreeSlug: target.newBranch,
+        worktreeSlug: target.worktreeSlug,
+        branchName: target.branchName,
         action: "branch-off",
-        ...(target.base ? { refName: target.base } : {}),
+        ...(target.baseBranch ? { refName: target.baseBranch } : {}),
       };
     case "checkout-branch":
       return { ...base, action: "checkout", refName: target.branch };
     case "checkout-pr":
-      return { ...base, action: "checkout", githubPrNumber: target.prNumber };
+      return { ...base, action: "checkout", githubPrNumber: target.githubPrNumber };
     default:
       throw new Error("unreachable");
   }

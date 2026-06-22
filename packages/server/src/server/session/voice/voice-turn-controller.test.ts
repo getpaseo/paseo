@@ -7,11 +7,11 @@ import type {
   StreamingTranscriptionCommittedEvent,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
-} from "../speech/speech-provider.js";
+} from "../../speech/speech-provider.js";
 import type {
   TurnDetectionProvider,
   TurnDetectionSession,
-} from "../speech/turn-detection-provider.js";
+} from "../../speech/turn-detection-provider.js";
 import { createVoiceTurnController } from "./voice-turn-controller.js";
 
 class FakeTurnDetectionSession extends EventEmitter implements TurnDetectionSession {

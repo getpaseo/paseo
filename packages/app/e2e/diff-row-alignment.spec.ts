@@ -362,11 +362,13 @@ async function createWorkspaceWithMountedTabDiff(): Promise<DirtyWorkspace> {
   });
 
   await writeFile(path.join(repo.path, "src/use-mounted-tab-set.ts"), AFTER);
-  const opened = await client.openProject(repo.path);
-  if (!opened.workspace) {
-    throw new Error(opened.error ?? `Failed to open project ${repo.path}`);
+  const createdWorkspace = await client.createWorkspace({
+    source: { kind: "directory", path: repo.path },
+  });
+  if (!createdWorkspace.workspace) {
+    throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repo.path}`);
   }
-  return { id: opened.workspace.id };
+  return { id: createdWorkspace.workspace.id };
 }
 
 async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {

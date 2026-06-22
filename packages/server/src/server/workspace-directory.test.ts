@@ -139,6 +139,16 @@ class WorkspaceStatus {
     );
   }
 
+  hasDetachedAgentInWorktree(input: AgentState): void {
+    this.agents.push(
+      createAgent({
+        ...input,
+        cwd: this.worktreeWorkspace.cwd,
+        workspaceId: this.worktreeWorkspace.workspaceId,
+      }),
+    );
+  }
+
   async workspaceStatus(): Promise<WorkspaceDescriptorPayload["status"]> {
     const entries = await this.directory.listFetchEntries({
       type: "fetch_workspaces_request",
@@ -378,6 +388,19 @@ describe("WorkspaceDirectory", () => {
     });
   });
 
+  test("running detached child contributes running to its own workspace", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasWorktreeWorkspace();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDetachedAgentInWorktree({ id: "child-agent", status: "running" });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-worktree": "running",
+    });
+  });
+
   test("working terminal contributes running status, beating done", async () => {
     const workspace = new WorkspaceStatus();
     const changedAt = new Date(NOW).getTime();
@@ -504,7 +527,7 @@ describe("WorkspaceDirectory empty projects", () => {
     } satisfies PersistedProjectRecord;
   }
 
-  test("surfaces a project with no active workspaces as an empty project", async () => {
+  test("surfaces a project with no active workspaces through the compatibility projection", async () => {
     const directory = makeDirectory({
       projects: [project({ projectId: "empty", customName: "Renamed" })],
       workspaces: [],

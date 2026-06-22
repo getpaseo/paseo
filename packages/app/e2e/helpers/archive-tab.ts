@@ -35,10 +35,6 @@ function buildSeededStoragePayload() {
  * idle agent from the same client it uses for everything else.
  */
 export interface IdleAgentSeedClient {
-  openProject(cwd: string): Promise<{
-    workspace: { id: string } | null;
-    error: string | null;
-  }>;
   createAgent(options: {
     provider: string;
     model: string;
@@ -56,18 +52,14 @@ export interface IdleAgentSeedClient {
 
 export async function createIdleAgent(
   client: IdleAgentSeedClient,
-  input: { cwd: string; title: string },
+  input: { cwd: string; workspaceId: string; title: string },
 ): Promise<ArchiveTabAgent> {
-  const opened = await client.openProject(input.cwd);
-  if (!opened.workspace) {
-    throw new Error(opened.error ?? `Failed to open project ${input.cwd}`);
-  }
   const created = await client.createAgent({
     provider: "opencode",
     model: "opencode/gpt-5-nano",
     modeId: "bypassPermissions",
     cwd: input.cwd,
-    workspaceId: opened.workspace.id,
+    workspaceId: input.workspaceId,
     title: input.title,
   });
   const snapshot = await client.waitForAgentUpsert(
@@ -82,7 +74,7 @@ export async function createIdleAgent(
     id: created.id,
     title: input.title,
     cwd: input.cwd,
-    workspaceId: opened.workspace.id,
+    workspaceId: input.workspaceId,
   };
 }
 

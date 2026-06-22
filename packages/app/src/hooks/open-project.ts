@@ -1,9 +1,11 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { OpenProjectResponseMessage } from "@getpaseo/protocol/messages";
-import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
-import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
+import type { ProjectAddResponse } from "@getpaseo/protocol/messages";
+import {
+  normalizeEmptyProjectDescriptor as normalizeProjectWithoutWorkspacesDescriptor,
+  type EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor,
+} from "@/stores/session-store";
 
-type OpenProjectPayload = OpenProjectResponseMessage["payload"];
+type OpenProjectPayload = ProjectAddResponse["payload"];
 type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;
 
 export interface OpenProjectSuccess {
@@ -22,11 +24,10 @@ export interface OpenProjectDirectlyInput {
   serverId: string;
   projectPath: string;
   isConnected: boolean;
-  client: Pick<DaemonClient, "openProject"> | null;
-  mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => void;
+  canAddProject: boolean;
+  client: Pick<DaemonClient, "addProject"> | null;
+  addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
-  openDraftTab: (workspaceKey: string) => string | null;
-  navigateToWorkspace: (serverId: string, workspaceId: string) => void;
 }
 
 export async function openProjectDirectly(
@@ -38,8 +39,16 @@ export async function openProjectDirectly(
     return { ok: false, errorCode: null, error: null };
   }
 
-  const payload = await input.client.openProject(trimmedPath);
-  if (payload.error || !payload.workspace) {
+  if (!input.canAddProject) {
+    return {
+      ok: false,
+      errorCode: null,
+      error: "Update the host to add projects without creating a workspace.",
+    };
+  }
+
+  const payload = await input.client.addProject(trimmedPath);
+  if (payload.error || !payload.project) {
     return {
       ok: false,
       errorCode: payload.errorCode ?? null,
@@ -47,19 +56,10 @@ export async function openProjectDirectly(
     };
   }
 
-  const workspace = normalizeWorkspaceDescriptor(payload.workspace);
-  input.mergeWorkspaces(normalizedServerId, [workspace]);
+  input.addEmptyProject(
+    normalizedServerId,
+    normalizeProjectWithoutWorkspacesDescriptor(payload.project),
+  );
   input.setHasHydratedWorkspaces(normalizedServerId, true);
-
-  const workspaceKey = buildWorkspaceTabPersistenceKey({
-    serverId: normalizedServerId,
-    workspaceId: workspace.id,
-  });
-  if (!workspaceKey) {
-    return { ok: false, errorCode: null, error: null };
-  }
-
-  input.openDraftTab(workspaceKey);
-  input.navigateToWorkspace(normalizedServerId, workspace.id);
   return { ok: true };
 }

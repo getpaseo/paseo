@@ -196,6 +196,8 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
       contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      model: agent?.model ?? null,
+      provider: agent?.provider ?? null,
     };
   };
 }
@@ -205,8 +207,12 @@ function renderContextWindowMeter(
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
   showPercentage: boolean,
+  serverId: string,
+  provider: string | null,
+  pending: boolean,
 ): ReactElement | null {
-  if (contextWindowMaxTokens === null || contextWindowUsedTokens === null) {
+  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
+  if (!hasData && !pending) {
     return null;
   }
   return (
@@ -215,6 +221,9 @@ function renderContextWindowMeter(
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
+      serverId={serverId}
+      provider={provider}
+      pending={pending}
     />
   );
 }
@@ -1636,6 +1645,9 @@ export function Composer({
     agentState.contextWindowUsedTokens,
   );
 
+  const contextWindowPending =
+    agentState.status === "initializing" || agentState.status === "running";
+
   const contextWindowMeter = useMemo(
     () =>
       renderContextWindowMeter(
@@ -1643,8 +1655,19 @@ export function Composer({
         contextWindowUsedTokens,
         agentState.totalCostUsd,
         isCompactLayout,
+        serverId,
+        agentState.provider,
+        contextWindowPending,
       ),
-    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isCompactLayout],
+    [
+      contextWindowMaxTokens,
+      contextWindowUsedTokens,
+      agentState.totalCostUsd,
+      isCompactLayout,
+      serverId,
+      agentState.provider,
+      contextWindowPending,
+    ],
   );
   const { beforeVoiceContent, footerInlineContent } = useMemo(
     () => resolveContextWindowPlacement(contextWindowMeter, isCompactLayout),

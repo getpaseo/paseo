@@ -16,6 +16,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -56,6 +57,7 @@ export interface ProviderSnapshotManagerOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  managedProcesses?: ManagedProcessRegistry;
   isDev?: boolean;
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
@@ -127,6 +129,7 @@ export class ProviderSnapshotManager {
   private readonly refreshTimeoutMs: number;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly isDev: boolean;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
@@ -138,6 +141,7 @@ export class ProviderSnapshotManager {
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
     this.workspaceGitService = options.workspaceGitService;
+    this.managedProcesses = options.managedProcesses;
     this.isDev = options.isDev === true;
     this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
@@ -370,6 +374,7 @@ export class ProviderSnapshotManager {
       runtimeSettings: this.runtimeSettings,
       providerOverrides: this.providerOverrides,
       workspaceGitService: this.workspaceGitService,
+      managedProcesses: this.managedProcesses,
       isDev: this.isDev,
     });
 
@@ -766,9 +771,16 @@ export function resolveSnapshotCwd(cwd?: string | null): string {
   if (!trimmed) {
     return homedir();
   }
-  const expanded =
+  let expanded =
     trimmed === "~" || trimmed.startsWith("~/") ? `${homedir()}${trimmed.slice(1)}` : trimmed;
-  return resolve(expanded);
+  if (process.platform === "win32" && /^[A-Za-z]:$/.test(expanded)) {
+    expanded = `${expanded}\\`;
+  }
+  let resolved = resolve(expanded);
+  if (process.platform === "win32" && /^[A-Za-z]:$/.test(resolved)) {
+    resolved = `${resolved}\\`;
+  }
+  return resolved;
 }
 
 function entriesToArray(

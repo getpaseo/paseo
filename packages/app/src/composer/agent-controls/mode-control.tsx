@@ -18,10 +18,12 @@ import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { useToast } from "@/contexts/toast-context";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
+import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { formatAgentModeLabel } from "@/composer/agent-controls/utils";
 import type { AgentMode, AgentProvider } from "@getpaseo/protocol/agent-types";
 import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
@@ -260,6 +262,7 @@ export const AgentModeControl = memo(function AgentModeControl({
     compareAvailableModes,
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const { updatePreferences } = useFormPreferences();
   const toast = useToast();
   const { entries: snapshotEntries } = useProvidersSnapshot(serverId, { cwd: slice?.cwd });
 
@@ -271,13 +274,27 @@ export const AgentModeControl = memo(function AgentModeControl({
 
   const handleSelectMode = useCallback(
     (modeId: string) => {
-      if (!client) return;
-      void client.setAgentMode(agentId, modeId).catch((error) => {
-        console.warn("[AgentModeControl] setAgentMode failed", error);
-        toast.error(toErrorMessage(error));
+      if (!client || !slice?.provider) return;
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: slice.provider,
+          updates: {
+            mode: modeId || undefined,
+          },
+        }),
+      ).catch((error) => {
+        console.warn("[AgentModeControl] persist mode preference failed", error);
       });
+      void client
+        .setAgentMode(agentId, modeId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.warn("[AgentModeControl] setAgentMode failed", error);
+          toast.error(toErrorMessage(error));
+        });
     },
-    [agentId, client, toast],
+    [agentId, client, slice?.provider, toast, updatePreferences],
   );
 
   if (!slice || availableModes.length === 0) return null;

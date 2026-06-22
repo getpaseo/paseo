@@ -90,6 +90,15 @@ const IGNORED_SUGGESTION_DIRECTORY_NAMES = new Set([
   "coverage",
   "vendor",
   "__pycache__",
+  ".git",
+]);
+const TRAVERSABLE_HIDDEN_WORKSPACE_DIRECTORY_NAMES = new Set([
+  ".agents",
+  ".claude",
+  ".codex",
+  ".github",
+  ".paseo",
+  ".vscode",
 ]);
 
 export async function searchHomeDirectories(
@@ -160,6 +169,19 @@ export async function searchWorkspaceEntries(
   }
 
   const matchMode = options.matchMode ?? "fuzzy";
+  const exactEntry =
+    queryParts.isPathQuery && matchMode === "suffix"
+      ? await resolveWorkspaceExactEntry({
+          workspaceRoot,
+          query: options.query,
+          includeDirectories,
+          includeFiles,
+        })
+      : null;
+  if (exactEntry && limit <= 1) {
+    return [exactEntry];
+  }
+
   if (queryParts.isPathQuery && matchMode !== "suffix") {
     return searchWorkspaceWithinParentDirectory({
       workspaceRoot,
@@ -175,7 +197,7 @@ export async function searchWorkspaceEntries(
     matchMode === "suffix"
       ? [queryParts.parentPart, queryParts.searchTerm].filter(Boolean).join("/")
       : queryParts.searchTerm;
-  return searchWorkspaceAcrossTree({
+  const entries = await searchWorkspaceAcrossTree({
     workspaceRoot,
     searchTerm,
     limit,
@@ -185,6 +207,66 @@ export async function searchWorkspaceEntries(
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_DIRECTORIES_SCANNED,
   });
+  return exactEntry ? prependWorkspaceEntry(exactEntry, entries).slice(0, limit) : entries;
+}
+
+async function resolveWorkspaceExactEntry(input: {
+  workspaceRoot: string;
+  query: string;
+  includeDirectories: boolean;
+  includeFiles: boolean;
+}): Promise<WorkspaceSuggestionEntry | null> {
+  const normalized = input.query
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/\/{2,}/g, "/");
+  if (!normalized) {
+    return null;
+  }
+
+  const candidatePath = path.isAbsolute(normalized)
+    ? path.resolve(normalized)
+    : path.resolve(input.workspaceRoot, normalized);
+  let resolvedPath: string;
+  try {
+    resolvedPath = await realpath(candidatePath);
+  } catch {
+    return null;
+  }
+  if (!isPathInsideRoot(input.workspaceRoot, resolvedPath)) {
+    return null;
+  }
+
+  const stats = await stat(resolvedPath).catch(() => null);
+  if (!stats) {
+    return null;
+  }
+  if (stats.isFile() && input.includeFiles) {
+    return {
+      path: normalizeRelativePath(input.workspaceRoot, resolvedPath),
+      kind: "file",
+    };
+  }
+  if (stats.isDirectory() && input.includeDirectories) {
+    return {
+      path: normalizeRelativePath(input.workspaceRoot, resolvedPath),
+      kind: "directory",
+    };
+  }
+  return null;
+}
+
+function prependWorkspaceEntry(
+  entry: WorkspaceSuggestionEntry,
+  entries: WorkspaceSuggestionEntry[],
+): WorkspaceSuggestionEntry[] {
+  return [
+    entry,
+    ...entries.filter(
+      (candidate) => candidate.kind !== entry.kind || candidate.path !== entry.path,
+    ),
+  ];
 }
 
 function normalizeLimit(limit: number | undefined): number {
@@ -318,6 +400,9 @@ async function searchWorkspaceWithinParentDirectory(input: {
     if (entry.kind === "file" && !input.includeFiles) {
       continue;
     }
+    if (isHiddenWorkspaceSuggestion(entry)) {
+      continue;
+    }
     const rankedEntry = rankWorkspaceEntry({
       absolutePath: entry.absolutePath,
       kind: entry.kind,
@@ -383,6 +468,10 @@ async function searchWorkspaceAcrossTree(input: {
       }
 
       if (entry.kind === "directory" && !input.includeDirectories) {
+        continue;
+      }
+      // Hidden directories are traversed, but not offered as suggestions.
+      if (isHiddenWorkspaceSuggestion(entry)) {
         continue;
       }
       if (entry.kind === "file" && !input.includeFiles) {
@@ -867,10 +956,26 @@ async function listWorkspaceChildEntries(input: {
   const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
     () => [] as Dirent[],
   );
-  const candidates = dirents.filter(
-    (dirent) =>
-      !isHiddenDirectoryName(dirent.name) && !isIgnoredSuggestionDirectoryName(dirent.name),
-  );
+  const candidates = dirents.filter((dirent) => {
+    if (isIgnoredSuggestionDirectoryName(dirent.name)) {
+      return false;
+    }
+    if (
+      isHiddenDirectoryName(dirent.name) &&
+      !dirent.isFile() &&
+      !isTraversableHiddenWorkspaceDirectoryName(dirent.name)
+    ) {
+      return false;
+    }
+    // Allowlisted hidden directories remain traversable so file links like
+    // `.claude/settings.local.json` can resolve, but hidden files (e.g.
+    // `.DS_Store`) should never be suggested.
+    if (dirent.isFile() && isHiddenDirectoryName(dirent.name)) {
+      return false;
+    }
+    return true;
+  });
+
   const resolved = await Promise.all(
     candidates.map(async (dirent) => {
       const candidatePath = path.join(input.directory, dirent.name);
@@ -960,8 +1065,16 @@ function isHiddenDirectoryName(name: string): boolean {
   return name.startsWith(".");
 }
 
+function isHiddenWorkspaceSuggestion(entry: ChildWorkspaceEntry): boolean {
+  return isHiddenDirectoryName(entry.name);
+}
+
 function isIgnoredSuggestionDirectoryName(name: string): boolean {
   return IGNORED_SUGGESTION_DIRECTORY_NAMES.has(name);
+}
+
+function isTraversableHiddenWorkspaceDirectoryName(name: string): boolean {
+  return TRAVERSABLE_HIDDEN_WORKSPACE_DIRECTORY_NAMES.has(name);
 }
 
 function setDirectoryListCache(cacheKey: string, entry: DirectoryListCacheEntry): void {

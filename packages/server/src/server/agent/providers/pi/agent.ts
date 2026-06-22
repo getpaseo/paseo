@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 
+import { withTimeout } from "../../../../utils/promise-timeout.js";
+
 import {
   type AgentCapabilityFlags,
   type AgentClient,
@@ -45,6 +47,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 import {
   buildBinaryDiagnosticRows,
+  buildCommandResolutionDiagnosticRows,
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
@@ -1995,21 +1998,33 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    const launch = await this.resolvePiLaunch();
-    const availability = await checkProviderLaunchAvailable(launch);
-    if (!availability.available) {
-      return false;
-    }
-    const runtimeSession = await this.runtime.startSession({ cwd: homedir() }).catch(() => null);
-    if (!runtimeSession) {
-      return false;
-    }
     try {
-      return (await runtimeSession.getAvailableModels()).length > 0;
+      return await withTimeout(
+        (async () => {
+          const launch = await this.resolvePiLaunch();
+          const availability = await checkProviderLaunchAvailable(launch);
+          if (!availability.available) {
+            return false;
+          }
+          const runtimeSession = await this.runtime
+            .startSession({ cwd: homedir() })
+            .catch(() => null);
+          if (!runtimeSession) {
+            return false;
+          }
+          try {
+            return (await runtimeSession.getAvailableModels()).length > 0;
+          } catch {
+            return false;
+          } finally {
+            await runtimeSession.close().catch(() => undefined);
+          }
+        })(),
+        2000,
+        "Pi availability check timed out",
+      );
     } catch {
       return false;
-    } finally {
-      await runtimeSession.close().catch(() => undefined);
     }
   }
 
@@ -2062,6 +2077,9 @@ export class PiRpcAgentClient implements AgentClient {
 
       return {
         diagnostic: formatProviderDiagnostic("Pi", [
+          ...(await buildCommandResolutionDiagnosticRows(launch, {
+            knownBinaryNames: [launch.command],
+          })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
           { label: "Configured providers", value: configuredProvidersValue },
           {

@@ -95,7 +95,9 @@ async function callWorkspaceCreation({
       worktreeSlug: createNameId(),
     });
   }
-  return connectedClient.openProject(input.cwd);
+  return connectedClient.createWorkspace({
+    source: { kind: "directory", path: input.cwd },
+  });
 }
 
 function failureMessageForCreationMethod(

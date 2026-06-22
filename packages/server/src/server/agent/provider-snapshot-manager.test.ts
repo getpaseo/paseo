@@ -11,7 +11,7 @@ import type {
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
-import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import { ProviderSnapshotManager, resolveSnapshotCwd } from "./provider-snapshot-manager.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 
 const TEST_CAPABILITIES = {
@@ -871,6 +871,15 @@ describe("ProviderSnapshotManager cwd routing", () => {
       }
     } finally {
       manager.destroy();
+    }
+  });
+
+  test("resolveSnapshotCwd normalizes pure drive letters to append backslash on Windows", () => {
+    const resolved = resolveSnapshotCwd("C:");
+    if (process.platform === "win32") {
+      expect(resolved).toBe("C:\\");
+    } else {
+      expect(resolved).toBeDefined();
     }
   });
 });
