@@ -6,7 +6,9 @@ import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-st
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import {
   buildGitActions,
+  buildPrPanelMergeActions,
   narrowPullRequestState,
+  type BuildGitActionsInput,
   type GitAction,
   type GitActions,
 } from "@/git/policy";
@@ -159,6 +161,7 @@ interface UseGitActionsInput {
 
 interface UseGitActionsResult {
   gitActions: GitActions;
+  prMergeActions: GitActions;
   branchLabel: string;
   isGit: boolean;
 }
@@ -568,8 +571,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   }, [prStatus?.url, handleCreatePr]);
 
   // Build actions
-  const gitActions: GitActions = useMemo(() => {
-    const actions = buildGitActions({
+  const gitActionsInput = useMemo<BuildGitActionsInput>(
+    () => ({
       isGit,
       githubFeaturesEnabled,
       githubAutoMergeActionsEnabled,
@@ -684,63 +687,78 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           handler: handleArchiveWorktree,
         },
       },
-    });
-    return translateGitActions(actions, { baseRefLabel, hasPullRequest, t });
-  }, [
-    t,
-    isGit,
-    hasRemote,
-    hasPullRequest,
-    prStatus?.url,
-    prStatus?.state,
-    prStatus?.isDraft,
-    prStatus?.isMerged,
-    prStatus?.mergeable,
-    prStatus?.github,
-    aheadCount,
-    behindBaseCount,
-    isPaseoOwnedWorktree,
-    isOnBaseBranch,
-    githubFeaturesEnabled,
-    githubAutoMergeActionsEnabled,
-    hasUncommittedChanges,
-    aheadOfOrigin,
-    behindOfOrigin,
-    shipDefault,
-    baseRefLabel,
-    shouldPromoteArchive,
-    actionsDisabled,
-    commitStatus,
-    pullStatus,
-    pushStatus,
-    pullAndPushStatus,
-    prCreateStatus,
-    mergePrStatuses.squash,
-    mergePrStatuses.merge,
-    mergePrStatuses.rebase,
-    enablePrAutoMergeStatuses.squash,
-    enablePrAutoMergeStatuses.merge,
-    enablePrAutoMergeStatuses.rebase,
-    disablePrAutoMergeStatus,
-    mergeStatus,
-    mergeFromBaseStatus,
-    archiveStatus,
-    handleCommit,
-    handlePull,
-    handlePush,
-    handlePullAndPush,
-    handlePrAction,
-    handleMergePr,
-    handleEnablePrAutoMerge,
-    handleDisablePrAutoMerge,
-    handleMergeBranch,
-    handleMergeFromBase,
-    handleArchiveWorktree,
-    icons,
-    baseRef,
-  ]);
+    }),
+    [
+      isGit,
+      hasRemote,
+      hasPullRequest,
+      prStatus?.url,
+      prStatus?.state,
+      prStatus?.isDraft,
+      prStatus?.isMerged,
+      prStatus?.mergeable,
+      prStatus?.github,
+      aheadCount,
+      behindBaseCount,
+      isPaseoOwnedWorktree,
+      isOnBaseBranch,
+      githubFeaturesEnabled,
+      githubAutoMergeActionsEnabled,
+      hasUncommittedChanges,
+      aheadOfOrigin,
+      behindOfOrigin,
+      shipDefault,
+      baseRefLabel,
+      shouldPromoteArchive,
+      actionsDisabled,
+      commitStatus,
+      pullStatus,
+      pushStatus,
+      pullAndPushStatus,
+      prCreateStatus,
+      mergePrStatuses.squash,
+      mergePrStatuses.merge,
+      mergePrStatuses.rebase,
+      enablePrAutoMergeStatuses.squash,
+      enablePrAutoMergeStatuses.merge,
+      enablePrAutoMergeStatuses.rebase,
+      disablePrAutoMergeStatus,
+      mergeStatus,
+      mergeFromBaseStatus,
+      archiveStatus,
+      handleCommit,
+      handlePull,
+      handlePush,
+      handlePullAndPush,
+      handlePrAction,
+      handleMergePr,
+      handleEnablePrAutoMerge,
+      handleDisablePrAutoMerge,
+      handleMergeBranch,
+      handleMergeFromBase,
+      handleArchiveWorktree,
+      icons,
+      baseRef,
+    ],
+  );
 
-  return { gitActions, branchLabel, isGit };
+  const gitActions: GitActions = useMemo(
+    () =>
+      translateGitActions(buildGitActions(gitActionsInput), { baseRefLabel, hasPullRequest, t }),
+    [gitActionsInput, baseRefLabel, hasPullRequest, t],
+  );
+
+  const prMergeActions: GitActions = useMemo(
+    () =>
+      translateGitActions(buildPrPanelMergeActions(gitActionsInput), {
+        baseRefLabel,
+        hasPullRequest,
+        t,
+      }),
+    [gitActionsInput, baseRefLabel, hasPullRequest, t],
+  );
+
+  return { gitActions, prMergeActions, branchLabel, isGit };
 }
 
 function translateGitActions(

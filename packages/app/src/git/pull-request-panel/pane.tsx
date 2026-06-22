@@ -25,10 +25,13 @@ import {
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
+  RotateCw,
 } from "lucide-react-native";
 import type { PressableStateCallbackType } from "react-native";
+import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { Button } from "@/components/ui/button";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   DropdownMenu,
@@ -42,9 +45,14 @@ import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
+import { useToast } from "@/contexts/toast-context";
+import { useCheckoutGitActionsStore } from "@/git/actions-store";
+import { GitActionsSplitButton } from "@/git/actions-split-button";
+import type { GitActions } from "@/git/policy";
 import { isNative } from "@/constants/platform";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
+import { PrActivitySkeleton } from "./activity-skeleton";
 import {
   collapseActivity,
   expandActivity,
@@ -85,6 +93,8 @@ const ThemedGitPullRequestDraft = withUnistyles(GitPullRequestDraft);
 const ThemedMessageSquare = withUnistyles(MessageSquare);
 const ThemedMessageSquarePlus = withUnistyles(MessageSquarePlus);
 const ThemedMoreHorizontal = withUnistyles(MoreHorizontal);
+const ThemedRotateCw = withUnistyles(RotateCw);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -138,6 +148,12 @@ function kebabTriggerStyle({
   return [styles.kebabButton, hovered && styles.kebabButtonHovered];
 }
 
+function refreshButtonStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.refreshButton, hovered && styles.refreshButtonHovered];
+}
+
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
     <ThemedMoreHorizontal
@@ -176,13 +192,19 @@ export function PullRequestPane({
   serverId,
   cwd,
   data,
+  activityLoading,
+  prMergeActions,
   workspaceAttachmentScopeKey,
 }: {
   serverId: string;
   cwd: string;
   data: PrPaneData;
+  activityLoading: boolean;
+  prMergeActions: GitActions;
   workspaceAttachmentScopeKey?: string;
 }) {
+  const { t } = useTranslation();
+  const toast = useToast();
   const daemonClient = useHostRuntimeClient(serverId);
   const canFetchGitHubCheckDetails = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.githubCheckDetails === true,
@@ -198,6 +220,24 @@ export function PullRequestPane({
   const handleOpenPrUrl = useCallback(() => {
     void openExternalUrl(data.url);
   }, [data.url]);
+
+  const refreshSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
+  );
+  const runRefresh = useCheckoutGitActionsStore((state) => state.refresh);
+  const isRefreshing =
+    useCheckoutGitActionsStore((state) =>
+      state.getStatus({ serverId, cwd, actionId: "refresh" }),
+    ) === "pending";
+
+  const handleRefresh = useCallback(() => {
+    if (isRefreshing) {
+      return;
+    }
+    void runRefresh({ serverId, cwd }).catch((error) => {
+      toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
+    });
+  }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
 
   const handleToggleChecks = useCallback(() => {
     setChecksOpen((open) => !open);
@@ -420,7 +460,43 @@ export function PullRequestPane({
           )}
         </Pressable>
 
-        <View style={styles.divider} />
+        <View style={styles.toolbar} testID="pr-pane-toolbar">
+          <View style={styles.toolbarActions}>
+            <Button
+              variant="ghost"
+              size="xs"
+              leftIcon={ExternalLink}
+              onPress={handleOpenPrUrl}
+              testID="pr-pane-view-pr"
+            >
+              {t("workspace.git.pr.actions.viewPullRequest")}
+            </Button>
+            {prMergeActions.primary ? <GitActionsSplitButton gitActions={prMergeActions} /> : null}
+          </View>
+          {refreshSupported ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                isRefreshing
+                  ? t("workspace.git.diff.refreshing")
+                  : t("workspace.git.diff.refreshState")
+              }
+              testID="pr-pane-refresh"
+              style={refreshButtonStyle}
+              hitSlop={8}
+              onPress={handleRefresh}
+              disabled={isRefreshing}
+            >
+              <View style={styles.refreshIcon}>
+                {isRefreshing ? (
+                  <ThemedLoadingSpinner size={16} uniProps={foregroundMutedColorMapping} />
+                ) : (
+                  <ThemedRotateCw size={16} uniProps={foregroundMutedColorMapping} />
+                )}
+              </View>
+            </Pressable>
+          ) : null}
+        </View>
 
         <Section
           title="Checks"
@@ -488,27 +564,30 @@ export function PullRequestPane({
                 size="xs"
                 leftIcon={MessageSquarePlus}
                 onPress={handleAddAllToChat}
+                disabled={activityLoading}
               >
                 Add all to chat
               </Button>
             </View>
           ) : null}
-          {visibleEntries.length === 0 ? (
+          {activityLoading ? <PrActivitySkeleton /> : null}
+          {!activityLoading && visibleEntries.length === 0 ? (
             <Text style={styles.emptyText}>No activity yet</Text>
-          ) : (
-            visibleEntries.map(({ entry, collapsed }) => (
-              <TimelineEntryCard
-                key={entry.id}
-                entry={entry}
-                collapsed={collapsed}
-                collapsedEntryIds={collapsedEntryIds}
-                attachEnabled={attachEnabled}
-                onAddToChat={handleAddActivityToChat}
-                onAddThreadToChat={handleAddThreadToChat}
-                onToggleCollapsed={handleToggleEntryCollapsed}
-              />
-            ))
-          )}
+          ) : null}
+          {!activityLoading
+            ? visibleEntries.map(({ entry, collapsed }) => (
+                <TimelineEntryCard
+                  key={entry.id}
+                  entry={entry}
+                  collapsed={collapsed}
+                  collapsedEntryIds={collapsedEntryIds}
+                  attachEnabled={attachEnabled}
+                  onAddToChat={handleAddActivityToChat}
+                  onAddThreadToChat={handleAddThreadToChat}
+                  onToggleCollapsed={handleToggleEntryCollapsed}
+                />
+              ))
+            : null}
         </Section>
       </ScrollView>
     </View>
@@ -1235,6 +1314,37 @@ const styles = StyleSheet.create((theme) => ({
   divider: {
     height: 1,
     backgroundColor: theme.colors.border,
+  },
+  toolbar: {
+    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[3],
+  },
+  toolbarActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  refreshButton: {
+    marginLeft: "auto",
+    width: 22,
+    height: 22,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  refreshButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  refreshIcon: {
+    width: 16,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sectionHeader: {
     flexDirection: "row",

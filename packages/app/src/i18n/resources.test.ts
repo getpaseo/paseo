@@ -243,6 +243,7 @@ describe("translation resources", () => {
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
+    expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View Pull Request");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 

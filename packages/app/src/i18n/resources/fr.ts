@@ -743,6 +743,9 @@ export const fr: TranslationResources = {
         failedOpen: "Échec de l'ouverture de l'espace de travail",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Voir la pull request",
+        },
         sections: {
           checks: "Chèques",
           reviews: "Avis",

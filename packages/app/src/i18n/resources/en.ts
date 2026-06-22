@@ -724,6 +724,9 @@ export const en = {
         failedOpen: "Failed to open workspace",
       },
       pr: {
+        actions: {
+          viewPullRequest: "View Pull Request",
+        },
         sections: {
           checks: "Checks",
           reviews: "Reviews",

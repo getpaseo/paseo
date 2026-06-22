@@ -316,6 +316,69 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
   };
 }
 
+export function buildPrPanelMergeActions(input: BuildGitActionsInput): GitActions {
+  const empty: GitActions = { primary: null, secondary: [], menu: [] };
+  if (
+    !input.githubFeaturesEnabled ||
+    !input.hasPullRequest ||
+    !input.pullRequestUrl ||
+    input.pullRequestIsMerged ||
+    input.pullRequestState === "closed"
+  ) {
+    return empty;
+  }
+
+  if (canMergePr(input)) {
+    const allowed = getAllowedDirectPullRequestMergeActionModels(input);
+    const preferredId = getDefaultDirectPullRequestMergeActionId(input);
+    return splitByPreferred(
+      allowed.map((model) => buildDirectPullRequestMergeAction(input, model)),
+      preferredId,
+    );
+  }
+
+  if (canEnablePrAutoMerge(input)) {
+    const allowed = getAllowedAutoMergeEnableActionModels(input);
+    const preferredId = getDefaultEnablePullRequestAutoMergeActionId(input);
+    return splitByPreferred(
+      allowed.map((model) => buildEnablePullRequestAutoMergeAction(input, model)),
+      preferredId,
+    );
+  }
+
+  if (hasEnabledPrAutoMerge(input)) {
+    return { primary: buildDisablePullRequestAutoMergeAction(input), secondary: [], menu: [] };
+  }
+
+  // Blocked PR: a muted (not hard-disabled) merge button so a tap surfaces the reason via the
+  // split button's existing toast. Hard-disable only while the status is loading/errored.
+  const model =
+    getPreferredDirectPullRequestMergeActionModel(input) ??
+    PULL_REQUEST_DIRECT_MERGE_ACTION_MODELS[0];
+  const runtime = input.runtime[model.id];
+  return {
+    primary: {
+      id: model.id,
+      label: getDirectPullRequestMergeActionLabel(model.id),
+      pendingLabel: i18n.t("workspace.git.actions.mergePr.pending"),
+      successLabel: i18n.t("workspace.git.actions.mergePr.success"),
+      disabled: runtime.disabled,
+      status: runtime.status,
+      unavailableMessage: runtime.disabled ? undefined : getMergePrUnavailableMessage(input),
+      icon: runtime.icon,
+      startsGroup: false,
+      handler: runtime.handler,
+    },
+    secondary: [],
+    menu: [],
+  };
+}
+
+function splitByPreferred(actions: GitAction[], preferredId: GitActionId): GitActions {
+  const primary = actions.find((action) => action.id === preferredId) ?? actions[0] ?? null;
+  return { primary, secondary: actions.filter((action) => action !== primary), menu: [] };
+}
+
 function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (input.shouldPromoteArchive && input.isPaseoOwnedWorktree) {
     return "archive-worktree";

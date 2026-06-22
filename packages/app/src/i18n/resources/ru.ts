@@ -736,6 +736,9 @@ export const ru: TranslationResources = {
         failedOpen: "Не удалось открыть рабочую область",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Открыть пулреквест",
+        },
         sections: {
           checks: "Чеки",
           reviews: "Отзывы",

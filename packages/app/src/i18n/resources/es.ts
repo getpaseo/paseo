@@ -744,6 +744,9 @@ export const es: TranslationResources = {
         failedOpen: "No se pudo abrir el espacio de trabajo",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Ver pull request",
+        },
         sections: {
           checks: "cheques",
           reviews: "Reseñas",
