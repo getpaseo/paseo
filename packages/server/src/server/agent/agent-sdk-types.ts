@@ -636,16 +636,6 @@ export interface AgentSession {
   } | null;
 }
 
-export interface ListModelsOptions {
-  cwd: string;
-  force: boolean;
-}
-
-export interface ListModesOptions {
-  cwd: string;
-  force: boolean;
-}
-
 export interface FetchCatalogOptions {
   cwd: string;
   force: boolean;

@@ -19,7 +19,7 @@ import type {
   AgentStreamEvent,
   AgentSlashCommand,
   AgentUsage,
-  ListModelsOptions,
+  FetchCatalogOptions,
 } from "../agent/agent-sdk-types.js";
 import type { AgentPermissionRequest, AgentPermissionResponse } from "../agent/agent-sdk-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
@@ -1185,24 +1185,35 @@ class FakeAgentClient implements AgentClient {
     );
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async fetchCatalog(
+    _options: FetchCatalogOptions,
+  ): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
     if (this.provider === "claude") {
-      return [
-        { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },
-        { provider: this.provider, id: "sonnet", label: "Sonnet", isDefault: false },
-      ];
+      return {
+        models: [
+          { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },
+          { provider: this.provider, id: "sonnet", label: "Sonnet", isDefault: false },
+        ],
+        modes: [],
+      };
     }
     if (this.provider === "codex") {
-      return [
-        {
-          provider: this.provider,
-          id: "gpt-5.4-mini",
-          label: "gpt-5.4-mini",
-          isDefault: true,
-        },
-      ];
+      return {
+        models: [
+          {
+            provider: this.provider,
+            id: "gpt-5.4-mini",
+            label: "gpt-5.4-mini",
+            isDefault: true,
+          },
+        ],
+        modes: [],
+      };
     }
-    return [{ provider: this.provider, id: "test-model", label: "Test Model", isDefault: true }];
+    return {
+      models: [{ provider: this.provider, id: "test-model", label: "Test Model", isDefault: true }],
+      modes: [],
+    };
   }
 
   async isAvailable(): Promise<boolean> {

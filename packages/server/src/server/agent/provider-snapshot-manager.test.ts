@@ -496,10 +496,28 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("getProviderDiagnostic throws when no client is configured for the provider", async () => {
+  test("getProviderDiagnostic materializes the client and proceeds for an unmaterialized configured provider", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      isDev: true,
+      extraClients: {},
+    });
+    try {
+      const result = await manager.getProviderDiagnostic("mock");
+      expect(result.provider).toBe("mock");
+      expect(result.diagnostic).toContain("Models:");
+      expect(result.diagnostic).toContain("Status:");
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("getProviderDiagnostic throws for an unknown provider", async () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {
-      await expect(manager.getProviderDiagnostic("codex")).rejects.toThrow(/not configured/);
+      await expect(
+        manager.getProviderDiagnostic("unknown-provider" as AgentProvider),
+      ).rejects.toThrow(/not configured/);
     } finally {
       manager.destroy();
     }

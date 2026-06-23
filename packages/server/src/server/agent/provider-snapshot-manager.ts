@@ -314,10 +314,7 @@ export class ProviderSnapshotManager {
 
   async getProviderDiagnostic(provider: AgentProvider): Promise<ProviderDiagnosticResult> {
     const definition = this.requireProvider(provider);
-    const client = this.providerClients[provider];
-    if (!client) {
-      throw new Error(`Provider ${provider} is not configured`);
-    }
+    const client = this.ensureClient(provider, definition);
 
     // Force-refresh the snapshot so Models/Status come from the single catalog authority.
     await this.refreshSnapshotForCwd({ cwd: homedir(), providers: [provider] });

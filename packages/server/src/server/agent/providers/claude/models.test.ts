@@ -63,7 +63,7 @@ describe("getClaudeModels", () => {
   });
 });
 
-describe("ClaudeAgentClient.listModels", () => {
+describe("ClaudeAgentClient.fetchCatalog", () => {
   it("appends concrete models from Claude settings.json", async () => {
     const configDir = await createClaudeConfigDir({
       model: "us.anthropic.claude-opus-4-7[1m]",

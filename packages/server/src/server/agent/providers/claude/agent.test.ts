@@ -395,7 +395,7 @@ describe("convertClaudeHistoryEntry", () => {
 // "interrupting message should produce coherent text without garbling from race condition"
 // in daemon.e2e.test.ts which exercises the full flow through the WebSocket API.
 
-describe("ClaudeAgentClient.listModels", () => {
+describe("ClaudeAgentClient.fetchCatalog", () => {
   const logger = createTestLogger();
 
   test("returns hardcoded claude models", async () => {

@@ -17,7 +17,6 @@ import type {
   AgentPersistenceHandle,
   AgentSession,
   AgentSessionConfig,
-  ListModelsOptions,
 } from "./agent/agent-sdk-types.js";
 import {
   createPersistedProjectRecord,
@@ -70,13 +69,9 @@ class SnapshotStormProviderClient implements AgentClient {
     throw new Error(`${this.provider} is only used for provider snapshot tests`);
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
     await new Promise((resolve) => setTimeout(resolve, this.delayMs));
-    return this.models;
-  }
-
-  async listModes(): Promise<AgentMode[]> {
-    return [];
+    return { models: this.models, modes: [] };
   }
 
   async isAvailable(): Promise<boolean> {
@@ -85,15 +80,18 @@ class SnapshotStormProviderClient implements AgentClient {
 }
 
 class MetadataMockLoadTestAgentClient extends MockLoadTestAgentClient {
-  override async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return [
-      {
-        provider: "mock",
-        id: "gpt-5.4-mini",
-        label: "GPT 5.4 Mini",
-        isDefault: true,
-      },
-    ];
+  override async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
+    return {
+      models: [
+        {
+          provider: "mock",
+          id: "gpt-5.4-mini",
+          label: "GPT 5.4 Mini",
+          isDefault: true,
+        },
+      ],
+      modes: [],
+    };
   }
 }
 

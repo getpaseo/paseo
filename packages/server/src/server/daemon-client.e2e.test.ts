@@ -473,8 +473,8 @@ class NonPersistentReloadClient implements AgentClient {
     });
   }
 
-  async listModels() {
-    return [];
+  async fetchCatalog() {
+    return { models: [], modes: [] };
   }
 }
 

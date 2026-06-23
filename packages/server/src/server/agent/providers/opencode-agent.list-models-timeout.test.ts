@@ -45,13 +45,15 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
 
   await vi.advanceTimersByTimeAsync(15_000);
 
-  await expect(modelsPromise).resolves.toMatchObject([
-    {
-      provider: "opencode",
-      id: "zai/glm-5.1",
-      label: "GLM 5.1",
-    },
-  ]);
+  await expect(modelsPromise).resolves.toMatchObject({
+    models: [
+      {
+        provider: "opencode",
+        id: "zai/glm-5.1",
+        label: "GLM 5.1",
+      },
+    ],
+  });
   expect(openCodeClient.calls.providerList).toHaveLength(1);
 });
 
@@ -161,5 +163,13 @@ test("does not throw when only api-source providers are present with no connecte
 
   await expect(
     client.fetchCatalog({ cwd: "/tmp/opencode-models", force: false }),
-  ).resolves.toHaveLength(1);
+  ).resolves.toMatchObject({
+    models: [
+      {
+        provider: "opencode",
+        id: "pi/pi-model-1",
+        label: "Pi Model 1",
+      },
+    ],
+  });
 });

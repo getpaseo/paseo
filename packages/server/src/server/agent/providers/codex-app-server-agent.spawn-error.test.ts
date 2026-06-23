@@ -6,7 +6,7 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 describe("CodexAppServerAgentClient spawn error handling", () => {
   const logger = createTestLogger();
 
-  test("listModels rejects gracefully when the codex binary does not exist", async () => {
+  test("fetchCatalog rejects gracefully when the codex binary does not exist", async () => {
     const client = new CodexAppServerAgentClient(logger, {
       command: {
         mode: "replace",
