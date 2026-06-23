@@ -3456,8 +3456,12 @@ class ClaudeAgentSession implements AgentSession {
     messageIdHint: string | null,
     turnId: string | null,
   ): Promise<AgentStreamEvent[]> {
+    // Allow disabling context usage probing to reduce API calls (restores v0.1.97 behavior).
+    // When disabled, context usage is calculated from stream events and result usage data
+    // via the fallback mechanism in buildResultUsage() - same as v0.1.97.
+    const shouldProbeContextUsage = process.env.PASEO_DISABLE_CONTEXT_USAGE_PROBE !== "true";
     const currentContextUsage =
-      message.type === "result" && message.subtype === "success"
+      shouldProbeContextUsage && message.type === "result" && message.subtype === "success"
         ? await this.queryCurrentContextUsage(activeQuery)
         : undefined;
     const messageEvents = this.translateMessageToEvents(message, {
