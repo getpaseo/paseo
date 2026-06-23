@@ -163,6 +163,10 @@ jobs:
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          if [[ "$SHOULD_PUBLISH" != "true" ]]; then
+            build_args+=("-c.mac.hardenedRuntime=false")
+            build_args+=("-c.mac.notarize=false")
+          fi
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload desktop artifacts to release
