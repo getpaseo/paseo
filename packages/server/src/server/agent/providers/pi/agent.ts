@@ -90,6 +90,10 @@ const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const PASEO_PI_EXTENSION_RESULT_TIMEOUT_MS = 10_000;
+// Pi cold-starts a CLI subprocess and fetches its model catalog during the availability probe,
+// which routinely takes 3-4s on real hardware. 2s was too short and made Pi report unavailable
+// (and therefore show no models in the web UI) on every snapshot refresh.
+const PI_AVAILABILITY_TIMEOUT_MS = 8_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -2020,7 +2024,7 @@ export class PiRpcAgentClient implements AgentClient {
             await runtimeSession.close().catch(() => undefined);
           }
         })(),
-        2000,
+        PI_AVAILABILITY_TIMEOUT_MS,
         "Pi availability check timed out",
       );
     } catch {
