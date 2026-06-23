@@ -1916,6 +1916,40 @@ describe("ACPAgentSession", () => {
     ).toHaveLength(1);
   });
 
+  test("startTurn ignores ACP user echo chunks that rewrite the submitted message id", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("follow-up", { messageId: "msg-client-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "provider-echo-1",
+        content: { type: "text", text: "initial questionfollow-up" },
+      } as SessionUpdate,
+    });
+
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        turnId,
+        item: { type: "user_message", text: "follow-up", messageId: "msg-client-1" },
+      },
+    ]);
+  });
+
   test("startTurn converts background prompt rejections into turn_failed events", async () => {
     const session = createSession();
     const events: Array<{ type: string; turnId?: string; error?: string }> = [];

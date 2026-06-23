@@ -2012,11 +2012,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
     switch (update.sessionUpdate) {
       case "user_message_chunk": {
-        const item = this.createMessageTimelineItem("user_message", update);
-        if (!item) {
+        // ACP providers often echo submitted user prompts back as user_message_chunk
+        // updates. Paseo already emits the submitted prompt locally in startTurn().
+        // Some providers rewrite or omit the original messageId, and can replay
+        // cumulative user text across follow-ups, so messageId-only de-duping is
+        // not enough. While a foreground turn is active, keep the local submitted
+        // user bubble and ignore provider echoes.
+        if (this.activeForegroundTurnId) {
           return [];
         }
         if (update.messageId && this.submittedUserMessageIds.has(update.messageId)) {
+          return [];
+        }
+        const item = this.createMessageTimelineItem("user_message", update);
+        if (!item) {
           return [];
         }
         return [this.wrapTimeline(item)];
