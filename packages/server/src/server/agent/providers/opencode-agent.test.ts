@@ -263,7 +263,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
 
-  test("listModels returns models with required fields", async () => {
+  test("fetchCatalog returns models with required fields", async () => {
     const runtime = new TestOpenCodeRuntime();
     const openCodeClient = new TestOpenCodeClient();
     openCodeClient.providerListResponse = {
@@ -286,15 +286,24 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
         ],
       },
     };
+    openCodeClient.appAgentsResponse = {
+      data: [
+        {
+          name: "build",
+          mode: "primary",
+          hidden: false,
+        },
+      ],
+    };
     runtime.enqueueClient(openCodeClient);
     const client = new OpenCodeAgentClient(logger, undefined, { runtime });
     const cwd = os.homedir();
-    const models = await client.listModels({ cwd, force: false });
+    const catalog = await client.fetchCatalog({ cwd, force: false });
 
-    expect(Array.isArray(models)).toBe(true);
-    expect(models).toHaveLength(1);
+    expect(Array.isArray(catalog.models)).toBe(true);
+    expect(catalog.models).toHaveLength(1);
 
-    for (const model of models) {
+    for (const model of catalog.models) {
       expect(model.provider).toBe("opencode");
       expect(typeof model.id).toBe("string");
       expect(model.id.length).toBeGreaterThan(0);
@@ -309,7 +318,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       });
       expect(typeof model.metadata?.contextWindowMaxTokens).toBe("number");
     }
-    expect(models[0]).toMatchObject({
+    expect(catalog.models[0]).toMatchObject({
       id: TEST_MODEL,
       label: "Big Pickle",
       metadata: {
@@ -358,7 +367,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     const client = new OpenCodeAgentClient(logger, undefined, { runtime });
     await Promise.all(
       Array.from({ length: 12 }, (_, index) =>
-        client.listModels({ cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`), force: false }),
+        client.fetchCatalog({ cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`), force: false }),
       ),
     );
 

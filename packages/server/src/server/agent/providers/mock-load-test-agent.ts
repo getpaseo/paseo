@@ -20,11 +20,11 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  FetchCatalogOptions,
   ImportableProviderSession,
   ImportProviderSessionContext,
   ImportProviderSessionInput,
-  ListModesOptions,
-  ListModelsOptions,
+  ProviderCatalog,
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -531,12 +531,11 @@ export class MockLoadTestAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return MODELS;
-  }
-
-  async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
-    return getAgentProviderDefinition(MOCK_LOAD_TEST_PROVIDER_ID).modes;
+  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    return {
+      models: MODELS,
+      modes: getAgentProviderDefinition(MOCK_LOAD_TEST_PROVIDER_ID).modes,
+    };
   }
 
   async listImportableSessions(): Promise<ImportableProviderSession[]> {

@@ -31,8 +31,6 @@ import {
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
-  type ListModesOptions,
-  type ListModelsOptions,
   type ProviderCatalog,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
@@ -1961,15 +1959,6 @@ export class PiRpcAgentClient implements AgentClient {
       paseoExtension.cleanup();
       throw error;
     }
-  }
-
-  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const catalog = await this.fetchCatalog(options);
-    return catalog.models;
-  }
-
-  async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
-    return [];
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {

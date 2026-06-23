@@ -11,7 +11,6 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentLaunchContext,
-  AgentModelDefinition,
   AgentPersistenceHandle,
   AgentPromptInput,
   AgentProvider,
@@ -206,19 +205,8 @@ class TestAgentClient implements AgentClient {
     return this.createSession(resolvedConfig);
   }
 
-  async listModels(): Promise<AgentModelDefinition[]> {
-    return [
-      {
-        provider: this.provider,
-        id: "test-model",
-        label: "Test Model",
-        isDefault: true,
-      },
-    ];
-  }
-
-  async isAvailable(): Promise<boolean> {
-    return true;
+  async fetchCatalog(): Promise<ProviderCatalog> {
+    return { models: true, modes: [] };
   }
 
   getSession(cwd: string): TestAgentSession {

@@ -1268,17 +1268,20 @@ describe("ACPAgentClient modelTransformer", () => {
       modelTransformer: transformPiModels,
     });
 
-    await expect(client.listModels({ cwd: "/tmp/acp-models", force: false })).resolves.toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-        isDefault: true,
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-      },
-    ]);
+    await expect(client.fetchCatalog({ cwd: "/tmp/acp-models", force: false })).resolves.toEqual({
+      models: [
+        {
+          provider: "pi",
+          id: "openrouter/openai/gpt-4.1-mini",
+          label: "gpt-4.1-mini",
+          description: "openrouter/openai/gpt-4.1-mini",
+          isDefault: true,
+          thinkingOptions: undefined,
+          defaultThinkingOptionId: undefined,
+        },
+      ],
+      modes: [],
+    });
   });
 });
 
@@ -1307,7 +1310,7 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
     protected override async closeProbe(): Promise<void> {}
   }
 
-  test("applies sessionResponseTransformer before deriving list probe modes", async () => {
+  test("applies sessionResponseTransformer before deriving catalog modes", async () => {
     const client = new TestACPAgentClient({
       provider: "claude-acp",
       logger: createTestLogger(),
@@ -1322,18 +1325,21 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
       }),
     });
 
-    await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([
-      {
-        id: "review",
-        label: "Review",
-        description: "After transform",
-      },
-    ]);
+    await expect(client.fetchCatalog({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual({
+      models: [],
+      modes: [
+        {
+          id: "review",
+          label: "Review",
+          description: "After transform",
+        },
+      ],
+    });
   });
 });
 
-describe("ACPAgentClient listModes", () => {
-  test("passes the requested cwd to list model and mode probes", async () => {
+describe("ACPAgentClient fetchCatalog", () => {
+  test("passes the requested cwd to the catalog probe", async () => {
     const newSession = vi.fn().mockResolvedValue({ modes: null, models: null, configOptions: [] });
 
     class TestACPAgentClient extends ACPAgentClient {
@@ -1355,20 +1361,15 @@ describe("ACPAgentClient listModes", () => {
       defaultModes: [],
     });
 
-    await client.listModels({ cwd: "/tmp/acp-model-cwd", force: false });
-    await client.listModes({ cwd: "/tmp/acp-mode-cwd", force: false });
+    await client.fetchCatalog({ cwd: "/tmp/acp-catalog-cwd", force: false });
 
-    expect(newSession).toHaveBeenNthCalledWith(1, {
-      cwd: "/tmp/acp-model-cwd",
-      mcpServers: [],
-    });
-    expect(newSession).toHaveBeenNthCalledWith(2, {
-      cwd: "/tmp/acp-mode-cwd",
+    expect(newSession).toHaveBeenCalledWith({
+      cwd: "/tmp/acp-catalog-cwd",
       mcpServers: [],
     });
   });
 
-  test("returns an empty array when no ACP modes are reported and fallback modes are empty", async () => {
+  test("returns an empty modes array when no ACP modes are reported and fallback modes are empty", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
@@ -1406,7 +1407,10 @@ describe("ACPAgentClient listModes", () => {
       defaultModes: [],
     });
 
-    await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([]);
+    await expect(client.fetchCatalog({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual({
+      models: [],
+      modes: [],
+    });
   });
 });
 
@@ -2159,7 +2163,7 @@ describe("ACPAgentClient probe cleanup", () => {
       terminateProcess: terminator.terminate,
     });
 
-    await client.listModels({ cwd: "/tmp/acp-models", force: false });
+    await client.fetchCatalog({ cwd: "/tmp/acp-models", force: false });
 
     expect(terminator.terminated).toContain(child);
     expect(child.stdin.destroyed).toBe(true);

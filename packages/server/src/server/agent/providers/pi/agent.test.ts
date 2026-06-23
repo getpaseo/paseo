@@ -858,10 +858,10 @@ describe("PiRpcAgentClient", () => {
     });
   });
 
-  test("lists models from a short-lived Pi session in the requested cwd", async () => {
+  test("discovers models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
-    const modelsPromise = client.listModels({ cwd: "/workspace/with-extension", force: false });
+    const catalogPromise = client.fetchCatalog({ cwd: "/workspace/with-extension", force: false });
     pi.latestSession().models = [
       {
         provider: "openrouter",
@@ -871,14 +871,17 @@ describe("PiRpcAgentClient", () => {
       },
     ];
 
-    await expect(modelsPromise).resolves.toMatchObject([
-      {
-        provider: "pi",
-        id: "openrouter/google/gemini-2.5-flash-lite",
-        label: "gemini-2.5-flash-lite",
-        defaultThinkingOptionId: "medium",
-      },
-    ]);
+    await expect(catalogPromise).resolves.toMatchObject({
+      models: [
+        {
+          provider: "pi",
+          id: "openrouter/google/gemini-2.5-flash-lite",
+          label: "gemini-2.5-flash-lite",
+          defaultThinkingOptionId: "medium",
+        },
+      ],
+      modes: [],
+    });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
   });
 

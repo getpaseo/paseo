@@ -45,7 +45,7 @@ describe("CursorACPAgentClient model discovery", () => {
       configOptions: [],
     });
 
-    await expect(client.listModels({ cwd: "/tmp/cursor", force: false })).resolves.toEqual([
+    await expect(client.fetchCatalog({ cwd: "/tmp/cursor", force: false })).resolves.toEqual([
       {
         provider: "acp",
         id: "gpt-5.4[context=272k,reasoning=medium,fast=false]",
@@ -65,6 +65,6 @@ describe("CursorACPAgentClient model discovery", () => {
       configOptions: [],
     });
 
-    await expect(client.listModels({ cwd: "/tmp/cursor", force: false })).resolves.toEqual([]);
+    await expect(client.fetchCatalog({ cwd: "/tmp/cursor", force: false })).resolves.toEqual([]);
   });
 });

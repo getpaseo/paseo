@@ -31,12 +31,10 @@ import {
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
-  type ListModelsOptions,
   type ProviderCatalog,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import type { Logger } from "pino";
-import { homedir } from "node:os";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -5561,7 +5559,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const models = await this.fetchModelsFromAppServer();
+    return { models, modes: CODEX_MODES };
+  }
+
+  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
     const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
@@ -5590,11 +5593,6 @@ export class CodexAppServerAgentClient implements AgentClient {
     } finally {
       await client.dispose();
     }
-  }
-
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const models = await this.listModels({ cwd: homedir(), force: false });
-    return { models, modes: CODEX_MODES };
   }
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {

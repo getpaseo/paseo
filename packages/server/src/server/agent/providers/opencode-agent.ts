@@ -44,8 +44,6 @@ import {
   type ListImportableSessionsOptions,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
-  type ListModelsOptions,
-  type ListModesOptions,
   type McpServerConfig,
   type ProviderCatalog,
   type ToolCallDetail,
@@ -1359,50 +1357,6 @@ export class OpenCodeAgentClient implements AgentClient {
     } catch (error) {
       acquisition.release();
       throw error;
-    }
-  }
-
-  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const acquisition = await this.runtime.acquireServer({ force: options.force });
-    const { url } = acquisition.server;
-    const client = this.runtime.createClient({
-      baseUrl: url,
-      directory: options.cwd,
-    });
-
-    try {
-      return await this.fetchModelsFromClient(client, options.cwd);
-    } finally {
-      acquisition.release();
-    }
-  }
-
-  async listModes(options: ListModesOptions): Promise<AgentMode[]> {
-    const acquisition = await this.runtime.acquireServer({ force: options.force });
-    const { url } = acquisition.server;
-    const directory = options.cwd;
-    const client = this.runtime.createClient({ baseUrl: url, directory });
-
-    try {
-      const response = await openCodeMetadataLimit(() =>
-        withTimeout(
-          client.app.agents({ directory }),
-          10_000,
-          "OpenCode app.agents timed out after 10s",
-        ),
-      );
-
-      if (response.error || !response.data) {
-        return DEFAULT_MODES;
-      }
-
-      const discovered = response.data
-        .filter(isSelectableOpenCodeAgent)
-        .map(mapOpenCodeAgentToMode);
-
-      return mergeOpenCodeModes(discovered);
-    } finally {
-      acquisition.release();
     }
   }
 

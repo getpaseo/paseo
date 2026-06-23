@@ -33,7 +33,7 @@ describe("MockLoadTestAgentClient", () => {
   test("default model is a five minute foreground stream with token-rate intervals", async () => {
     const client = new MockLoadTestAgentClient();
 
-    const models = await client.listModels({ cwd: "/tmp/mock-models", force: false });
+    const { models } = await client.fetchCatalog({ cwd: "/tmp/mock-models", force: false });
 
     expect(models[0]).toMatchObject({
       id: MOCK_LOAD_TEST_DEFAULT_MODEL_ID,

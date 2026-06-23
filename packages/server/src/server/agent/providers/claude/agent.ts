@@ -57,7 +57,6 @@ import {
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
-  type AgentModelDefinition,
   type AgentPermissionRequest,
   type AgentPermissionRequestKind,
   type AgentPermissionResponse,
@@ -79,7 +78,6 @@ import {
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
-  type ListModelsOptions,
   type McpServerConfig,
   type ProviderCatalog,
 } from "../../agent-sdk-types.js";
@@ -1421,12 +1419,8 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
-    return await getClaudeModelsWithSettings(this.logger, this.configDir);
-  }
-
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
     const models = await getClaudeModelsWithSettings(this.logger, this.configDir);
     return { models, modes: DEFAULT_MODES };
   }

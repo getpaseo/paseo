@@ -404,9 +404,7 @@ export class ProviderSnapshotManager {
           client.resolveCreateConfig?.bind(client) ?? definition.resolveCreateConfig,
         isCreateConfigUnattended:
           client.isCreateConfigUnattended?.bind(client) ?? definition.isCreateConfigUnattended,
-        fetchModels: client.listModels.bind(client),
-        fetchModes: client.listModes?.bind(client) ?? definition.fetchModes,
-        fetchCatalog: client.fetchCatalog?.bind(client) ?? definition.fetchCatalog,
+        fetchCatalog: client.fetchCatalog.bind(client),
       };
     }
 

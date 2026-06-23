@@ -7,7 +7,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
-  ListModelsOptions,
+  FetchCatalogOptions,
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
@@ -38,8 +38,8 @@ function createExtraClient(
     async resumeSession() {
       throw new Error("not implemented");
     },
-    async listModels(_options: ListModelsOptions) {
-      return [] as AgentModelDefinition[];
+    async fetchCatalog(_options: FetchCatalogOptions) {
+      return { models: [] as AgentModelDefinition[], modes: [] as AgentMode[] };
     },
     async isAvailable() {
       return false;
@@ -107,7 +107,10 @@ describe("ProviderSnapshotManager public surface", () => {
 
   test("providerOverrides with enabled:false marks the provider as unavailable without probing", async () => {
     const isAvailable = vi.fn(async () => true);
-    const fetchModels = vi.fn(async () => [] as AgentModelDefinition[]);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -118,7 +121,7 @@ describe("ProviderSnapshotManager public surface", () => {
         pi: { enabled: false },
       },
       extraClients: {
-        codex: createExtraClient("codex", { isAvailable, listModels: fetchModels }),
+        codex: createExtraClient("codex", { isAvailable, fetchCatalog }),
       },
     });
     try {
@@ -126,7 +129,7 @@ describe("ProviderSnapshotManager public surface", () => {
       const codex = entries.find((entry) => entry.provider === "codex");
       expect(codex).toMatchObject({ provider: "codex", enabled: false, status: "unavailable" });
       expect(isAvailable).not.toHaveBeenCalled();
-      expect(fetchModels).not.toHaveBeenCalled();
+      expect(fetchCatalog).not.toHaveBeenCalled();
     } finally {
       manager.destroy();
     }
@@ -161,18 +164,20 @@ describe("ProviderSnapshotManager public surface", () => {
   test("wait:true returns a warm provider without refreshing it", async () => {
     const cwd = "/tmp/project";
     const isAvailable = vi.fn(async () => true);
-    const listModels = vi.fn(async () => [
-      {
-        provider: "codex",
-        id: "gpt-5.4-mini",
-        label: "GPT 5.4 Mini",
-      },
-    ]);
-    const listModes = vi.fn(async () => [] as AgentMode[]);
+    const fetchCatalog = vi.fn(async () => ({
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4-mini",
+          label: "GPT 5.4 Mini",
+        },
+      ] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       extraClients: {
-        codex: createExtraClient("codex", { isAvailable, listModels, listModes }),
+        codex: createExtraClient("codex", { isAvailable, fetchCatalog }),
       },
     });
     const listener = vi.fn();
@@ -181,16 +186,14 @@ describe("ProviderSnapshotManager public surface", () => {
       const [first] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
       expect(first).toMatchObject({ provider: "codex", status: "ready" });
       expect(isAvailable).toHaveBeenCalledTimes(1);
-      expect(listModels).toHaveBeenCalledTimes(1);
-      expect(listModes).toHaveBeenCalledTimes(1);
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
 
       listener.mockClear();
       const [second] = await manager.listProviders({ cwd, providers: ["codex"], wait: true });
 
       expect(second).toEqual(first);
       expect(isAvailable).toHaveBeenCalledTimes(1);
-      expect(listModels).toHaveBeenCalledTimes(1);
-      expect(listModes).toHaveBeenCalledTimes(1);
+      expect(fetchCatalog).toHaveBeenCalledTimes(1);
       expect(listener).not.toHaveBeenCalled();
     } finally {
       manager.destroy();
@@ -200,35 +203,37 @@ describe("ProviderSnapshotManager public surface", () => {
   test("explicit refresh re-probes only the requested warm provider", async () => {
     const cwd = "/tmp/project";
     const isAvailableCodex = vi.fn(async () => true);
-    const listCodexModels = vi.fn(async () => [
-      {
-        provider: "codex",
-        id: "gpt-5.4-mini",
-        label: "GPT 5.4 Mini",
-      },
-    ]);
-    const listCodexModes = vi.fn(async () => [] as AgentMode[]);
+    const fetchCodexCatalog = vi.fn(async () => ({
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4-mini",
+          label: "GPT 5.4 Mini",
+        },
+      ] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
     const isAvailableClaude = vi.fn(async () => true);
-    const listClaudeModels = vi.fn(async () => [
-      {
-        provider: "claude",
-        id: "claude-opus-4.5",
-        label: "Claude Opus 4.5",
-      },
-    ]);
-    const listClaudeModes = vi.fn(async () => [] as AgentMode[]);
+    const fetchClaudeCatalog = vi.fn(async () => ({
+      models: [
+        {
+          provider: "claude",
+          id: "claude-opus-4.5",
+          label: "Claude Opus 4.5",
+        },
+      ] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       extraClients: {
         codex: createExtraClient("codex", {
           isAvailable: isAvailableCodex,
-          listModels: listCodexModels,
-          listModes: listCodexModes,
+          fetchCatalog: fetchCodexCatalog,
         }),
         claude: createExtraClient("claude", {
           isAvailable: isAvailableClaude,
-          listModels: listClaudeModels,
-          listModes: listClaudeModes,
+          fetchCatalog: fetchClaudeCatalog,
         }),
       },
     });
@@ -237,11 +242,9 @@ describe("ProviderSnapshotManager public surface", () => {
       await manager.refreshSnapshotForCwd({ cwd, providers: ["codex"] });
 
       expect(isAvailableCodex).toHaveBeenCalledTimes(2);
-      expect(listCodexModels).toHaveBeenCalledTimes(2);
-      expect(listCodexModes).toHaveBeenCalledTimes(2);
+      expect(fetchCodexCatalog).toHaveBeenCalledTimes(2);
       expect(isAvailableClaude).toHaveBeenCalledTimes(1);
-      expect(listClaudeModels).toHaveBeenCalledTimes(1);
-      expect(listClaudeModes).toHaveBeenCalledTimes(1);
+      expect(fetchClaudeCatalog).toHaveBeenCalledTimes(1);
     } finally {
       manager.destroy();
     }
@@ -459,13 +462,9 @@ describe("ProviderSnapshotManager public surface", () => {
       models: catalogModels,
       modes: catalogModes,
     }));
-    const listModels = vi.fn(async () => [] as AgentModelDefinition[]);
-    const listModes = vi.fn(async () => [] as AgentMode[]);
     const client = createExtraClient("codex", {
       isAvailable: async () => true,
       fetchCatalog,
-      listModels,
-      listModes,
     });
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -474,8 +473,6 @@ describe("ProviderSnapshotManager public surface", () => {
     try {
       const result = await manager.getProviderDiagnostic("codex");
       expect(fetchCatalog).toHaveBeenCalledTimes(1);
-      expect(listModels).not.toHaveBeenCalled();
-      expect(listModes).not.toHaveBeenCalled();
       expect(result.diagnostic).toContain("Models: 1");
       expect(result.diagnostic).toContain("Status: Ready");
     } finally {
@@ -547,8 +544,8 @@ describe("ProviderSnapshotManager public surface", () => {
           async isAvailable() {
             return true;
           },
-          async listModes() {
-            return childModes;
+          async fetchCatalog() {
+            return { models: [] as AgentModelDefinition[], modes: childModes };
           },
           async resolveCreateConfig(input) {
             resolverInputs.push(input);
@@ -562,8 +559,8 @@ describe("ProviderSnapshotManager public surface", () => {
           async isAvailable() {
             return true;
           },
-          async listModes() {
-            return parentModes;
+          async fetchCatalog() {
+            return { models: [] as AgentModelDefinition[], modes: parentModes };
           },
           isCreateConfigUnattended(input) {
             return input.modeId === "parent-unattended";
@@ -625,8 +622,8 @@ describe("ProviderSnapshotManager public surface", () => {
           async isAvailable() {
             return true;
           },
-          async listModes() {
-            return modes;
+          async fetchCatalog() {
+            return { models: [] as AgentModelDefinition[], modes };
           },
           async resolveCreateConfig(input) {
             resolverInputs.push(input);
@@ -684,8 +681,8 @@ describe("ProviderSnapshotManager public surface", () => {
           async isAvailable() {
             return true;
           },
-          async listModes() {
-            return modes;
+          async fetchCatalog() {
+            return { models: [] as AgentModelDefinition[], modes };
           },
           resolveCreateConfig: openCode.resolveCreateConfig.bind(openCode),
           isCreateConfigUnattended: openCode.isCreateConfigUnattended.bind(openCode),

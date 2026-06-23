@@ -11,8 +11,6 @@ import type {
   AgentSession,
   AgentStreamEvent,
   FetchCatalogOptions,
-  ListModelsOptions,
-  ListModesOptions,
   ProviderCatalog,
   ResolveAgentCreateConfigInput,
   ResolveAgentCreateConfigResult,
@@ -66,8 +64,6 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   createClient: (logger: Logger) => AgentClient;
   resolveCreateConfig: (input: ResolveAgentCreateConfigInput) => ResolveAgentCreateConfigResult;
   isCreateConfigUnattended: (input: AgentCreateConfigUnattendedInput) => boolean;
-  fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
-  fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
   /**
    * Single catalog discovery call used by ProviderSnapshotManager. Should spawn
    * at most one provider runtime process and return both models and modes.
@@ -431,22 +427,15 @@ function wrapClientProvider(
           launchContext,
         ),
       ),
-    listModels: async (options) =>
-      mergeModels(provider, profileModels, additionalModels, await inner.listModels(options), {
-        profileModelsAreAdditive,
-      }),
-    listModes: inner.listModes?.bind(inner),
-    fetchCatalog: inner.fetchCatalog
-      ? async (options) => {
-          const catalog = await inner.fetchCatalog!(options);
-          return {
-            models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
-              profileModelsAreAdditive,
-            }),
-            modes: catalog.modes,
-          };
-        }
-      : undefined,
+    fetchCatalog: async (options) => {
+      const catalog = await inner.fetchCatalog(options);
+      return {
+        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
+          profileModelsAreAdditive,
+        }),
+        modes: catalog.modes,
+      };
+    },
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listImportableSessions: listImportableSessions
@@ -508,29 +497,7 @@ function createRegistryEntry(
       });
     });
 
-  const fetchModelsFromClient = async (
-    options: ListModelsOptions,
-    catalogClient: AgentClient = modelClient,
-  ) =>
-    mergeModels(
-      provider,
-      resolved.profileModels,
-      resolved.additionalModels,
-      await catalogClient.listModels(options),
-      {
-        profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-      },
-    );
-
-  const fetchModesFromClient = async (
-    options: ListModesOptions,
-    catalogClient: AgentClient = modelClient,
-  ) => {
-    const modes = catalogClient.listModes
-      ? await catalogClient.listModes(options)
-      : resolved.definition.modes;
-    return decorateModes(modes);
-  };
+  const hasStaticModes = resolved.definition.modes.length > 0;
 
   return {
     ...resolved.definition,
@@ -541,48 +508,36 @@ function createRegistryEntry(
     resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,
     isCreateConfigUnattended:
       modelClient.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended,
-    fetchModels: fetchModelsFromClient,
-    fetchModes: fetchModesFromClient,
     fetchCatalog: async (options: FetchCatalogOptions, client?: AgentClient) => {
       const catalogClient = client ?? modelClient;
       if (hasReplacementModels) {
         // Replacement models skip runtime model discovery, but additionalModels
-        // must still be merged on top. If modes are dynamic, probe for modes only;
-        // otherwise use static/empty modes with no runtime.
+        // must still be merged on top. If modes are dynamic, probe for modes via
+        // the single catalog API; otherwise use static/empty modes with no runtime.
         const models = mergeModelAdditions(provider, replacementModels, resolved.additionalModels);
-        if (!catalogClient.listModes) {
+        if (hasStaticModes) {
           return {
             models,
             modes: decorateModes(resolved.definition.modes),
           };
         }
-        return {
-          models,
-          modes: await fetchModesFromClient(options, catalogClient),
-        };
-      }
-
-      if (catalogClient.fetchCatalog) {
         const catalog = await catalogClient.fetchCatalog(options);
-        return {
-          models: mergeModels(
-            provider,
-            resolved.profileModels,
-            resolved.additionalModels,
-            catalog.models,
-            {
-              profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-            },
-          ),
-          modes: decorateModes(catalog.modes),
-        };
+        return { models, modes: decorateModes(catalog.modes) };
       }
 
-      const [models, modes] = await Promise.all([
-        fetchModelsFromClient(options, catalogClient),
-        fetchModesFromClient(options, catalogClient),
-      ]);
-      return { models, modes };
+      const catalog = await catalogClient.fetchCatalog(options);
+      return {
+        models: mergeModels(
+          provider,
+          resolved.profileModels,
+          resolved.additionalModels,
+          catalog.models,
+          {
+            profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+          },
+        ),
+        modes: decorateModes(catalog.modes),
+      };
     },
   };
 }

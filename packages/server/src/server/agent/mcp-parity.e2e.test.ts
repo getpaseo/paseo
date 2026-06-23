@@ -163,7 +163,7 @@ function createRecordingAgentClients(): Record<AgentProvider, AgentClient> {
       },
       resumeSession: async (handle, overrides, launchContext) =>
         await client.resumeSession(handle, overrides, launchContext),
-      listModels: async (options) => await client.listModels(options),
+      listModels: async (options) => await client.fetchCatalog(options),
       isAvailable: async () => await client.isAvailable(),
     };
     if (client.listModes) {
