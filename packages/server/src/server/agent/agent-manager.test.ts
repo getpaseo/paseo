@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -99,7 +100,102 @@ class TestAgentClient implements AgentClient {
   }
 
   async fetchCatalog() {
-    return { models: new TestAgentSession(config), modes: [] };
+    return {
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          isDefault: true,
+        },
+        {
+          provider: "codex",
+          id: "gpt-5.4-mini",
+          label: "GPT-5.4 Mini",
+        },
+        {
+          provider: "codex",
+          id: "gpt-5.2-codex",
+          label: "GPT-5.2 Codex",
+        },
+      ],
+      modes: [],
+    };
+  }
+
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.resumeOverrides.push(config);
+    return new TestAgentSession({
+      provider: "codex",
+      cwd: config?.cwd ?? process.cwd(),
+      daemonAppendSystemPrompt: config?.daemonAppendSystemPrompt,
+    });
+  }
+}
+
+class NativeArchiveRecordingClient extends TestAgentClient {
+  readonly archivedHandles: AgentPersistenceHandle[] = [];
+  readonly unarchivedHandles: AgentPersistenceHandle[] = [];
+  readArchivedAtDuringUnarchive: (() => Promise<string | null | undefined>) | null = null;
+  archivedAtDuringUnarchive: string | null | undefined;
+  unarchiveFailure: Error | null = null;
+
+  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    this.archivedHandles.push(handle);
+  }
+
+  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    this.unarchivedHandles.push(handle);
+    if (this.readArchivedAtDuringUnarchive) {
+      this.archivedAtDuringUnarchive = await this.readArchivedAtDuringUnarchive();
+    }
+    if (this.unarchiveFailure) {
+      throw this.unarchiveFailure;
+    }
+  }
+}
+
+class EnvProbeAgentClient extends TestAgentClient {
+  probe: Promise<{ probe: string | null; agentId: string | null }> | null = null;
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const script = `
+      process.stdout.write(JSON.stringify({
+        probe: process.env.CHUNK14_PROBE ?? null,
+        agentId: process.env.PASEO_AGENT_ID ?? null
+      }));
+    `;
+    const child = spawn(process.execPath, ["-e", script], {
+      cwd: config.cwd,
+      env: { ...process.env, ...launchContext?.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    this.probe = new Promise((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`env probe exited ${code}: ${stderr}`));
+          return;
+        }
+        resolve(JSON.parse(stdout) as { probe: string | null; agentId: string | null });
+      });
+    });
+    return new TestAgentSession(config);
   }
 }
 
@@ -1365,7 +1461,34 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     }
 
     async fetchCatalog() {
-      return { models: new TestAgentSession(merged), modes: [] };
+      return {
+        models: [
+          {
+            provider: "codex",
+            id: "gpt-5.4",
+            label: "GPT-5.4",
+            isDefault: true,
+          },
+        ],
+        modes: [],
+      };
+    }
+
+    async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastResumeOverrides = overrides;
+      this.lastResumeLaunchContext = launchContext;
+      const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+      const merged: AgentSessionConfig = {
+        ...metadata,
+        ...overrides,
+        provider: "codex",
+        cwd: overrides?.cwd ?? metadata.cwd ?? process.cwd(),
+      };
+      return new TestAgentSession(merged);
     }
   }
 

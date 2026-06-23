@@ -20,6 +20,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  ProviderCatalog,
 } from "./agent-sdk-types.js";
 
 /**
@@ -206,7 +207,21 @@ class TestAgentClient implements AgentClient {
   }
 
   async fetchCatalog(): Promise<ProviderCatalog> {
-    return { models: true, modes: [] };
+    return {
+      models: [
+        {
+          provider: this.provider,
+          id: "test-model",
+          label: "Test Model",
+          isDefault: true,
+        },
+      ],
+      modes: [],
+    };
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
   }
 
   getSession(cwd: string): TestAgentSession {

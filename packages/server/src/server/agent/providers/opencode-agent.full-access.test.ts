@@ -19,6 +19,12 @@ function mockOpenCodeClient(options: MockOpenCodeClientOptions = {}) {
   const openCodeClient = new TestOpenCodeClient();
   openCodeClient.appAgentsResponse = { data: options.agents ?? [] };
   openCodeClient.sessionPromptAsyncEvents = options.events ?? [idleEvent()];
+  openCodeClient.providerListResponse = {
+    data: {
+      connected: ["openai"],
+      all: [{ id: "openai", source: "env", models: {} }],
+    },
+  };
   runtime.enqueueClient(openCodeClient);
 
   return { openCodeClient, runtime };
