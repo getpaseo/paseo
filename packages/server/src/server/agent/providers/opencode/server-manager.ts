@@ -275,6 +275,21 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       };
       const timeout = setTimeout(() => {
         if (!started) {
+          this.removeManagedProcessRecordWhenResolved(managedProcessRecord);
+          void this.terminateProcess(serverProcess, {
+            gracefulTimeoutMs: 1_000,
+            forceTimeoutMs: 1_000,
+          })
+            .then(() => {
+              this.logger.warn({ port }, "Killed OpenCode server process after startup timeout");
+              return undefined;
+            })
+            .catch((error) => {
+              this.logger.error(
+                { err: error, port },
+                "Failed to kill OpenCode server process after timeout",
+              );
+            });
           reject(new Error(buildStartupErrorMessage("OpenCode server startup timeout")));
         }
       }, 30_000);

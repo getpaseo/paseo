@@ -93,6 +93,18 @@ describe("OpenCodeServerManager generations", () => {
     expect(runtime.terminatedPorts).toEqual([4402, 4401]);
   });
 
+  test("terminates process when server startup times out", { timeout: 35_000 }, async () => {
+    const { manager, runtime } = createTestManager([4601]);
+
+    runtime.delayListeningAnnouncement = 31_000;
+
+    const acquisitionPromise = manager.acquire({ force: false });
+
+    await expect(acquisitionPromise).rejects.toThrow(/OpenCode server (startup timeout|exited)/);
+
+    expect(runtime.terminatedPorts).toEqual([4601]);
+  });
+
   test("shutdown still signals a process after an earlier kill signal if it has not exited", async () => {
     const { manager, runtime } = createTestManager([4451]);
 
@@ -179,6 +191,7 @@ class FakeOpenCodeServerRuntime {
   private readonly ports: number[];
   private readonly processesByChild = new Map<ChildProcess, FakeOpenCodeProcess>();
   private readonly processesByPort = new Map<number, FakeOpenCodeProcess>();
+  delayListeningAnnouncement = 0;
 
   constructor(ports: number[]) {
     this.ports = [...ports];
@@ -206,7 +219,11 @@ class FakeOpenCodeServerRuntime {
     const process = new FakeOpenCodeProcess({ port, pid: 10_000 + port });
     this.processesByChild.set(process.child, process);
     this.processesByPort.set(port, process);
-    queueMicrotask(() => process.announceListening());
+    if (this.delayListeningAnnouncement > 0) {
+      setTimeout(() => process.announceListening(), this.delayListeningAnnouncement);
+    } else {
+      queueMicrotask(() => process.announceListening());
+    }
     return process.child;
   };
 
