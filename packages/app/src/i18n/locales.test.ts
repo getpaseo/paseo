@@ -88,7 +88,7 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("zh-CN", ["en-US"])).toBe("zh-CN");
   });
 
-  it("maps UN official system locales", () => {
+  it("maps supported system locales", () => {
     expect(resolveSupportedLocale("system", ["ar-EG"])).toBe("ar");
     expect(resolveSupportedLocale("system", ["en-US"])).toBe("en");
     expect(resolveSupportedLocale("system", ["es-MX"])).toBe("es");
