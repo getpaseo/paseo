@@ -1444,6 +1444,7 @@ export const en = {
           en: "English",
           es: "Spanish",
           fr: "French",
+          ja: "Japanese",
           ru: "Russian",
           zhCN: "Simplified Chinese",
         },
