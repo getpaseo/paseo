@@ -582,6 +582,8 @@ export const en = {
           success: "Pulled and pushed",
         },
         viewPr: "View PR",
+        copyPrUrl: "Copy PR URL",
+        copyPrUrlSuccess: "URL copied",
         createPr: {
           label: "Create PR",
           pending: "Creating PR...",
@@ -674,6 +676,7 @@ export const en = {
           failedMergeFromBase: "Failed to merge from base",
           worktreePathUnavailable: "Worktree path unavailable",
           failedArchive: "Failed to archive worktree",
+          failedCopyPrUrl: "Failed to copy PR URL",
         },
         archiveWarning: {
           title: 'Archive "{{worktreeName}}"?',

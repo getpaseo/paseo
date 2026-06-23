@@ -589,6 +589,8 @@ export const es: TranslationResources = {
           success: "Tirado y empujado",
         },
         viewPr: "VerPR",
+        copyPrUrl: "Copiar URL del PR",
+        copyPrUrlSuccess: "URL copiada",
         createPr: {
           label: "CrearPR",
           pending: "CreandoPR...",
@@ -694,6 +696,7 @@ export const es: TranslationResources = {
           failedMergeFromBase: "No se pudo fusionar desde la base",
           worktreePathUnavailable: "Ruta del árbol de trabajo no disponible",
           failedArchive: "No se pudo archivar el árbol de trabajo",
+          failedCopyPrUrl: "No se pudo copiar la URL del PR",
         },
         archiveWarning: {
           title: '¿Archivo "{{worktreeName}}"?',

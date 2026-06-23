@@ -583,6 +583,8 @@ export const ar: TranslationResources = {
           success: "سحبت ودفعت",
         },
         viewPr: "عرض PR",
+        copyPrUrl: "نسخ رابط PR",
+        copyPrUrlSuccess: "تم نسخ الرابط",
         createPr: {
           label: "إنشاء PR",
           pending: "إنشاء PR...",
@@ -667,6 +669,7 @@ export const ar: TranslationResources = {
           failedMergeFromBase: "فشل الدمج من القاعدة",
           worktreePathUnavailable: "مسار شجرة العمل غير متوفر",
           failedArchive: "فشل في أرشفة شجرة العمل",
+          failedCopyPrUrl: "فشل في نسخ رابط PR",
         },
         archiveWarning: {
           title: 'الأرشيف "{{worktreeName}}"؟',

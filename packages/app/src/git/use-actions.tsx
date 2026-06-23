@@ -12,6 +12,7 @@ import {
 } from "@/git/policy";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -154,6 +155,7 @@ interface UseGitActionsInput {
     merge: ReactElement;
     mergeFromBase: ReactElement;
     archive: ReactElement;
+    copyPrUrl: ReactElement;
   };
 }
 
@@ -567,6 +569,18 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handleCreatePr();
   }, [prStatus?.url, handleCreatePr]);
 
+  const handleCopyPrUrl = useCallback(() => {
+    if (prStatus?.url) {
+      void copyToClipboard(prStatus.url)
+        .then(() => {
+          return toast.show(t("workspace.git.actions.copyPrUrlSuccess"), { variant: "success" });
+        })
+        .catch((error: unknown) => {
+          toastActionError(error, t("workspace.git.actions.toasts.failedCopyPrUrl"));
+        });
+    }
+  }, [prStatus?.url, toast, t, toastActionError]);
+
   // Build actions
   const gitActions: GitActions = useMemo(() => {
     const actions = buildGitActions({
@@ -683,6 +697,12 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           icon: icons.archive,
           handler: handleArchiveWorktree,
         },
+        "copy-pr-url": {
+          disabled: false,
+          status: "idle",
+          icon: icons.copyPrUrl,
+          handler: handleCopyPrUrl,
+        },
       },
     });
     return translateGitActions(actions, { baseRefLabel, hasPullRequest, t });
@@ -736,6 +756,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handleMergeBranch,
     handleMergeFromBase,
     handleArchiveWorktree,
+    handleCopyPrUrl,
     icons,
     baseRef,
   ]);
@@ -889,6 +910,12 @@ function getTranslatedGitActionLabels(
         label: t("workspace.git.actions.archive.label"),
         pendingLabel: t("workspace.git.actions.archive.pending"),
         successLabel: t("workspace.git.actions.archive.success"),
+      };
+    case "copy-pr-url":
+      return {
+        label: t("workspace.git.actions.copyPrUrl"),
+        pendingLabel: t("workspace.git.actions.copyPrUrl"),
+        successLabel: t("workspace.git.actions.copyPrUrl"),
       };
   }
 }
