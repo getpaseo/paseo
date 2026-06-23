@@ -601,11 +601,9 @@ export function ProviderDiagnosticSheet({
 
   const stableDiscoveredRef = useRef<AgentModelDefinition[]>([]);
   const currentModels = providerEntry?.models;
-  useEffect(() => {
-    if (currentModels && currentModels.length > 0) {
-      stableDiscoveredRef.current = currentModels;
-    }
-  }, [currentModels]);
+  if (currentModels && currentModels.length > 0) {
+    stableDiscoveredRef.current = currentModels;
+  }
 
   const discoveredModels = useMemo(() => {
     if (currentModels && currentModels.length > 0) {
