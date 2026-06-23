@@ -13,7 +13,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { isPlatform } from "../test-utils/platform.js";
-import { probeExecutable } from "./executable-resolution.js";
+import { findExecutable, probeExecutable } from "./executable-resolution.js";
 
 const timeoutMs = 1000;
 const timeoutSlackMs = 500;
@@ -179,4 +179,29 @@ describe("probeExecutable", () => {
       }
     },
   );
+});
+
+// Regression test for getpaseo/paseo#1665:
+// `findExecutable()` must honour the configured probe timeout when an agent CLI
+// hangs past it. The elapsed window is bounded on both sides so a silent
+// regression of the constant fails loudly instead of letting slow CLIs be
+// misclassified.
+const EXPECTED_PROBE_TIMEOUT_MS = 5000;
+const REGRESSION_SLACK_MS = 3000;
+
+describe("findExecutable timeout", () => {
+  test("honours PROBE_TIMEOUT_MS for a hanging agent CLI", async () => {
+    const hangsPath = createHangingFixture(makeTempDir());
+    const startedAt = performance.now();
+
+    // The probe sends SIGKILL once the timeout elapses, so findExecutable
+    // resolves with the candidate path rather than throwing. The two timing
+    // assertions below pin the configured timeout.
+    const result = await findExecutable(hangsPath);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(typeof result).toBe("string");
+    expect(elapsedMs).toBeGreaterThan(EXPECTED_PROBE_TIMEOUT_MS);
+    expect(elapsedMs).toBeLessThan(EXPECTED_PROBE_TIMEOUT_MS + REGRESSION_SLACK_MS);
+  });
 });

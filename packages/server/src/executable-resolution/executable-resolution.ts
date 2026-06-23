@@ -10,7 +10,7 @@ type Which = (command: string, options: { all: true }) => Promise<string[]>;
 
 const require = createRequire(import.meta.url);
 const which = require("which") as Which;
-const PROBE_TIMEOUT_MS = 2000;
+const PROBE_TIMEOUT_MS = 5000;
 
 function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
