@@ -2020,7 +2020,7 @@ export class PiRpcAgentClient implements AgentClient {
             await runtimeSession.close().catch(() => undefined);
           }
         })(),
-        2000,
+        15_000,
         "Pi availability check timed out",
       );
     } catch {
