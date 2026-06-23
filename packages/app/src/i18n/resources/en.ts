@@ -725,7 +725,7 @@ export const en = {
       },
       pr: {
         actions: {
-          viewPullRequest: "View Pull Request",
+          viewPullRequest: "View",
         },
         sections: {
           checks: "Checks",

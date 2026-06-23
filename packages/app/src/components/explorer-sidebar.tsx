@@ -10,17 +10,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useIsFocused } from "@react-navigation/native";
 import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import {
-  Archive,
-  ArrowDownUp,
-  Download,
-  GitCommitHorizontal,
-  GitMerge,
-  RefreshCcw,
-  Upload,
-  X,
-} from "lucide-react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   formatPrTabLabel,
@@ -30,12 +21,8 @@ import {
   PullRequestTabIcon,
   usePrPaneData,
 } from "@/git/pull-request-panel";
-import { GitHubIcon } from "@/components/icons/github-icon";
-import { useGitActions } from "@/git/use-actions";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
-import type { GitActions } from "@/git/policy";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
-import type { Theme } from "@/styles/theme";
 import {
   usePanelStore,
   selectIsFileExplorerOpen,
@@ -57,34 +44,6 @@ import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attach
 
 const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
-
-const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
-const ThemedDownload = withUnistyles(Download);
-const ThemedUpload = withUnistyles(Upload);
-const ThemedArrowDownUp = withUnistyles(ArrowDownUp);
-const ThemedGitHubIcon = withUnistyles(GitHubIcon);
-const ThemedGitMerge = withUnistyles(GitMerge);
-const ThemedRefreshCcw = withUnistyles(RefreshCcw);
-const ThemedArchive = withUnistyles(Archive);
-
-const gitActionIconColorMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
-
-const GIT_ACTION_ICONS = {
-  commit: <ThemedGitCommitHorizontal size={16} uniProps={gitActionIconColorMapping} />,
-  pull: <ThemedDownload size={16} uniProps={gitActionIconColorMapping} />,
-  push: <ThemedUpload size={16} uniProps={gitActionIconColorMapping} />,
-  pullAndPush: <ThemedArrowDownUp size={16} uniProps={gitActionIconColorMapping} />,
-  viewPr: <ThemedGitHubIcon size={16} uniProps={gitActionIconColorMapping} />,
-  createPr: <ThemedGitHubIcon size={16} uniProps={gitActionIconColorMapping} />,
-  mergePrSquash: <ThemedGitHubIcon size={16} uniProps={gitActionIconColorMapping} />,
-  mergePrMerge: <ThemedGitHubIcon size={16} uniProps={gitActionIconColorMapping} />,
-  mergePrRebase: <ThemedGitHubIcon size={16} uniProps={gitActionIconColorMapping} />,
-  merge: <ThemedGitMerge size={16} uniProps={gitActionIconColorMapping} />,
-  mergeFromBase: <ThemedRefreshCcw size={16} uniProps={gitActionIconColorMapping} />,
-  archive: <ThemedArchive size={16} uniProps={gitActionIconColorMapping} />,
-};
 
 interface ExplorerSidebarProps {
   serverId: string;
@@ -500,11 +459,6 @@ function SidebarContent({
     !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
   const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
-  const { prMergeActions } = useGitActions({
-    serverId,
-    cwd: workspaceRoot,
-    icons: GIT_ACTION_ICONS,
-  });
   const refreshGitActions = useCheckoutGitActionsStore((s) => s.refresh);
   const handlePrRetry = useCallback(() => {
     refreshGitActions({ serverId, cwd: workspaceRoot }).catch(() => {});
@@ -590,7 +544,6 @@ function SidebarContent({
             serverId={serverId}
             cwd={workspaceRoot}
             prPane={prPane}
-            prMergeActions={prMergeActions}
             workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
             onRetry={handlePrRetry}
           />
@@ -604,7 +557,6 @@ interface PrTabContentProps {
   serverId: string;
   cwd: string;
   prPane: UsePrPaneDataResult;
-  prMergeActions: GitActions;
   workspaceAttachmentScopeKey: string;
   onRetry: () => void;
 }
@@ -613,7 +565,6 @@ function PrTabContent({
   serverId,
   cwd,
   prPane,
-  prMergeActions,
   workspaceAttachmentScopeKey,
   onRetry,
 }: PrTabContentProps) {
@@ -624,7 +575,6 @@ function PrTabContent({
         cwd={cwd}
         data={prPane.data}
         activityLoading={prPane.activityLoading}
-        prMergeActions={prMergeActions}
         workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
       />
     );

@@ -6,7 +6,6 @@ import { type CheckoutStatusPayload, useCheckoutStatusQuery } from "@/git/use-st
 import { type CheckoutPrStatusPayload, useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import {
   buildGitActions,
-  buildPrPanelMergeActions,
   narrowPullRequestState,
   type BuildGitActionsInput,
   type GitAction,
@@ -161,7 +160,6 @@ interface UseGitActionsInput {
 
 interface UseGitActionsResult {
   gitActions: GitActions;
-  prMergeActions: GitActions;
   branchLabel: string;
   isGit: boolean;
 }
@@ -748,17 +746,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     [gitActionsInput, baseRefLabel, hasPullRequest, t],
   );
 
-  const prMergeActions: GitActions = useMemo(
-    () =>
-      translateGitActions(buildPrPanelMergeActions(gitActionsInput), {
-        baseRefLabel,
-        hasPullRequest,
-        t,
-      }),
-    [gitActionsInput, baseRefLabel, hasPullRequest, t],
-  );
-
-  return { gitActions, prMergeActions, branchLabel, isGit };
+  return { gitActions, branchLabel, isGit };
 }
 
 function translateGitActions(

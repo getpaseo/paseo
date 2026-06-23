@@ -718,7 +718,7 @@ export const ar: TranslationResources = {
       },
       pr: {
         actions: {
-          viewPullRequest: "عرض طلب السحب",
+          viewPullRequest: "عرض",
         },
         sections: {
           checks: "الشيكات",

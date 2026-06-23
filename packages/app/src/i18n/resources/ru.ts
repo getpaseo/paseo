@@ -737,7 +737,7 @@ export const ru: TranslationResources = {
       },
       pr: {
         actions: {
-          viewPullRequest: "Открыть пулреквест",
+          viewPullRequest: "Открыть",
         },
         sections: {
           checks: "Чеки",

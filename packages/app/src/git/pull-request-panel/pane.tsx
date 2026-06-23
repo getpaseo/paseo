@@ -47,11 +47,9 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
-import { GitActionsSplitButton } from "@/git/actions-split-button";
-import type { GitActions } from "@/git/policy";
 import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
-import type { Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { PrActivitySkeleton } from "./activity-skeleton";
 import {
   collapseActivity,
@@ -150,8 +148,9 @@ function kebabTriggerStyle({
 
 function refreshButtonStyle({
   hovered = false,
+  pressed = false,
 }: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.refreshButton, hovered && styles.refreshButtonHovered];
+  return [styles.refreshButton, (hovered || pressed) && styles.refreshButtonHovered];
 }
 
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
@@ -193,14 +192,12 @@ export function PullRequestPane({
   cwd,
   data,
   activityLoading,
-  prMergeActions,
   workspaceAttachmentScopeKey,
 }: {
   serverId: string;
   cwd: string;
   data: PrPaneData;
   activityLoading: boolean;
-  prMergeActions: GitActions;
   workspaceAttachmentScopeKey?: string;
 }) {
   const { t } = useTranslation();
@@ -435,6 +432,47 @@ export function PullRequestPane({
   return (
     <View style={styles.root} testID="pr-pane">
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.toolbar} testID="pr-pane-toolbar">
+          <View style={styles.toolbarActions}>
+            <Button
+              variant="ghost"
+              size="xs"
+              leftIcon={ExternalLink}
+              onPress={handleOpenPrUrl}
+              style={styles.viewButton}
+              testID="pr-pane-view-pr"
+            >
+              {t("workspace.git.pr.actions.viewPullRequest")}
+            </Button>
+          </View>
+          {refreshSupported ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                isRefreshing
+                  ? t("workspace.git.diff.refreshing")
+                  : t("workspace.git.diff.refreshState")
+              }
+              testID="pr-pane-refresh"
+              style={refreshButtonStyle}
+              hitSlop={8}
+              onPress={handleRefresh}
+              disabled={isRefreshing}
+            >
+              <View style={styles.refreshIcon}>
+                {isRefreshing ? (
+                  <ThemedLoadingSpinner
+                    size={ICON_SIZE.sm}
+                    uniProps={foregroundMutedColorMapping}
+                  />
+                ) : (
+                  <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+                )}
+              </View>
+            </Pressable>
+          ) : null}
+        </View>
+
         <Pressable onPress={handleOpenPrUrl} style={styles.header}>
           {({ hovered }) => (
             <>
@@ -459,44 +497,6 @@ export function PullRequestPane({
             </>
           )}
         </Pressable>
-
-        <View style={styles.toolbar} testID="pr-pane-toolbar">
-          <View style={styles.toolbarActions}>
-            <Button
-              variant="ghost"
-              size="xs"
-              leftIcon={ExternalLink}
-              onPress={handleOpenPrUrl}
-              testID="pr-pane-view-pr"
-            >
-              {t("workspace.git.pr.actions.viewPullRequest")}
-            </Button>
-            {prMergeActions.primary ? <GitActionsSplitButton gitActions={prMergeActions} /> : null}
-          </View>
-          {refreshSupported ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                isRefreshing
-                  ? t("workspace.git.diff.refreshing")
-                  : t("workspace.git.diff.refreshState")
-              }
-              testID="pr-pane-refresh"
-              style={refreshButtonStyle}
-              hitSlop={8}
-              onPress={handleRefresh}
-              disabled={isRefreshing}
-            >
-              <View style={styles.refreshIcon}>
-                {isRefreshing ? (
-                  <ThemedLoadingSpinner size={16} uniProps={foregroundMutedColorMapping} />
-                ) : (
-                  <ThemedRotateCw size={16} uniProps={foregroundMutedColorMapping} />
-                )}
-              </View>
-            </Pressable>
-          ) : null}
-        </View>
 
         <Section
           title="Checks"
@@ -1322,12 +1322,23 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
-    paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+    paddingRight: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+    paddingLeft: theme.spacing[3],
   },
   toolbarActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  viewButton: {
+    gap: theme.spacing[1],
+    minHeight: 24,
+    height: 24,
+    paddingVertical: 0,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
   },
   refreshButton: {
     marginLeft: "auto",
@@ -1341,8 +1352,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   refreshIcon: {
-    width: 16,
-    height: 16,
+    width: ICON_SIZE.md,
+    height: ICON_SIZE.md,
     alignItems: "center",
     justifyContent: "center",
   },

@@ -712,7 +712,7 @@ export const zhCN: TranslationResources = {
       },
       pr: {
         actions: {
-          viewPullRequest: "查看拉取请求",
+          viewPullRequest: "查看",
         },
         sections: {
           checks: "Checks",

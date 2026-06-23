@@ -744,7 +744,7 @@ export const fr: TranslationResources = {
       },
       pr: {
         actions: {
-          viewPullRequest: "Voir la pull request",
+          viewPullRequest: "Voir",
         },
         sections: {
           checks: "Chèques",
