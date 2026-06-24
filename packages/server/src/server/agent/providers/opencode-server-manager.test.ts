@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import os from "node:os";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -217,17 +218,21 @@ describe("OpenCodeServerManager generations", () => {
     });
 
     const acquisition = manager.acquireCurrent({ cwd: "/workspace/repo" });
+    const acquisitionFailure = expect(acquisition).rejects.toThrow(
+      "OpenCode server exited with code null",
+    );
     await runtime.settle();
+    expect(runtime.launches).toEqual([]);
+
     const shutdown = manager.shutdown();
     await runtime.settle();
+    expect(runtime.terminatedPorts).toEqual([]);
 
     runtime.releaseNextPort();
     await shutdown;
-    if (runtime.terminatedPorts.length === 0) {
-      runtime.processForPort(4475).announceListening();
-    }
 
-    await expect(acquisition).rejects.toThrow("OpenCode server exited with code null");
+    await acquisitionFailure;
+    expect(runtime.launches).toEqual([{ port: 4475, cwd: "/workspace/repo" }]);
     expect(runtime.terminatedPorts).toEqual([4475]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
@@ -254,6 +259,41 @@ describe("OpenCodeServerManager generations", () => {
 
     await acquisitionFailure;
     expect(runtime.terminatedPorts).toEqual([4476]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("shutdown rejects acquisitions started while collecting pending launches", async () => {
+    const { manager, runtime } = createTestManager([4477, 4478, 4479, 4480], {
+      deferFirstPort: true,
+    });
+
+    const pendingAcquisition = manager.acquireCurrent({ cwd: "/workspace/slow" });
+    const pendingFailure = expect(pendingAcquisition).rejects.toThrow(
+      "OpenCode server manager is shutting down",
+    );
+    await runtime.settle();
+
+    const shutdown = manager.shutdown();
+    await runtime.settle();
+
+    const lateCurrentFailure = expect(
+      manager.acquireCurrent({ cwd: "/workspace/late-current" }),
+    ).rejects.toThrow("OpenCode server manager is shutting down");
+    const lateNewFailure = expect(
+      manager.acquireNew({ cwd: "/workspace/late-new" }),
+    ).rejects.toThrow("OpenCode server manager is shutting down");
+    const lateDedicatedFailure = expect(
+      manager.acquireDedicated({ TEST_ENV: "custom" }, { cwd: "/workspace/late-dedicated" }),
+    ).rejects.toThrow("OpenCode server manager is shutting down");
+
+    await Promise.all([lateCurrentFailure, lateNewFailure, lateDedicatedFailure]);
+
+    runtime.releaseNextPort();
+    await shutdown;
+
+    await pendingFailure;
+    expect(runtime.launches).toEqual([{ port: 4477, cwd: "/workspace/slow" }]);
+    expect(runtime.terminatedPorts).toEqual([4477]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
@@ -320,9 +360,11 @@ describe("OpenCodeServerManager managed process ledger", () => {
 
   test("records helper server starts and removes the record on process exit", async () => {
     const { manager, runtime } = createTestManager([4601]);
+    const homeCwd = os.homedir();
 
     await manager.acquireCurrent();
 
+    expect(runtime.launches).toEqual([{ port: 4601, cwd: homeCwd }]);
     expect(await runtime.managedProcesses.list()).toEqual([
       {
         id: "managed-process-1",
@@ -330,7 +372,7 @@ describe("OpenCodeServerManager managed process ledger", () => {
         pid: 14601,
         command: "opencode",
         args: ["serve", "--port", "4601"],
-        metadata: { port: 4601 },
+        metadata: { port: 4601, cwd: homeCwd },
         identity: { commandLine: null, startedAt: null },
         createdAt: "test-created-at",
       },
