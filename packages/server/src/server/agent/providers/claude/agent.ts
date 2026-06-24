@@ -1699,6 +1699,7 @@ class ClaudeContextUsageState {
   beginTurn(): void {
     this.streamRequestInputTokens = undefined;
     this.streamRequestOutputTokens = undefined;
+    this.compactedContextWindowUsedTokens = undefined;
   }
 
   setInitialContextWindowMaxTokens(contextWindowMaxTokens: number | undefined): void {
@@ -1784,7 +1785,8 @@ class ClaudeContextUsageState {
     ) {
       return undefined;
     }
-    return this.streamRequestInputTokens + this.streamRequestOutputTokens;
+    const usedTokens = this.streamRequestInputTokens + this.streamRequestOutputTokens;
+    return usedTokens > 0 ? usedTokens : undefined;
   }
 
   private createUsageUpdatedEvent(contextWindowUsedTokens: number): AgentStreamEvent {

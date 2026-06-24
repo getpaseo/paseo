@@ -2001,6 +2001,114 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("zero-token stream events after compact keep post-token usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25),
+        createCompactBoundary(),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaEvent(0),
+        createSuccessResult({
+          total_cost_usd: 0.04,
+          usage: {
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 0,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session, "/compact");
+
+      expect(
+        events.filter(
+          (event) => event.type === "usage_updated" && event.usage.contextWindowUsedTokens === 0,
+        ),
+      ).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: {
+            inputTokens: 0,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            totalCostUsd: 0.04,
+            contextWindowMaxTokens: 200_000,
+            contextWindowUsedTokens: 704,
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("starting a new turn clears interrupted compact usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createSuccessResult({
+          total_cost_usd: 0.04,
+          usage: {
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 0,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const compactEvents = (session as unknown as TestClaudeSession).translateMessageToEvents(
+        createCompactBoundary(),
+      );
+      expect(compactEvents).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowUsedTokens: 704,
+          },
+        }),
+      );
+
+      const events = await collectStreamEvents(session, "next turn");
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: expect.objectContaining({
+            inputTokens: 0,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            totalCostUsd: 0.04,
+          }),
+        }),
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "turn_completed" && event.usage.contextWindowUsedTokens !== undefined,
+        ),
+      ).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("result.result is surfaced as an assistant message when no model output was produced", async () => {
     const session = await createSessionForTest();
 
