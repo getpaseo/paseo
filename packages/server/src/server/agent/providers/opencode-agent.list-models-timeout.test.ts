@@ -78,7 +78,9 @@ test("uses a new server for explicit catalog refresh", async () => {
 
   await client.fetchCatalog({ cwd: "/tmp/opencode-models", force: true });
 
-  expect(runtime.acquisitions).toEqual([{ kind: "new", releaseCount: 1 }]);
+  expect(runtime.acquisitions).toEqual([
+    { kind: "new", cwd: "/tmp/opencode-models", releaseCount: 1 },
+  ]);
 });
 
 test("includes models from api-source providers not in connected", async () => {
