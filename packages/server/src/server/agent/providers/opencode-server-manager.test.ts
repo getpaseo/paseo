@@ -124,6 +124,29 @@ describe("OpenCodeServerManager generations", () => {
     modelsAcquisition.release();
   });
 
+  test("new acquisitions for the same cwd coalesce before the fresh helper is listening", async () => {
+    const { manager, runtime } = createTestManager([4261, 4262], { autoAnnounce: false });
+
+    const firstStart = manager.acquireNew({ cwd: "/workspace/repo" });
+    await runtime.settle();
+    const secondStart = manager.acquireNew({ cwd: "/workspace/repo" });
+    await runtime.settle();
+
+    expect(runtime.launches).toEqual([{ port: 4261, cwd: "/workspace/repo" }]);
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    runtime.processForPort(4261).announceListening();
+    const [firstAcquisition, secondAcquisition] = await Promise.all([firstStart, secondStart]);
+
+    expect(firstAcquisition.server.url).toBe("http://127.0.0.1:4261");
+    expect(secondAcquisition.server.url).toBe("http://127.0.0.1:4261");
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    secondAcquisition.release();
+    firstAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([]);
+  });
+
   test("release is idempotent", async () => {
     const { manager, runtime } = createTestManager([4301, 4302]);
 
@@ -206,6 +229,31 @@ describe("OpenCodeServerManager generations", () => {
 
     await expect(acquisition).rejects.toThrow("OpenCode server exited with code null");
     expect(runtime.terminatedPorts).toEqual([4475]);
+    expect(await runtime.managedProcesses.list()).toEqual([]);
+  });
+
+  test("shutdown kills a dedicated server whose launch is still pending", async () => {
+    const { manager, runtime } = createTestManager([4476], {
+      autoAnnounce: false,
+      deferFirstPort: true,
+    });
+
+    const acquisition = manager.acquireDedicated(
+      { TEST_ENV: "custom" },
+      { cwd: "/workspace/repo" },
+    );
+    const acquisitionFailure = expect(acquisition).rejects.toThrow(
+      "OpenCode server exited with code null",
+    );
+    await runtime.settle();
+    const shutdown = manager.shutdown();
+    await runtime.settle();
+
+    runtime.releaseNextPort();
+    await shutdown;
+
+    await acquisitionFailure;
+    expect(runtime.terminatedPorts).toEqual([4476]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
