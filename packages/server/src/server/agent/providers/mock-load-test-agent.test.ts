@@ -56,7 +56,7 @@ describe("MockLoadTestAgentClient", () => {
 
     const resultPromise = session.run(
       [
-        "Generate a git branch name for a coding agent based on the user prompt and attachments.",
+        "Generate a title and a git branch name for a coding agent from the user prompt and attachments.",
         "Title: a short human-readable sentence-case label for the task (no slug rules, max 80 characters).",
         "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
         "Return JSON only with fields 'title' and 'branch'.",
