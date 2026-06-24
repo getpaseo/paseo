@@ -27,6 +27,7 @@ import type {
   WorkspaceGitSnapshotOptions,
 } from "../../workspace-git-service.js";
 import { assertSafeGitRef } from "../../worktree-session.js";
+import type { GitMutationService } from "../git-mutation/git-mutation-service.js";
 import {
   assertPullRequestAutoMergeDisableReady,
   assertPullRequestAutoMergeEnableReady,
@@ -34,10 +35,8 @@ import {
   type PullRequestTimelineItem,
 } from "../../../services/github-service.js";
 import {
-  type CheckoutExistingBranchResult,
   commitChanges,
   createPullRequest,
-  type GitMutationRefreshReason,
   mergeFromBase,
   mergeToBase,
   pullCurrentBranch,
@@ -49,24 +48,21 @@ import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 /**
  * The collaborators a checkout command reaches that are NOT part of the checkout
- * domain: the git-mutation refresh primitive and workspace-update emitters owned
- * by the Session shell (also used by worktree/workspace creation), and the injected
- * branch operations. CheckoutSession orchestrates them but does not own them.
+ * domain and stay owned by the Session shell: client emit, workspace-update
+ * emission, the git branch-snapshot notifier, and the current-branch rename
+ * primitive. CheckoutSession orchestrates them but does not own them. The
+ * git-mutation primitives it performs (switch branch, force snapshot refresh) are
+ * injected separately as `gitMutation`, since they are shared with worktree and
+ * workspace creation.
  */
 export interface CheckoutSessionHost {
   emit(msg: SessionOutboundMessage): void;
-  notifyGitMutation(
-    cwd: string,
-    reason: GitMutationRefreshReason,
-    options?: { invalidateGithub?: boolean },
-  ): Promise<void>;
   emitWorkspaceUpdateForCwd(cwd: string): Promise<void>;
   handleWorkspaceGitBranchSnapshot(cwd: string, branchName: string | null): void;
   renameCurrentBranch(
     cwd: string,
     branch: string,
   ): Promise<{ previousBranch: string | null; currentBranch: string | null }>;
-  checkoutExistingBranch(cwd: string, branch: string): Promise<CheckoutExistingBranchResult>;
 }
 
 type CurrentWorkspacePullRequest = NonNullable<
@@ -90,6 +86,7 @@ export interface CheckoutDiffSubscriber {
 
 export interface CheckoutSessionOptions {
   host: CheckoutSessionHost;
+  gitMutation: Pick<GitMutationService, "checkoutExistingBranch" | "notifyGitMutation">;
   workspaceGitService: WorkspaceGitService;
   github: GitHubService;
   checkoutDiffManager: CheckoutDiffSubscriber;
@@ -106,13 +103,17 @@ export interface CheckoutSessionOptions {
  * merge/pull/push/stash and the GitHub-PR operations).
  *
  * Command operations keep the live diff in sync by calling scheduleDiffRefresh()
- * and refresh the workspace git snapshot through host.notifyGitMutation(); the
+ * and refresh the workspace git snapshot through gitMutation.notifyGitMutation(); the
  * workspace git observer streams branch changes through emitStatusUpdate().
  */
 export class CheckoutSession {
   private static readonly PASEO_STASH_PREFIX = "paseo-auto-stash:";
 
   private readonly host: CheckoutSessionHost;
+  private readonly gitMutation: Pick<
+    GitMutationService,
+    "checkoutExistingBranch" | "notifyGitMutation"
+  >;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly github: GitHubService;
   private readonly checkoutDiffManager: CheckoutDiffSubscriber;
@@ -124,6 +125,7 @@ export class CheckoutSession {
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
+    this.gitMutation = options.gitMutation;
     this.workspaceGitService = options.workspaceGitService;
     this.github = options.github;
     this.checkoutDiffManager = options.checkoutDiffManager;
@@ -373,7 +375,7 @@ export class CheckoutSession {
     const { cwd, branch, requestId } = msg;
 
     try {
-      const checkoutResult = await this.host.checkoutExistingBranch(cwd, branch);
+      const checkoutResult = await this.gitMutation.checkoutExistingBranch(cwd, branch);
       this.scheduleDiffRefresh(cwd);
 
       // Push a workspace_update immediately so the sidebar/header reflect
@@ -425,7 +427,7 @@ export class CheckoutSession {
 
     try {
       const result = await this.host.renameCurrentBranch(cwd, branch);
-      await this.host.notifyGitMutation(cwd, "rename-branch", { invalidateGithub: true });
+      await this.gitMutation.notifyGitMutation(cwd, "rename-branch", { invalidateGithub: true });
       this.scheduleDiffRefresh(cwd);
       this.host.handleWorkspaceGitBranchSnapshot(cwd, result.currentBranch);
 
@@ -474,7 +476,7 @@ export class CheckoutSession {
       await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], {
         cwd,
       });
-      await this.host.notifyGitMutation(cwd, "stash-push");
+      await this.gitMutation.notifyGitMutation(cwd, "stash-push");
       this.scheduleDiffRefresh(cwd);
       this.host.emit({
         type: "stash_save_response",
@@ -496,7 +498,7 @@ export class CheckoutSession {
       await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], {
         cwd,
       });
-      await this.host.notifyGitMutation(cwd, "stash-pop");
+      await this.gitMutation.notifyGitMutation(cwd, "stash-pop");
       this.scheduleDiffRefresh(cwd);
       this.host.emit({
         type: "stash_pop_response",
@@ -548,7 +550,7 @@ export class CheckoutSession {
         message,
         addAll: msg.addAll ?? true,
       });
-      await this.host.notifyGitMutation(cwd, "commit-changes");
+      await this.gitMutation.notifyGitMutation(cwd, "commit-changes");
       this.scheduleDiffRefresh(cwd);
 
       this.host.emit({
@@ -607,8 +609,8 @@ export class CheckoutSession {
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
       );
       await Promise.all([
-        this.host.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateGithub: true }),
-        ...(mutatedCwd !== cwd ? [this.host.notifyGitMutation(cwd, "merge-to-base")] : []),
+        this.gitMutation.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateGithub: true }),
+        ...(mutatedCwd !== cwd ? [this.gitMutation.notifyGitMutation(cwd, "merge-to-base")] : []),
       ]);
       this.scheduleDiffRefresh(cwd);
 
@@ -651,7 +653,7 @@ export class CheckoutSession {
         baseRef: msg.baseRef,
         requireCleanTarget: msg.requireCleanTarget ?? true,
       });
-      await this.host.notifyGitMutation(cwd, "merge-from-base", { invalidateGithub: true });
+      await this.gitMutation.notifyGitMutation(cwd, "merge-from-base", { invalidateGithub: true });
       this.scheduleDiffRefresh(cwd);
 
       this.host.emit({
@@ -683,7 +685,7 @@ export class CheckoutSession {
 
     try {
       await pullCurrentBranch(cwd);
-      await this.host.notifyGitMutation(cwd, "pull", { invalidateGithub: true });
+      await this.gitMutation.notifyGitMutation(cwd, "pull", { invalidateGithub: true });
       this.scheduleDiffRefresh(cwd);
 
       this.host.emit({
@@ -715,7 +717,7 @@ export class CheckoutSession {
 
     try {
       await pushCurrentBranch(cwd);
-      await this.host.notifyGitMutation(cwd, "push", { invalidateGithub: true });
+      await this.gitMutation.notifyGitMutation(cwd, "push", { invalidateGithub: true });
       this.host.emit({
         type: "checkout_push_response",
         payload: {
@@ -762,7 +764,7 @@ export class CheckoutSession {
         },
         this.github,
       );
-      await this.host.notifyGitMutation(cwd, "create-pr", { invalidateGithub: true });
+      await this.gitMutation.notifyGitMutation(cwd, "create-pr", { invalidateGithub: true });
 
       this.host.emit({
         type: "checkout_pr_create_response",
@@ -806,7 +808,7 @@ export class CheckoutSession {
         mergeMethod: msg.mergeMethod,
         status: pullRequest,
       });
-      await this.host.notifyGitMutation(cwd, "merge-pr", { invalidateGithub: true });
+      await this.gitMutation.notifyGitMutation(cwd, "merge-pr", { invalidateGithub: true });
 
       this.host.emit({
         type: "checkout_pr_merge_response",
@@ -875,7 +877,7 @@ export class CheckoutSession {
           status: pullRequest,
         });
       }
-      await this.host.notifyGitMutation(
+      await this.gitMutation.notifyGitMutation(
         cwd,
         msg.enabled ? "enable-pr-auto-merge" : "disable-pr-auto-merge",
         {

@@ -159,12 +159,11 @@ import {
 } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
+import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
 import {
-  checkoutResolvedBranch,
-  type CheckoutExistingBranchResult,
-  type GitMutationRefreshReason,
-  renameCurrentBranch as renameCurrentBranchDefault,
-} from "../utils/checkout-git.js";
+  createGitMutationService,
+  type GitMutationService,
+} from "./session/git-mutation/git-mutation-service.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -174,7 +173,6 @@ import type pino from "pino";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
-import { execCommand } from "../utils/spawn.js";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import {
@@ -196,7 +194,6 @@ import {
   type GeneratedWorkspaceName,
 } from "./worktree-branch-name-generator.js";
 import {
-  assertSafeGitRef as assertWorktreeSafeGitRef,
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
   createPaseoWorktreeWorkflow as createWorktreeWorkflow,
   type CreatePaseoWorktreeSetupContinuationInput,
@@ -566,6 +563,7 @@ export class Session {
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
   private readonly generateWorkspaceName: typeof generateBranchNameFromFirstAgentContext;
   private readonly workspaceGitService: WorkspaceGitService;
+  private readonly gitMutation: GitMutationService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly mcpBaseUrl: string | null;
   private readonly pushTokenStore: PushTokenStore;
@@ -697,17 +695,20 @@ export class Session {
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.generateWorkspaceName = generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
     this.workspaceGitService = workspaceGitService;
+    this.gitMutation = createGitMutationService({
+      workspaceGitService: this.workspaceGitService,
+      github: this.github,
+      logger: this.sessionLogger,
+    });
     this.checkoutSession = new CheckoutSession({
       host: {
         emit: (msg) => this.emit(msg),
-        notifyGitMutation: (cwd, reason, mutationOptions) =>
-          this.notifyGitMutation(cwd, reason, mutationOptions),
         emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
         handleWorkspaceGitBranchSnapshot: (cwd, branchName) =>
           this.handleWorkspaceGitBranchSnapshot(cwd, branchName),
         renameCurrentBranch: (cwd, branch) => this.renameCurrentBranch(cwd, branch),
-        checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
       },
+      gitMutation: this.gitMutation,
       workspaceGitService: this.workspaceGitService,
       github: this.github,
       checkoutDiffManager,
@@ -3074,8 +3075,9 @@ export class Session {
               logger: this.sessionLogger,
             },
           }),
-        checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
-        createBranchFromBase: (params) => this.createBranchFromBase(params),
+        checkoutExistingBranch: (cwd, branch) =>
+          this.gitMutation.checkoutExistingBranch(cwd, branch),
+        createBranchFromBase: (params) => this.gitMutation.createBranchFromBase(params),
         github: this.github,
       },
       config,
@@ -3134,7 +3136,7 @@ export class Session {
       branch: result.branchName,
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
-    await this.notifyGitMutation(input.workspace.cwd, "rename-branch");
+    await this.gitMutation.notifyGitMutation(input.workspace.cwd, "rename-branch");
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }
 
@@ -3237,13 +3239,6 @@ export class Session {
     );
   }
 
-  private assertSafeGitRef(ref: string, label: string): void {
-    if (!/^[A-Za-z0-9._/-]+$/.test(ref)) {
-      throw new Error(`Invalid ${label}: ${ref}`);
-    }
-    assertWorktreeSafeGitRef(ref, label);
-  }
-
   private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
     const resolvedRoot = resolve(rootPath);
     const resolvedCandidate = resolve(candidatePath);
@@ -3251,93 +3246,6 @@ export class Session {
       return true;
     }
     return resolvedCandidate.startsWith(resolvedRoot + sep);
-  }
-
-  private async ensureCleanWorkingTree(cwd: string): Promise<void> {
-    const dirty = await this.isWorkingTreeDirty(cwd);
-    if (dirty) {
-      throw new Error(
-        "Working directory has uncommitted changes. Commit or stash before switching branches.",
-      );
-    }
-  }
-
-  private async isWorkingTreeDirty(cwd: string): Promise<boolean> {
-    try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-      return snapshot.git.isDirty === true;
-    } catch (error) {
-      throw new Error(`Unable to inspect git status for ${cwd}: ${getErrorMessage(error)}`, {
-        cause: error,
-      });
-    }
-  }
-
-  private async checkoutExistingBranch(
-    cwd: string,
-    branch: string,
-  ): Promise<CheckoutExistingBranchResult> {
-    this.assertSafeGitRef(branch, "branch");
-    const resolution = await this.workspaceGitService.validateBranchRef(cwd, branch);
-    if (resolution.kind === "not-found") {
-      throw new Error(`Branch not found: ${branch}`);
-    }
-    await this.ensureCleanWorkingTree(cwd);
-    const result = await checkoutResolvedBranch({
-      cwd,
-      resolution,
-    });
-    await this.notifyGitMutation(cwd, "switch-branch", { invalidateGithub: true });
-    return result;
-  }
-
-  private async createBranchFromBase(params: {
-    cwd: string;
-    baseBranch: string;
-    newBranchName: string;
-  }): Promise<void> {
-    const { cwd, baseBranch, newBranchName } = params;
-    this.assertSafeGitRef(baseBranch, "base branch");
-    this.assertSafeGitRef(newBranchName, "new branch");
-
-    const baseResolution = await this.workspaceGitService.validateBranchRef(cwd, baseBranch);
-    if (baseResolution.kind === "not-found") {
-      throw new Error(`Base branch not found: ${baseBranch}`);
-    }
-
-    const exists = await this.doesLocalBranchExist(cwd, newBranchName);
-    if (exists) {
-      throw new Error(`Branch already exists: ${newBranchName}`);
-    }
-
-    await this.ensureCleanWorkingTree(cwd);
-    await execCommand("git", ["checkout", "-b", newBranchName, baseBranch], {
-      cwd,
-    });
-    await this.notifyGitMutation(cwd, "create-branch");
-  }
-
-  private async doesLocalBranchExist(cwd: string, branch: string): Promise<boolean> {
-    this.assertSafeGitRef(branch, "branch");
-    return this.workspaceGitService.hasLocalBranch(cwd, branch);
-  }
-
-  private async notifyGitMutation(
-    cwd: string,
-    reason: GitMutationRefreshReason,
-    options?: { invalidateGithub?: boolean },
-  ): Promise<void> {
-    if (options?.invalidateGithub) {
-      this.github.invalidate({ cwd });
-    }
-    try {
-      await this.workspaceGitService.getSnapshot(cwd, { force: true, reason });
-    } catch (error) {
-      this.sessionLogger.warn(
-        { err: error, cwd, reason },
-        "Failed to force-refresh workspace git snapshot after mutation",
-      );
-    }
   }
 
   /**
@@ -4715,8 +4623,8 @@ export class Session {
       workspaceGitService: this.workspaceGitService,
     });
     void Promise.all([
-      this.notifyGitMutation(input.cwd, "create-worktree"),
-      this.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
+      this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),
+      this.gitMutation.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
     ]).catch((error) => {
       this.sessionLogger.warn(
         { err: error, cwd: input.cwd, worktreePath: result.worktree.worktreePath },
