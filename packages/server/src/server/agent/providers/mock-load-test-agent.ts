@@ -290,7 +290,10 @@ function parseStructuredBranchNamePrompt(
     return null;
   }
 
-  const seed = text.split("User context:\n").at(-1)?.trim() ?? "";
+  const seed =
+    text.match(/<user-prompt>\n([\s\S]*?)\n<\/user-prompt>/)?.[1]?.trim() ??
+    text.match(/<attachments>\n([\s\S]*?)\n<\/attachments>/)?.[1]?.trim() ??
+    "";
   const firstLine =
     seed
       .split("\n")

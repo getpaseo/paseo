@@ -61,8 +61,9 @@ describe("MockLoadTestAgentClient", () => {
         "Branch: concise lowercase slug using letters, numbers, hyphens, and slashes only.",
         "Return JSON only with fields 'title' and 'branch'.",
         "",
-        "User context:",
+        "<user-prompt>",
         "Fix login bug",
+        "</user-prompt>",
       ].join("\n"),
     );
     await vi.advanceTimersByTimeAsync(0);
