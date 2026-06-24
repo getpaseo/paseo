@@ -19,7 +19,16 @@ export const LANGUAGE_OPTIONS: LanguageOption[] = [
   { value: "zh-CN", labelKey: "settings.general.language.options.zhCN" },
 ];
 
-const SUPPORTED_LANGUAGES = new Set<AppLanguage>(["system", "ar", "en", "es", "fr", "ja", "ru", "zh-CN"]);
+const SUPPORTED_LANGUAGES = new Set<AppLanguage>([
+  "system",
+  "ar",
+  "en",
+  "es",
+  "fr",
+  "ja",
+  "ru",
+  "zh-CN",
+]);
 const LANGUAGE_NATIVE_NAMES: Record<SupportedLocale, string> = {
   ar: "العربية",
   en: "English",

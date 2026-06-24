@@ -517,8 +517,7 @@ export const ja: TranslationResources = {
             "{{agents}}件のエージェントをアーカイブし、{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           terminalsAndTabs:
             "{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
-          agentsAndTabs:
-            "{{agents}}件のエージェントをアーカイブし、{{tabs}}件のタブを閉じます。",
+          agentsAndTabs: "{{agents}}件のエージェントをアーカイブし、{{tabs}}件のタブを閉じます。",
           terminals:
             "{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           tabs: "{{tabs}}件のタブを閉じます。",
@@ -625,8 +624,7 @@ export const ja: TranslationResources = {
           disabled: "自動マージが無効になりました",
         },
         unavailable: {
-          viewPrNoGithub:
-            "GitHubが接続されていないため、PRの表示は現在利用できません",
+          viewPrNoGithub: "GitHubが接続されていないため、PRの表示は現在利用できません",
           pullNoRemote:
             "このブランチはまだリモートに接続されていないため、プルはここでは利用できません",
           pullDirty:
@@ -634,8 +632,7 @@ export const ja: TranslationResources = {
           pullUpToDate: "このブランチはすでに最新のため、プルは利用できません",
           pushNoRemote:
             "このブランチはまだリモートに接続されていないため、プッシュはここでは利用できません",
-          pushBehind:
-            "取り込む必要がある新しい変更があるため、まだプッシュは利用できません",
+          pushBehind: "取り込む必要がある新しい変更があるため、まだプッシュは利用できません",
           pushNothing: "プッシュする変更がないため、プッシュは利用できません",
           pullAndPushNoRemote:
             "このブランチはまだリモートに接続されていないため、プル＆プッシュはここでは利用できません",
@@ -643,36 +640,24 @@ export const ja: TranslationResources = {
             "ローカルに変更があるためプル＆プッシュは利用できません。先にコミットまたはスタッシュしてください",
           pullAndPushInSync:
             "このブランチはすでに同期されているため、プル＆プッシュは利用できません",
-          createPrNoGithub:
-            "GitHubが接続されていないため、PRの作成は現在利用できません",
-          createPrNoCommits:
-            "このブランチにまだ新しいコミットがないため、PRの作成は利用できません",
-          mergeNoBase:
-            "ベースブランチを特定できなかったため、マージは利用できません",
+          createPrNoGithub: "GitHubが接続されていないため、PRの作成は現在利用できません",
+          createPrNoCommits: "このブランチにまだ新しいコミットがないため、PRの作成は利用できません",
+          mergeNoBase: "ベースブランチを特定できなかったため、マージは利用できません",
           mergeDirty:
             "ローカルに変更があるためマージは利用できません。先にコミットまたはスタッシュしてください",
-          mergeNothing:
-            "このブランチにまだマージするものがないため、マージは利用できません",
-          updateNoBase:
-            "ベースブランチを特定できなかったため、更新は利用できません",
+          mergeNothing: "このブランチにまだマージするものがないため、マージは利用できません",
+          updateNoBase: "ベースブランチを特定できなかったため、更新は利用できません",
           updateDirty:
             "ローカルに変更があるため更新は利用できません。先にコミットまたはスタッシュしてください",
-          updateCurrent:
-            "このブランチはすでに{{baseRef}}と最新の状態のため、更新は利用できません",
+          updateCurrent: "このブランチはすでに{{baseRef}}と最新の状態のため、更新は利用できません",
           archiveNotWorktree:
             "このワークスペースはPaseoワークツリーとして作成されていないため、アーカイブはここでは利用できません",
-          mergePrNoGithub:
-            "GitHubが接続されていないため、PRのマージは現在利用できません",
-          mergePrMissing:
-            "プルリクエストがまだないため、PRのマージは利用できません",
-          mergePrDraft:
-            "プルリクエストがまだドラフトのため、PRのマージは利用できません",
-          mergePrMerged:
-            "プルリクエストはすでにマージされているため、PRのマージは利用できません",
-          mergePrClosed:
-            "プルリクエストがクローズされているため、PRのマージは利用できません",
-          mergePrConflicts:
-            "プルリクエストにコンフリクトがあるため、PRのマージは利用できません",
+          mergePrNoGithub: "GitHubが接続されていないため、PRのマージは現在利用できません",
+          mergePrMissing: "プルリクエストがまだないため、PRのマージは利用できません",
+          mergePrDraft: "プルリクエストがまだドラフトのため、PRのマージは利用できません",
+          mergePrMerged: "プルリクエストはすでにマージされているため、PRのマージは利用できません",
+          mergePrClosed: "プルリクエストがクローズされているため、PRのマージは利用できません",
+          mergePrConflicts: "プルリクエストにコンフリクトがあるため、PRのマージは利用できません",
           mergePrQueue:
             "このリポジトリはマージキューを使用しているため、PRのマージはここでは利用できません",
           mergePrNotReady:
@@ -1032,8 +1017,7 @@ export const ja: TranslationResources = {
       testNotification: {
         title: "Paseo通知テスト",
         body: "これが見えれば、デスクトップ通知は機能しています。",
-        notDelivered:
-          "通知が届きませんでした。システム設定 > 通知を確認してください。",
+        notDelivered: "通知が届きませんでした。システム設定 > 通知を確認してください。",
         failed: "通知の送信に失敗しました。",
       },
     },
@@ -1097,8 +1081,7 @@ export const ja: TranslationResources = {
     empty: "ブランチが見つかりません。",
     title: "ブランチを切り替え",
     uncommittedTitle: "未コミットの変更",
-    uncommittedMessage:
-      "未コミットの変更があります。ブランチを切り替える前にスタッシュしますか？",
+    uncommittedMessage: "未コミットの変更があります。ブランチを切り替える前にスタッシュしますか？",
     stashAndSwitch: "スタッシュして切り替え",
     failedToStash: "変更のスタッシュに失敗しました",
     failedToSwitch: "ブランチの切り替えに失敗しました",
@@ -1245,16 +1228,13 @@ export const ja: TranslationResources = {
         failedTitle: "接続に失敗しました",
         failedToConnect: "{{endpoint}}への接続に失敗しました。",
         noAdditionalDetails: "{{detail}}（追加の詳細は提供されていません）",
-        timedOut:
-          "接続がタイムアウトしました。ホスト/ポートとネットワークを確認してください。",
+        timedOut: "接続がタイムアウトしました。ホスト/ポートとネットワークを確認してください。",
         refused: "接続が拒否されました。このアドレスでサーバーが実行されていますか？",
         hostNotFound: "ホストが見つかりません。ホスト名を確認してもう一度試してください。",
         hostUnreachable:
           "ホストに到達できません。ネットワークとファイアウォールを確認してください。",
-        tlsError:
-          "TLSエラー。直接接続は、デーモンの前にTLS終端がある場合のみSSLを使用します。",
-        unableToConnect:
-          "接続できません。ホスト/ポートとデーモンが到達可能かを確認してください。",
+        tlsError: "TLSエラー。直接接続は、デーモンの前にTLS終端がある場合のみSSLを使用します。",
+        unableToConnect: "接続できません。ホスト/ポートとデーモンが到達可能かを確認してください。",
         details: "詳細: {{detail}}",
       },
     },
@@ -1282,7 +1262,7 @@ export const ja: TranslationResources = {
       title: "QRをスキャン",
       webUnavailableTitle: "Webでは利用できません",
       webUnavailableBody:
-        'QRスキャンはWebビルドではサポートされていません。代わりに「リンクを貼り付け」を使用してください。',
+        "QRスキャンはWebビルドではサポートされていません。代わりに「リンクを貼り付け」を使用してください。",
       backToSettings: "設定に戻る",
       cameraPermissionTitle: "カメラの権限",
       cameraPermissionBody:
@@ -1295,7 +1275,8 @@ export const ja: TranslationResources = {
     device: {
       loadingOffer: "ペアリングオファーを読み込み中...",
       failedToLoadOffer: "ペアリングオファーの読み込みに失敗しました。",
-      relayDisabled: "リレーが有効になっていません。デバイスをペアリングするにはリレーを有効にしてください。",
+      relayDisabled:
+        "リレーが有効になっていません。デバイスをペアリングするにはリレーを有効にしてください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
       qrUnavailable: "QRコードが利用できません。",
@@ -1441,10 +1422,8 @@ export const ja: TranslationResources = {
       defaultSend: {
         label: "デフォルトの送信",
         descriptions: {
-          interrupt:
-            "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
-          queue:
-            "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
+          interrupt: "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
+          queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
         },
         options: {
           interrupt: "中断",
@@ -1686,8 +1665,7 @@ export const ja: TranslationResources = {
       pairDevices: {
         title: "デバイスをペアリング",
         rowTitle: "デバイスをペアリング",
-        rowHint:
-          "QRコードをスキャンするかリンクをコピーしてスマートフォンをこのホストに接続",
+        rowHint: "QRコードをスキャンするかリンクをコピーしてスマートフォンをこのホストに接続",
       },
       orchestration: {
         title: "オーケストレーション",
@@ -1909,13 +1887,11 @@ export const ja: TranslationResources = {
         commitMessage: "コミットメッセージ",
         commitMessagePlaceholder: "スコープ付きのConventional Commitsを使用",
         pullRequest: "プルリクエスト",
-        pullRequestPlaceholder:
-          "1段落の要約で始め、テスト計画セクションを含める",
+        pullRequestPlaceholder: "1段落の要約で始め、テスト計画セクションを含める",
       },
       writeFailures: {
         staleTitle: "設定がディスク上で変更されました",
-        staleDescription:
-          "保存する前に最新のpaseo.jsonを取得するために再読み込みしてください。",
+        staleDescription: "保存する前に最新のpaseo.jsonを取得するために再読み込みしてください。",
         failedTitle: "paseo.jsonを保存できませんでした",
         failedDescription: "再試行するか、ディスクから最新バージョンを再読み込みしてください。",
       },
