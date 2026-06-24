@@ -6,8 +6,8 @@ import { OpenCodeAgentClient } from "./opencode-agent.js";
 import {
   idleEvent,
   TestOpenCodeClient,
-  TestOpenCodeRuntime,
-} from "./opencode/test-utils/test-opencode-runtime.js";
+  TestOpenCodeHarness,
+} from "./opencode/test-utils/test-opencode-harness.js";
 
 interface MockOpenCodeClientOptions {
   agents?: unknown[];
@@ -15,7 +15,7 @@ interface MockOpenCodeClientOptions {
 }
 
 function mockOpenCodeClient(options: MockOpenCodeClientOptions = {}) {
-  const runtime = new TestOpenCodeRuntime();
+  const runtime = new TestOpenCodeHarness();
   const openCodeClient = new TestOpenCodeClient();
   openCodeClient.appAgentsResponse = { data: options.agents ?? [] };
   openCodeClient.sessionPromptAsyncEvents = options.events ?? [idleEvent()];
@@ -77,7 +77,10 @@ describe("OpenCode auto_accept feature", () => {
       ],
     });
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const { modes } = await client.fetchCatalog({ cwd: "/tmp/project", force: false });
 
     expect(modes.map((mode) => mode.id)).toEqual(["build", "paseo-custom"]);
@@ -86,7 +89,10 @@ describe("OpenCode auto_accept feature", () => {
   test("falls back to default OpenCode modes when discovery returns no modes", async () => {
     const { runtime } = mockOpenCodeClient({ agents: [] });
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const { modes } = await client.fetchCatalog({ cwd: "/tmp/project", force: false });
 
     expect(modes.map((mode) => mode.id)).toEqual(["build", "plan"]);
@@ -95,7 +101,10 @@ describe("OpenCode auto_accept feature", () => {
   test("lists auto accept as a provider feature", async () => {
     const { runtime } = mockOpenCodeClient();
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const enabledFeatures = await client.listFeatures({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -121,7 +130,10 @@ describe("OpenCode auto_accept feature", () => {
   test("keeps legacy full-access as an alias for build plus auto accept", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient();
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -251,7 +263,10 @@ describe("OpenCode auto_accept feature", () => {
     });
     const receivedEvents: AgentStreamEvent[] = [];
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -279,7 +294,10 @@ describe("OpenCode auto_accept feature", () => {
     });
     const receivedEvents: AgentStreamEvent[] = [];
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -322,7 +340,10 @@ describe("OpenCode auto_accept feature", () => {
     });
     const receivedEvents: AgentStreamEvent[] = [];
 
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",

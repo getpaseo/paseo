@@ -42,6 +42,8 @@ Provider session import has its own contract. The picker calls `listImportableSe
 
 Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
 
+If a helper process has a readiness phase, the provider's lifecycle model must own the process immediately after `spawn`, before readiness succeeds. Startup timeout, startup exit, and daemon shutdown must all clean up through that owned generation. Do not keep a spawned helper only inside a readiness promise; that creates a live process outside the manager/reaper contract.
+
 Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in place for the next reconcile rather than deleted. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
 
 ---
