@@ -5263,8 +5263,8 @@ export class Session {
     }
   }
 
-  // Thin accessor over the workspace-scripts module; the workspace descriptor builder and the
-  // session.workspace-git-watch test (owned by in-flight PR #1714) both read the scripts snapshot here.
+  // Named accessor: the workspace descriptor builder and the git-watch test both read a workspace's
+  // scripts snapshot through here; the workspace-scripts module owns the payload assembly.
   private buildWorkspaceScriptPayloadSnapshot(
     workspaceId: string,
     workspaceDirectory: string,

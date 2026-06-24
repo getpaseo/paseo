@@ -55,6 +55,10 @@ function fakeGitService(metadata: WorkspaceGitMetadata = gitMetadata) {
   };
 }
 
+// The service only truthiness-checks terminalManager in its availability guard and then forwards it
+// opaquely to the injected spawnWorkspaceScript fake, which ignores it — an empty stand-in is enough.
+const availableTerminalManager = {} as unknown as TerminalManager;
+
 interface BuildOptions {
   serviceProxy?: ServiceProxySubsystem | null;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null;
@@ -81,9 +85,7 @@ function buildService(options: BuildOptions = {}) {
         ? new WorkspaceScriptRuntimeStore()
         : options.scriptRuntimeStore,
     terminalManager:
-      options.terminalManager === undefined
-        ? ({} as unknown as TerminalManager)
-        : options.terminalManager,
+      options.terminalManager === undefined ? availableTerminalManager : options.terminalManager,
     workspaceRegistry: fakeWorkspaceRegistry(workspace),
     workspaceGitService: fakeGitService(),
     getDaemonTcpPort: () => 6767,
