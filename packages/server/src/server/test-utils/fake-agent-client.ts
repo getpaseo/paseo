@@ -37,6 +37,13 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 const TEST_FEATURE_ID = "test_feature";
+const TEST_MODES: AgentMode[] = [
+  { id: "bypassPermissions", label: "Bypass", description: "No permissions" },
+  { id: "default", label: "Default", description: "Ask for permissions" },
+  { id: "full-access", label: "Full access", description: "No prompts" },
+  { id: "auto", label: "Auto", description: "Ask/allow based on policy" },
+  { id: "always-ask", label: "Always Ask", description: "Always prompt" },
+];
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -798,13 +805,7 @@ class FakeAgentSession implements AgentSession {
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
-    return [
-      { id: "bypassPermissions", label: "Bypass", description: "No permissions" },
-      { id: "default", label: "Default", description: "Ask for permissions" },
-      { id: "full-access", label: "Full access", description: "No prompts" },
-      { id: "auto", label: "Auto", description: "Ask/allow based on policy" },
-      { id: "always-ask", label: "Always Ask", description: "Always prompt" },
-    ];
+    return TEST_MODES;
   }
 
   async getCurrentMode(): Promise<string | null> {
@@ -1194,7 +1195,7 @@ class FakeAgentClient implements AgentClient {
           { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },
           { provider: this.provider, id: "sonnet", label: "Sonnet", isDefault: false },
         ],
-        modes: [],
+        modes: TEST_MODES,
       };
     }
     if (this.provider === "codex") {
@@ -1207,12 +1208,12 @@ class FakeAgentClient implements AgentClient {
             isDefault: true,
           },
         ],
-        modes: [],
+        modes: TEST_MODES,
       };
     }
     return {
       models: [{ provider: this.provider, id: "test-model", label: "Test Model", isDefault: true }],
-      modes: [],
+      modes: TEST_MODES,
     };
   }
 
