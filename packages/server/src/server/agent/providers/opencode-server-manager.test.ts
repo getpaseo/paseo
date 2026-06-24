@@ -136,6 +136,29 @@ describe("OpenCodeServerManager generations", () => {
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
 
+  test("dedicated server startup is protected from retired cleanup", async () => {
+    const { manager, runtime } = createTestManager([4473, 4474], { autoAnnounce: false });
+
+    const currentStart = manager.acquireCurrent();
+    await runtime.settle();
+    runtime.processForPort(4473).announceListening();
+    const currentAcquisition = await currentStart;
+
+    const dedicatedStart = manager.acquireDedicated({ TEST_ENV: "custom" });
+    await runtime.settle();
+
+    currentAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    runtime.processForPort(4474).announceListening();
+    const dedicatedAcquisition = await dedicatedStart;
+
+    expect(dedicatedAcquisition.server.url).toBe("http://127.0.0.1:4474");
+
+    dedicatedAcquisition.release();
+    expect(runtime.terminatedPorts).toEqual([4474]);
+  });
+
   test("repeated rotations leave zero unreferenced retired servers", async () => {
     const { manager, runtime } = createTestManager([4501, 4502, 4503]);
 

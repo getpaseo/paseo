@@ -145,8 +145,17 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    const server = await this.startDedicatedServer(env);
-    return this.acquireServer(server);
+    const server = await this.startServer(env);
+    server.retired = true;
+    this.retiredServers.add(server);
+    const acquisition = this.acquireServer(server);
+    try {
+      await server.ready;
+      return acquisition;
+    } catch (error) {
+      acquisition.release();
+      throw error;
+    }
   }
 
   private acquireServer(server: OpenCodeServerGeneration): OpenCodeServerAcquisition {
@@ -188,9 +197,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   private async getCurrentServer(): Promise<OpenCodeServerGeneration> {
     if (this.newServerPromise) {
-      const server = await this.newServerPromise;
-      await server.ready;
-      return server;
+      return this.newServerPromise;
     }
 
     if (this.startPromise) {
@@ -235,16 +242,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       this.currentServer = null;
       this.cleanupRetiredServers();
     }
-  }
-
-  private async startDedicatedServer(
-    env: Record<string, string>,
-  ): Promise<OpenCodeServerGeneration> {
-    const server = await this.startServer(env);
-    server.retired = true;
-    this.retiredServers.add(server);
-    await server.ready;
-    return server;
   }
 
   private async startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
