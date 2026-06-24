@@ -87,7 +87,6 @@ import {
 } from "./agent/lifecycle-command.js";
 import {
   buildStoredAgentPayload,
-  resolveEffectiveThinkingOptionId,
   resolveStoredAgentPayloadUpdatedAt,
   toAgentPayload,
 } from "./agent/agent-projections.js";
@@ -164,6 +163,11 @@ import {
   createWorkspaceProvisioningService,
   type WorkspaceProvisioningService,
 } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import {
+  createAgentUpdatesService,
+  matchesAgentUpdatesFilter,
+  type AgentUpdatesService,
+} from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -355,14 +359,7 @@ type FetchAgentsResponsePayload = Extract<
 >["payload"];
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
-type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
-interface AgentUpdatesSubscriptionState {
-  subscriptionId: string;
-  filter?: AgentUpdatesFilter;
-  isBootstrapping: boolean;
-  pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
-}
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_workspaces_request" }
@@ -570,7 +567,7 @@ export class Session {
   private readonly pushTokenStore: PushTokenStore;
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
-  private agentUpdatesSubscription: AgentUpdatesSubscriptionState | null = null;
+  private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
   private clientActivity: {
     deviceType: "web" | "mobile";
@@ -814,6 +811,17 @@ export class Session {
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
     });
+    this.agentUpdates = createAgentUpdatesService({
+      emit: (message) => this.emit(message),
+      buildAgentPayload: (agent) => this.buildAgentPayload(agent),
+      buildStoredAgentPayload: (record) => this.buildStoredAgentPayload(record),
+      isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
+      buildProjectPlacementForWorkspaceId: (workspaceId) =>
+        this.buildProjectPlacementForWorkspaceId(workspaceId),
+      emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
+        this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+      logger: this.sessionLogger,
+    });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
@@ -828,14 +836,7 @@ export class Session {
       listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
       archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
       emit: (message) => this.emit(message),
-      emitAgentRemove: (agentId) => {
-        if (this.agentUpdatesSubscription) {
-          this.bufferOrEmitAgentUpdate(this.agentUpdatesSubscription, {
-            kind: "remove",
-            agentId,
-          });
-        }
-      },
+      emitAgentRemove: (agentId) => this.agentUpdates.removeAgent(agentId),
       emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
         this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
       markWorkspaceArchiving: (workspaceIds, archivingAt) =>
@@ -1180,7 +1181,7 @@ export class Session {
             },
             "agent.session.forward_update",
           );
-          void this.forwardAgentUpdate(event.agent);
+          void this.agentUpdates.forwardLiveAgent(event.agent);
           return;
         }
 
@@ -1295,176 +1296,6 @@ export class Session {
     return LEGACY_PROVIDER_IDS.has(provider);
   }
 
-  private agentThinkingOptionMatchesFilter(
-    agent: AgentSnapshotPayload,
-    filter: AgentUpdatesFilter,
-  ): boolean {
-    if (filter.thinkingOptionId === undefined) {
-      return true;
-    }
-    const expectedThinkingOptionId = resolveEffectiveThinkingOptionId({
-      configuredThinkingOptionId: filter.thinkingOptionId ?? null,
-    });
-    const resolvedThinkingOptionId =
-      agent.effectiveThinkingOptionId ??
-      resolveEffectiveThinkingOptionId({
-        runtimeInfo: agent.runtimeInfo,
-        configuredThinkingOptionId: agent.thinkingOptionId ?? null,
-      });
-    return resolvedThinkingOptionId === expectedThinkingOptionId;
-  }
-
-  private matchesAgentStructuralFilter(
-    agent: AgentSnapshotPayload,
-    project: ProjectPlacementPayload,
-    filter: AgentUpdatesFilter,
-  ): boolean {
-    if (filter.statuses && filter.statuses.length > 0) {
-      const statuses = new Set(filter.statuses);
-      if (!statuses.has(agent.status)) {
-        return false;
-      }
-    }
-
-    if (typeof filter.requiresAttention === "boolean") {
-      const requiresAttention = agent.requiresAttention ?? false;
-      if (requiresAttention !== filter.requiresAttention) {
-        return false;
-      }
-    }
-
-    if (filter.projectKeys && filter.projectKeys.length > 0) {
-      const projectKeys = new Set(filter.projectKeys.filter((item) => item.trim().length > 0));
-      if (projectKeys.size > 0 && !projectKeys.has(project.projectKey)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private matchesAgentFilter(options: {
-    agent: AgentSnapshotPayload;
-    project: ProjectPlacementPayload;
-    filter?: AgentUpdatesFilter;
-  }): boolean {
-    const { agent, project, filter } = options;
-
-    if (filter?.labels) {
-      const matchesLabels = Object.entries(filter.labels).every(
-        ([key, value]) => agent.labels[key] === value,
-      );
-      if (!matchesLabels) {
-        return false;
-      }
-    }
-
-    const includeArchived = filter?.includeArchived ?? false;
-    if (!includeArchived && agent.archivedAt) {
-      return false;
-    }
-
-    if (filter && !this.agentThinkingOptionMatchesFilter(agent, filter)) {
-      return false;
-    }
-
-    if (filter && !this.matchesAgentStructuralFilter(agent, project, filter)) {
-      return false;
-    }
-
-    return true;
-  }
-
-  private getAgentUpdateTargetId(update: AgentUpdatePayload): string {
-    return update.kind === "remove" ? update.agentId : update.agent.id;
-  }
-
-  private bufferOrEmitAgentUpdate(
-    subscription: AgentUpdatesSubscriptionState,
-    payload: AgentUpdatePayload,
-  ): void {
-    if (payload.kind === "upsert" && !this.isProviderVisibleToClient(payload.agent.provider)) {
-      return;
-    }
-    if (subscription.isBootstrapping) {
-      subscription.pendingUpdatesByAgentId.set(this.getAgentUpdateTargetId(payload), payload);
-      return;
-    }
-
-    this.emit({
-      type: "agent_update",
-      payload,
-    });
-  }
-
-  private async emitStoredAgentUpdate(record: StoredAgentRecord): Promise<AgentSnapshotPayload> {
-    const payload = this.buildStoredAgentPayload(record);
-    const subscription = this.agentUpdatesSubscription;
-    if (!subscription) {
-      return payload;
-    }
-
-    const project = payload.workspaceId
-      ? await this.buildProjectPlacementForWorkspaceId(payload.workspaceId)
-      : null;
-    if (!project) {
-      this.bufferOrEmitAgentUpdate(subscription, {
-        kind: "remove",
-        agentId: payload.id,
-      });
-      return payload;
-    }
-
-    const matches = this.matchesAgentFilter({
-      agent: payload,
-      project,
-      filter: subscription.filter,
-    });
-    this.bufferOrEmitAgentUpdate(
-      subscription,
-      matches
-        ? {
-            kind: "upsert",
-            agent: payload,
-            project,
-          }
-        : {
-            kind: "remove",
-            agentId: payload.id,
-          },
-    );
-    return payload;
-  }
-
-  private flushBootstrappedAgentUpdates(options?: {
-    snapshotUpdatedAtByAgentId?: Map<string, number>;
-  }): void {
-    const subscription = this.agentUpdatesSubscription;
-    if (!subscription || !subscription.isBootstrapping) {
-      return;
-    }
-
-    subscription.isBootstrapping = false;
-    const pending = Array.from(subscription.pendingUpdatesByAgentId.values());
-    subscription.pendingUpdatesByAgentId.clear();
-
-    for (const payload of pending) {
-      if (payload.kind === "upsert") {
-        const snapshotUpdatedAt = options?.snapshotUpdatedAtByAgentId?.get(payload.agent.id);
-        if (typeof snapshotUpdatedAt === "number") {
-          const updateUpdatedAt = Date.parse(payload.agent.updatedAt);
-          if (!Number.isNaN(updateUpdatedAt) && updateUpdatedAt <= snapshotUpdatedAt) {
-            continue;
-          }
-        }
-      }
-
-      this.emit({
-        type: "agent_update",
-        payload,
-      });
-    }
-  }
-
   private async buildProjectPlacementForWorkspace(
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
@@ -1501,51 +1332,6 @@ export class Session {
     const project = await this.projectRegistry.get(workspace.projectId);
     if (!project) return null;
     return this.buildProjectPlacementForWorkspace(workspace, project);
-  }
-
-  private async forwardAgentUpdate(agent: ManagedAgent): Promise<void> {
-    try {
-      const subscription = this.agentUpdatesSubscription;
-      const payload = await this.buildAgentPayload(agent);
-      if (subscription) {
-        const project = payload.workspaceId
-          ? await this.buildProjectPlacementForWorkspaceId(payload.workspaceId)
-          : null;
-        if (!project) {
-          this.bufferOrEmitAgentUpdate(subscription, {
-            kind: "remove",
-            agentId: payload.id,
-          });
-        } else {
-          const matches = this.matchesAgentFilter({
-            agent: payload,
-            project,
-            filter: subscription.filter,
-          });
-
-          if (matches) {
-            this.bufferOrEmitAgentUpdate(subscription, {
-              kind: "upsert",
-              agent: payload,
-              project,
-            });
-          } else {
-            this.bufferOrEmitAgentUpdate(subscription, {
-              kind: "remove",
-              agentId: payload.id,
-            });
-          }
-        }
-      }
-
-      // A lifecycle change updates exactly the agent's owning workspace, never
-      // every workspace sharing its cwd. Ownership is the agent's workspaceId.
-      if (payload.workspaceId) {
-        await this.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
-      }
-    } catch (error) {
-      this.sessionLogger.error({ err: error }, "Failed to emit agent update");
-    }
   }
 
   /**
@@ -2069,12 +1855,7 @@ export class Session {
       },
     });
 
-    if (this.agentUpdatesSubscription) {
-      this.bufferOrEmitAgentUpdate(this.agentUpdatesSubscription, {
-        kind: "remove",
-        agentId,
-      });
-    }
+    this.agentUpdates.removeAgent(agentId);
 
     if (knownWorkspaceId) {
       await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
@@ -2108,8 +1889,8 @@ export class Session {
       agentId,
     );
 
-    if (this.agentUpdatesSubscription) {
-      const payload = await this.emitStoredAgentUpdate(archivedRecord);
+    if (this.agentUpdates.hasSubscription()) {
+      const payload = await this.agentUpdates.emitStoredRecord(archivedRecord);
       if (payload.workspaceId) {
         await this.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
       }
@@ -2126,7 +1907,7 @@ export class Session {
       const affectedWorkspaceIds = new Set<string>();
 
       if (!result.live) {
-        const payload = await this.emitStoredAgentUpdate(result.record);
+        const payload = await this.agentUpdates.emitStoredRecord(result.record);
         if (payload.workspaceId) {
           affectedWorkspaceIds.add(payload.workspaceId);
         }
@@ -2687,7 +2468,7 @@ export class Session {
       if (!createdWorktree && msg.workspaceId) {
         await this.writeInitialWorkspaceTitleIfUntitled(workspaceId, workspacePromptTitle);
       }
-      await this.forwardAgentUpdate(snapshot);
+      await this.agentUpdates.forwardLiveAgent(snapshot);
       if (!createdWorktree && trimmedPrompt) {
         await this.scheduleAutoNameLocalWorkspaceTitleForFirstAgent({
           workspaceId,
@@ -2784,7 +2565,7 @@ export class Session {
       const snapshot = await this.agentManager.resumeAgentFromPersistence(handle, overrides);
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
       await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
-      await this.forwardAgentUpdate(snapshot);
+      await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
       if (requestId) {
         const agentPayload = await this.buildAgentPayload(snapshot);
@@ -2934,7 +2715,7 @@ export class Session {
         );
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId);
-      await this.forwardAgentUpdate(snapshot);
+      await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
       if (requestId) {
         this.emit({
@@ -3896,7 +3677,7 @@ export class Session {
           continue;
         }
         if (
-          !this.matchesAgentFilter({
+          !matchesAgentUpdatesFilter({
             agent: entry.agent,
             project: entry.project,
             filter,
@@ -4688,12 +4469,10 @@ export class Session {
 
     try {
       if (subscriptionId) {
-        this.agentUpdatesSubscription = {
+        this.agentUpdates.beginSubscription({
           subscriptionId,
           filter: request.filter,
-          isBootstrapping: true,
-          pendingUpdatesByAgentId: new Map(),
-        };
+        });
       }
 
       const payload = await this.listFetchAgentsEntries(request);
@@ -4714,12 +4493,12 @@ export class Session {
         },
       });
 
-      if (subscriptionId && this.agentUpdatesSubscription?.subscriptionId === subscriptionId) {
-        this.flushBootstrappedAgentUpdates({ snapshotUpdatedAtByAgentId });
+      if (subscriptionId) {
+        this.agentUpdates.flushBootstrapped(subscriptionId, { snapshotUpdatedAtByAgentId });
       }
     } catch (error) {
-      if (subscriptionId && this.agentUpdatesSubscription?.subscriptionId === subscriptionId) {
-        this.agentUpdatesSubscription = null;
+      if (subscriptionId) {
+        this.agentUpdates.clearSubscription(subscriptionId);
       }
       const code = error instanceof SessionRequestError ? error.code : "fetch_agents_failed";
       const message = error instanceof Error ? error.message : "Failed to fetch agents";
@@ -6156,6 +5935,7 @@ export class Session {
       this.unsubscribeAgentEvents();
       this.unsubscribeAgentEvents = null;
     }
+    this.agentUpdates.dispose();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
       this.unsubscribeTerminalWorkspaceContributionEvents();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
