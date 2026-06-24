@@ -53,14 +53,13 @@ import { respondToAgentPermission } from "./agent/permission-response.js";
 import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
-import {
-  buildWorkspaceScriptPayloads,
-  readPaseoConfigForProjection,
-} from "./script-status-projection.js";
-import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import {
+  createWorkspaceScriptsService,
+  type WorkspaceScriptsService,
+} from "./session/workspace-scripts/workspace-scripts-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
@@ -609,6 +608,7 @@ export class Session {
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
+  private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
   constructor(options: SessionOptions) {
@@ -854,6 +854,20 @@ export class Session {
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.workspaceScripts = createWorkspaceScriptsService({
+      serviceProxy: this.serviceProxy,
+      scriptRuntimeStore: this.scriptRuntimeStore,
+      terminalManager: this.terminalManager,
+      workspaceRegistry: this.workspaceRegistry,
+      workspaceGitService: this.workspaceGitService,
+      getDaemonTcpPort: this.getDaemonTcpPort,
+      getDaemonTcpHost: this.getDaemonTcpHost,
+      serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
+      resolveScriptHealth: this.resolveScriptHealth,
+      logger: this.sessionLogger,
+      emit: (message) => this.emit(message),
+      spawnWorkspaceScript,
+    });
     this.subscribeToOptionalManagers();
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
@@ -4068,20 +4082,7 @@ export class Session {
       statusEnteredAt: null,
       activityAt: null,
       diffStat,
-      scripts:
-        this.serviceProxy && this.scriptRuntimeStore
-          ? buildWorkspaceScriptPayloads({
-              workspaceId: workspace.workspaceId,
-              workspaceDirectory: workspace.cwd,
-              paseoConfig: readPaseoConfigForProjection(workspace.cwd, this.sessionLogger),
-              serviceProxy: this.serviceProxy,
-              runtimeStore: this.scriptRuntimeStore,
-              daemonPort: this.getDaemonTcpPort?.() ?? null,
-              serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
-              gitMetadata: this.resolveWorkspaceScriptGitMetadata(workspace.cwd),
-              resolveHealth: this.resolveScriptHealth ?? undefined,
-            })
-          : [],
+      scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace.workspaceId, workspace.cwd),
       ...(resolvedProjectRecord
         ? {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
@@ -5262,116 +5263,17 @@ export class Session {
     }
   }
 
+  // Thin accessor over the workspace-scripts module; the workspace descriptor builder and the
+  // session.workspace-git-watch test (owned by in-flight PR #1714) both read the scripts snapshot here.
   private buildWorkspaceScriptPayloadSnapshot(
     workspaceId: string,
     workspaceDirectory: string,
   ): WorkspaceDescriptorPayload["scripts"] {
-    if (!this.serviceProxy || !this.scriptRuntimeStore) {
-      return [];
-    }
-    return buildWorkspaceScriptPayloads({
-      workspaceId,
-      workspaceDirectory,
-      paseoConfig: readPaseoConfigForProjection(workspaceDirectory, this.sessionLogger),
-      serviceProxy: this.serviceProxy,
-      runtimeStore: this.scriptRuntimeStore,
-      daemonPort: this.getDaemonTcpPort?.() ?? null,
-      serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
-      gitMetadata: this.resolveWorkspaceScriptGitMetadata(workspaceDirectory),
-      resolveHealth: this.resolveScriptHealth ?? undefined,
-    });
+    return this.workspaceScripts.buildSnapshot(workspaceId, workspaceDirectory);
   }
 
-  private resolveWorkspaceScriptGitMetadata(
-    workspaceDirectory: string,
-  ): { projectSlug: string; currentBranch: string | null } | undefined {
-    const snapshot = this.workspaceGitService.peekSnapshot(workspaceDirectory);
-    if (!snapshot) {
-      return undefined;
-    }
-    return {
-      projectSlug: deriveProjectSlug(
-        workspaceDirectory,
-        snapshot.git.isGit ? snapshot.git.remoteUrl : null,
-      ),
-      currentBranch: snapshot.git.currentBranch,
-    };
-  }
-
-  private emitWorkspaceScriptStatusUpdate(workspaceId: string, workspaceDirectory: string): void {
-    this.emit({
-      type: "script_status_update",
-      payload: {
-        workspaceId,
-        scripts: this.buildWorkspaceScriptPayloadSnapshot(workspaceId, workspaceDirectory),
-      },
-    });
-  }
-
-  private async handleStartWorkspaceScriptRequest(
-    request: StartWorkspaceScriptRequest,
-  ): Promise<void> {
-    try {
-      if (!this.terminalManager || !this.serviceProxy || !this.scriptRuntimeStore) {
-        throw new Error("Workspace scripts are not available on this daemon");
-      }
-
-      const workspace = await this.workspaceRegistry.get(request.workspaceId);
-      if (!workspace) {
-        throw new Error(`Workspace not found: ${request.workspaceId}`);
-      }
-      const gitMetadata = await this.workspaceGitService.getWorkspaceGitMetadata(workspace.cwd);
-
-      const serviceResult = await spawnWorkspaceScript({
-        repoRoot: workspace.cwd,
-        workspaceId: workspace.workspaceId,
-        projectSlug: gitMetadata.projectSlug,
-        branchName: gitMetadata.currentBranch,
-        scriptName: request.scriptName,
-        daemonPort: this.getDaemonTcpPort?.() ?? null,
-        daemonListenHost: this.getDaemonTcpHost?.() ?? null,
-        serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
-        serviceProxy: this.serviceProxy,
-        runtimeStore: this.scriptRuntimeStore,
-        terminalManager: this.terminalManager,
-        logger: this.sessionLogger,
-        onLifecycleChanged: () => {
-          this.emitWorkspaceScriptStatusUpdate(workspace.workspaceId, workspace.cwd);
-        },
-      });
-
-      this.emitWorkspaceScriptStatusUpdate(workspace.workspaceId, workspace.cwd);
-      this.emit({
-        type: "start_workspace_script_response",
-        payload: {
-          requestId: request.requestId,
-          workspaceId: request.workspaceId,
-          scriptName: request.scriptName,
-          terminalId: serviceResult.terminalId,
-          error: null,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to start workspace script";
-      this.sessionLogger.error(
-        {
-          err: error,
-          workspaceId: request.workspaceId,
-          scriptName: request.scriptName,
-        },
-        "Failed to start workspace script",
-      );
-      this.emit({
-        type: "start_workspace_script_response",
-        payload: {
-          requestId: request.requestId,
-          workspaceId: request.workspaceId,
-          scriptName: request.scriptName,
-          terminalId: null,
-          error: message,
-        },
-      });
-    }
+  private handleStartWorkspaceScriptRequest(request: StartWorkspaceScriptRequest): Promise<void> {
+    return this.workspaceScripts.start(request);
   }
 
   // COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer call daemon editor RPCs.
@@ -5447,7 +5349,7 @@ export class Session {
         getDaemonTcpHost: this.getDaemonTcpHost,
         serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
         onScriptsChanged: (workspaceId, workspaceDirectory) => {
-          this.emitWorkspaceScriptStatusUpdate(workspaceId, workspaceDirectory);
+          this.workspaceScripts.emitStatusUpdate(workspaceId, workspaceDirectory);
         },
       },
       input,
