@@ -74,11 +74,6 @@ export function createGitMutationService(deps: {
     }
   }
 
-  async function doesLocalBranchExist(cwd: string, branch: string): Promise<boolean> {
-    assertSafeGitRef(branch, "branch");
-    return workspaceGitService.hasLocalBranch(cwd, branch);
-  }
-
   async function notifyGitMutation(
     cwd: string,
     reason: GitMutationRefreshReason,
@@ -119,7 +114,7 @@ export function createGitMutationService(deps: {
         throw new Error(`Base branch not found: ${baseBranch}`);
       }
 
-      const exists = await doesLocalBranchExist(cwd, newBranchName);
+      const exists = await workspaceGitService.hasLocalBranch(cwd, newBranchName);
       if (exists) {
         throw new Error(`Branch already exists: ${newBranchName}`);
       }

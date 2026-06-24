@@ -140,7 +140,7 @@ describe("checkoutExistingBranch", () => {
     expect(result.source).toBe("local");
     expect(headBranch(dir)).toBe("feature");
     expect(invalidateCalls).toEqual([{ cwd: dir }]);
-    expect(snapshotCalls.some((c) => c.force && c.reason === "switch-branch")).toBe(true);
+    expect(snapshotCalls).toContainEqual({ cwd: dir, force: true, reason: "switch-branch" });
   });
 });
 
@@ -192,7 +192,7 @@ describe("createBranchFromBase", () => {
     await service.createBranchFromBase({ cwd: dir, baseBranch: "main", newBranchName: "feature2" });
     expect(headBranch(dir)).toBe("feature2");
     expect(invalidateCalls).toEqual([]);
-    expect(snapshotCalls.some((c) => c.force && c.reason === "create-branch")).toBe(true);
+    expect(snapshotCalls).toContainEqual({ cwd: dir, force: true, reason: "create-branch" });
   });
 });
 
