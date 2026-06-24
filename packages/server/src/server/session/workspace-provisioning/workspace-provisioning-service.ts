@@ -140,7 +140,6 @@ export function createWorkspaceProvisioningService(deps: {
 
     const nextWorkspace = {
       ...input.workspace,
-      workspaceId: input.workspace.workspaceId,
       projectId,
       cwd: input.cwd,
       kind,

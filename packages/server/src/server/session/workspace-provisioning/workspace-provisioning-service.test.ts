@@ -193,6 +193,17 @@ test("resolveOrCreateWorkspaceIdForCreateAgent creates a titled workspace when n
   expect(created?.title).toBe("My Title");
 });
 
+test("createWorkspaceForDirectory always mints a fresh workspace even when one already occupies the cwd", async () => {
+  const repo = path.join(tmpDir, "repo");
+  gitRoots.add(repo);
+
+  const first = await provisioning.createWorkspaceForDirectory(repo);
+  const second = await provisioning.createWorkspaceForDirectory(repo);
+
+  expect(second.workspaceId).not.toBe(first.workspaceId);
+  expect(await workspaceRegistry.list()).toHaveLength(2);
+});
+
 test("findOrCreateProjectForDirectory reuses the active project for the same root", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
