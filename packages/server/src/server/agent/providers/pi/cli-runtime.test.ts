@@ -210,42 +210,11 @@ describe("PiCliRuntime", () => {
   test("lists commands through the OMP-compatible get_available_commands RPC", async () => {
     const child = createPiChild();
     const commandTypes: string[] = [];
-    let buffer = "";
-    child.stdin.on("data", (chunk) => {
-      buffer += chunk.toString();
-      for (;;) {
-        const newlineIndex = buffer.indexOf("\n");
-        if (newlineIndex === -1) break;
-        const line = buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-        const command = JSON.parse(line) as Record<string, unknown>;
-        commandTypes.push(String(command.type));
-        if (command.type === "get_available_commands") {
-          child.stdout.write(
-            `${JSON.stringify({
-              id: command.id,
-              type: "response",
-              command: "get_available_commands",
-              success: true,
-              data: {
-                commands: [
-                  { name: "skill:ctx-stats", description: "Show context stats", source: "skill" },
-                ],
-              },
-            })}\n`,
-          );
-          continue;
-        }
-        child.stdout.write(
-          `${JSON.stringify({
-            type: "response",
-            command: command.type,
-            success: false,
-            error: `Unknown command: ${String(command.type)}`,
-          })}\n`,
-        );
-        child.emit("exit", 1, null);
-      }
+    replyToCommands(child, (command) => {
+      commandTypes.push(String(command.type));
+      return {
+        commands: [{ name: "skill:ctx-stats", description: "Show context stats", source: "skill" }],
+      };
     });
     const session = await createRuntime(child, [], {
       commandsRpcType: "get_available_commands",

@@ -502,7 +502,6 @@ test("built-in OMP override passes params to the Pi adapter constructor", () => 
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       omp: {
-        extends: "pi",
         label: "OMP",
         command: ["omp"],
         params: {
