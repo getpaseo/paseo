@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type pino from "pino";
 import { describe, expect, test } from "vitest";
 import type { WorkspaceDescriptorPayload } from "../../messages.js";
@@ -8,6 +9,11 @@ import type {
 } from "../../workspace-git-service.js";
 import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import { createWorkspaceGitObserverService } from "./workspace-git-observer-service.js";
+
+// Watch targets are keyed by resolve(cwd), which is platform-dependent (POSIX vs Windows
+// drive paths). Resolve the test cwds the same way so assertions hold on every platform.
+const WS1 = resolve("/repo/ws1");
+const WS2 = resolve("/repo/ws2");
 
 // The service reads only WorkspaceGitService.registerWorkspace plus a handful of injected
 // session callbacks. The harness below implements exactly that slice as in-memory adapters:
@@ -39,7 +45,7 @@ function makeRecord(workspaceId: string): PersistedWorkspaceRecord {
 }
 
 function flushMicrotasks(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  return new Promise((done) => setImmediate(done));
 }
 
 function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
@@ -122,60 +128,60 @@ function buildHarness(opts: { emitCwdRejects?: boolean } = {}) {
 describe("syncObservers", () => {
   test("registers a WorkspaceGitService subscription for a git workspace", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    expect(h.registerCalls).toEqual(["/repo/ws1"]);
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    expect(h.registerCalls).toEqual([WS1]);
   });
 
   test("does not register a non-git workspace", () => {
     const h = buildHarness();
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", projectKind: "directory" }),
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "directory" }),
     ]);
     expect(h.registerCalls).toEqual([]);
   });
 
   test("is idempotent — re-syncing the same git workspace does not re-register", () => {
     const h = buildHarness();
-    const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" });
+    const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: WS1 });
     h.service.syncObservers([descriptor]);
     h.service.syncObservers([descriptor]);
-    expect(h.registerCalls).toEqual(["/repo/ws1"]);
+    expect(h.registerCalls).toEqual([WS1]);
   });
 
   test("tears down the subscription when a git workspace becomes non-git", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", projectKind: "directory" }),
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1, projectKind: "directory" }),
     ]);
-    expect(h.unsubscribeCalls).toEqual(["/repo/ws1"]);
+    expect(h.unsubscribeCalls).toEqual([WS1]);
   });
 });
 
 describe("git snapshot listener", () => {
   test("fans a snapshot out to branch-change, workspace-update, and status-update", async () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    h.emitSnapshot("/repo/ws1", "feature");
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.emitSnapshot(WS1, "feature");
     await flushMicrotasks();
     expect(h.branchChanges).toEqual([["ws1", null, "feature"]]);
-    expect(h.emitCwdCalls).toEqual(["/repo/ws1"]);
-    expect(h.statusCalls).toEqual([{ cwd: "/repo/ws1", branch: "feature" }]);
+    expect(h.emitCwdCalls).toEqual([WS1]);
+    expect(h.statusCalls).toEqual([{ cwd: WS1, branch: "feature" }]);
   });
 
   test("does not re-fire onBranchChanged when the branch is unchanged", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    h.emitSnapshot("/repo/ws1", "feature");
-    h.emitSnapshot("/repo/ws1", "feature");
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.emitSnapshot(WS1, "feature");
+    h.emitSnapshot(WS1, "feature");
     expect(h.branchChanges).toEqual([["ws1", null, "feature"]]);
   });
 
   test("logs and swallows an emit failure without skipping the status update", async () => {
     const h = buildHarness({ emitCwdRejects: true });
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    expect(() => h.emitSnapshot("/repo/ws1", "feature")).not.toThrow();
-    expect(h.statusCalls).toEqual([{ cwd: "/repo/ws1", branch: "feature" }]);
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    expect(() => h.emitSnapshot(WS1, "feature")).not.toThrow();
+    expect(h.statusCalls).toEqual([{ cwd: WS1, branch: "feature" }]);
     await flushMicrotasks();
     expect(h.warnCalls).toHaveLength(1);
   });
@@ -189,9 +195,9 @@ describe("shouldSkipUpdate", () => {
 
   test("skips a repeat descriptor state and re-emits when it changes", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    const a = makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", name: "main" });
-    const b = makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", name: "feature" });
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    const a = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "main" });
+    const b = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "feature" });
     expect(h.service.shouldSkipUpdate("ws1", a)).toBe(false);
     expect(h.service.shouldSkipUpdate("ws1", a)).toBe(true);
     expect(h.service.shouldSkipUpdate("ws1", b)).toBe(false);
@@ -201,8 +207,8 @@ describe("shouldSkipUpdate", () => {
 describe("recordDescriptorState", () => {
   test("fires onBranchChanged once per branch name transition", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    const feature = makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", name: "feature" });
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    const feature = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "feature" });
     h.service.recordDescriptorState("ws1", feature);
     h.service.recordDescriptorState("ws1", feature);
     expect(h.branchChanges).toEqual([["ws1", null, "feature"]]);
@@ -221,41 +227,41 @@ describe("recordDescriptorState", () => {
 describe("teardown", () => {
   test("removeForWorkspaceId unsubscribes the matching observer", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     h.service.removeForWorkspaceId("ws1");
-    expect(h.unsubscribeCalls).toEqual(["/repo/ws1"]);
+    expect(h.unsubscribeCalls).toEqual([WS1]);
   });
 
   test("removeForWorkspaceId is a no-op for an unknown workspace", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     h.service.removeForWorkspaceId("nope");
     expect(h.unsubscribeCalls).toEqual([]);
   });
 
   test("removeForCwd unsubscribes and stops the observer", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
-    h.service.removeForCwd("/repo/ws1");
-    expect(h.unsubscribeCalls).toEqual(["/repo/ws1"]);
-    expect(() => h.emitSnapshot("/repo/ws1", "x")).toThrow();
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
+    h.service.removeForCwd(WS1);
+    expect(h.unsubscribeCalls).toEqual([WS1]);
+    expect(() => h.emitSnapshot(WS1, "x")).toThrow();
   });
 
   test("dispose releases every live subscription", () => {
     const h = buildHarness();
     h.service.syncObservers([
-      makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" }),
-      makeDescriptor({ id: "ws2", workspaceDirectory: "/repo/ws2" }),
+      makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }),
+      makeDescriptor({ id: "ws2", workspaceDirectory: WS2 }),
     ]);
     h.service.dispose();
-    expect(h.unsubscribeCalls.sort()).toEqual(["/repo/ws1", "/repo/ws2"]);
+    expect(h.unsubscribeCalls.sort()).toEqual([WS1, WS2]);
   });
 
   test("dispose clears watch targets so post-teardown lookups find nothing", () => {
     const h = buildHarness();
-    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: WS1 })]);
     h.service.dispose();
-    const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", name: "main" });
+    const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: WS1, name: "main" });
     expect(h.service.shouldSkipUpdate("ws1", descriptor)).toBe(false);
     h.service.recordDescriptorState("ws1", descriptor);
     expect(h.branchChanges).toEqual([]);
@@ -265,17 +271,17 @@ describe("teardown", () => {
 describe("syncObserverForWorkspace / warmGitData", () => {
   test("describes the record then registers the observer", async () => {
     const h = buildHarness();
-    h.setDescribeResult(makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" }));
+    h.setDescribeResult(makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }));
     await h.service.syncObserverForWorkspace(makeRecord("ws1"));
     expect(h.describeCalls).toEqual([makeRecord("ws1")]);
-    expect(h.registerCalls).toEqual(["/repo/ws1"]);
+    expect(h.registerCalls).toEqual([WS1]);
   });
 
   test("warmGitData registers the observer and emits a workspace update", async () => {
     const h = buildHarness();
-    h.setDescribeResult(makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" }));
+    h.setDescribeResult(makeDescriptor({ id: "ws1", workspaceDirectory: WS1 }));
     await h.service.warmGitData(makeRecord("ws1"));
-    expect(h.registerCalls).toEqual(["/repo/ws1"]);
+    expect(h.registerCalls).toEqual([WS1]);
     expect(h.emitWorkspaceIdCalls).toEqual(["ws1"]);
   });
 });
