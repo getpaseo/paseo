@@ -1,6 +1,8 @@
 import type { ChildProcess } from "node:child_process";
+import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
+import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
@@ -249,7 +251,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
     const serverArgs = [...launchPrefix.args, "serve", "--port", String(port)];
-    const serverCwd = os.homedir();
+    // Use a neutral scratch directory as the server cwd. Launching from the
+    // user's home directory causes OpenCode to treat /Users/admin as the default
+    // workspace and index the entire home tree.
+    const serverCwd = path.join(os.homedir(), ".paseo", "opencode-server-root");
+    await fs.mkdir(serverCwd, { recursive: true });
 
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
       cwd: serverCwd,

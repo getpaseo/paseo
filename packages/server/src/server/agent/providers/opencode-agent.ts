@@ -12,6 +12,9 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import pLimit from "p-limit";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -104,6 +107,16 @@ const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
+
+// Neutral scratch directory used for global provider catalog refresh.
+// Passing the user's home directory to OpenCode causes it to index the entire
+// home tree (location services + bigram indexing), which is unnecessary when
+// we only need model/mode metadata.
+const OPENCODE_GLOBAL_CATALOG_DIR = path.join(
+  os.homedir(),
+  ".paseo",
+  "opencode-catalog-scratch",
+);
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -1348,7 +1361,22 @@ export class OpenCodeAgentClient implements AgentClient {
       ? await this.serverManager.acquireNew()
       : await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
-    const directory = options.cwd;
+
+    // Refreshing the global provider snapshot with the user's home directory
+    // causes OpenCode to boot location services and run a full bigram index of
+    // the entire home tree. Catalog refresh only needs model/mode metadata, so
+    // use a neutral scratch directory for the global/home scope.
+    const isHomeDirectory =
+      options.cwd !== undefined &&
+      path.resolve(options.cwd) === path.resolve(os.homedir());
+    const directory = isHomeDirectory
+      ? OPENCODE_GLOBAL_CATALOG_DIR
+      : options.cwd;
+
+    if (directory === OPENCODE_GLOBAL_CATALOG_DIR) {
+      await fs.mkdir(directory, { recursive: true });
+    }
+
     const client = this.createOpenCodeClient({ baseUrl: url, directory });
 
     try {
