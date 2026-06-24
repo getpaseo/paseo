@@ -268,8 +268,6 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsSessionListing: z.boolean().optional(),
     supportsDynamicModes: z.boolean(),
     supportsMcpServers: z.boolean(),
-    // COMPAT(nativePaseoTools): added in v0.1.X, drop when floor >= v0.1.X.
-    supportsNativePaseoTools: z.boolean().optional().default(false),
     supportsReasoningStream: z.boolean(),
     supportsToolInvocations: z.boolean(),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
