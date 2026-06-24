@@ -9,6 +9,7 @@ import {
 } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
+  type ACPConfigFeatureOption,
   type ACPBeforeModeWriteResult,
   type ACPProviderModeWriteResult,
   type ACPProviderModeWriterContext,
@@ -44,6 +45,16 @@ const COPILOT_ALLOW_ALL_ON = "on";
 const COPILOT_ALLOW_ALL_OFF = "off";
 type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
 
+export const COPILOT_AGENT_FEATURE_OPTION: ACPConfigFeatureOption = {
+  id: "agent",
+  configId: "agent",
+  category: "_agent",
+  label: "Agent",
+  description: "Use a Copilot custom agent profile",
+  tooltip: "Select Copilot agent",
+  emptyOptionLabel: "Default",
+};
+
 export const COPILOT_MODES: AgentMode[] = [
   {
     id: COPILOT_AGENT_MODE_ID,
@@ -77,6 +88,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
       defaultModes: COPILOT_MODES,
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
       modeIdTransformer: transformCopilotModeId,
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
