@@ -250,6 +250,16 @@ describe("teardown", () => {
     h.service.dispose();
     expect(h.unsubscribeCalls.sort()).toEqual(["/repo/ws1", "/repo/ws2"]);
   });
+
+  test("dispose clears watch targets so post-teardown lookups find nothing", () => {
+    const h = buildHarness();
+    h.service.syncObservers([makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1" })]);
+    h.service.dispose();
+    const descriptor = makeDescriptor({ id: "ws1", workspaceDirectory: "/repo/ws1", name: "main" });
+    expect(h.service.shouldSkipUpdate("ws1", descriptor)).toBe(false);
+    h.service.recordDescriptorState("ws1", descriptor);
+    expect(h.branchChanges).toEqual([]);
+  });
 });
 
 describe("syncObserverForWorkspace / warmGitData", () => {

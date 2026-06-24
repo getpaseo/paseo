@@ -31,6 +31,8 @@ export interface WorkspaceGitObserverService {
   syncObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void;
   syncObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void>;
   warmGitData(workspace: PersistedWorkspaceRecord): Promise<void>;
+  // Check-and-record dedupe gate: returns true when the descriptor state is unchanged
+  // for this workspace, and otherwise advances the recorded state key as a side effect.
   shouldSkipUpdate(workspaceId: string, workspace: WorkspaceDescriptorPayload | null): boolean;
   recordDescriptorState(workspaceId: string, workspace: WorkspaceDescriptorPayload | null): void;
   handleBranchSnapshot(cwd: string, branchName: string | null): void;
@@ -219,6 +221,7 @@ export function createWorkspaceGitObserverService(deps: {
         unsubscribe();
       }
       subscriptions.clear();
+      watchTargets.clear();
     },
   };
 }
