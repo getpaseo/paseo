@@ -4,7 +4,6 @@ import type { FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, normalize, resolve, sep } from "path";
 import { homedir } from "node:os";
-import { z } from "zod";
 import type { ToolSet } from "ai";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -102,15 +101,7 @@ import {
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
-import {
-  StructuredAgentFallbackError,
-  StructuredAgentResponseError,
-  generateStructuredAgentResponseWithFallback,
-} from "./agent/agent-response-loop.js";
-import {
-  resolveStructuredGenerationProviders,
-  type StructuredGenerationDaemonConfig,
-} from "./agent/structured-generation-providers.js";
+import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
@@ -150,6 +141,10 @@ import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
+import {
+  createAgentStructuredTextGeneration,
+  createGitMetadataGenerator,
+} from "./session/checkout/git-metadata-generator.js";
 import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
@@ -158,7 +153,6 @@ import { ProjectConfigSession } from "./session/project-config/project-config-se
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
@@ -245,12 +239,6 @@ function resolveSubscriptionId(
     return requestedSubscriptionId;
   }
   return uuidv4();
-}
-
-function diffChangeTypeFor(file: { isNew?: boolean; isDeleted?: boolean }): "A" | "D" | "M" {
-  if (file.isNew) return "A";
-  if (file.isDeleted) return "D";
-  return "M";
 }
 
 function buildWorkspaceCheckout(
@@ -719,12 +707,19 @@ export class Session {
           this.handleWorkspaceGitBranchSnapshot(cwd, branchName),
         renameCurrentBranch: (cwd, branch) => this.renameCurrentBranch(cwd, branch),
         checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
-        generateCommitMessage: (cwd) => this.generateCommitMessage(cwd),
-        generatePullRequestText: (cwd, baseRef) => this.generatePullRequestText(cwd, baseRef),
       },
       workspaceGitService: this.workspaceGitService,
       github: this.github,
       checkoutDiffManager,
+      gitMetadataGenerator: createGitMetadataGenerator({
+        workspaceGitService: this.workspaceGitService,
+        generation: createAgentStructuredTextGeneration({
+          agentManager: this.agentManager,
+          providerSnapshotManager,
+          readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
+          getFocusedSelection: (cwd) => this.getFocusedAgentSelectionForCwd(cwd),
+        }),
+      }),
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.sessionLogger,
@@ -3256,170 +3251,6 @@ export class Session {
       return true;
     }
     return resolvedCandidate.startsWith(resolvedRoot + sep);
-  }
-
-  private async generateCommitMessage(cwd: string): Promise<string> {
-    const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
-      mode: "uncommitted",
-      includeStructured: true,
-    });
-    const schema = z.object({
-      message: z
-        .string()
-        .min(1)
-        .max(72)
-        .describe("Concise git commit message, imperative mood, no trailing period."),
-    });
-    const fileList =
-      diff.structured && diff.structured.length > 0
-        ? [
-            "Files changed:",
-            ...diff.structured.map((file) => {
-              const changeType = diffChangeTypeFor(file);
-              const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
-              return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
-            }),
-          ].join("\n")
-        : "Files changed: (unknown)";
-    const maxPatchChars = 120_000;
-    const patch =
-      diff.diff.length > maxPatchChars
-        ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
-        : diff.diff;
-    const prompt = await buildMetadataPrompt({
-      cwd,
-      workspaceGitService: this.workspaceGitService,
-      contract: "Write a concise git commit message for the changes below.",
-      styles: [
-        {
-          configKey: "commitMessage",
-          default: "Concise, imperative mood, no trailing period.",
-        },
-      ],
-      after: [
-        "Return JSON only with a single field 'message'.",
-        "",
-        fileList,
-        "",
-        patch.length > 0 ? patch : "(No diff available)",
-      ].join("\n"),
-    });
-    const providers = await resolveStructuredGenerationProviders({
-      cwd,
-      providerSnapshotManager: this.providerSnapshotManager,
-      daemonConfig: this.readStructuredGenerationDaemonConfig(),
-      currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
-    });
-    try {
-      const result = await generateStructuredAgentResponseWithFallback({
-        manager: this.agentManager,
-        cwd,
-        prompt,
-        schema,
-        schemaName: "CommitMessage",
-        maxRetries: 2,
-        providers,
-        persistSession: false,
-        agentConfigOverrides: {
-          title: "Commit generator",
-          internal: true,
-        },
-      });
-      return result.message;
-    } catch (error) {
-      if (
-        error instanceof StructuredAgentResponseError ||
-        error instanceof StructuredAgentFallbackError
-      ) {
-        return "Update files";
-      }
-      throw error;
-    }
-  }
-
-  private async generatePullRequestText(
-    cwd: string,
-    baseRef?: string,
-  ): Promise<{
-    title: string;
-    body: string;
-  }> {
-    const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
-      mode: "base",
-      baseRef,
-      includeStructured: true,
-    });
-    const schema = z.object({
-      title: z.string().min(1).max(72),
-      body: z.string().min(1),
-    });
-    const fileList =
-      diff.structured && diff.structured.length > 0
-        ? [
-            "Files changed:",
-            ...diff.structured.map((file) => {
-              const changeType = diffChangeTypeFor(file);
-              const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
-              return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
-            }),
-          ].join("\n")
-        : "Files changed: (unknown)";
-    const maxPatchChars = 200_000;
-    const patch =
-      diff.diff.length > maxPatchChars
-        ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
-        : diff.diff;
-    const prompt = await buildMetadataPrompt({
-      cwd,
-      workspaceGitService: this.workspaceGitService,
-      contract: "Write a pull request title and body for the changes below.",
-      styles: [
-        {
-          configKey: "pullRequest",
-          default: "Clear, descriptive title; body explaining what changed and why.",
-        },
-      ],
-      after: [
-        "Return JSON only with fields 'title' and 'body'.",
-        "",
-        fileList,
-        "",
-        patch.length > 0 ? patch : "(No diff available)",
-      ].join("\n"),
-    });
-    const providers = await resolveStructuredGenerationProviders({
-      cwd,
-      providerSnapshotManager: this.providerSnapshotManager,
-      daemonConfig: this.readStructuredGenerationDaemonConfig(),
-      currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
-    });
-    try {
-      return await generateStructuredAgentResponseWithFallback({
-        manager: this.agentManager,
-        cwd,
-        prompt,
-        schema,
-        schemaName: "PullRequest",
-        maxRetries: 2,
-        providers,
-        persistSession: false,
-        agentConfigOverrides: {
-          title: "PR generator",
-          internal: true,
-        },
-      });
-    } catch (error) {
-      if (
-        error instanceof StructuredAgentResponseError ||
-        error instanceof StructuredAgentFallbackError
-      ) {
-        return {
-          title: "Update changes",
-          body: "Automated PR generated by Paseo.",
-        };
-      }
-      throw error;
-    }
   }
 
   private async ensureCleanWorkingTree(cwd: string): Promise<void> {

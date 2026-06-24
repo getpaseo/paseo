@@ -45,13 +45,13 @@ import {
 } from "../../../utils/checkout-git.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { expandTilde } from "../../../utils/path.js";
+import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 /**
  * The collaborators a checkout command reaches that are NOT part of the checkout
  * domain: the git-mutation refresh primitive and workspace-update emitters owned
- * by the Session shell (also used by worktree/workspace creation), the injected
- * branch operations, and the LLM-backed commit/PR text generators. CheckoutSession
- * orchestrates them but does not own them.
+ * by the Session shell (also used by worktree/workspace creation), and the injected
+ * branch operations. CheckoutSession orchestrates them but does not own them.
  */
 export interface CheckoutSessionHost {
   emit(msg: SessionOutboundMessage): void;
@@ -67,8 +67,6 @@ export interface CheckoutSessionHost {
     branch: string,
   ): Promise<{ previousBranch: string | null; currentBranch: string | null }>;
   checkoutExistingBranch(cwd: string, branch: string): Promise<CheckoutExistingBranchResult>;
-  generateCommitMessage(cwd: string): Promise<string>;
-  generatePullRequestText(cwd: string, baseRef?: string): Promise<{ title: string; body: string }>;
 }
 
 type CurrentWorkspacePullRequest = NonNullable<
@@ -95,6 +93,7 @@ export interface CheckoutSessionOptions {
   workspaceGitService: WorkspaceGitService;
   github: GitHubService;
   checkoutDiffManager: CheckoutDiffSubscriber;
+  gitMetadataGenerator: GitMetadataGenerator;
   paseoHome: string;
   worktreesRoot: string | undefined;
   logger: pino.Logger;
@@ -117,6 +116,7 @@ export class CheckoutSession {
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly github: GitHubService;
   private readonly checkoutDiffManager: CheckoutDiffSubscriber;
+  private readonly gitMetadataGenerator: GitMetadataGenerator;
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
@@ -127,6 +127,7 @@ export class CheckoutSession {
     this.workspaceGitService = options.workspaceGitService;
     this.github = options.github;
     this.checkoutDiffManager = options.checkoutDiffManager;
+    this.gitMetadataGenerator = options.gitMetadataGenerator;
     this.paseoHome = options.paseoHome;
     this.worktreesRoot = options.worktreesRoot;
     this.logger = options.logger;
@@ -537,7 +538,7 @@ export class CheckoutSession {
     try {
       let message = msg.message?.trim() ?? "";
       if (!message) {
-        message = await this.host.generateCommitMessage(cwd);
+        message = await this.gitMetadataGenerator.generateCommitMessage(cwd);
       }
       if (!message) {
         throw new Error("Commit message is required");
@@ -747,7 +748,7 @@ export class CheckoutSession {
       let body = msg.body?.trim() ?? "";
 
       if (!title || !body) {
-        const generated = await this.host.generatePullRequestText(cwd, msg.baseRef);
+        const generated = await this.gitMetadataGenerator.generatePullRequestText(cwd, msg.baseRef);
         if (!title) title = generated.title;
         if (!body) body = generated.body;
       }

@@ -20,6 +20,7 @@ import {
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
 import { expandTilde } from "../../../utils/path.js";
+import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 interface FakeDiffSubscription {
   cwd: string;
@@ -64,6 +65,9 @@ interface RecordedHostCalls {
   handleWorkspaceGitBranchSnapshot: Array<{ cwd: string; branchName: string | null }>;
   renameCurrentBranch: Array<{ cwd: string; branch: string }>;
   checkoutExistingBranch: Array<{ cwd: string; branch: string }>;
+}
+
+interface RecordedGeneratorCalls {
   generateCommitMessage: string[];
   generatePullRequestText: Array<{ cwd: string; baseRef?: string }>;
 }
@@ -73,6 +77,7 @@ function makeCheckoutSession(options?: {
   diff?: CheckoutDiffSubscriber;
   github?: Partial<GitHubService>;
   host?: Partial<CheckoutSessionHost>;
+  gitMetadataGenerator?: Partial<GitMetadataGenerator>;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
@@ -81,6 +86,8 @@ function makeCheckoutSession(options?: {
     handleWorkspaceGitBranchSnapshot: [],
     renameCurrentBranch: [],
     checkoutExistingBranch: [],
+  };
+  const generatorCalls: RecordedGeneratorCalls = {
     generateCommitMessage: [],
     generatePullRequestText: [],
   };
@@ -103,15 +110,18 @@ function makeCheckoutSession(options?: {
       hostCalls.checkoutExistingBranch.push({ cwd, branch });
       return { source: "local" };
     },
+    ...options?.host,
+  };
+  const gitMetadataGenerator: GitMetadataGenerator = {
     generateCommitMessage: async (cwd) => {
-      hostCalls.generateCommitMessage.push(cwd);
+      generatorCalls.generateCommitMessage.push(cwd);
       return "";
     },
     generatePullRequestText: async (cwd, baseRef) => {
-      hostCalls.generatePullRequestText.push({ cwd, baseRef });
+      generatorCalls.generatePullRequestText.push({ cwd, baseRef });
       return { title: "", body: "" };
     },
-    ...options?.host,
+    ...options?.gitMetadataGenerator,
   };
   const github: GitHubService = { ...createGitHubService(), ...options?.github };
   const checkout = new CheckoutSession({
@@ -120,11 +130,12 @@ function makeCheckoutSession(options?: {
     github,
     checkoutDiffManager:
       options?.diff ?? createFakeDiffSubscriber({ cwd: "", files: [], error: null }).subscriber,
+    gitMetadataGenerator,
     paseoHome: "/tmp/paseo-home",
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
-  return { checkout, emitted, hostCalls };
+  return { checkout, emitted, hostCalls, generatorCalls };
 }
 
 function createGitSnapshot(
@@ -641,7 +652,7 @@ describe("CheckoutSession", () => {
 
   describe("commit", () => {
     it("fails when no message is supplied and none can be generated", async () => {
-      const { checkout, emitted, hostCalls } = makeCheckoutSession();
+      const { checkout, emitted, generatorCalls } = makeCheckoutSession();
 
       await checkout.handleCheckoutCommitRequest({
         type: "checkout_commit_request",
@@ -651,7 +662,7 @@ describe("CheckoutSession", () => {
         requestId: "c1",
       });
 
-      expect(hostCalls.generateCommitMessage).toEqual(["/repo"]);
+      expect(generatorCalls.generateCommitMessage).toEqual(["/repo"]);
       expect(emitted).toEqual([
         {
           type: "checkout_commit_response",
