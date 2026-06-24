@@ -1982,7 +1982,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .optional()
           .describe("IANA time zone for the cron cadence. For example: America/New_York."),
         name: z.string().optional(),
-        provider: AgentProviderEnum.describe(
+        provider: AgentProviderEnum.optional().describe(
           "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
         ),
         cwd: z.string().optional(),

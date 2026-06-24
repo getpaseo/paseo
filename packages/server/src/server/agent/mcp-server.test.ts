@@ -2734,7 +2734,7 @@ describe("create_schedule MCP tool", () => {
         cron: "*/5 * * * *",
         name: "Default schedule",
       }),
-    ).rejects.toThrow("expected string");
+    ).rejects.toThrow("provider is required when target is new-agent");
     expect(create).not.toHaveBeenCalled();
   });
 
