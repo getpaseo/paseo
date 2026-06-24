@@ -339,7 +339,12 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
         contextWindowMaxTokens: 200_000,
       },
     });
-    expect(openCodeClient.calls.providerList).toEqual([{ directory: cwd }]);
+    expect(openCodeClient.calls.providerList).toEqual([
+      // cwd === os.homedir() is rewritten to a neutral scratch path so OpenCode
+      // doesn't index the entire home tree during catalog refresh. See
+      // OPENCODE_GLOBAL_CATALOG_DIR in opencode-agent.ts.
+      { directory: path.join(cwd, ".paseo", "opencode-catalog-scratch") },
+    ]);
   }, 60_000);
 
   test("limits concurrent OpenCode metadata requests across clients", async () => {

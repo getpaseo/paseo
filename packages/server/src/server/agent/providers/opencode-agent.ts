@@ -11,10 +11,13 @@ import {
   type Session as OpenCodeSession,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
-import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  createPathEquivalenceMatcher,
+  createRealpathAwarePathMatcher,
+} from "../../../utils/path.js";
 import pLimit from "p-limit";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -112,11 +115,11 @@ const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
 // Passing the user's home directory to OpenCode causes it to index the entire
 // home tree (location services + bigram indexing), which is unnecessary when
 // we only need model/mode metadata.
-const OPENCODE_GLOBAL_CATALOG_DIR = path.join(
-  os.homedir(),
-  ".paseo",
-  "opencode-catalog-scratch",
-);
+const OPENCODE_GLOBAL_CATALOG_DIR = path.join(os.homedir(), ".paseo", "opencode-catalog-scratch");
+
+// Realpath-aware matcher so we catch home-dir aliases like /private/var/... on macOS,
+// trailing separators, and Windows casing — consistent with the rest of the file.
+const isHomeDirectoryPath = createRealpathAwarePathMatcher(os.homedir());
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -1366,15 +1369,15 @@ export class OpenCodeAgentClient implements AgentClient {
     // causes OpenCode to boot location services and run a full bigram index of
     // the entire home tree. Catalog refresh only needs model/mode metadata, so
     // use a neutral scratch directory for the global/home scope.
-    const isHomeDirectory =
-      options.cwd !== undefined &&
-      path.resolve(options.cwd) === path.resolve(os.homedir());
-    const directory = isHomeDirectory
-      ? OPENCODE_GLOBAL_CATALOG_DIR
-      : options.cwd;
+    const isHomeDirectory = options.cwd !== undefined && isHomeDirectoryPath(options.cwd);
+    const directory = isHomeDirectory ? OPENCODE_GLOBAL_CATALOG_DIR : options.cwd;
 
     if (directory === OPENCODE_GLOBAL_CATALOG_DIR) {
       await fs.mkdir(directory, { recursive: true });
+      this.logger.debug(
+        { originalCwd: options.cwd, rewrittenCwd: directory },
+        "opencode catalog refresh: rewriting home directory to scratch path to avoid full-tree indexing",
+      );
     }
 
     const client = this.createOpenCodeClient({ baseUrl: url, directory });
