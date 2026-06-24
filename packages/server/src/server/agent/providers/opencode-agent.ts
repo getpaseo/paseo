@@ -1496,22 +1496,22 @@ export class OpenCodeAgentClient implements AgentClient {
       const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
       const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
       const model = resolveOpenCodePersistedSessionModel(session, messages);
-      const config = {
+      const config: AgentSessionConfig = {
         ...context.config,
         provider: "opencode",
         cwd: input.cwd,
         title: normalizeOpenCodeSessionTitle(session.title) ?? undefined,
         ...(modeId ? { modeId } : {}),
         ...(model ? { model } : {}),
-      } as AgentSessionConfig;
-      const storedConfig = {
+      };
+      const storedConfig: AgentSessionConfig = {
         ...context.storedConfig,
         provider: "opencode",
         cwd: input.cwd,
         title: config.title,
         ...(modeId ? { modeId } : {}),
         ...(model ? { model } : {}),
-      } as AgentSessionConfig;
+      };
       const persistence = buildOpenCodeImportPersistenceHandle(input, storedConfig);
       const openCodeConfig = this.assertConfig(config);
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
