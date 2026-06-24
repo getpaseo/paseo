@@ -62,6 +62,7 @@ import type { PiRuntime, PiRuntimeSession } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
   PiAgentMessage,
+  PiCommandsRpcType,
   PiImageContent,
   PiModel,
   PiRpcSlashCommand,
@@ -154,6 +155,7 @@ interface PiRpcAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   providerParams?: unknown;
+  commandsRpcType?: PiCommandsRpcType;
   runtime?: PiRuntime;
 }
 
@@ -967,8 +969,12 @@ function mapPiModel(model: PiModel): AgentModelDefinition {
   };
 }
 
-function createRuntime(logger: Logger, runtimeSettings?: ProviderRuntimeSettings): PiRuntime {
-  return new PiCliRuntime({ logger, runtimeSettings });
+function createRuntime(
+  logger: Logger,
+  runtimeSettings?: ProviderRuntimeSettings,
+  commandsRpcType?: PiCommandsRpcType,
+): PiRuntime {
+  return new PiCliRuntime({ logger, runtimeSettings, commandsRpcType });
 }
 
 export class PiRpcAgentSession implements AgentSession {
@@ -1866,7 +1872,9 @@ export class PiRpcAgentClient implements AgentClient {
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
     this.providerParams = PiProviderParamsSchema.parse(options.providerParams ?? {});
-    this.runtime = options.runtime ?? createRuntime(options.logger, options.runtimeSettings);
+    this.runtime =
+      options.runtime ??
+      createRuntime(options.logger, options.runtimeSettings, options.commandsRpcType);
   }
 
   async createSession(

@@ -13,6 +13,7 @@ import {
 } from "./runtime.js";
 import type {
   PiAgentMessage,
+  PiCommandsRpcType,
   PiModel,
   PiRpcCommand,
   PiRpcResponse,
@@ -26,6 +27,7 @@ const DEFAULT_PI_COMMAND: [string, ...string[]] = [
   process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi",
 ];
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_COMMANDS_RPC_TYPE: PiCommandsRpcType = "get_commands";
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -48,15 +50,18 @@ export interface PiCliRuntimeOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
+  commandsRpcType?: PiCommandsRpcType;
   spawnProcess?: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
 
 export class PiCliRuntime implements PiRuntime {
   private readonly command: [string, ...string[]];
+  private readonly commandsRpcType: PiCommandsRpcType;
   private readonly spawnProcess: (launch: PiRuntimeLaunch) => ChildProcessWithoutNullStreams;
 
   constructor(private readonly options: PiCliRuntimeOptions) {
     this.command = options.command ?? DEFAULT_PI_COMMAND;
+    this.commandsRpcType = options.commandsRpcType ?? DEFAULT_COMMANDS_RPC_TYPE;
     this.spawnProcess =
       options.spawnProcess ??
       ((launch) => {
@@ -77,7 +82,12 @@ export class PiCliRuntime implements PiRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    return new PiCliRuntimeSession(launch, this.spawnProcess(launch), this.options.logger);
+    return new PiCliRuntimeSession(
+      launch,
+      this.spawnProcess(launch),
+      this.options.logger,
+      this.commandsRpcType,
+    );
   }
 }
 
@@ -93,6 +103,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     _launch: PiRuntimeLaunch,
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly logger: Logger,
+    private readonly commandsRpcType: PiCommandsRpcType,
   ) {
     child.stdout.on("data", (chunk) => {
       this.handleStdoutChunk(chunk.toString());
@@ -173,7 +184,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async getCommands(): Promise<PiRpcSlashCommand[]> {
-    const data = (await this.request({ type: "get_commands" })) as {
+    const data = (await this.request({ type: this.commandsRpcType })) as {
       commands?: PiRpcSlashCommand[];
     };
     return data.commands ?? [];
