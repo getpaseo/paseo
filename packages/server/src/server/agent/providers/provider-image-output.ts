@@ -66,13 +66,14 @@ export function materializeProviderImage(image: {
   return { path: filePath };
 }
 
+// Recognizes the markdown renderProviderImageOutputAsAssistantMarkdown emits for a materialized
+// provider image: its source is a content-hashed file in the attachments dir. Matching the full
+// <hash>.<ext> shape (not just a leading "![") keeps user-authored text from being mistaken for a
+// provider image when it reaches the history-replay filter.
 const PROVIDER_IMAGE_MARKDOWN = new RegExp(
-  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[^)]*\\)`,
+  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\][0-9a-f]{64}\\.[a-z0-9]+\\)`,
 );
 
-// Recognizes the markdown renderProviderImageOutputAsAssistantMarkdown emits for a materialized
-// provider image — its source points at the attachments dir. Lets callers tell a provider-image
-// assistant_message apart from ordinary assistant text without a carrier type marker.
 export function isProviderImageMarkdown(text: string): boolean {
   return PROVIDER_IMAGE_MARKDOWN.test(text);
 }
