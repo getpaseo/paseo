@@ -93,26 +93,28 @@ describe("GenericACPAgentClient diagnostics", () => {
   });
 
   test("reports a missing launcher without dropping the rest of the diagnostic", async () => {
-    const missingCommand = path.join(tmpdir(), "paseo-missing-acp-agent");
-    const client = new GenericACPAgentClient({
-      logger: createTestLogger(),
-      command: [missingCommand, "--acp"],
-      providerId: "grok",
-      label: "Grok",
-      diagnosticPhaseTimeoutMs: TEST_ACP_TIMEOUT_MS,
+    await withTempDir("paseo-missing-acp-agent-", async (testDir) => {
+      const missingCommand = path.join(testDir, "missing-acp-agent");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [missingCommand, "--acp"],
+        providerId: "grok",
+        label: "Grok",
+        diagnosticPhaseTimeoutMs: TEST_ACP_TIMEOUT_MS,
+      });
+
+      const { diagnostic } = await client.getDiagnostic();
+
+      expect(diagnostic).toContain("Grok (ACP)");
+      expect(diagnostic).toContain("Provider ID: grok");
+      expect(diagnostic).toContain(`Configured command: ${missingCommand} --acp`);
+      expect(diagnostic).toContain(`Launcher binary: ${missingCommand}`);
+      expect(diagnostic).toContain("Resolved path: not found");
+      expect(diagnostic).toContain("Version: unknown");
+      expect(diagnostic).toContain(`Version command: ${missingCommand} --version`);
+      expect(diagnostic).toContain("ACP spawn: error:");
+      expect(diagnostic).toContain("not found");
     });
-
-    const { diagnostic } = await client.getDiagnostic();
-
-    expect(diagnostic).toContain("Grok (ACP)");
-    expect(diagnostic).toContain("Provider ID: grok");
-    expect(diagnostic).toContain(`Configured command: ${missingCommand} --acp`);
-    expect(diagnostic).toContain(`Launcher binary: ${missingCommand}`);
-    expect(diagnostic).toContain("Resolved path: not found");
-    expect(diagnostic).toContain("Version: unknown");
-    expect(diagnostic).toContain(`Version command: ${missingCommand} --version`);
-    expect(diagnostic).toContain("ACP spawn: error:");
-    expect(diagnostic).toContain("not found");
   });
 });
 
@@ -120,12 +122,17 @@ async function withFakeACPAgent(
   mode: "success" | "hang-session",
   run: (scriptPath: string, mode: string, testDir: string) => Promise<void>,
 ): Promise<void> {
-  const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-diagnostic-"));
-  const scriptPath = path.join(testDir, "fake-acp-agent.cjs");
-  await writeFile(scriptPath, fakeACPAgentScript, "utf8");
-
-  try {
+  await withTempDir("paseo-acp-diagnostic-", async (testDir) => {
+    const scriptPath = path.join(testDir, "fake-acp-agent.cjs");
+    await writeFile(scriptPath, fakeACPAgentScript, "utf8");
     await run(scriptPath, mode, testDir);
+  });
+}
+
+async function withTempDir(prefix: string, run: (testDir: string) => Promise<void>): Promise<void> {
+  const testDir = await mkdtemp(path.join(tmpdir(), prefix));
+  try {
+    await run(testDir);
   } finally {
     await rm(testDir, { recursive: true, force: true });
   }

@@ -49,6 +49,20 @@ function createExtraClient(
   } satisfies AgentClient;
 }
 
+async function withEnv(key: string, value: string, run: () => Promise<void>): Promise<void> {
+  const previous = process.env[key];
+  process.env[key] = value;
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
+}
+
 describe("ProviderSnapshotManager public surface", () => {
   test("listRegisteredProviderIds includes the built-in providers", () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
@@ -656,34 +670,29 @@ describe("ProviderSnapshotManager public surface", () => {
   });
 
   test("getProviderDiagnostic reports a stuck catalog refresh inside the diagnostic", async () => {
-    vi.useFakeTimers();
-    const previousEnabled = process.env.PASEO_ENABLE_MOCK_SLOW;
-    process.env.PASEO_ENABLE_MOCK_SLOW = "true";
-    const manager = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      isDev: true,
-      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
-    });
-    try {
-      const diagnosticRequest = manager.getProviderDiagnostic("mock-slow");
-      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
+    await withEnv("PASEO_ENABLE_MOCK_SLOW", "true", async () => {
+      vi.useFakeTimers();
+      const manager = new ProviderSnapshotManager({
+        logger: createTestLogger(),
+        isDev: true,
+        refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      });
+      try {
+        const diagnosticRequest = manager.getProviderDiagnostic("mock-slow");
+        await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
 
-      const result = await diagnosticRequest;
-      expect(result.provider).toBe("mock-slow");
-      expect(result.diagnostic).toContain("Mock slow provider");
-      expect(result.diagnostic).toContain("Models: —");
-      expect(result.diagnostic).toContain(
-        `Status: Error: Timed out refreshing Mock Slow Provider after ${TEST_REFRESH_TIMEOUT_MS}ms`,
-      );
-    } finally {
-      if (previousEnabled === undefined) {
-        delete process.env.PASEO_ENABLE_MOCK_SLOW;
-      } else {
-        process.env.PASEO_ENABLE_MOCK_SLOW = previousEnabled;
+        const result = await diagnosticRequest;
+        expect(result.provider).toBe("mock-slow");
+        expect(result.diagnostic).toContain("Mock slow provider");
+        expect(result.diagnostic).toContain("Models: —");
+        expect(result.diagnostic).toContain(
+          `Status: Error: Timed out refreshing Mock Slow Provider after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+        );
+      } finally {
+        manager.destroy();
+        vi.useRealTimers();
       }
-      manager.destroy();
-      vi.useRealTimers();
-    }
+    });
   });
 
   test("getProviderDiagnostic returns an error diagnostic for an unknown provider", async () => {

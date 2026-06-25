@@ -398,6 +398,10 @@ export interface SpawnedACPProcess {
   stderrChunks?: string[];
 }
 
+type UninitializedACPProcess = Omit<SpawnedACPProcess, "initialize"> & {
+  initialize?: InitializeResponse;
+};
+
 interface ACPProcessTransport {
   child: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
@@ -797,12 +801,18 @@ export class ACPAgentClient implements AgentClient {
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     const { cwd } = options;
     const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
-    let probe: SpawnedACPProcess | null = null;
+    let probe: UninitializedACPProcess | null = null;
     try {
       const catalogProbe = (async () => {
-        probe = await this.spawnProcess(PROBE_ENV, { initializeTimeoutMs: timeoutMs });
+        const initializedProbe = await this.spawnProcess(PROBE_ENV, {
+          initializeTimeoutMs: timeoutMs,
+          onSpawned: (spawned) => {
+            probe = spawned;
+          },
+        });
+        probe = initializedProbe;
         const response = await this.runACPRequest(() =>
-          probe!.connection.newSession({
+          initializedProbe.connection.newSession({
             cwd,
             mcpServers: [],
           }),
@@ -919,17 +929,26 @@ export class ACPAgentClient implements AgentClient {
 
   protected async spawnProcess(
     launchEnv?: Record<string, string>,
-    options?: { initializeTimeoutMs?: number },
+    options?: {
+      initializeTimeoutMs?: number;
+      onSpawned?: (probe: UninitializedACPProcess) => void;
+    },
   ): Promise<SpawnedACPProcess> {
     const transport = await this.spawnTransport(launchEnv);
+    const probe: UninitializedACPProcess = {
+      child: transport.child,
+      connection: transport.connection,
+      stderrChunks: transport.stderrChunks,
+    };
+    options?.onSpawned?.(probe);
     try {
       const initialize = await this.initializeTransport(transport, options?.initializeTimeoutMs);
-      return {
-        child: transport.child,
-        connection: transport.connection,
+      const initializedProbe: SpawnedACPProcess = {
+        ...probe,
         initialize,
-        stderrChunks: transport.stderrChunks,
       };
+      probe.initialize = initialize;
+      return initializedProbe;
     } catch (error) {
       await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
       throw error;
@@ -1034,9 +1053,9 @@ export class ACPAgentClient implements AgentClient {
     };
   }
 
-  protected async closeProbe(probe: SpawnedACPProcess): Promise<void> {
+  protected async closeProbe(probe: UninitializedACPProcess): Promise<void> {
     try {
-      if (probe.initialize.agentCapabilities?.sessionCapabilities?.close) {
+      if (probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
         // No active session to close here; ignore capability.
       }
     } finally {
