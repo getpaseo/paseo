@@ -4,7 +4,6 @@ import type { FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, normalize, resolve, sep } from "path";
 import { homedir } from "node:os";
-import { z } from "zod";
 import type { ToolSet } from "ai";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -102,15 +101,7 @@ import {
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
-import {
-  StructuredAgentFallbackError,
-  StructuredAgentResponseError,
-  generateStructuredAgentResponseWithFallback,
-} from "./agent/agent-response-loop.js";
-import {
-  resolveStructuredGenerationProviders,
-  type StructuredGenerationDaemonConfig,
-} from "./agent/structured-generation-providers.js";
+import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
@@ -130,14 +121,10 @@ import {
 } from "./agent/import-sessions.js";
 import {
   checkoutLiteFromGitSnapshot,
-  classifyDirectoryForProjectMembership,
   deriveWorkspaceDisplayName,
-  generateWorkspaceId,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
-  createPersistedProjectRecord,
-  createPersistedWorkspaceRecord,
   resolveProjectDisplayName,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
@@ -150,6 +137,10 @@ import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import { VoiceSession } from "./session/voice/voice-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
+import {
+  createAgentStructuredTextGeneration,
+  createGitMetadataGenerator,
+} from "./session/checkout/git-metadata-generator.js";
 import { ChatScheduleLoopSession } from "./session/chat/chat-schedule-loop-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
@@ -158,19 +149,21 @@ import { ProjectConfigSession } from "./session/project-config/project-config-se
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
 } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
+import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
 import {
-  checkoutResolvedBranch,
-  type CheckoutExistingBranchResult,
-  type GitMutationRefreshReason,
-  renameCurrentBranch as renameCurrentBranchDefault,
-} from "../utils/checkout-git.js";
+  createGitMutationService,
+  type GitMutationService,
+} from "./session/git-mutation/git-mutation-service.js";
+import {
+  createWorkspaceProvisioningService,
+  type WorkspaceProvisioningService,
+} from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
@@ -180,7 +173,6 @@ import type pino from "pino";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
-import { execCommand } from "../utils/spawn.js";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import {
@@ -202,7 +194,6 @@ import {
   type GeneratedWorkspaceName,
 } from "./worktree-branch-name-generator.js";
 import {
-  assertSafeGitRef as assertWorktreeSafeGitRef,
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
   createPaseoWorktreeWorkflow as createWorktreeWorkflow,
   type CreatePaseoWorktreeSetupContinuationInput,
@@ -245,12 +236,6 @@ function resolveSubscriptionId(
     return requestedSubscriptionId;
   }
   return uuidv4();
-}
-
-function diffChangeTypeFor(file: { isNew?: boolean; isDeleted?: boolean }): "A" | "D" | "M" {
-  if (file.isNew) return "A";
-  if (file.isDeleted) return "D";
-  return "M";
 }
 
 function buildWorkspaceCheckout(
@@ -578,6 +563,8 @@ export class Session {
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
   private readonly generateWorkspaceName: typeof generateBranchNameFromFirstAgentContext;
   private readonly workspaceGitService: WorkspaceGitService;
+  private readonly gitMutation: GitMutationService;
+  private readonly workspaceProvisioning: WorkspaceProvisioningService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly mcpBaseUrl: string | null;
   private readonly pushTokenStore: PushTokenStore;
@@ -709,22 +696,37 @@ export class Session {
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.generateWorkspaceName = generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
     this.workspaceGitService = workspaceGitService;
+    this.gitMutation = createGitMutationService({
+      workspaceGitService: this.workspaceGitService,
+      github: this.github,
+      logger: this.sessionLogger,
+    });
+    this.workspaceProvisioning = createWorkspaceProvisioningService({
+      workspaceRegistry: this.workspaceRegistry,
+      projectRegistry: this.projectRegistry,
+      workspaceGitService: this.workspaceGitService,
+    });
     this.checkoutSession = new CheckoutSession({
       host: {
         emit: (msg) => this.emit(msg),
-        notifyGitMutation: (cwd, reason, mutationOptions) =>
-          this.notifyGitMutation(cwd, reason, mutationOptions),
         emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
         handleWorkspaceGitBranchSnapshot: (cwd, branchName) =>
           this.handleWorkspaceGitBranchSnapshot(cwd, branchName),
         renameCurrentBranch: (cwd, branch) => this.renameCurrentBranch(cwd, branch),
-        checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
-        generateCommitMessage: (cwd) => this.generateCommitMessage(cwd),
-        generatePullRequestText: (cwd, baseRef) => this.generatePullRequestText(cwd, baseRef),
       },
+      gitMutation: this.gitMutation,
       workspaceGitService: this.workspaceGitService,
       github: this.github,
       checkoutDiffManager,
+      gitMetadataGenerator: createGitMetadataGenerator({
+        workspaceGitService: this.workspaceGitService,
+        generation: createAgentStructuredTextGeneration({
+          agentManager: this.agentManager,
+          providerSnapshotManager,
+          readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
+          getFocusedSelection: (cwd) => this.getFocusedAgentSelectionForCwd(cwd),
+        }),
+      }),
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.sessionLogger,
@@ -1461,29 +1463,6 @@ export class Session {
         payload,
       });
     }
-  }
-
-  private async findExactWorkspaceByDirectory(
-    cwd: string,
-    options?: { refreshGit?: boolean },
-  ): Promise<PersistedWorkspaceRecord | null> {
-    const normalizedCwd = await this.resolveWorkspaceDirectory(cwd, options);
-    const workspaces = await this.workspaceRegistry.list();
-    return workspaces.find((workspace) => workspace.cwd === normalizedCwd) ?? null;
-  }
-
-  private async resolveWorkspaceDirectory(
-    cwd: string,
-    options?: { refreshGit?: boolean },
-  ): Promise<string> {
-    const normalizedCwd = resolve(cwd);
-    if (options?.refreshGit === false) {
-      const snapshot = this.workspaceGitService.peekSnapshot(normalizedCwd);
-      return resolve(snapshot?.git.repoRoot ?? normalizedCwd);
-    }
-
-    const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
-    return resolve(checkout.worktreeRoot ?? normalizedCwd);
   }
 
   private async buildProjectPlacementForWorkspace(
@@ -2667,12 +2646,14 @@ export class Session {
       const createAgentConfig: AgentSessionConfig = createdWorktree
         ? { ...config, cwd: createdWorktree.worktree.worktreePath }
         : config;
-      const workspaceId = await this.resolveOrCreateWorkspaceIdForCreateAgent({
-        createdWorktree,
-        requestedWorkspaceId: msg.workspaceId,
-        cwd: createAgentConfig.cwd,
-        initialTitle: workspacePromptTitle,
-      });
+      const workspaceId = await this.workspaceProvisioning.resolveOrCreateWorkspaceIdForCreateAgent(
+        {
+          createdWorktree,
+          requestedWorkspaceId: msg.workspaceId,
+          cwd: createAgentConfig.cwd,
+          initialTitle: workspacePromptTitle,
+        },
+      );
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
@@ -2871,7 +2852,9 @@ export class Session {
       }
       // An imported agent mints its own workspace; ownership is its workspaceId,
       // never an existing same-cwd workspace resolved by path.
-      const workspace = await this.createWorkspaceForDirectory(normalized.cwd);
+      const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
+        normalized.cwd,
+      );
       const { snapshot, timelineSize } = await importProviderSession({
         request: normalized,
         workspaceId: workspace.workspaceId,
@@ -3079,8 +3062,9 @@ export class Session {
               logger: this.sessionLogger,
             },
           }),
-        checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
-        createBranchFromBase: (params) => this.createBranchFromBase(params),
+        checkoutExistingBranch: (cwd, branch) =>
+          this.gitMutation.checkoutExistingBranch(cwd, branch),
+        createBranchFromBase: (params) => this.gitMutation.createBranchFromBase(params),
         github: this.github,
       },
       config,
@@ -3139,7 +3123,7 @@ export class Session {
       branch: result.branchName,
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
-    await this.notifyGitMutation(input.workspace.cwd, "rename-branch");
+    await this.gitMutation.notifyGitMutation(input.workspace.cwd, "rename-branch");
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }
 
@@ -3242,13 +3226,6 @@ export class Session {
     );
   }
 
-  private assertSafeGitRef(ref: string, label: string): void {
-    if (!/^[A-Za-z0-9._/-]+$/.test(ref)) {
-      throw new Error(`Invalid ${label}: ${ref}`);
-    }
-    assertWorktreeSafeGitRef(ref, label);
-  }
-
   private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
     const resolvedRoot = resolve(rootPath);
     const resolvedCandidate = resolve(candidatePath);
@@ -3256,257 +3233,6 @@ export class Session {
       return true;
     }
     return resolvedCandidate.startsWith(resolvedRoot + sep);
-  }
-
-  private async generateCommitMessage(cwd: string): Promise<string> {
-    const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
-      mode: "uncommitted",
-      includeStructured: true,
-    });
-    const schema = z.object({
-      message: z
-        .string()
-        .min(1)
-        .max(72)
-        .describe("Concise git commit message, imperative mood, no trailing period."),
-    });
-    const fileList =
-      diff.structured && diff.structured.length > 0
-        ? [
-            "Files changed:",
-            ...diff.structured.map((file) => {
-              const changeType = diffChangeTypeFor(file);
-              const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
-              return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
-            }),
-          ].join("\n")
-        : "Files changed: (unknown)";
-    const maxPatchChars = 120_000;
-    const patch =
-      diff.diff.length > maxPatchChars
-        ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
-        : diff.diff;
-    const prompt = await buildMetadataPrompt({
-      cwd,
-      workspaceGitService: this.workspaceGitService,
-      contract: "Write a concise git commit message for the changes below.",
-      styles: [
-        {
-          configKey: "commitMessage",
-          default: "Concise, imperative mood, no trailing period.",
-        },
-      ],
-      after: [
-        "Return JSON only with a single field 'message'.",
-        "",
-        fileList,
-        "",
-        patch.length > 0 ? patch : "(No diff available)",
-      ].join("\n"),
-    });
-    const providers = await resolveStructuredGenerationProviders({
-      cwd,
-      providerSnapshotManager: this.providerSnapshotManager,
-      daemonConfig: this.readStructuredGenerationDaemonConfig(),
-      currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
-    });
-    try {
-      const result = await generateStructuredAgentResponseWithFallback({
-        manager: this.agentManager,
-        cwd,
-        prompt,
-        schema,
-        schemaName: "CommitMessage",
-        maxRetries: 2,
-        providers,
-        persistSession: false,
-        agentConfigOverrides: {
-          title: "Commit generator",
-          internal: true,
-        },
-      });
-      return result.message;
-    } catch (error) {
-      if (
-        error instanceof StructuredAgentResponseError ||
-        error instanceof StructuredAgentFallbackError
-      ) {
-        return "Update files";
-      }
-      throw error;
-    }
-  }
-
-  private async generatePullRequestText(
-    cwd: string,
-    baseRef?: string,
-  ): Promise<{
-    title: string;
-    body: string;
-  }> {
-    const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
-      mode: "base",
-      baseRef,
-      includeStructured: true,
-    });
-    const schema = z.object({
-      title: z.string().min(1).max(72),
-      body: z.string().min(1),
-    });
-    const fileList =
-      diff.structured && diff.structured.length > 0
-        ? [
-            "Files changed:",
-            ...diff.structured.map((file) => {
-              const changeType = diffChangeTypeFor(file);
-              const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
-              return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
-            }),
-          ].join("\n")
-        : "Files changed: (unknown)";
-    const maxPatchChars = 200_000;
-    const patch =
-      diff.diff.length > maxPatchChars
-        ? `${diff.diff.slice(0, maxPatchChars)}\n\n... (diff truncated to ${maxPatchChars} chars)\n`
-        : diff.diff;
-    const prompt = await buildMetadataPrompt({
-      cwd,
-      workspaceGitService: this.workspaceGitService,
-      contract: "Write a pull request title and body for the changes below.",
-      styles: [
-        {
-          configKey: "pullRequest",
-          default: "Clear, descriptive title; body explaining what changed and why.",
-        },
-      ],
-      after: [
-        "Return JSON only with fields 'title' and 'body'.",
-        "",
-        fileList,
-        "",
-        patch.length > 0 ? patch : "(No diff available)",
-      ].join("\n"),
-    });
-    const providers = await resolveStructuredGenerationProviders({
-      cwd,
-      providerSnapshotManager: this.providerSnapshotManager,
-      daemonConfig: this.readStructuredGenerationDaemonConfig(),
-      currentSelection: this.getFocusedAgentSelectionForCwd(cwd),
-    });
-    try {
-      return await generateStructuredAgentResponseWithFallback({
-        manager: this.agentManager,
-        cwd,
-        prompt,
-        schema,
-        schemaName: "PullRequest",
-        maxRetries: 2,
-        providers,
-        persistSession: false,
-        agentConfigOverrides: {
-          title: "PR generator",
-          internal: true,
-        },
-      });
-    } catch (error) {
-      if (
-        error instanceof StructuredAgentResponseError ||
-        error instanceof StructuredAgentFallbackError
-      ) {
-        return {
-          title: "Update changes",
-          body: "Automated PR generated by Paseo.",
-        };
-      }
-      throw error;
-    }
-  }
-
-  private async ensureCleanWorkingTree(cwd: string): Promise<void> {
-    const dirty = await this.isWorkingTreeDirty(cwd);
-    if (dirty) {
-      throw new Error(
-        "Working directory has uncommitted changes. Commit or stash before switching branches.",
-      );
-    }
-  }
-
-  private async isWorkingTreeDirty(cwd: string): Promise<boolean> {
-    try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-      return snapshot.git.isDirty === true;
-    } catch (error) {
-      throw new Error(`Unable to inspect git status for ${cwd}: ${getErrorMessage(error)}`, {
-        cause: error,
-      });
-    }
-  }
-
-  private async checkoutExistingBranch(
-    cwd: string,
-    branch: string,
-  ): Promise<CheckoutExistingBranchResult> {
-    this.assertSafeGitRef(branch, "branch");
-    const resolution = await this.workspaceGitService.validateBranchRef(cwd, branch);
-    if (resolution.kind === "not-found") {
-      throw new Error(`Branch not found: ${branch}`);
-    }
-    await this.ensureCleanWorkingTree(cwd);
-    const result = await checkoutResolvedBranch({
-      cwd,
-      resolution,
-    });
-    await this.notifyGitMutation(cwd, "switch-branch", { invalidateGithub: true });
-    return result;
-  }
-
-  private async createBranchFromBase(params: {
-    cwd: string;
-    baseBranch: string;
-    newBranchName: string;
-  }): Promise<void> {
-    const { cwd, baseBranch, newBranchName } = params;
-    this.assertSafeGitRef(baseBranch, "base branch");
-    this.assertSafeGitRef(newBranchName, "new branch");
-
-    const baseResolution = await this.workspaceGitService.validateBranchRef(cwd, baseBranch);
-    if (baseResolution.kind === "not-found") {
-      throw new Error(`Base branch not found: ${baseBranch}`);
-    }
-
-    const exists = await this.doesLocalBranchExist(cwd, newBranchName);
-    if (exists) {
-      throw new Error(`Branch already exists: ${newBranchName}`);
-    }
-
-    await this.ensureCleanWorkingTree(cwd);
-    await execCommand("git", ["checkout", "-b", newBranchName, baseBranch], {
-      cwd,
-    });
-    await this.notifyGitMutation(cwd, "create-branch");
-  }
-
-  private async doesLocalBranchExist(cwd: string, branch: string): Promise<boolean> {
-    this.assertSafeGitRef(branch, "branch");
-    return this.workspaceGitService.hasLocalBranch(cwd, branch);
-  }
-
-  private async notifyGitMutation(
-    cwd: string,
-    reason: GitMutationRefreshReason,
-    options?: { invalidateGithub?: boolean },
-  ): Promise<void> {
-    if (options?.invalidateGithub) {
-      this.github.invalidate({ cwd });
-    }
-    try {
-      await this.workspaceGitService.getSnapshot(cwd, { force: true, reason });
-    } catch (error) {
-      this.sessionLogger.warn(
-        { err: error, cwd, reason },
-        "Failed to force-refresh workspace git snapshot after mutation",
-      );
-    }
   }
 
   /**
@@ -4575,108 +4301,6 @@ export class Session {
     }
   }
 
-  private async findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
-    const inputCwd = resolve(cwd);
-    const normalizedCwd = await this.resolveWorkspaceDirectory(cwd);
-    const existingWorkspace = await this.findExactWorkspaceByDirectory(normalizedCwd, {
-      refreshGit: false,
-    });
-    if (existingWorkspace) {
-      if (existingWorkspace.archivedAt && inputCwd !== normalizedCwd) {
-        const timestamp = new Date().toISOString();
-        const checkout = checkoutLiteFromGitSnapshot(inputCwd, {
-          isGit: false,
-          currentBranch: null,
-          remoteUrl: null,
-          repoRoot: null,
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: null,
-        });
-        const membership = classifyDirectoryForProjectMembership({ cwd: inputCwd, checkout });
-        const projectRecord = await this.resolveProjectRecordForPlacement({
-          membership,
-          timestamp,
-        });
-        await this.projectRegistry.upsert(projectRecord);
-        const workspaceRecord = createPersistedWorkspaceRecord({
-          workspaceId: generateWorkspaceId(),
-          projectId: projectRecord.projectId,
-          cwd: inputCwd,
-          kind: membership.workspaceKind,
-          displayName: membership.workspaceDisplayName,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        await this.workspaceRegistry.upsert(workspaceRecord);
-        return workspaceRecord;
-      }
-      return this.reclassifyOrUnarchiveWorkspaceForDirectory({
-        workspace: existingWorkspace,
-        project: await this.projectRegistry.get(existingWorkspace.projectId),
-        cwd: normalizedCwd,
-      });
-    }
-
-    return this.createWorkspaceForDirectory(normalizedCwd);
-  }
-
-  private async resolveOrCreateWorkspaceIdForCreateAgent(input: {
-    createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
-    requestedWorkspaceId?: string;
-    cwd: string;
-    initialTitle: string | null;
-  }): Promise<string> {
-    if (input.createdWorktree) {
-      return input.createdWorktree.workspace.workspaceId;
-    }
-
-    if (input.requestedWorkspaceId) {
-      return input.requestedWorkspaceId;
-    }
-
-    return (await this.createWorkspaceForDirectory(input.cwd, input.initialTitle)).workspaceId;
-  }
-
-  private async createWorkspaceForDirectory(
-    cwd: string,
-    title?: string | null,
-  ): Promise<PersistedWorkspaceRecord> {
-    const checkout = await this.workspaceGitService.getCheckout(cwd);
-    const membership = classifyDirectoryForProjectMembership({ cwd, checkout });
-    const timestamp = new Date().toISOString();
-
-    const projectRecord = await this.resolveProjectRecordForPlacement({
-      membership,
-      timestamp,
-    });
-    await this.projectRegistry.upsert(projectRecord);
-
-    const workspaceRecord = createPersistedWorkspaceRecord({
-      workspaceId: generateWorkspaceId(),
-      projectId: projectRecord.projectId,
-      cwd,
-      kind: membership.workspaceKind,
-      displayName: membership.workspaceDisplayName,
-      title: title ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    await this.workspaceRegistry.upsert(workspaceRecord);
-    return workspaceRecord;
-  }
-
-  private async findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
-    const normalizedCwd = resolve(cwd);
-    const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
-    const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
-    const projectRecord = await this.resolveProjectRecordForPlacement({
-      membership,
-      timestamp: new Date().toISOString(),
-    });
-    await this.projectRegistry.upsert(projectRecord);
-    return projectRecord;
-  }
-
   private buildProjectDescriptor(
     project: PersistedProjectRecord,
   ): WorkspaceProjectDescriptorPayload {
@@ -4686,81 +4310,6 @@ export class Session {
       projectCustomName: project.customName ?? null,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
-    };
-  }
-
-  private async reclassifyOrUnarchiveWorkspaceForDirectory(input: {
-    workspace: PersistedWorkspaceRecord;
-    project: PersistedProjectRecord | null;
-    cwd: string;
-  }): Promise<PersistedWorkspaceRecord> {
-    const checkout = await this.workspaceGitService.getCheckout(input.cwd);
-    const membership = classifyDirectoryForProjectMembership({ cwd: input.cwd, checkout });
-    const timestamp = new Date().toISOString();
-    const projectRecord = await this.resolveProjectRecordForPlacement({
-      membership,
-      timestamp,
-    });
-    const projectId = projectRecord.projectId;
-    const kind = membership.workspaceKind;
-    const displayName = membership.workspaceDisplayName;
-
-    if (
-      input.workspace.projectId === projectId &&
-      input.workspace.kind === kind &&
-      input.workspace.displayName === displayName
-    ) {
-      if (!input.project) {
-        await this.projectRegistry.upsert(projectRecord);
-      }
-      return this.ensureWorkspaceRecordUnarchived(input.workspace);
-    }
-
-    await this.projectRegistry.upsert(projectRecord);
-
-    const nextWorkspace = {
-      ...input.workspace,
-      workspaceId: input.workspace.workspaceId,
-      projectId,
-      cwd: input.cwd,
-      kind,
-      displayName,
-      archivedAt: null,
-      updatedAt: timestamp,
-    };
-    await this.workspaceRegistry.upsert(nextWorkspace);
-    return nextWorkspace;
-  }
-
-  private async resolveProjectRecordForPlacement(input: {
-    membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
-    timestamp: string;
-  }): Promise<PersistedProjectRecord> {
-    const rootPath = input.membership.projectRootPath;
-    const kind = input.membership.projectKind;
-    const projects = await this.projectRegistry.list();
-    const existingProject =
-      projects.find((project) => !project.archivedAt && project.rootPath === rootPath) ??
-      projects.find((project) => project.rootPath === rootPath) ??
-      null;
-
-    if (!existingProject) {
-      return createPersistedProjectRecord({
-        projectId: input.membership.projectKey,
-        rootPath,
-        kind,
-        displayName: input.membership.projectName,
-        createdAt: input.timestamp,
-        updatedAt: input.timestamp,
-      });
-    }
-
-    return {
-      ...existingProject,
-      rootPath,
-      kind,
-      archivedAt: null,
-      updatedAt: input.timestamp,
     };
   }
 
@@ -4785,7 +4334,7 @@ export class Session {
       await this.recreateOwningWorktreeForRestore(workspace, workspace.branch);
     }
 
-    await this.ensureWorkspaceRecordUnarchived(workspace);
+    await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId]);
   }
 
@@ -4844,30 +4393,6 @@ export class Session {
     }
   }
 
-  private async ensureWorkspaceRecordUnarchived(
-    workspace: PersistedWorkspaceRecord,
-  ): Promise<PersistedWorkspaceRecord> {
-    const project = await this.projectRegistry.get(workspace.projectId);
-    if (!workspace.archivedAt && (!project || !project.archivedAt)) {
-      return workspace;
-    }
-
-    const timestamp = new Date().toISOString();
-    let unarchivedWorkspace = workspace;
-    if (workspace.archivedAt) {
-      unarchivedWorkspace = { ...workspace, archivedAt: null, updatedAt: timestamp };
-      await this.workspaceRegistry.upsert(unarchivedWorkspace);
-    }
-    if (project?.archivedAt) {
-      await this.projectRegistry.upsert({
-        ...project,
-        archivedAt: null,
-        updatedAt: timestamp,
-      });
-    }
-    return unarchivedWorkspace;
-  }
-
   private async createPaseoWorktree(
     input: CreatePaseoWorktreeInput,
     options?: {
@@ -4884,8 +4409,8 @@ export class Session {
       workspaceGitService: this.workspaceGitService,
     });
     void Promise.all([
-      this.notifyGitMutation(input.cwd, "create-worktree"),
-      this.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
+      this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),
+      this.gitMutation.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
     ]).catch((error) => {
       this.sessionLogger.warn(
         { err: error, cwd: input.cwd, worktreePath: result.worktree.worktreePath },
@@ -5617,7 +5142,7 @@ export class Session {
       for (const workspaceRecord of await this.workspaceRegistry.list()) {
         workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
       }
-      const workspace = await this.findOrCreateWorkspaceForDirectory(cwd);
+      const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
       const project = await this.projectRegistry.get(workspace.projectId);
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -5702,7 +5227,7 @@ export class Session {
       for (const project of await this.projectRegistry.list()) {
         projectsBefore.set(project.projectId, project);
       }
-      const project = await this.findOrCreateProjectForDirectory(cwd);
+      const project = await this.workspaceProvisioning.findOrCreateProjectForDirectory(cwd);
       this.sessionLogger.info(
         {
           requestedCwd,

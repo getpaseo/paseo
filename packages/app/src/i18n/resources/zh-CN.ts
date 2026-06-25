@@ -1420,6 +1420,7 @@ export const zhCN: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
           ru: "Русский",
           zhCN: "简体中文",
         },

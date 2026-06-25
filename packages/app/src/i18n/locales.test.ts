@@ -7,13 +7,14 @@ import {
 } from "./locales";
 
 describe("parseAppLanguage", () => {
-  it("accepts system and all UN official language locales", () => {
-    expect(["system", "ar", "en", "es", "fr", "ru", "zh-CN"].map(parseAppLanguage)).toEqual([
+  it("accepts system and all supported language locales", () => {
+    expect(["system", "ar", "en", "es", "fr", "ja", "ru", "zh-CN"].map(parseAppLanguage)).toEqual([
       "system",
       "ar",
       "en",
       "es",
       "fr",
+      "ja",
       "ru",
       "zh-CN",
     ]);
@@ -24,13 +25,14 @@ describe("parseAppLanguage", () => {
     expect(parseAppLanguage(null)).toBeNull();
   });
 
-  it("offers system plus the six UN official languages", () => {
+  it("offers system plus all supported languages", () => {
     expect(LANGUAGE_OPTIONS.map((option) => option.value)).toEqual([
       "system",
       "ar",
       "en",
       "es",
       "fr",
+      "ja",
       "ru",
       "zh-CN",
     ]);
@@ -81,15 +83,17 @@ describe("resolveSupportedLocale", () => {
     expect(resolveSupportedLocale("en", ["zh-CN"])).toBe("en");
     expect(resolveSupportedLocale("es", ["en-US"])).toBe("es");
     expect(resolveSupportedLocale("fr", ["en-US"])).toBe("fr");
+    expect(resolveSupportedLocale("ja", ["en-US"])).toBe("ja");
     expect(resolveSupportedLocale("ru", ["en-US"])).toBe("ru");
     expect(resolveSupportedLocale("zh-CN", ["en-US"])).toBe("zh-CN");
   });
 
-  it("maps UN official system locales", () => {
+  it("maps supported system locales", () => {
     expect(resolveSupportedLocale("system", ["ar-EG"])).toBe("ar");
     expect(resolveSupportedLocale("system", ["en-US"])).toBe("en");
     expect(resolveSupportedLocale("system", ["es-MX"])).toBe("es");
     expect(resolveSupportedLocale("system", ["fr-CA"])).toBe("fr");
+    expect(resolveSupportedLocale("system", ["ja-JP"])).toBe("ja");
     expect(resolveSupportedLocale("system", ["ru-RU"])).toBe("ru");
   });
 
