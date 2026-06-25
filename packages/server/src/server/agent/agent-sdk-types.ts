@@ -646,6 +646,7 @@ export interface AgentSession {
 export interface FetchCatalogOptions {
   cwd: string;
   force: boolean;
+  timeoutMs?: number;
 }
 
 export interface ProviderCatalog {
