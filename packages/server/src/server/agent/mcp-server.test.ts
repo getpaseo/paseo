@@ -722,7 +722,7 @@ describe("create_agent MCP tool", () => {
     ).toBe(true);
   });
 
-  it("requires an explicit workspace", async () => {
+  it("rejects partial explicit workspace shape", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
       agentManager,
@@ -740,12 +740,10 @@ describe("create_agent MCP tool", () => {
       initialPrompt: "test",
     });
 
-    expect(parsed.success).toBe(false);
-    expect(
-      parsed.error.issues.some(
-        (issue: { path: Array<string | number> }) => issue.path[0] === "workspace",
-      ),
-    ).toBe(true);
+    expect(parsed.success).toBe(true);
+    await expect(tool.handler(parsed.data)).rejects.toThrow(
+      "relationship and workspace must be provided together",
+    );
   });
 
   it("rejects caller-only relationship and workspace intents without a caller agent", async () => {
@@ -765,7 +763,7 @@ describe("create_agent MCP tool", () => {
         provider: "codex/gpt-5.4",
         initialPrompt: "test",
       }),
-    ).rejects.toThrow("relationship subagent requires an agent-scoped MCP session");
+    ).rejects.toThrow("relationship subagent requires an agent-scoped tool session");
 
     await expect(
       tool.handler({
@@ -774,7 +772,7 @@ describe("create_agent MCP tool", () => {
         provider: "codex/gpt-5.4",
         initialPrompt: "test",
       }),
-    ).rejects.toThrow("workspace current requires an agent-scoped MCP session");
+    ).rejects.toThrow("workspace current requires an agent-scoped tool session");
   });
 
   it("requires a caller workspace for current workspace intent", async () => {

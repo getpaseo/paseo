@@ -677,6 +677,7 @@ test("maps tool_result content shapes into deterministic string output", async (
   const session = await createSession();
   const internal: {
     buildToolOutput: (
+      content: unknown,
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
     ) => Record<string, unknown> | undefined;
@@ -724,6 +725,7 @@ test("maps tool_result content shapes into deterministic string output", async (
   try {
     for (const fixture of fixtures) {
       const output = internal.buildToolOutput(
+        fixture.content,
         {
           type: "tool_result",
           tool_use_id: "tool-1",
@@ -750,6 +752,7 @@ test("Grep tool_result string content flows to a search detail with content", as
   const session = await createSession();
   const internal: {
     buildToolOutput: (
+      content: unknown,
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
     ) => Record<string, unknown> | undefined;
@@ -765,12 +768,14 @@ test("Grep tool_result string content flows to a search detail with content", as
   };
 
   try {
+    const grepContent = "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx";
     const output = internal.buildToolOutput(
+      grepContent,
       {
         type: "tool_result",
         tool_use_id: "tool-grep-1",
         tool_name: "Grep",
-        content: "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx",
+        content: grepContent,
         is_error: false,
       },
       grepEntry,
