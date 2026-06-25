@@ -8,6 +8,7 @@ import {
   applyRetargetTab,
   buildWorkspaceTabPersistenceKey,
   initialWorkspaceTabsCoreState,
+  migrateWorkspaceTabsState,
   type WorkspaceTabsCoreState,
 } from "./state";
 
@@ -334,6 +335,53 @@ describe("workspace-tabs-store reducers", () => {
     expect(result.state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(result.tabId);
   });
 
+  it("ensures distinct ids for a working diff tab and a commit diff tab", () => {
+    let state = emptyState();
+    const working = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
+      now: NOW,
+    });
+    state = working.state;
+    const commit = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
+      now: NOW,
+    });
+    state = commit.state;
+
+    expect(working.tabId).toBe("diff_working:uncommitted:");
+    expect(commit.tabId).toBe("diff_commit:abc123");
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(2);
+  });
+
+  it("dedupes a working diff tab and just updates focusPath on re-open", () => {
+    let state = emptyState();
+    const first = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
+      now: NOW,
+    });
+    state = first.state;
+    const second = applyOpenOrFocusTab(state, {
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: {
+        kind: "diff",
+        diffTarget: { kind: "working", mode: "uncommitted" },
+        focusPath: "src/index.ts",
+      },
+      now: NOW,
+    });
+    state = second.state;
+
+    expect(second.tabId).toBe(first.tabId);
+    expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(1);
+  });
+
   it("closeTab focuses the most-recent remaining tab when the focused tab is removed", () => {
     let state = emptyState();
     const first = applyOpenOrFocusTab(state, {
@@ -360,5 +408,66 @@ describe("workspace-tabs-store reducers", () => {
 
     expect(state.focusedTabIdByWorkspace[WORKSPACE_KEY]).toBe(first.tabId);
     expect(state.uiTabsByWorkspace[WORKSPACE_KEY]).toHaveLength(1);
+  });
+});
+
+describe("migrateWorkspaceTabsState diff tab coercion", () => {
+  it("restores a working diff tab but drops a commit diff tab across reload", () => {
+    const persisted = {
+      state: {
+        uiTabsByWorkspace: {
+          [WORKSPACE_KEY]: [
+            {
+              tabId: "diff_working:uncommitted:",
+              target: { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
+              createdAt: NOW,
+            },
+            {
+              tabId: "diff_commit:abc123",
+              target: { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
+              createdAt: NOW,
+            },
+          ],
+        },
+      },
+    };
+
+    const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
+    const tabs = migrated.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
+
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.target).toEqual({
+      kind: "diff",
+      diffTarget: { kind: "working", mode: "uncommitted" },
+    });
+    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual(["diff_working:uncommitted:"]);
+  });
+
+  it("restores a working base diff tab with its baseRef", () => {
+    const persisted = {
+      state: {
+        uiTabsByWorkspace: {
+          [WORKSPACE_KEY]: [
+            {
+              tabId: "diff_working:base:main",
+              target: {
+                kind: "diff",
+                diffTarget: { kind: "working", mode: "base", baseRef: "main" },
+              },
+              createdAt: NOW,
+            },
+          ],
+        },
+      },
+    };
+
+    const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
+    const tabs = migrated.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
+
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.target).toEqual({
+      kind: "diff",
+      diffTarget: { kind: "working", mode: "base", baseRef: "main" },
+    });
   });
 });

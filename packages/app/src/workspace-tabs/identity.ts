@@ -1,5 +1,8 @@
+import { type DiffTarget, diffTargetKey } from "@/git/diff-target";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { normalizeWorkspaceFileLocation, workspaceFileLocationsEqual } from "@/workspace/file-open";
+
+type DiffTabTarget = Extract<WorkspaceTabTarget, { kind: "diff" }>;
 
 type WorkspaceDraftTabSetup = NonNullable<Extract<WorkspaceTabTarget, { kind: "draft" }>["setup"]>;
 
@@ -43,7 +46,42 @@ export function normalizeWorkspaceTabTarget(
     const workspaceId = trimNonEmpty(value.workspaceId);
     return workspaceId ? { kind: "setup", workspaceId } : null;
   }
+  if (value.kind === "diff") {
+    return normalizeDiffTabTarget(value);
+  }
   return null;
+}
+
+function normalizeDiffTarget(value: DiffTarget | null | undefined): DiffTarget | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (value.kind === "commit") {
+    const sha = trimNonEmpty(value.sha);
+    return sha ? { kind: "commit", sha } : null;
+  }
+  if (value.kind === "working") {
+    const mode = value.mode === "base" ? "base" : "uncommitted";
+    const baseRef = trimOptionalString(value.baseRef);
+    return {
+      kind: "working",
+      mode,
+      ...(baseRef != null ? { baseRef } : {}),
+      ...(typeof value.ignoreWhitespace === "boolean"
+        ? { ignoreWhitespace: value.ignoreWhitespace }
+        : {}),
+    };
+  }
+  return null;
+}
+
+function normalizeDiffTabTarget(value: DiffTabTarget): WorkspaceTabTarget | null {
+  const diffTarget = normalizeDiffTarget(value.diffTarget);
+  if (!diffTarget) {
+    return null;
+  }
+  const focusPath = trimNonEmpty(value.focusPath);
+  return focusPath ? { kind: "diff", diffTarget, focusPath } : { kind: "diff", diffTarget };
 }
 
 export function normalizeWorkspaceDraftTabSetup(
@@ -97,6 +135,11 @@ export function workspaceTabTargetsEqual(
   }
   if (left.kind === "setup" && right.kind === "setup") {
     return left.workspaceId === right.workspaceId;
+  }
+  if (left.kind === "diff" && right.kind === "diff") {
+    // focusPath is intentionally excluded — re-clicking a diff focuses the same
+    // tab and only updates the scroll target.
+    return diffTargetKey(left.diffTarget) === diffTargetKey(right.diffTarget);
   }
   return false;
 }
@@ -152,6 +195,11 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "setup") {
     return `setup_${target.workspaceId}`;
+  }
+  if (target.kind === "diff") {
+    // focusPath is excluded so a working diff dedupes to one tab and each commit
+    // dedupes by sha.
+    return `diff_${diffTargetKey(target.diffTarget)}`;
   }
   return `file_${target.path}`;
 }

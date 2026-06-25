@@ -1,4 +1,5 @@
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { DiffTarget } from "@/git/diff-target";
 import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceDraftTabSetup,
@@ -23,7 +24,9 @@ export type WorkspaceTabTarget =
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
   | WorkspaceFileTabTarget
-  | { kind: "setup"; workspaceId: string };
+  | { kind: "setup"; workspaceId: string }
+  // focusPath drives scroll-to-file only; it is NOT part of tab identity.
+  | { kind: "diff"; diffTarget: DiffTarget; focusPath?: string };
 
 export interface WorkspaceTab {
   tabId: string;
@@ -537,7 +540,34 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   if (kind === "setup" && typeof raw.workspaceId === "string") {
     return normalizeWorkspaceTabTarget({ kind: "setup", workspaceId: raw.workspaceId });
   }
+  if (kind === "diff") {
+    return coercePersistedDiffTabTarget(raw);
+  }
   return null;
+}
+
+function coercePersistedDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
+  const diffTarget = toObjectRecord(raw.diffTarget);
+  // Commit diff tabs are ephemeral: their SHA may be rebased away on reload, so
+  // we deliberately drop them rather than restore tabs pointing at dead commits.
+  if (!diffTarget || diffTarget.kind !== "working") {
+    return null;
+  }
+  const mode = diffTarget.mode === "base" ? "base" : "uncommitted";
+  const baseRef = typeof diffTarget.baseRef === "string" ? diffTarget.baseRef : undefined;
+  const ignoreWhitespace =
+    typeof diffTarget.ignoreWhitespace === "boolean" ? diffTarget.ignoreWhitespace : undefined;
+  const focusPath = typeof raw.focusPath === "string" ? raw.focusPath : undefined;
+  return normalizeWorkspaceTabTarget({
+    kind: "diff",
+    diffTarget: {
+      kind: "working",
+      mode,
+      ...(baseRef !== undefined ? { baseRef } : {}),
+      ...(ignoreWhitespace !== undefined ? { ignoreWhitespace } : {}),
+    },
+    ...(focusPath !== undefined ? { focusPath } : {}),
+  });
 }
 
 function migrateSingleTab(rawTab: unknown, now: number): WorkspaceTab | null {

@@ -351,7 +351,16 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
+  if (tab.target.kind === "diff") {
+    return describeDiffTabTarget(tab.target.diffTarget);
+  }
   return labels.agent;
+}
+
+function describeDiffTabTarget(
+  diffTarget: Extract<WorkspaceTabTarget, { kind: "diff" }>["diffTarget"],
+): string {
+  return diffTarget.kind === "commit" ? diffTarget.sha.slice(0, 7) : "Diff";
 }
 
 function getFallbackTabOptionDescription(
@@ -381,6 +390,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "provider_subagent") {
     return labels.agent;
+  }
+  if (tab.target.kind === "diff") {
+    return describeDiffTabTarget(tab.target.diffTarget);
   }
   return tab.target.path;
 }
