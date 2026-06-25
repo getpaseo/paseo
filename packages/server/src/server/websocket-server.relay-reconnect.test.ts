@@ -105,7 +105,6 @@ import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
-  socketMessageQueues: Map<unknown, Promise<void>>;
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
@@ -398,7 +397,6 @@ async function attachRelayAndHello(params: {
 }) {
   await params.server.attachExternalSocket(params.socket, { transport: "relay" });
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  await waitForSocketMessages(params.server, params.socket);
   expect(params.socket.sent.length).toBeGreaterThan(0);
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
@@ -418,7 +416,6 @@ async function attachDirectAndHello(params: {
     createDirectRequest(),
   );
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  await waitForSocketMessages(params.server, params.socket);
   expect(params.socket.sent.length).toBeGreaterThan(0);
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
@@ -426,13 +423,6 @@ async function attachDirectAndHello(params: {
   expect(envelope.message?.type).toBe("status");
   expect(serverInfo).not.toBeNull();
   return serverInfo!;
-}
-
-async function waitForSocketMessages(
-  server: VoiceAssistantWebSocketServer,
-  socket: MockSocket,
-): Promise<void> {
-  await asInternals<WebSocketServerInternals>(server).socketMessageQueues.get(socket);
 }
 
 describe("relay external socket reconnect behavior", () => {
@@ -489,8 +479,6 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    await waitForSocketMessages(server, socket);
-
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0];
     expect(session.args.clientCapabilities).toEqual({
@@ -586,13 +574,59 @@ describe("relay external socket reconnect behavior", () => {
         },
       }),
     );
-    await waitForSocketMessages(server, socket);
-
     expect(closeCode).toBe(4002);
     expect(["Invalid hello", "Session message before hello"]).toContain(closeReason);
     expect(sessionMock.instances).toHaveLength(0);
 
     await server.close();
+  });
+
+  test("responds to top-level ping while provider diagnostic is still running", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-ping-during-provider-diagnostic",
+    });
+
+    const session = sessionMock.instances[0];
+    let finishProviderDiagnostic = () => {
+      throw new Error("provider diagnostic did not start");
+    };
+    session.handleMessage.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishProviderDiagnostic = resolve;
+        }),
+    );
+
+    const sentBeforeDiagnostic = socket.sent.length;
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "provider_diagnostic_request",
+          provider: "grok",
+          requestId: "slow-provider-diagnostic",
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(session.handleMessage).toHaveBeenCalledTimes(1);
+    });
+
+    try {
+      socket.emit("message", JSON.stringify({ type: "ping" }));
+      await Promise.resolve();
+
+      expect(sentEnvelopes(socket).slice(sentBeforeDiagnostic)).toContainEqual({ type: "pong" });
+    } finally {
+      finishProviderDiagnostic();
+      await Promise.resolve();
+      await server.close();
+    }
   });
 
   test("reuses direct session when same clientId reconnects within grace window", async () => {
@@ -793,8 +827,6 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    await waitForSocketMessages(server, socket);
-
     expect(session.handleBinaryFrame).toHaveBeenCalledTimes(1);
     const { frame } = BinaryFrameSchema.parse(session.handleBinaryFrame.mock.calls[0]?.[0]);
     expect(frame.opcode).toBe(TerminalStreamOpcode.Input);
