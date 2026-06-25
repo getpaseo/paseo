@@ -145,7 +145,8 @@ function markdownImageSource(markdown: string): string {
   if (!match) {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
-  return match[1].replace(/\\\)/g, ")");
+  // Reverse escapeMarkdownImageSource: "\\" -> "\" and "\)" -> ")" (Windows paths are escaped).
+  return match[1].replace(/\\(.)/g, "$1");
 }
 
 describe("Claude tool_result image rendering", () => {

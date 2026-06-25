@@ -69,9 +69,10 @@ export function materializeProviderImage(image: {
 // Recognizes the markdown renderProviderImageOutputAsAssistantMarkdown emits for a materialized
 // provider image: its source is a content-hashed file in the attachments dir. Matching the full
 // <hash>.<ext> shape (not just a leading "![") keeps user-authored text from being mistaken for a
-// provider image when it reaches the history-replay filter.
+// provider image when it reaches the history-replay filter. The separator class allows one-or-more
+// because on Windows the path uses "\\" and escapeMarkdownImageSource doubles each backslash.
 const PROVIDER_IMAGE_MARKDOWN = new RegExp(
-  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\][0-9a-f]{64}\\.[a-z0-9]+\\)`,
+  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\]+[0-9a-f]{64}\\.[a-z0-9]+\\)`,
 );
 
 export function isProviderImageMarkdown(text: string): boolean {

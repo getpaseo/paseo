@@ -10,6 +10,12 @@ describe("isProviderImageMarkdown", () => {
     expect(isProviderImageMarkdown(`![shot](/var/folders/x/paseo-attachments/${HASH}.webp)`)).toBe(
       true,
     );
+    // Windows: backslash path separators are doubled by escapeMarkdownImageSource.
+    expect(
+      isProviderImageMarkdown(
+        `![Image](C:\\\\Users\\\\me\\\\AppData\\\\Local\\\\Temp\\\\paseo-attachments\\\\${HASH}.png)`,
+      ),
+    ).toBe(true);
   });
 
   test("rejects user-authored markdown that is not a materialized attachment", () => {
