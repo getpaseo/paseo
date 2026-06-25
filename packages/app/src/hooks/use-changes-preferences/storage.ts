@@ -12,7 +12,6 @@ const changesPreferencesSchema = z.object({
   hideWhitespace: z.boolean().optional(),
   fileView: z.enum(["list", "tree"]).optional(),
   commitsCollapsed: z.boolean().optional(),
-  commitsSectionHeight: z.number().optional(),
 });
 
 export interface ChangesPreferences {
@@ -22,7 +21,6 @@ export interface ChangesPreferences {
   hideWhitespace: boolean;
   fileView: "list" | "tree";
   commitsCollapsed: boolean;
-  commitsSectionHeight: number;
 }
 
 export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
@@ -32,7 +30,6 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   hideWhitespace: false,
   fileView: "list",
   commitsCollapsed: true,
-  commitsSectionHeight: 240,
 };
 
 export interface KeyValueStorage {

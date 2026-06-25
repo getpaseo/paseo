@@ -749,7 +749,6 @@ export const en = {
           fileDiffError: "Failed to load file diff",
           loading: "Loading commits…",
           loadError: "Failed to load commits",
-          resizeHandle: "Resize commits section",
         },
       },
       openInEditor: {

@@ -95,6 +95,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { usePanelStore } from "@/stores/panel-store";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import {
   formatDiffContentText,
@@ -1783,6 +1785,23 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const overflowToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
   const toast = useToast();
+  const openWorkspaceTabFocused = useWorkspaceLayoutStore((state) => state.openTabFocused);
+  const commitDiffPersistenceKey = useMemo(
+    () => buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? cwd }),
+    [cwd, serverId, workspaceId],
+  );
+  const handleCommitPress = useCallback(
+    (sha: string) => {
+      if (!commitDiffPersistenceKey) {
+        return;
+      }
+      openWorkspaceTabFocused(commitDiffPersistenceKey, {
+        kind: "diff",
+        diffTarget: { kind: "commit", sha },
+      });
+    },
+    [commitDiffPersistenceKey, openWorkspaceTabFocused],
+  );
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
   );
@@ -2463,7 +2482,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       <View style={styles.diffContainer}>{bodyContent}</View>
 
       {isDesktopWeb ? (
-        <CommitsSection serverId={serverId} workspaceId={workspaceId} cwd={cwd} />
+        <CommitsSection serverId={serverId} cwd={cwd} onCommitPress={handleCommitPress} />
       ) : null}
     </View>
   );

@@ -69,28 +69,9 @@ vi.mock("react-native-unistyles", () => ({
   withUnistyles: <T,>(component: T) => component,
 }));
 
-vi.mock("react-native-svg", () => ({
-  SvgXml: ({ xml }: { xml: string }) =>
-    React.createElement("span", { "data-svg": xml, "data-icon": "file" }),
-}));
-
-vi.mock("lucide-react-native", () => ({
-  ChevronRight: (props: Record<string, unknown>) =>
-    React.createElement("span", { ...props, "data-icon": "ChevronRight" }),
-}));
-
-vi.mock("@/components/material-file-icons", () => ({
-  getFileIconSvg: (name: string) => `<svg data-name="${name}" />`,
-}));
-
-vi.mock("./commit-file-diff-view", () => ({
-  CommitFileDiffView: ({ serverId, cwd, sha, path }: Record<string, string>) =>
-    React.createElement("div", {
-      "data-testid": `commit-file-diff-${path}`,
-      "data-server": serverId,
-      "data-cwd": cwd,
-      "data-sha": sha,
-    }),
+vi.mock("@/git/themed-chevron", () => ({
+  ThemedChevron: () => React.createElement("span", { "data-icon": "chevron" }),
+  chevronColorMapping: () => ({ color: "#aaa" }),
 }));
 
 import { CommitRow } from "./commit-row";
@@ -138,42 +119,37 @@ describe("CommitRow", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderRow(
-    props: Omit<React.ComponentProps<typeof CommitRow>, "serverId" | "cwd" | "fileView"> & {
-      serverId?: string;
-      cwd?: string;
-      fileView?: "list" | "tree";
-    },
-  ): void {
+  function renderRow(props: React.ComponentProps<typeof CommitRow>): void {
     act(() => {
-      root?.render(<CommitRow serverId="server-1" cwd="/tmp/repo" fileView="list" {...props} />);
+      root?.render(<CommitRow {...props} />);
     });
   }
 
   it("renders the subject and short sha", () => {
-    renderRow({ commit: makeCommit(), expanded: false, onToggle: vi.fn() });
+    renderRow({ commit: makeCommit(), onCommitPress: vi.fn() });
 
     expect(container?.textContent).toContain("Add the commits section");
     expect(container?.textContent).toContain("abcdef1");
   });
 
   it("renders the local dot variant when the commit is not on the remote", () => {
-    renderRow({ commit: makeCommit({ isOnRemote: false }), expanded: false, onToggle: vi.fn() });
+    renderRow({ commit: makeCommit({ isOnRemote: false }), onCommitPress: vi.fn() });
 
     expect(container?.querySelector('[data-testid="commit-dot-local"]')).not.toBeNull();
     expect(container?.querySelector('[data-testid="commit-dot-remote"]')).toBeNull();
   });
 
   it("renders the remote dot variant when the commit is on the remote", () => {
-    renderRow({ commit: makeCommit({ isOnRemote: true }), expanded: false, onToggle: vi.fn() });
+    renderRow({ commit: makeCommit({ isOnRemote: true }), onCommitPress: vi.fn() });
 
     expect(container?.querySelector('[data-testid="commit-dot-remote"]')).not.toBeNull();
     expect(container?.querySelector('[data-testid="commit-dot-local"]')).toBeNull();
   });
 
-  it("calls onToggle when the row is pressed", () => {
-    const onToggle = vi.fn();
-    renderRow({ commit: makeCommit(), expanded: false, onToggle });
+  it("calls onCommitPress with the commit sha when the row is pressed", () => {
+    const onCommitPress = vi.fn();
+    const commit = makeCommit();
+    renderRow({ commit, onCommitPress });
 
     const row = container?.querySelector(
       '[data-testid="commit-row-abcdef1"]',
@@ -184,107 +160,7 @@ describe("CommitRow", () => {
       row?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     });
 
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
-  it("hides the file rows when collapsed and reveals them when expanded", () => {
-    renderRow({ commit: makeCommit(), expanded: false, onToggle: vi.fn() });
-    expect(container?.querySelector('[data-testid="commit-file-src/app.ts"]')).toBeNull();
-
-    renderRow({ commit: makeCommit(), expanded: true, onToggle: vi.fn() });
-    const fileRow = container?.querySelector('[data-testid="commit-file-src/app.ts"]');
-    expect(fileRow).not.toBeNull();
-    expect(container?.textContent).toContain("src/app.ts");
-    expect(container?.textContent).toContain("+12");
-    expect(container?.textContent).toContain("-3");
-  });
-
-  it("calls onFilePress with the commit and file when a file row is pressed", () => {
-    const onFilePress = vi.fn();
-    const commit = makeCommit();
-    renderRow({ commit, expanded: true, onToggle: vi.fn(), onFilePress });
-
-    const fileRow = container?.querySelector(
-      '[data-testid="commit-file-src/app.ts"]',
-    ) as HTMLElement | null;
-    expect(fileRow).not.toBeNull();
-
-    act(() => {
-      fileRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(onFilePress).toHaveBeenCalledTimes(1);
-    expect(onFilePress).toHaveBeenCalledWith(commit, commit.files[0]);
-  });
-
-  it("toggles the inline file diff view when a file row is pressed", () => {
-    const commit = makeCommit();
-    renderRow({ commit, expanded: true, onToggle: vi.fn() });
-
-    const fileRow = container?.querySelector(
-      '[data-testid="commit-file-src/app.ts"]',
-    ) as HTMLElement | null;
-    expect(container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]')).toBeNull();
-
-    act(() => {
-      fileRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    });
-
-    const diffView = container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]');
-    expect(diffView).not.toBeNull();
-    expect(diffView?.getAttribute("data-server")).toBe("server-1");
-    expect(diffView?.getAttribute("data-cwd")).toBe("/tmp/repo");
-    expect(diffView?.getAttribute("data-sha")).toBe(commit.sha);
-
-    act(() => {
-      fileRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(container?.querySelector('[data-testid="commit-file-diff-src/app.ts"]')).toBeNull();
-  });
-
-  it("renders files flat in list mode", () => {
-    const commit = makeCommit({
-      files: [{ path: "src/git/foo.ts", additions: 1, deletions: 0, status: "modified" }],
-    });
-    renderRow({ commit, expanded: true, onToggle: vi.fn(), fileView: "list" });
-
-    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).not.toBeNull();
-    expect(container?.querySelector('[data-testid="commit-file-dir-src"]')).toBeNull();
-    expect(container?.querySelector('[data-testid="commit-file-dir-src/git"]')).toBeNull();
-  });
-
-  it("renders a nested file under directory rows in tree mode", () => {
-    const commit = makeCommit({
-      files: [{ path: "src/git/foo.ts", additions: 1, deletions: 0, status: "modified" }],
-    });
-    renderRow({ commit, expanded: true, onToggle: vi.fn(), fileView: "tree" });
-
-    expect(container?.querySelector('[data-testid="commit-file-dir-src"]')).not.toBeNull();
-    expect(container?.querySelector('[data-testid="commit-file-dir-src/git"]')).not.toBeNull();
-    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).not.toBeNull();
-    // The file row shows only the basename in tree mode.
-    expect(container?.textContent).toContain("foo.ts");
-  });
-
-  it("collapsing a directory hides its files in tree mode", () => {
-    const commit = makeCommit({
-      files: [{ path: "src/git/foo.ts", additions: 1, deletions: 0, status: "modified" }],
-    });
-    renderRow({ commit, expanded: true, onToggle: vi.fn(), fileView: "tree" });
-
-    const dirRow = container?.querySelector(
-      '[data-testid="commit-file-dir-src/git"]',
-    ) as HTMLElement | null;
-    expect(dirRow).not.toBeNull();
-    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).not.toBeNull();
-
-    act(() => {
-      dirRow?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(container?.querySelector('[data-testid="commit-file-src/git/foo.ts"]')).toBeNull();
-    // The collapsed directory row itself stays visible.
-    expect(container?.querySelector('[data-testid="commit-file-dir-src/git"]')).not.toBeNull();
+    expect(onCommitPress).toHaveBeenCalledTimes(1);
+    expect(onCommitPress).toHaveBeenCalledWith(commit.sha);
   });
 });

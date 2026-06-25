@@ -742,7 +742,6 @@ export const ar: TranslationResources = {
           fileDiffError: "تعذّر تحميل فروق الملف",
           loading: "جارٍ تحميل الإيداعات…",
           loadError: "تعذّر تحميل الإيداعات",
-          resizeHandle: "تغيير حجم قسم الإيداعات",
         },
       },
       openInEditor: {
