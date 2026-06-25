@@ -1,15 +1,15 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import type { OpenCodeRuntime, OpenCodeServerAcquisition } from "../runtime.js";
+import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "../server-manager.js";
 
 interface OpenCodeResponse {
   data?: unknown;
   error?: unknown;
 }
 
-export class TestOpenCodeRuntime implements OpenCodeRuntime {
+export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
   readonly acquisitions: Array<{
-    force: boolean;
+    kind: "current" | "new" | "dedicated";
     env?: Record<string, string>;
     releaseCount: number;
   }> = [];
@@ -22,11 +22,27 @@ export class TestOpenCodeRuntime implements OpenCodeRuntime {
     this.clients.push(client);
   }
 
-  async acquireServer(options: {
-    force: boolean;
+  async acquireCurrent(): Promise<OpenCodeServerAcquisition> {
+    return this.recordAcquisition({ kind: "current" });
+  }
+
+  async acquireNew(): Promise<OpenCodeServerAcquisition> {
+    return this.recordAcquisition({ kind: "new" });
+  }
+
+  async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
+    return this.recordAcquisition({ kind: "dedicated", env });
+  }
+
+  private recordAcquisition(input: {
+    kind: "current" | "new" | "dedicated";
     env?: Record<string, string>;
-  }): Promise<OpenCodeServerAcquisition> {
-    const acquisition = { force: options.force, env: options.env, releaseCount: 0 };
+  }): OpenCodeServerAcquisition {
+    const acquisition = {
+      kind: input.kind,
+      releaseCount: 0,
+      ...(input.env ? { env: input.env } : {}),
+    };
     this.acquisitions.push(acquisition);
     return {
       server: this.server,
@@ -36,15 +52,15 @@ export class TestOpenCodeRuntime implements OpenCodeRuntime {
     };
   }
 
-  async ensureServerRunning(): Promise<{ port: number; url: string }> {
+  async ensureRunning(): Promise<{ port: number; url: string }> {
     return this.server;
   }
 
-  createClient(options: { baseUrl: string; directory: string }): OpencodeClient {
+  readonly createClient = (options: { baseUrl: string; directory: string }): OpencodeClient => {
     this.clientCreations.push(options);
     const client = this.clients.shift() ?? new TestOpenCodeClient();
     return client.asSdkClient();
-  }
+  };
 
   async shutdown(): Promise<void> {}
 }

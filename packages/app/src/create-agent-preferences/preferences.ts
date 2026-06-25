@@ -46,6 +46,43 @@ export function parseFormPreferences(value: unknown): FormPreferences {
   return result.success ? result.data : DEFAULT_FORM_PREFERENCES;
 }
 
+function mergeDefinedRecord<T>(
+  existing: Record<string, T> | undefined,
+  updates: Record<string, T> | undefined,
+): Record<string, T> | undefined {
+  if (updates === undefined) {
+    return existing;
+  }
+  return {
+    ...existing,
+    ...updates,
+  };
+}
+
+function applyProviderPreferenceUpdates(
+  existing: ProviderPreferences,
+  updates: Partial<ProviderPreferences>,
+): ProviderPreferences {
+  const next: ProviderPreferences = { ...existing };
+  const nextThinkingByModel = mergeDefinedRecord(existing.thinkingByModel, updates.thinkingByModel);
+  const nextFeatureValues = mergeDefinedRecord(existing.featureValues, updates.featureValues);
+
+  if (updates.model !== undefined) {
+    next.model = updates.model;
+  }
+  if (updates.mode !== undefined) {
+    next.mode = updates.mode;
+  }
+  if (nextThinkingByModel !== undefined) {
+    next.thinkingByModel = nextThinkingByModel;
+  }
+  if (nextFeatureValues !== undefined) {
+    next.featureValues = nextFeatureValues;
+  }
+
+  return next;
+}
+
 export function mergeProviderPreferences(args: {
   preferences: FormPreferences;
   provider: AgentProvider;
@@ -54,32 +91,13 @@ export function mergeProviderPreferences(args: {
   const { preferences, provider, updates } = args;
   const existingProviderPreferences = preferences.providerPreferences ?? {};
   const existing = existingProviderPreferences[provider] ?? {};
-  const nextThinkingByModel =
-    updates.thinkingByModel === undefined
-      ? existing.thinkingByModel
-      : {
-          ...existing.thinkingByModel,
-          ...updates.thinkingByModel,
-        };
-  const nextFeatureValues =
-    updates.featureValues === undefined
-      ? existing.featureValues
-      : {
-          ...existing.featureValues,
-          ...updates.featureValues,
-        };
 
   return {
     ...preferences,
     provider,
     providerPreferences: {
       ...existingProviderPreferences,
-      [provider]: {
-        ...existing,
-        ...updates,
-        ...(nextThinkingByModel ? { thinkingByModel: nextThinkingByModel } : {}),
-        ...(nextFeatureValues ? { featureValues: nextFeatureValues } : {}),
-      },
+      [provider]: applyProviderPreferenceUpdates(existing, updates),
     },
   };
 }

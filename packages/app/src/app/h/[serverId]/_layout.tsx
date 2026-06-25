@@ -1,7 +1,15 @@
-import { Redirect, Slot, useLocalSearchParams } from "expo-router";
+import { Redirect, Stack, useLocalSearchParams } from "expo-router";
 import { useHostRuntimeBootstrapState } from "@/app/_layout";
-import { resolveStartupRoute } from "@/app/host-runtime-bootstrap";
+import { HostRouteProvider } from "@/navigation/host-route-context";
+import { resolveStartupRoute } from "@/navigation/host-runtime-bootstrap";
 import { useHostRegistryStatus, useHosts } from "@/runtime/host-runtime";
+
+const HOST_STACK_SCREEN_OPTIONS = {
+  headerShown: false,
+  animation: "none" as const,
+};
+
+const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
 
 export default function HostRouteLayout() {
   return <KnownHostRoute />;
@@ -24,8 +32,21 @@ function KnownHostRoute() {
     return <Redirect href={startupRoute.href} />;
   }
 
-  // Keep the host Slot mounted while startup gates are active. React Navigation
-  // web can reserialize a shallower tree and drop nested workspace URL segments
-  // if the layout swaps Slot for a splash; leaf routes own the splash boundary.
-  return <Slot />;
+  const stack = (
+    <Stack screenOptions={HOST_STACK_SCREEN_OPTIONS}>
+      <Stack.Screen name="index" />
+      <Stack.Screen name="workspace/[workspaceId]/index" />
+      <Stack.Screen name="agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
+      <Stack.Screen name="sessions" />
+      <Stack.Screen name="open-project" />
+      <Stack.Screen name="new" />
+      <Stack.Screen name="settings" />
+    </Stack>
+  );
+
+  if (!routeServerId) {
+    return stack;
+  }
+
+  return <HostRouteProvider serverId={routeServerId}>{stack}</HostRouteProvider>;
 }

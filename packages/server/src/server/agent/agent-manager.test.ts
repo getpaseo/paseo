@@ -99,25 +99,28 @@ class TestAgentClient implements AgentClient {
     return new TestAgentSession(config);
   }
 
-  async listModels() {
-    return [
-      {
-        provider: "codex",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-        isDefault: true,
-      },
-      {
-        provider: "codex",
-        id: "gpt-5.4-mini",
-        label: "GPT-5.4 Mini",
-      },
-      {
-        provider: "codex",
-        id: "gpt-5.2-codex",
-        label: "GPT-5.2 Codex",
-      },
-    ];
+  async fetchCatalog() {
+    return {
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          isDefault: true,
+        },
+        {
+          provider: "codex",
+          id: "gpt-5.4-mini",
+          label: "GPT-5.4 Mini",
+        },
+        {
+          provider: "codex",
+          id: "gpt-5.2-codex",
+          label: "GPT-5.2 Codex",
+        },
+      ],
+      modes: [],
+    };
   }
 
   async resumeSession(
@@ -667,8 +670,11 @@ test("setAgentMode persists the selected mode across session reload", async () =
       });
     }
 
-    async listModels() {
-      return [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }];
+    async fetchCatalog() {
+      return {
+        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }],
+        modes: [],
+      };
     }
   }
 
@@ -1454,15 +1460,18 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
       return new TestAgentSession(config);
     }
 
-    async listModels() {
-      return [
-        {
-          provider: "codex",
-          id: "gpt-5.4",
-          label: "GPT-5.4",
-          isDefault: true,
-        },
-      ];
+    async fetchCatalog() {
+      return {
+        models: [
+          {
+            provider: "codex",
+            id: "gpt-5.4",
+            label: "GPT-5.4",
+            isDefault: true,
+          },
+        ],
+        modes: [],
+      };
     }
 
     async resumeSession(
@@ -5976,8 +5985,8 @@ class RecordingPersistedAgentsClient implements AgentClient {
     throw new Error(`unexpected resumeSession for ${this.provider}`);
   }
 
-  async listModels() {
-    return [];
+  async fetchCatalog() {
+    return { models: [], modes: [] };
   }
 
   async listImportableSessions() {

@@ -735,6 +735,9 @@ export const ptBR: TranslationResources = {
         failedOpen: "Falha ao abrir workspace",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Ver",
+        },
         sections: {
           checks: "Verificações",
           reviews: "Revisões",
@@ -1457,6 +1460,7 @@ export const ptBR: TranslationResources = {
           en: "Inglês",
           es: "Espanhol",
           fr: "Francês",
+          ja: "Japonês",
           ptBR: "Português brasileiro",
           ru: "Russo",
           zhCN: "Chinês simplificado",
@@ -1587,6 +1591,7 @@ export const ptBR: TranslationResources = {
         toggleFocusMode: "Alternar modo de foco",
         cycleTheme: "Alternar tema",
         focusMessageInput: "Focar entrada de mensagem",
+        cycleAgentMode: "Alternar modo do agente",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar/parar ditado",
         interruptAgent: "Interromper agente",

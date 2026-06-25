@@ -26,7 +26,6 @@ import type {
   AgentStreamEvent,
   AgentSlashCommand,
   AgentRuntimeInfo,
-  ListModelsOptions,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage } from "./agent/agent-storage.js";
@@ -93,8 +92,8 @@ class ScriptedAgentClient implements AgentClient {
     );
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return [];
+  async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
+    return { models: [], modes: [] };
   }
 }
 

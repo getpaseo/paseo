@@ -49,6 +49,38 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 
 In Paseo-managed worktree services, use the injected service environment rather than hardcoded root checkout ports.
 
+### Expo Router layout ownership
+
+Each layout owns only the routes directly inside its directory. In the root
+layout, register `h/[serverId]`; do not register host leaf routes such as
+`h/[serverId]/workspace/[workspaceId]`, `h/[serverId]/open-project`, or
+`h/[serverId]/index` there. The `h/[serverId]/_layout.tsx` file owns those leaf
+routes with its own nested stack and relative screen names:
+`workspace/[workspaceId]/index`, `open-project`, `index`, and so on. Expo Router
+warns with `[Layout children]: No route named ...` when a layout registers
+grandchildren. Treat that warning as a route-tree bug: on native, this shape can
+leave a nested index route mounted without its local dynamic params and render a
+blank screen.
+
+Do not paper over missing required route params by reading global params in the
+leaf. Required dynamic params belong to the matched route. If
+`useLocalSearchParams()` misses one, fix the layout ownership.
+
+Keep non-route modules out of `src/app`. Expo Router treats ordinary `.ts` and
+`.tsx` files there as routes, which produces `missing the required default
+export` warnings and pollutes the route tree. Put shared route policy in
+`src/navigation`, `src/utils`, or another non-route directory.
+
+Treat `/h/[serverId]` as the host home route. It resolves to the last remembered
+workspace for that host after the workspace-selection store hydrates unless the
+host's hydrated workspace list proves that workspace is gone; hosts without a
+remembered workspace go to `open-project`.
+
+Keep workspace identity and retention outside native-stack `getId`/
+`dangerouslySingular`. Expo Router maps `dangerouslySingular` to React
+Navigation `getId`, and `getId` has broken Android native-stack/Fabric by
+reordering an already-mounted workspace screen.
+
 ### iOS simulator preview service
 
 Paseo worktrees expose the native iOS dev app through the `ios-simulator` service in `paseo.json`. The service URL serves the simulator preview at `/.sim`, so the preview link is `${PASEO_URL}/.sim`.

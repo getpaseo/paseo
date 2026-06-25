@@ -136,6 +136,7 @@ export interface ResolveIndexStartupRouteInput extends ResolveStartupRouteBaseIn
   route: IndexStartupRouteTarget;
   anyOnlineHostServerId: string | null;
   workspaceSelection: ActiveWorkspaceSelection | null;
+  workspaceSelectionStatus: WorkspaceSelectionStatus;
   isWorkspaceSelectionLoaded: boolean;
   hasGivenUpWaitingForHost: boolean;
 }
@@ -150,6 +151,42 @@ export type StartupRouteDecision =
   | { kind: "render" }
   | { kind: "splash" }
   | { kind: "redirect"; href: Href };
+
+export type WorkspaceSelectionStatus = "unknown" | "exists" | "missing";
+
+function shouldRestoreWorkspaceSelection(input: {
+  workspaceSelection: ActiveWorkspaceSelection | null;
+  workspaceSelectionStatus: WorkspaceSelectionStatus;
+}): input is {
+  workspaceSelection: ActiveWorkspaceSelection;
+  workspaceSelectionStatus: Exclude<WorkspaceSelectionStatus, "missing">;
+} {
+  return input.workspaceSelection !== null && input.workspaceSelectionStatus !== "missing";
+}
+
+export function resolveWorkspaceSelectionStatus(input: {
+  hasHydratedWorkspaces: boolean;
+  workspaceExists: boolean;
+}): WorkspaceSelectionStatus {
+  if (input.workspaceExists) {
+    return "exists";
+  }
+  return input.hasHydratedWorkspaces ? "missing" : "unknown";
+}
+
+export function resolveHostIndexRoute(input: {
+  serverId: string;
+  workspaceSelection: ActiveWorkspaceSelection | null;
+  workspaceSelectionStatus: WorkspaceSelectionStatus;
+}): Href {
+  if (
+    input.workspaceSelection?.serverId === input.serverId &&
+    shouldRestoreWorkspaceSelection(input)
+  ) {
+    return buildHostWorkspaceRoute(input.serverId, input.workspaceSelection.workspaceId);
+  }
+  return buildHostOpenProjectRoute(input.serverId);
+}
 
 function isIndexPathname(pathname: string) {
   return pathname === "/" || pathname === "";
@@ -171,11 +208,16 @@ function resolveReadyIndexStartupRoute(input: ResolveIndexStartupRouteInput): St
     return { kind: "splash" };
   }
 
-  const workspaceSelection = input.workspaceSelection;
-  if (workspaceSelection && hostExists(input.hosts, workspaceSelection.serverId)) {
+  if (
+    shouldRestoreWorkspaceSelection(input) &&
+    hostExists(input.hosts, input.workspaceSelection.serverId)
+  ) {
     return {
       kind: "redirect",
-      href: buildHostWorkspaceRoute(workspaceSelection.serverId, workspaceSelection.workspaceId),
+      href: buildHostWorkspaceRoute(
+        input.workspaceSelection.serverId,
+        input.workspaceSelection.workspaceId,
+      ),
     };
   }
 

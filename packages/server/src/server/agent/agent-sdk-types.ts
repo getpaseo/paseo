@@ -636,14 +636,14 @@ export interface AgentSession {
   } | null;
 }
 
-export interface ListModelsOptions {
+export interface FetchCatalogOptions {
   cwd: string;
   force: boolean;
 }
 
-export interface ListModesOptions {
-  cwd: string;
-  force: boolean;
+export interface ProviderCatalog {
+  models: AgentModelDefinition[];
+  modes: AgentMode[];
 }
 
 export interface AgentClient {
@@ -659,8 +659,13 @@ export interface AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
-  listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
-  listModes?(options: ListModesOptions): Promise<AgentMode[]>;
+  /**
+   * Discover models and modes together. Implementations may use one upstream
+   * process, separate upstream calls, static modes, or private helpers; callers
+   * outside the provider do not get separate runtime model/mode probes.
+   * The registry is responsible for merging configured model overrides.
+   */
+  fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;

@@ -26,7 +26,7 @@ describe("Codex app-server provider (real)", () => {
   test("lists models and runs a simple prompt", async () => {
     const client = createRealProviderClient("codex", createTestLogger());
     const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-"));
-    const models = await client.listModels({ cwd, force: false });
+    const { models } = await client.fetchCatalog({ cwd, force: false });
     expect(models.length).toBeGreaterThan(0);
 
     const session = await client.createSession({

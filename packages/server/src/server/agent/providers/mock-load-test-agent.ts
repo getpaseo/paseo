@@ -20,11 +20,11 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  FetchCatalogOptions,
   ImportableProviderSession,
   ImportProviderSessionContext,
   ImportProviderSessionInput,
-  ListModesOptions,
-  ListModelsOptions,
+  ProviderCatalog,
   ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -275,7 +275,7 @@ function parseStructuredBranchNamePrompt(
 ): { title: string; branch: string } | null {
   const text = promptToText(prompt);
   const hasBranchNamePrompt =
-    text.includes("Generate a git branch name for a coding agent") &&
+    text.includes("Generate a title and a git branch name for a coding agent") &&
     (text.includes("Return JSON only with fields 'title' and 'branch'.") ||
       text.includes('"title"') ||
       text.includes('"branch"'));
@@ -290,7 +290,10 @@ function parseStructuredBranchNamePrompt(
     return null;
   }
 
-  const seed = text.split("User context:\n").at(-1)?.trim() ?? "";
+  const seed =
+    text.match(/<user-prompt>\n([\s\S]*?)\n<\/user-prompt>/)?.[1]?.trim() ??
+    text.match(/<attachments>\n([\s\S]*?)\n<\/attachments>/)?.[1]?.trim() ??
+    "";
   const firstLine =
     seed
       .split("\n")
@@ -531,12 +534,11 @@ export class MockLoadTestAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return MODELS;
-  }
-
-  async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
-    return getAgentProviderDefinition(MOCK_LOAD_TEST_PROVIDER_ID).modes;
+  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    return {
+      models: MODELS,
+      modes: getAgentProviderDefinition(MOCK_LOAD_TEST_PROVIDER_ID).modes,
+    };
   }
 
   async listImportableSessions(): Promise<ImportableProviderSession[]> {
