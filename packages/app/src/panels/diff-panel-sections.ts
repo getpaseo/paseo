@@ -1,24 +1,32 @@
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 
 /**
- * Flat-list items for the diff tab. Each changed file expands to a non-collapsible
- * header row followed by its body (the full diff). The diff tab shows everything
- * expanded — unlike the sidebar Changes panel, there is no per-file collapse — so
- * the section list is a deterministic header→body interleave over `files`.
+ * Flat-list items for the diff tab. Every changed file contributes a header row;
+ * its body (the full diff) follows only when the file is expanded. The diff tab
+ * is collapsed by default — pressing a header toggles its file — so the section
+ * list is a deterministic walk over `files` that interleaves a body after each
+ * header whose path is in the expanded set.
  */
 export type DiffPanelItem =
   | { type: "header"; file: ParsedDiffFile; fileIndex: number }
   | { type: "body"; file: ParsedDiffFile; fileIndex: number };
 
 /**
- * Build the header→body flat-item list for a diff tab. Pure and React-free so the
- * ordering/keying contract is unit-testable independent of the FlatList.
+ * Build the header(+body) flat-item list for a diff tab. A header is emitted for
+ * every file in order; a body is emitted immediately after a header only when the
+ * file's path is in `expandedPaths`. Pure and React-free so the ordering/keying
+ * contract is unit-testable independent of the FlatList.
  */
-export function buildDiffPanelSections(files: ParsedDiffFile[]): DiffPanelItem[] {
+export function buildDiffPanelSections(
+  files: ParsedDiffFile[],
+  expandedPaths: ReadonlySet<string>,
+): DiffPanelItem[] {
   const items: DiffPanelItem[] = [];
   files.forEach((file, fileIndex) => {
     items.push({ type: "header", file, fileIndex });
-    items.push({ type: "body", file, fileIndex });
+    if (expandedPaths.has(file.path)) {
+      items.push({ type: "body", file, fileIndex });
+    }
   });
   return items;
 }

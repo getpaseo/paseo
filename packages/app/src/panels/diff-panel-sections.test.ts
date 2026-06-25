@@ -27,9 +27,30 @@ function makeFile(overrides: Partial<ParsedDiffFile> & { path: string }): Parsed
 }
 
 describe("buildDiffPanelSections", () => {
-  it("interleaves one header and one body per file, in order", () => {
+  it("emits a header for every file and a body only for the expanded ones, in order", () => {
     const files = [makeFile({ path: "a.ts" }), makeFile({ path: "src/b.ts" })];
-    const sections = buildDiffPanelSections(files);
+    const sections = buildDiffPanelSections(files, new Set(["src/b.ts"]));
+
+    expect(sections.map((s) => [s.type, s.file.path, s.fileIndex])).toEqual([
+      ["header", "a.ts", 0],
+      ["header", "src/b.ts", 1],
+      ["body", "src/b.ts", 1],
+    ]);
+  });
+
+  it("emits header-only items for every file when nothing is expanded (default collapsed)", () => {
+    const files = [makeFile({ path: "a.ts" }), makeFile({ path: "src/b.ts" })];
+    const sections = buildDiffPanelSections(files, new Set());
+
+    expect(sections.map((s) => [s.type, s.file.path, s.fileIndex])).toEqual([
+      ["header", "a.ts", 0],
+      ["header", "src/b.ts", 1],
+    ]);
+  });
+
+  it("interleaves header+body for every file when all are expanded, in order", () => {
+    const files = [makeFile({ path: "a.ts" }), makeFile({ path: "src/b.ts" })];
+    const sections = buildDiffPanelSections(files, new Set(["a.ts", "src/b.ts"]));
 
     expect(sections.map((s) => [s.type, s.file.path, s.fileIndex])).toEqual([
       ["header", "a.ts", 0],
@@ -40,7 +61,7 @@ describe("buildDiffPanelSections", () => {
   });
 
   it("returns an empty list when there are no files", () => {
-    expect(buildDiffPanelSections([])).toEqual([]);
+    expect(buildDiffPanelSections([], new Set())).toEqual([]);
   });
 });
 
