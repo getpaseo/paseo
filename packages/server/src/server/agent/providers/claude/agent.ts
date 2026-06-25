@@ -45,6 +45,12 @@ import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
+import {
+  isProviderImageMarkdown,
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+  type ProviderImageOutput,
+} from "../provider-image-output.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -588,6 +594,44 @@ function coerceToolResultContentToString(content: unknown): string {
     return content.map((block) => block.text).join("");
   }
   return deterministicStringify(content);
+}
+
+function toBase64ImageOutput(block: unknown): ProviderImageOutput | null {
+  const record = toObjectRecord(block);
+  if (!record || record.type !== "image") {
+    return null;
+  }
+  const source = toObjectRecord(record.source);
+  if (!source || source.type !== "base64" || typeof source.data !== "string") {
+    return null;
+  }
+  return {
+    data: source.data,
+    mimeType: typeof source.media_type === "string" ? source.media_type : null,
+  };
+}
+
+// Claude returns images inside tool_result content as base64 Anthropic blocks. Left in place they
+// reach coerceToolResultContentToString, which JSON.stringifies the whole array — dumping base64
+// into the tool output. We pull those blocks out to render them as image markdown and leave a
+// "[image]" placeholder so image-only results still produce non-empty output.
+function splitClaudeToolResultImages(content: unknown): {
+  images: ProviderImageOutput[];
+  text: unknown;
+} {
+  if (!Array.isArray(content)) {
+    return { images: [], text: content };
+  }
+  const images: ProviderImageOutput[] = [];
+  const text = content.map((block) => {
+    const image = toBase64ImageOutput(block);
+    if (image) {
+      images.push(image);
+      return { type: "text", text: "[image]" };
+    }
+    return block;
+  });
+  return { images, text };
 }
 
 function normalizeClaudeTranscriptText(value: unknown): string | null {
@@ -4353,8 +4397,10 @@ class ClaudeAgentSession implements AgentSession {
         ? block.tool_use_id
         : (entry?.id ?? null);
 
-    // Extract output from block.content (SDK always returns content in string form)
-    const output = this.buildToolOutput(block, entry);
+    // Pull image blocks out of the result so base64 never reaches the tool output, and render each
+    // one as an assistant_message markdown image after the tool_call (matching how Codex emits).
+    const { images, text } = splitClaudeToolResultImages(block.content);
+    const output = this.buildToolOutput(text, block, entry);
 
     if (block.is_error) {
       this.pushToolCall(
@@ -4363,7 +4409,7 @@ class ClaudeAgentSession implements AgentSession {
           callId,
           input: entry?.input ?? null,
           output: output ?? null,
-          error: block,
+          error: { ...block, content: text },
         }),
         items,
       );
@@ -4379,6 +4425,15 @@ class ClaudeAgentSession implements AgentSession {
       );
     }
 
+    for (const image of images) {
+      const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      });
+      if (imageItem) {
+        items.push(imageItem);
+      }
+    }
+
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
       this.sidechainTracker.delete(block.tool_use_id);
@@ -4386,6 +4441,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private buildToolOutput(
+    content: unknown,
     block: ClaudeContentChunk,
     entry: ToolUseCacheEntry | undefined,
   ): AgentMetadata | undefined {
@@ -4397,11 +4453,11 @@ class ClaudeAgentSession implements AgentSession {
     const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
     const server = entry?.server ?? blockServer ?? "tool";
     const tool = entry?.name ?? blockToolName ?? "tool";
-    const content = coerceToolResultContentToString(block.content);
+    const coercedContent = coerceToolResultContentToString(content);
     const input = entry?.input;
 
     // Build structured result based on tool type
-    const structured = this.buildStructuredToolResult(server, tool, content, input);
+    const structured = this.buildStructuredToolResult(server, tool, coercedContent, input);
 
     if (structured) {
       return structured;
@@ -4410,13 +4466,13 @@ class ClaudeAgentSession implements AgentSession {
     // Fallback format - try to parse JSON first
     const result: AgentMetadata = {};
 
-    if (content.length > 0) {
+    if (coercedContent.length > 0) {
       try {
         // If content is a JSON string, parse it
-        result.output = JSON.parse(content);
+        result.output = JSON.parse(coercedContent);
       } catch {
         // If not JSON, return unchanged (no extra wrapping)
-        result.output = content;
+        result.output = coercedContent;
       }
     }
 
@@ -4936,6 +4992,10 @@ function convertClaudeHistoryEntryPreamble(
   return { proceed: { content } };
 }
 
+function isProviderImageMessage(item: AgentTimelineItem): boolean {
+  return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
+}
+
 export function convertClaudeHistoryEntry(
   entry: ClaudeHistoryEntry,
   mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
@@ -4979,7 +5039,12 @@ export function convertClaudeHistoryEntry(
   if (hasToolBlock && normalizedBlocks) {
     const mapped = mapBlocks(normalizedBlocks);
     if (entry.type === "user") {
-      const toolItems = mapped.filter((item) => item.type === "tool_call");
+      // tool_result handling (handleToolResult) emits image markdown as an assistant_message
+      // alongside the tool_call. User-entry text blocks also map to assistant_message in this path
+      // and must stay suppressed, so keep tool_calls plus only the image assistant_messages.
+      const toolItems = mapped.filter(
+        (item) => item.type === "tool_call" || isProviderImageMessage(item),
+      );
       return timeline.length ? [...timeline, ...toolItems] : toolItems;
     }
     return mapped;
