@@ -10,6 +10,7 @@ import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { FileDropZone } from "@/components/file-drop-zone";
+import { appendDroppedFilePathText } from "@/file-drops/file-drop-paths";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
@@ -985,7 +986,7 @@ export function NewWorkspaceScreen({
   }, []);
 
   const handleClearDraft = useCallback(() => {
-    // No-op: screen navigates away on success, text should stay for retry on error
+    // 成功后页面会跳转；失败时保留文本方便重试。
   }, []);
 
   const badgePressableStyle = useCallback(
@@ -1104,6 +1105,19 @@ export function NewWorkspaceScreen({
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
     addImagesRef.current?.(files);
   }, []);
+  const chatDraftText = chatDraft.text;
+  const setChatDraftText = chatDraft.setText;
+  const handleTextDropped = useCallback(
+    (text: string) => {
+      setChatDraftText(
+        appendDroppedFilePathText({
+          currentText: chatDraftText,
+          droppedText: text,
+        }),
+      );
+    },
+    [chatDraftText, setChatDraftText],
+  );
 
   const renderPickerOption = useCallback(
     ({
@@ -1310,7 +1324,7 @@ export function NewWorkspaceScreen({
   );
 
   return (
-    <FileDropZone onFilesDropped={handleFilesDropped}>
+    <FileDropZone onFilesDropped={handleFilesDropped} onTextDropped={handleTextDropped}>
       <View style={styles.container}>
         <ScreenHeader
           left={

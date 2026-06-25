@@ -3,9 +3,15 @@ import type { ImageAttachment } from "@/composer/types";
 import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
 import { isWeb } from "@/constants/platform";
+import {
+  extractDroppedFilePaths,
+  getDroppedImageMimeType,
+  resolveDroppedFilePaths,
+} from "@/file-drops/file-drop-paths";
 
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
+  onTextDropped?: (text: string) => void;
   disabled?: boolean;
 }
 
@@ -15,20 +21,6 @@ interface UseFileDropZoneReturn {
 }
 
 const IS_WEB = isWeb;
-const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
-  ".svg": "image/svg+xml",
-  ".heic": "image/heic",
-  ".heif": "image/heif",
-  ".avif": "image/avif",
-  ".tif": "image/tiff",
-  ".tiff": "image/tiff",
-};
 
 type DesktopDragDropPayload =
   | {
@@ -54,22 +46,8 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith("image/");
 }
 
-function getFileExtension(path: string): string {
-  const normalizedPath = path.split("#", 1)[0]?.split("?", 1)[0] ?? path;
-  const extensionIndex = normalizedPath.lastIndexOf(".");
-  if (extensionIndex < 0) {
-    return "";
-  }
-  return normalizedPath.slice(extensionIndex).toLowerCase();
-}
-
-function isImagePath(path: string): boolean {
-  return getFileExtension(path) in IMAGE_MIME_BY_EXTENSION;
-}
-
 async function filePathToImageAttachment(path: string): Promise<ImageAttachment> {
-  const extension = getFileExtension(path);
-  const mimeType = IMAGE_MIME_BY_EXTENSION[extension] ?? "image/jpeg";
+  const mimeType = getDroppedImageMimeType(path);
   return await persistAttachmentFromFileUri({ uri: path, mimeType });
 }
 
@@ -83,19 +61,23 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
 
 export function useFileDropZone({
   onFilesDropped,
+  onTextDropped,
   disabled = false,
 }: UseFileDropZoneOptions): UseFileDropZoneReturn {
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLElement | null>(null);
   const dragCounterRef = useRef(0);
   const onFilesDroppedRef = useRef(onFilesDropped);
+  const onTextDroppedRef = useRef(onTextDropped);
 
-  // Keep callback ref up to date
   useEffect(() => {
     onFilesDroppedRef.current = onFilesDropped;
   }, [onFilesDropped]);
 
-  // Reset drag state when disabled changes
+  useEffect(() => {
+    onTextDroppedRef.current = onTextDropped;
+  }, [onTextDropped]);
+
   useEffect(() => {
     if (disabled) {
       setIsDragging(false);
@@ -103,7 +85,7 @@ export function useFileDropZone({
     }
   }, [disabled]);
 
-  // Set up event listeners on web
+  // 仅网页平台需要安装拖拽监听。
   useEffect(() => {
     if (!IS_WEB) return;
 
@@ -151,12 +133,17 @@ export function useFileDropZone({
             return;
           }
 
-          // Drop always ends the current drag operation.
+          // 松手放下会结束当前拖拽状态。
           setIsDragging(false);
 
           if (disabled) return;
 
-          const imagePaths = payload.paths.filter(isImagePath);
+          const droppedPaths = resolveDroppedFilePaths(payload.paths);
+          if (droppedPaths.text) {
+            onTextDroppedRef.current?.(droppedPaths.text);
+          }
+
+          const imagePaths = droppedPaths.imagePaths;
           if (imagePaths.length === 0) {
             return;
           }
@@ -238,6 +225,13 @@ export function useFileDropZone({
         if (disabled) return;
 
         const files = Array.from(e.dataTransfer?.files ?? []);
+        const droppedPaths = resolveDroppedFilePaths(
+          extractDroppedFilePaths(e.dataTransfer ?? null, getDesktopHost()),
+        );
+        if (droppedPaths.text) {
+          onTextDroppedRef.current?.(droppedPaths.text);
+        }
+
         const imageFiles = files.filter(isImageFile);
 
         if (imageFiles.length === 0) return;

@@ -10,15 +10,22 @@ import { isWeb } from "@/constants/platform";
 interface FileDropZoneProps {
   children: React.ReactNode;
   onFilesDropped: (files: ImageAttachment[]) => void;
+  onTextDropped?: (text: string) => void;
   disabled?: boolean;
 }
 
 const IS_WEB = isWeb;
 
-export function FileDropZone({ children, onFilesDropped, disabled = false }: FileDropZoneProps) {
+export function FileDropZone({
+  children,
+  onFilesDropped,
+  onTextDropped,
+  disabled = false,
+}: FileDropZoneProps) {
   const { theme } = useUnistyles();
   const { isDragging, containerRef } = useFileDropZone({
     onFilesDropped,
+    onTextDropped,
     disabled,
   });
 
@@ -38,27 +45,26 @@ export function FileDropZone({ children, onFilesDropped, disabled = false }: Fil
     [overlayAnimatedStyle],
   );
 
-  // On non-web platforms, just render children
+  // 非网页平台直接渲染子节点。
   if (!IS_WEB) {
     return children;
   }
 
   return (
     <View
-      // Cast ref for web - View renders as div on web
+      // 网页上 View 会渲染成 div，这里复用 DOM 引用。
       ref={containerRef as unknown as React.RefObject<View>}
       style={styles.container}
     >
       {children}
 
-      {/* Drop overlay */}
       <Animated.View style={overlayStyle}>
-        {/* Backdrop */}
         <View style={styles.backdrop} />
-        {/* Content */}
         <View style={styles.overlayContent}>
           <Upload size={32} color={theme.colors.primary} />
-          <Text style={styles.overlayText}>Drop images here</Text>
+          <Text style={styles.overlayText}>
+            {onTextDropped ? "Drop files here" : "Drop images here"}
+          </Text>
         </View>
       </Animated.View>
     </View>

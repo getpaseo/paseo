@@ -37,6 +37,7 @@ import {
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
+import { appendDroppedFilePathText } from "@/file-drops/file-drop-paths";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -1097,6 +1098,19 @@ function ChatAgentReadyContent({
       agentId,
     }),
   });
+  const agentInputText = agentInputDraft.text;
+  const setAgentInputText = agentInputDraft.setText;
+  const handleTextDropped = useCallback(
+    (text: string) => {
+      setAgentInputText(
+        appendDroppedFilePathText({
+          currentText: agentInputText,
+          droppedText: text,
+        }),
+      );
+    },
+    [agentInputText, setAgentInputText],
+  );
   const streamSection = (
     <RenderProfile id={`AgentStreamSection:${agentId}`}>
       <AgentStreamSection
@@ -1138,7 +1152,11 @@ function ChatAgentReadyContent({
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
       <View style={styles.root}>
-        <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
+        <FileDropZone
+          onFilesDropped={handleFilesDropped}
+          onTextDropped={handleTextDropped}
+          disabled={isArchivingCurrentAgent}
+        >
           <View style={styles.container}>
             {contentContainer}
 

@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
+import { appendDroppedFilePathText } from "@/file-drops/file-drop-paths";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -534,6 +535,19 @@ export function WorkspaceDraftAgentTab({
     addImagesRef.current?.(files);
   }, []);
 
+  const draftText = draftInput.text;
+  const handleTextDropped = useCallback(
+    (text: string) => {
+      setDraftText(
+        appendDroppedFilePathText({
+          currentText: draftText,
+          droppedText: text,
+        }),
+      );
+    },
+    [draftText, setDraftText],
+  );
+
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
     addImagesRef.current = addImages;
   }, []);
@@ -645,7 +659,7 @@ export function WorkspaceDraftAgentTab({
   );
 
   return (
-    <FileDropZone onFilesDropped={handleFilesDropped}>
+    <FileDropZone onFilesDropped={handleFilesDropped} onTextDropped={handleTextDropped}>
       <View style={styles.container}>
         <View style={styles.contentContainer}>
           {isSubmitting && draftAgent ? (
