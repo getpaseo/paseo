@@ -1143,15 +1143,24 @@ async function resolvePullRequestStatusLookupTarget(
   }
   const branchRemoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
   let branchMergeRef: string | null = null;
-  let branchRemoteUrl: string | null = null;
   if (branchRemoteName) {
-    [branchMergeRef, branchRemoteUrl] = await Promise.all([
-      getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context),
-      getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
-    ]);
+    branchMergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
   }
 
-  const [originRemoteUrl, resolvedBaseRef] = await Promise.all([
+  const localBranchTarget = buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch,
+    branchRemoteName,
+    branchMergeRef,
+    branchRemoteUrl: null,
+    originRemoteUrl: null,
+    resolvedBaseRef: null,
+  });
+  if (localBranchTarget.headRef === currentBranch) {
+    return localBranchTarget;
+  }
+
+  const [branchRemoteUrl, originRemoteUrl, resolvedBaseRef] = await Promise.all([
+    branchRemoteName ? getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context) : null,
     getGitConfigValue(cwd, "remote.origin.url", context),
     getResolvedBaseRefForCwd(cwd, context),
   ]);
