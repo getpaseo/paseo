@@ -1382,6 +1382,15 @@ export const zhCN: TranslationResources = {
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
     },
+    diff: {
+      changesLabel: "更改",
+      changesSubtitle: "工作区差异",
+      commitSubtitle: "提交差异",
+      directoryMissing: "未找到 workspace 目录。",
+      empty: "没有更改",
+      loadError: "加载差异失败",
+      capabilityMissing: "请更新主机以查看提交差异。",
+    },
   },
   toolCallDetails: {
     error: "错误",

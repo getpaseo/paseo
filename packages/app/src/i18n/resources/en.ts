@@ -1406,6 +1406,15 @@ export const en = {
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
     },
+    diff: {
+      changesLabel: "Changes",
+      changesSubtitle: "Working tree diff",
+      commitSubtitle: "Commit diff",
+      directoryMissing: "Workspace directory not found.",
+      empty: "No changes",
+      loadError: "Failed to load diff",
+      capabilityMissing: "Update the host to view commit diffs.",
+    },
   },
   toolCallDetails: {
     error: "Error",
