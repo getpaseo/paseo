@@ -546,28 +546,23 @@ function coerceWorkspaceTabTarget(raw: Record<string, unknown>): WorkspaceTabTar
   return null;
 }
 
+// NOTE: This legacy store no longer persists diff tabs — live tab persistence is
+// owned by the workspace-layout store, which is where the "commit diff tabs are
+// ephemeral on reload" guarantee is enforced (see stripEphemeralTabsFromLayout).
+// This coercion exists only so this store's migration stays type-complete for any
+// diff-shaped entries left in old `workspace-tabs-state` blobs; it does NOT drop
+// commit diff tabs and makes no ephemerality claim. Both working and commit diff
+// targets are normalized straight through normalizeWorkspaceTabTarget.
 function coercePersistedDiffTabTarget(raw: Record<string, unknown>): WorkspaceTabTarget | null {
-  const diffTarget = toObjectRecord(raw.diffTarget);
-  // Commit diff tabs are ephemeral: their SHA may be rebased away on reload, so
-  // we deliberately drop them rather than restore tabs pointing at dead commits.
-  if (!diffTarget || diffTarget.kind !== "working") {
+  if (!toObjectRecord(raw.diffTarget)) {
     return null;
   }
-  const mode = diffTarget.mode === "base" ? "base" : "uncommitted";
-  const baseRef = typeof diffTarget.baseRef === "string" ? diffTarget.baseRef : undefined;
-  const ignoreWhitespace =
-    typeof diffTarget.ignoreWhitespace === "boolean" ? diffTarget.ignoreWhitespace : undefined;
   const focusPath = typeof raw.focusPath === "string" ? raw.focusPath : undefined;
   return normalizeWorkspaceTabTarget({
     kind: "diff",
-    diffTarget: {
-      kind: "working",
-      mode,
-      ...(baseRef !== undefined ? { baseRef } : {}),
-      ...(ignoreWhitespace !== undefined ? { ignoreWhitespace } : {}),
-    },
+    diffTarget: raw.diffTarget,
     ...(focusPath !== undefined ? { focusPath } : {}),
-  });
+  } as WorkspaceTabTarget);
 }
 
 function migrateSingleTab(rawTab: unknown, now: number): WorkspaceTab | null {

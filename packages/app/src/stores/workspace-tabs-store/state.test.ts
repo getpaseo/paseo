@@ -412,7 +412,12 @@ describe("workspace-tabs-store reducers", () => {
 });
 
 describe("migrateWorkspaceTabsState diff tab coercion", () => {
-  it("restores a working diff tab but drops a commit diff tab across reload", () => {
+  // This legacy store no longer enforces the "commit diff tabs are ephemeral"
+  // guarantee — that now lives in the workspace-layout store's partialize (see
+  // stripEphemeralTabsFromLayout). This migration only needs to round-trip any
+  // diff-shaped entries left in old `workspace-tabs-state` blobs without dropping
+  // them, so both working and commit diff tabs are restored as-is here.
+  it("restores both working and commit diff tabs across reload", () => {
     const persisted = {
       state: {
         uiTabsByWorkspace: {
@@ -435,12 +440,15 @@ describe("migrateWorkspaceTabsState diff tab coercion", () => {
     const migrated = migrateWorkspaceTabsState(persisted, { now: NOW });
     const tabs = migrated.uiTabsByWorkspace[WORKSPACE_KEY] ?? [];
 
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]?.target).toEqual({
-      kind: "diff",
-      diffTarget: { kind: "working", mode: "uncommitted" },
-    });
-    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual(["diff_working:uncommitted:"]);
+    expect(tabs).toHaveLength(2);
+    expect(tabs.map((tab) => tab.target)).toEqual([
+      { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
+      { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
+    ]);
+    expect(migrated.tabOrderByWorkspace[WORKSPACE_KEY]).toEqual([
+      "diff_working:uncommitted:",
+      "diff_commit:abc123",
+    ]);
   });
 
   it("restores a working base diff tab with its baseRef", () => {
