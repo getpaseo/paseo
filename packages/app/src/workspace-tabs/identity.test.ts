@@ -3,6 +3,7 @@ import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
+  workspaceTabTargetsFullyEqual,
 } from "./identity";
 
 describe("provider subagent tab identity", () => {
@@ -130,6 +131,75 @@ describe("workspaceTabTargetsEqual for diff tabs", () => {
       workspaceTabTargetsEqual(
         { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
         { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" } },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("workspaceTabTargetsFullyEqual for diff tabs", () => {
+  it("treats two working diff targets that differ only in focusPath as NOT fully equal", () => {
+    expect(
+      workspaceTabTargetsFullyEqual(
+        {
+          kind: "diff",
+          diffTarget: { kind: "working", mode: "uncommitted" },
+          focusPath: "src/a.ts",
+        },
+        {
+          kind: "diff",
+          diffTarget: { kind: "working", mode: "uncommitted" },
+          focusPath: "src/b.ts",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("treats two working diff targets with the same focusPath as fully equal", () => {
+    expect(
+      workspaceTabTargetsFullyEqual(
+        {
+          kind: "diff",
+          diffTarget: { kind: "working", mode: "uncommitted" },
+          focusPath: "src/a.ts",
+        },
+        {
+          kind: "diff",
+          diffTarget: { kind: "working", mode: "uncommitted" },
+          focusPath: "src/a.ts",
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("treats a working diff target with no focusPath as fully equal to itself", () => {
+    expect(
+      workspaceTabTargetsFullyEqual(
+        { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
+        { kind: "diff", diffTarget: { kind: "working", mode: "uncommitted" } },
+      ),
+    ).toBe(true);
+  });
+
+  it("still distinguishes diff targets with different identity regardless of focusPath", () => {
+    expect(
+      workspaceTabTargetsFullyEqual(
+        { kind: "diff", diffTarget: { kind: "commit", sha: "abc123" }, focusPath: "a.ts" },
+        { kind: "diff", diffTarget: { kind: "commit", sha: "def456" }, focusPath: "a.ts" },
+      ),
+    ).toBe(false);
+  });
+
+  it("matches workspaceTabTargetsEqual for non-diff tabs", () => {
+    expect(
+      workspaceTabTargetsFullyEqual(
+        { kind: "agent", agentId: "agent-1" },
+        { kind: "agent", agentId: "agent-1" },
+      ),
+    ).toBe(true);
+    expect(
+      workspaceTabTargetsFullyEqual(
+        { kind: "file", path: "/repo/a.ts", lineStart: 1 },
+        { kind: "file", path: "/repo/a.ts", lineStart: 2 },
       ),
     ).toBe(false);
   });

@@ -144,6 +144,28 @@ export function workspaceTabTargetsEqual(
   return false;
 }
 
+/**
+ * Stricter than {@link workspaceTabTargetsEqual}: also compares the parts that
+ * are deliberately excluded from tab *identity* but still belong to the stored
+ * target. Today the only such part is a diff tab's `focusPath`, which drives
+ * scroll-to-file. Use this to decide whether re-opening an already-matched tab
+ * actually needs its stored target refreshed — `workspaceTabTargetsEqual` would
+ * report a focusPath-only change as "equal" and skip the update, leaving the
+ * panel scrolled at the previous file.
+ */
+export function workspaceTabTargetsFullyEqual(
+  left: WorkspaceTabTarget,
+  right: WorkspaceTabTarget,
+): boolean {
+  if (!workspaceTabTargetsEqual(left, right)) {
+    return false;
+  }
+  if (left.kind === "diff" && right.kind === "diff") {
+    return (left.focusPath ?? null) === (right.focusPath ?? null);
+  }
+  return true;
+}
+
 function workspaceDraftTabSetupsEqual(
   left: WorkspaceDraftTabSetup | undefined,
   right: WorkspaceDraftTabSetup | undefined,

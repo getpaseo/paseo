@@ -7,6 +7,7 @@ import {
   buildDeterministicWorkspaceTabId,
   normalizeWorkspaceTabTarget,
   workspaceTabTargetsEqual,
+  workspaceTabTargetsFullyEqual,
 } from "@/workspace-tabs/identity";
 
 export interface SplitPane {
@@ -1073,7 +1074,12 @@ function updateExistingTabTarget(
   tab: WorkspaceTab,
   target: WorkspaceTabTarget,
 ): WorkspaceLayout {
-  if (workspaceTabTargetsEqual(tab.target, target)) {
+  // Identity-equal tabs were already matched by findExistingTabForTarget; gate on
+  // the *fully* structural comparison so non-identity parts that still live on the
+  // stored target (a diff tab's focusPath) refresh when a re-open supplies a new
+  // value. Using workspaceTabTargetsEqual here would treat a focusPath-only change
+  // as a no-op and leave the diff panel scrolled at the previous file.
+  if (workspaceTabTargetsFullyEqual(tab.target, target)) {
     return layout;
   }
   return withNormalizedParentTabMap({

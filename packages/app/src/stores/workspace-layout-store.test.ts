@@ -386,6 +386,40 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("reuses the working diff tab and refreshes focusPath when re-opened for a new file", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    const firstTabId = store.openTabFocused(workspaceKey, {
+      kind: "diff",
+      diffTarget: { kind: "working", mode: "uncommitted" },
+      focusPath: "src/a.ts",
+    });
+    const secondTabId = store.openTabFocused(workspaceKey, {
+      kind: "diff",
+      diffTarget: { kind: "working", mode: "uncommitted" },
+      focusPath: "src/b.ts",
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    // focusPath is excluded from tab identity, so both opens resolve to the SAME
+    // single working diff tab — but the stored focusPath must update to the new
+    // file so the diff panel scrolls there.
+    expect(firstTabId).toBe("diff_working:uncommitted:");
+    expect(secondTabId).toBe(firstTabId);
+    expect(collectAllTabs(layout.root)).toEqual([
+      {
+        tabId: "diff_working:uncommitted:",
+        target: {
+          kind: "diff",
+          diffTarget: { kind: "working", mode: "uncommitted" },
+          focusPath: "src/b.ts",
+        },
+        createdAt: expect.any(Number),
+      },
+    ]);
+  });
+
   it("openTabInBackground inserts a tab without stealing focus", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
