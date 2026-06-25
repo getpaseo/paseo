@@ -797,14 +797,12 @@ export class ACPAgentClient implements AgentClient {
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     const { cwd } = options;
     const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
-    const transportRef: { current: ACPProcessTransport | null } = { current: null };
+    let probe: SpawnedACPProcess | null = null;
     try {
       const catalogProbe = (async () => {
-        const activeTransport = await this.spawnTransport(PROBE_ENV);
-        transportRef.current = activeTransport;
-        await this.initializeTransport(activeTransport, timeoutMs);
+        probe = await this.spawnProcess(PROBE_ENV, { initializeTimeoutMs: timeoutMs });
         const response = await this.runACPRequest(() =>
-          activeTransport.connection.newSession({
+          probe!.connection.newSession({
             cwd,
             mcpServers: [],
           }),
@@ -832,9 +830,8 @@ export class ACPAgentClient implements AgentClient {
         `ACP catalog probe timed out after ${timeoutMs}ms`,
       );
     } finally {
-      const activeTransport = transportRef.current;
-      if (activeTransport) {
-        await terminateChildProcess(activeTransport.child, 2_000, this.terminateProcess);
+      if (probe) {
+        await this.closeProbe(probe);
       }
     }
   }
