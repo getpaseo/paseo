@@ -5,6 +5,7 @@ import path from "node:path";
 import type pino from "pino";
 
 import type { ManagedAgent, ProviderAvailability } from "../../agent/agent-manager.js";
+import type { WebSocketRuntimeDiagnosticSnapshot } from "../../websocket/runtime-metrics.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 import { execCommand } from "../../../utils/spawn.js";
 import type { DaemonRuntimeConfig } from "./daemon-session.js";
@@ -23,7 +24,29 @@ export interface DaemonDiagnosticsOptions {
   listProjects: () => Promise<PersistedProjectRecord[]>;
   listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
+  getWebSocketRuntimeMetrics: () => WebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
+}
+
+interface DiagnosticWebSocketRuntimeMetrics {
+  terminalDirectorySubscriptionCount?: number;
+  terminalSubscriptionCount?: number;
+  inflightRequests?: number;
+  peakInflightRequests?: number;
+  checkoutDiffTargetCount?: number;
+  checkoutDiffSubscriptionCount?: number;
+  checkoutDiffWatcherCount?: number;
+  checkoutDiffFallbackRefreshTargetCount?: number;
+}
+
+interface DiagnosticAgentRuntimeMetrics {
+  total?: number;
+  byLifecycle?: Record<string, number>;
+  withActiveForegroundTurn?: number;
+  timelineStats?: {
+    totalItems?: number;
+    maxItemsPerAgent?: number;
+  };
 }
 
 const TOOL_TIMEOUT_MS = 3_000;
@@ -54,6 +77,13 @@ export async function collectDaemonDiagnostics(options: DaemonDiagnosticsOptions
   );
   sections.push(
     await safeSection("Providers", () => collectProviderEntries(options), options.logger),
+  );
+  sections.push(
+    await safeSection(
+      "WebSocket runtime metrics",
+      () => collectWebSocketRuntimeEntries(options),
+      options.logger,
+    ),
   );
   sections.push(await safeSection("Tools", collectToolEntries, options.logger));
   sections.push(await safeLogTailSection(options));
@@ -197,6 +227,154 @@ async function collectToolEntries(): Promise<DiagnosticEntry[]> {
     { label: "git", value: git },
     { label: "gh", value: gh },
   ];
+}
+
+function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): DiagnosticEntry[] {
+  const snapshot = options.getWebSocketRuntimeMetrics();
+  if (!snapshot) {
+    return [{ label: "Status", value: "no runtime metrics window has been flushed yet" }];
+  }
+
+  const runtime = snapshot.runtime as DiagnosticWebSocketRuntimeMetrics;
+  const agents = snapshot.agents as DiagnosticAgentRuntimeMetrics;
+
+  return [
+    { label: "Collected at", value: snapshot.collectedAt },
+    { label: "Window", value: formatDurationMs(snapshot.windowMs) },
+    { label: "Final", value: String(snapshot.final) },
+    {
+      label: "Sessions",
+      value: [
+        `active=${snapshot.sessions.activeConnections}`,
+        `externalKeys=${snapshot.sessions.externalSessionKeys}`,
+        `reconnectGrace=${snapshot.sessions.reconnectGraceSessions}`,
+      ].join(", "),
+    },
+    {
+      label: "Sockets",
+      value: [
+        `active=${snapshot.sockets.activeSockets}`,
+        `pending=${snapshot.sockets.pendingConnections}`,
+      ].join(", "),
+    },
+    {
+      label: "Runtime requests",
+      value: [
+        `inflight=${formatNumberMetric(runtime.inflightRequests)}`,
+        `peakInflight=${formatNumberMetric(runtime.peakInflightRequests)}`,
+      ].join(", "),
+    },
+    {
+      label: "Terminal subscriptions",
+      value: [
+        `terminals=${formatNumberMetric(runtime.terminalSubscriptionCount)}`,
+        `directories=${formatNumberMetric(runtime.terminalDirectorySubscriptionCount)}`,
+      ].join(", "),
+    },
+    {
+      label: "Checkout diff",
+      value: [
+        `targets=${formatNumberMetric(runtime.checkoutDiffTargetCount)}`,
+        `subscriptions=${formatNumberMetric(runtime.checkoutDiffSubscriptionCount)}`,
+        `watchers=${formatNumberMetric(runtime.checkoutDiffWatcherCount)}`,
+        `fallbackRefreshTargets=${formatNumberMetric(
+          runtime.checkoutDiffFallbackRefreshTargetCount,
+        )}`,
+      ].join(", "),
+    },
+    {
+      label: "Buffered amount",
+      value: `p95=${formatBytes(snapshot.bufferedAmount.p95)}, max=${formatBytes(
+        snapshot.bufferedAmount.max,
+      )}`,
+    },
+    { label: "Event loop delay", value: formatEventLoopDelay(snapshot.eventLoopDelay) },
+    { label: "Latency", value: formatLatencyStats(snapshot.latency) },
+    { label: "Inbound messages", value: formatTopCounts(snapshot.inboundMessageTypesTop) },
+    {
+      label: "Inbound session requests",
+      value: formatTopCounts(snapshot.inboundSessionRequestTypesTop),
+    },
+    { label: "Outbound messages", value: formatTopCounts(snapshot.outboundMessageTypesTop) },
+    {
+      label: "Outbound session messages",
+      value: formatTopCounts(snapshot.outboundSessionMessageTypesTop),
+    },
+    { label: "Agent streams", value: formatTopCounts(snapshot.outboundAgentStreamTypesTop) },
+    { label: "Agent stream agents", value: formatTopCounts(snapshot.outboundAgentStreamAgentsTop) },
+    { label: "Binary frames", value: formatTopCounts(snapshot.outboundBinaryFrameTypesTop) },
+    { label: "Counters", value: formatNonZeroNumberRecord(snapshot.counters) },
+    {
+      label: "Agent metrics",
+      value: [
+        `total=${formatNumberMetric(agents.total)}`,
+        `activeForegroundTurns=${formatNumberMetric(agents.withActiveForegroundTurn)}`,
+      ].join(", "),
+    },
+    { label: "Agent lifecycle", value: formatNumberRecord(agents.byLifecycle) },
+    {
+      label: "Agent timelines",
+      value: [
+        `items=${formatNumberMetric(agents.timelineStats?.totalItems)}`,
+        `maxPerAgent=${formatNumberMetric(agents.timelineStats?.maxItemsPerAgent)}`,
+      ].join(", "),
+    },
+  ];
+}
+
+function formatTopCounts(counts: Array<[string, number]>): string {
+  if (counts.length === 0) return "none";
+  return counts.map(([key, count]) => `${key}=${count}`).join(", ");
+}
+
+function formatLatencyStats(stats: WebSocketRuntimeDiagnosticSnapshot["latency"]): string {
+  if (stats.length === 0) return "none";
+  return stats
+    .map(
+      (stat) =>
+        `${stat.type} count=${stat.count} p50=${formatMilliseconds(
+          stat.p50Ms,
+        )} max=${formatMilliseconds(stat.maxMs)} total=${formatMilliseconds(stat.totalMs)}`,
+    )
+    .join("; ");
+}
+
+function formatEventLoopDelay(stats: WebSocketRuntimeDiagnosticSnapshot["eventLoopDelay"]): string {
+  if (!stats) return "unavailable";
+  return `p50=${formatMilliseconds(stats.p50Ms)}, p99=${formatMilliseconds(
+    stats.p99Ms,
+  )}, max=${formatMilliseconds(stats.maxMs)}`;
+}
+
+function formatNumberRecord(record: object | undefined): string {
+  if (!record) return "unknown";
+  const entries = Object.entries(record).filter(([, value]) => Number.isFinite(value));
+  if (entries.length === 0) return "none";
+  return entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
+
+function formatNonZeroNumberRecord(record: object): string {
+  const entries = Object.entries(record).filter(
+    ([, value]) => Number.isFinite(value) && value !== 0,
+  );
+  if (entries.length === 0) return "none";
+  return entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
+
+function formatNumberMetric(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
+  return String(value);
+}
+
+function formatMilliseconds(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "unknown";
+  return `${Math.round(ms)}ms`;
 }
 
 async function checkTool(command: string, args: string[]): Promise<string> {

@@ -61,6 +61,7 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import type { WebSocketRuntimeDiagnosticSnapshot } from "./websocket/runtime-metrics.js";
 
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -463,6 +464,7 @@ export interface SessionOptions {
   serverId?: string;
   daemonVersion?: string;
   daemonRuntimeConfig?: DaemonRuntimeConfig;
+  getWebSocketRuntimeMetrics?: () => WebSocketRuntimeDiagnosticSnapshot | null;
 }
 
 export type SessionLifecycleIntent =
@@ -632,6 +634,7 @@ export class Session {
       serverId,
       daemonVersion,
       daemonRuntimeConfig,
+      getWebSocketRuntimeMetrics,
     } = options;
     this.clientId = clientId;
     this.appVersion = appVersion ?? null;
@@ -779,6 +782,7 @@ export class Session {
       serverId,
       daemonVersion,
       daemonRuntimeConfig,
+      getWebSocketRuntimeMetrics,
       listProviderAvailability: () => this.agentManager.listProviderAvailability(),
       listAgents: () => this.agentManager.listAgents(),
       listProjects: () => this.projectRegistry.list(),

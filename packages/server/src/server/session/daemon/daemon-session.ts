@@ -5,6 +5,7 @@ import { getPidLockInfo } from "../../pid-lock.js";
 import { generateLocalPairingOffer } from "../../pairing-offer.js";
 import { collectDaemonDiagnostics } from "./diagnostics.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { WebSocketRuntimeDiagnosticSnapshot } from "../../websocket/runtime-metrics.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 export interface DaemonRuntimeConfig {
@@ -33,6 +34,7 @@ export interface DaemonSessionOptions {
   listProjects: () => Promise<PersistedProjectRecord[]>;
   listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
+  getWebSocketRuntimeMetrics?: () => WebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
 }
 
@@ -53,6 +55,7 @@ export class DaemonSession {
   private readonly listProjects: () => Promise<PersistedProjectRecord[]>;
   private readonly listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   private readonly listProviderAvailability: () => Promise<ProviderAvailability[]>;
+  private readonly getWebSocketRuntimeMetrics: () => WebSocketRuntimeDiagnosticSnapshot | null;
   private readonly logger: pino.Logger;
 
   constructor(options: DaemonSessionOptions) {
@@ -65,6 +68,7 @@ export class DaemonSession {
     this.listProjects = options.listProjects;
     this.listWorkspaces = options.listWorkspaces;
     this.listProviderAvailability = options.listProviderAvailability;
+    this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.logger = options.logger;
   }
 
@@ -162,6 +166,7 @@ export class DaemonSession {
         listProjects: this.listProjects,
         listWorkspaces: this.listWorkspaces,
         listProviderAvailability: this.listProviderAvailability,
+        getWebSocketRuntimeMetrics: this.getWebSocketRuntimeMetrics,
         logger: this.logger,
       });
       this.host.emit({
