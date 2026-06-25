@@ -295,6 +295,17 @@ export const zhCN: TranslationResources = {
       completed: "上下文已压缩",
     },
   },
+  markdown: {
+    mermaid: {
+      diagram: "Diagram",
+      source: "Source",
+      viewDiagram: "View diagram",
+      viewSource: "View source",
+      renderFailed: "Diagram failed to render",
+      openFullscreen: "Open fullscreen",
+      closeFullscreen: "Close fullscreen",
+    },
+  },
   importSession: {
     title: "导入会话",
     filters: {

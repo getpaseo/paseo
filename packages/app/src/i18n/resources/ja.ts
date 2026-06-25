@@ -298,6 +298,17 @@ export const ja: TranslationResources = {
       completed: "コンテキストを圧縮しました",
     },
   },
+  markdown: {
+    mermaid: {
+      diagram: "Diagram",
+      source: "Source",
+      viewDiagram: "View diagram",
+      viewSource: "View source",
+      renderFailed: "Diagram failed to render",
+      openFullscreen: "Open fullscreen",
+      closeFullscreen: "Close fullscreen",
+    },
+  },
   importSession: {
     title: "セッションをインポート",
     filters: {

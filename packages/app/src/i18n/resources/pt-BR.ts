@@ -298,6 +298,17 @@ export const ptBR: TranslationResources = {
       completed: "Contexto compactado",
     },
   },
+  markdown: {
+    mermaid: {
+      diagram: "Diagram",
+      source: "Source",
+      viewDiagram: "View diagram",
+      viewSource: "View source",
+      renderFailed: "Diagram failed to render",
+      openFullscreen: "Open fullscreen",
+      closeFullscreen: "Close fullscreen",
+    },
+  },
   importSession: {
     title: "Importar sessão",
     filters: {
