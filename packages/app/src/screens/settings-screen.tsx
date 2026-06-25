@@ -383,7 +383,7 @@ function GeneralSection({
             >
               <Text style={styles.themeTriggerText}>{selectedLanguageLabel}</Text>
             </DropdownTrigger>
-            <DropdownMenuContent side="bottom" align="end" width={220}>
+            <DropdownMenuContent side="bottom" align="end" width={300}>
               {LANGUAGE_OPTIONS.map((option) => (
                 <LanguageMenuItem
                   key={option.value}

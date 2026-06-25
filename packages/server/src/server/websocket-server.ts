@@ -350,7 +350,6 @@ export class VoiceAssistantWebSocketServer {
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
-  private readonly socketMessageQueues: Map<WebSocketLike, Promise<void>> = new Map();
   private readonly serverId: string;
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig:
@@ -1209,7 +1208,7 @@ export class VoiceAssistantWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      this.enqueueRawMessage(ws, data);
+      this.handleRawMessage(ws, data);
     });
 
     ws.on("close", async (...args: unknown[]) => {
@@ -1230,25 +1229,6 @@ export class VoiceAssistantWebSocketServer {
       log.error({ err }, "Client error");
       await this.detachSocket(ws, { error: err });
     });
-  }
-
-  private enqueueRawMessage(
-    ws: WebSocketLike,
-    data: Buffer | ArrayBuffer | Buffer[] | string,
-  ): void {
-    const previous = this.socketMessageQueues.get(ws) ?? Promise.resolve();
-    const next = previous.then(
-      () => this.handleRawMessage(ws, data),
-      () => this.handleRawMessage(ws, data),
-    );
-    this.socketMessageQueues.set(ws, next);
-    void next
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.socketMessageQueues.get(ws) === next) {
-          this.socketMessageQueues.delete(ws);
-        }
-      });
   }
 
   public resolveVoiceSpeakHandler(callerAgentId: string): VoiceSpeakHandler | null {
@@ -1430,12 +1410,12 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  private async maybeHandleBinaryFrame(params: {
+  private maybeHandleBinaryFrame(params: {
     ws: WebSocketLike;
     buffer: Buffer;
     activeConnection: SessionConnection | undefined;
     log: pino.Logger;
-  }): Promise<boolean> {
+  }): boolean {
     const { ws, buffer, activeConnection, log } = params;
     const asBytes = asUint8Array(buffer);
     if (!asBytes) {
@@ -1456,7 +1436,16 @@ export class VoiceAssistantWebSocketServer {
       }
       return true;
     }
-    await activeConnection.session.handleBinaryFrame(decodedFrame);
+    void Promise.resolve(activeConnection.session.handleBinaryFrame(decodedFrame)).catch(
+      (error: unknown) => {
+        this.handleRawMessageError({
+          ws,
+          data: buffer,
+          error,
+          log: activeConnection.connectionLogger,
+        });
+      },
+    );
     return true;
   }
 
@@ -1490,10 +1479,10 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private async handleRawMessage(
+  private handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
-  ): Promise<void> {
+  ): void {
     const activeConnection = this.sessions.get(ws);
     const pendingConnection = this.pendingConnections.get(ws);
     const log =
@@ -1501,7 +1490,7 @@ export class VoiceAssistantWebSocketServer {
 
     try {
       const buffer = bufferFromWsData(data);
-      const binaryHandled = await this.maybeHandleBinaryFrame({
+      const binaryHandled = this.maybeHandleBinaryFrame({
         ws,
         buffer,
         activeConnection,
@@ -1564,7 +1553,9 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
-        await this.dispatchSessionMessage(activeConnection, message);
+        void this.dispatchSessionMessage(activeConnection, message).catch((error: unknown) => {
+          this.handleRawMessageError({ ws, data, error, log: activeConnection.connectionLogger });
+        });
       }
     } catch (error) {
       this.handleRawMessageError({ ws, data, error, log });
