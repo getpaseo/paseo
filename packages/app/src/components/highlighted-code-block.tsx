@@ -133,7 +133,7 @@ interface SplitStyles {
 const CONTAINER_BASE: ViewStyle = { position: "relative" };
 const WEB_SELECTABLE: TextStyle = isWeb ? ({ userSelect: "text" } as TextStyle) : {};
 
-function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): SplitStyles {
+export function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): SplitStyles {
   const { fontFamily, fontSize, color, ...box } = textStyle;
   const textOnly: TextStyle = { ...WEB_SELECTABLE };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
