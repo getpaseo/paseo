@@ -8,9 +8,9 @@ import {
   type DaemonRuntimeConfig,
   type DaemonSessionHost,
 } from "./daemon-session.js";
+import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./diagnostics.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { SessionOutboundMessage } from "../../messages.js";
-import type { WebSocketRuntimeDiagnosticSnapshot } from "../../websocket/runtime-metrics.js";
 
 const tempDirs: string[] = [];
 
@@ -31,7 +31,7 @@ function makeSubsystem(overrides: {
   daemonVersion?: string;
   daemonRuntimeConfig?: DaemonRuntimeConfig;
   listProviderAvailability?: () => Promise<ProviderAvailability[]>;
-  getWebSocketRuntimeMetrics?: () => WebSocketRuntimeDiagnosticSnapshot | null;
+  getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const host: DaemonSessionHost = { emit: (msg) => emitted.push(msg) };

@@ -24,30 +24,35 @@ export interface DaemonDiagnosticsOptions {
   listProjects: () => Promise<PersistedProjectRecord[]>;
   listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
-  getWebSocketRuntimeMetrics: () => WebSocketRuntimeDiagnosticSnapshot | null;
+  getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
 }
 
 interface DiagnosticWebSocketRuntimeMetrics {
-  terminalDirectorySubscriptionCount?: number;
-  terminalSubscriptionCount?: number;
-  inflightRequests?: number;
-  peakInflightRequests?: number;
-  checkoutDiffTargetCount?: number;
-  checkoutDiffSubscriptionCount?: number;
-  checkoutDiffWatcherCount?: number;
-  checkoutDiffFallbackRefreshTargetCount?: number;
+  terminalDirectorySubscriptionCount: number;
+  terminalSubscriptionCount: number;
+  inflightRequests: number;
+  peakInflightRequests: number;
+  checkoutDiffTargetCount: number;
+  checkoutDiffSubscriptionCount: number;
+  checkoutDiffWatcherCount: number;
+  checkoutDiffFallbackRefreshTargetCount: number;
 }
 
 interface DiagnosticAgentRuntimeMetrics {
-  total?: number;
-  byLifecycle?: Record<string, number>;
-  withActiveForegroundTurn?: number;
-  timelineStats?: {
-    totalItems?: number;
-    maxItemsPerAgent?: number;
+  total: number;
+  byLifecycle: Record<string, number>;
+  withActiveForegroundTurn: number;
+  timelineStats: {
+    totalItems: number;
+    maxItemsPerAgent: number;
   };
 }
+
+export type DaemonWebSocketRuntimeDiagnosticSnapshot = WebSocketRuntimeDiagnosticSnapshot<
+  DiagnosticWebSocketRuntimeMetrics,
+  DiagnosticAgentRuntimeMetrics
+>;
 
 const TOOL_TIMEOUT_MS = 3_000;
 const TOOL_OUTPUT_LIMIT = 512;
@@ -235,8 +240,8 @@ function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): Diag
     return [{ label: "Status", value: "no runtime metrics window has been flushed yet" }];
   }
 
-  const runtime = snapshot.runtime as DiagnosticWebSocketRuntimeMetrics;
-  const agents = snapshot.agents as DiagnosticAgentRuntimeMetrics;
+  const runtime = snapshot.runtime;
+  const agents = snapshot.agents;
 
   return [
     { label: "Collected at", value: snapshot.collectedAt },
@@ -327,7 +332,7 @@ function formatTopCounts(counts: Array<[string, number]>): string {
   return counts.map(([key, count]) => `${key}=${count}`).join(", ");
 }
 
-function formatLatencyStats(stats: WebSocketRuntimeDiagnosticSnapshot["latency"]): string {
+function formatLatencyStats(stats: DaemonWebSocketRuntimeDiagnosticSnapshot["latency"]): string {
   if (stats.length === 0) return "none";
   return stats
     .map(
@@ -339,7 +344,9 @@ function formatLatencyStats(stats: WebSocketRuntimeDiagnosticSnapshot["latency"]
     .join("; ");
 }
 
-function formatEventLoopDelay(stats: WebSocketRuntimeDiagnosticSnapshot["eventLoopDelay"]): string {
+function formatEventLoopDelay(
+  stats: DaemonWebSocketRuntimeDiagnosticSnapshot["eventLoopDelay"],
+): string {
   if (!stats) return "unavailable";
   return `p50=${formatMilliseconds(stats.p50Ms)}, p99=${formatMilliseconds(
     stats.p99Ms,
