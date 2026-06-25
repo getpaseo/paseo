@@ -16,12 +16,7 @@ import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { uploadFileAttachments } from "@/composer/actions";
-import {
-  getMimeTypeFromPath,
-  isRasterImageFile,
-  isRasterImagePath,
-} from "@/attachments/file-types";
-import { readDesktopFileBytes } from "@/hooks/use-file-picker";
+import { getMimeTypeFromPath, isRasterImageFile } from "@/attachments/file-types";
 import type { DroppedItem } from "@/hooks/use-file-drop-zone";
 import type { UserComposerAttachment } from "@/attachments/types";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
@@ -57,6 +52,7 @@ import {
   clearHistorySyncErrorAfterSuccessfulSync,
   reconcileMissingAgentStateWithPresentAgent,
 } from "@/panels/agent-panel-load-state";
+import { appendDroppedFilePathText } from "@/file-drops/file-drop-paths";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -734,25 +730,18 @@ function ChatAgentContent({
   const handleGenericFilesDropped = useCallback(
     async (items: DroppedItem[]) => {
       if (!client || !isConnected) return;
-      const nonImageItems = items.filter((item) => {
-        if (item.kind === "web-file") return !isRasterImageFile(item.file);
-        return !isRasterImagePath(item.path);
-      });
+      const nonImageItems = items.filter(
+        (item): item is Extract<DroppedItem, { kind: "web-file" }> =>
+          item.kind === "web-file" && !isRasterImageFile(item.file),
+      );
       if (nonImageItems.length === 0) return;
       try {
         const files = await Promise.all(
-          nonImageItems.map(async (item) => {
-            if (item.kind === "web-file") {
-              return {
-                fileName: item.file.name,
-                mimeType: item.file.type || getMimeTypeFromPath(item.file.name),
-                bytes: new Uint8Array(await item.file.arrayBuffer()),
-              };
-            }
-            const fileName = item.path.split("/").pop() ?? item.path.split("\\").pop() ?? item.path;
-            const bytes = await readDesktopFileBytes(item.path);
-            return { fileName, mimeType: getMimeTypeFromPath(item.path), bytes };
-          }),
+          nonImageItems.map(async (item) => ({
+            fileName: item.file.name,
+            mimeType: item.file.type || getMimeTypeFromPath(item.file.name),
+            bytes: new Uint8Array(await item.file.arrayBuffer()),
+          })),
         );
         const uploaded = await uploadFileAttachments({ client, files });
         addFilesRef.current?.(uploaded);
@@ -1210,6 +1199,17 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     }),
     [text, setText, attachments, setAttachments, clear, isHydrated, composerState],
   );
+  const handleTextDropped = useCallback(
+    (droppedText: string) => {
+      setText(
+        appendDroppedFilePathText({
+          currentText: text,
+          droppedText,
+        }),
+      );
+    },
+    [setText, text],
+  );
   const streamSection = (
     <RenderProfile id={`AgentStreamSection:${agentId}`}>
       <AgentStreamSection
@@ -1255,6 +1255,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         <FileDropZone
           onFilesDropped={handleFilesDropped}
           onGenericFilesDropped={handleGenericFilesDropped}
+          onTextDropped={handleTextDropped}
           disabled={isArchivingCurrentAgent}
         >
           <View style={styles.container}>

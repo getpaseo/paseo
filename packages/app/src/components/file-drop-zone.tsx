@@ -12,6 +12,7 @@ interface FileDropZoneProps {
   children: React.ReactNode;
   onFilesDropped: (files: ImageAttachment[]) => void;
   onGenericFilesDropped?: (items: DroppedItem[]) => void;
+  onTextDropped?: (text: string) => void;
   disabled?: boolean;
 }
 
@@ -21,6 +22,7 @@ export function FileDropZone({
   children,
   onFilesDropped,
   onGenericFilesDropped,
+  onTextDropped,
   disabled = false,
 }: FileDropZoneProps) {
   const { t } = useTranslation();
@@ -28,6 +30,7 @@ export function FileDropZone({
   const { isDragging, containerRef } = useFileDropZone({
     onFilesDropped,
     onGenericFilesDropped,
+    onTextDropped,
     disabled,
   });
 
@@ -47,24 +50,21 @@ export function FileDropZone({
     [overlayAnimatedStyle],
   );
 
-  // On non-web platforms, just render children
+  // On non-web platforms, just render children.
   if (!IS_WEB) {
     return children;
   }
 
   return (
     <View
-      // Cast ref for web - View renders as div on web
+      // Cast ref for web - View renders as div on web.
       ref={containerRef as unknown as React.RefObject<View>}
       style={styles.container}
     >
       {children}
 
-      {/* Drop overlay */}
       <Animated.View style={overlayStyle}>
-        {/* Backdrop */}
         <View style={styles.backdrop} />
-        {/* Content */}
         <View style={styles.overlayContent}>
           <Upload size={32} color={theme.colors.primary} />
           <Text style={styles.overlayText}>{t("composer.attachments.dropFilesHere")}</Text>
