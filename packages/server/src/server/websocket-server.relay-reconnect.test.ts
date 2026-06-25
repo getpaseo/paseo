@@ -681,6 +681,49 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("sends rpc_error when an async session request fails", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-session-request-failure",
+    });
+
+    const session = sessionMock.instances[0];
+    session.handleMessage.mockRejectedValueOnce(new Error("handler exploded"));
+
+    const sentBeforeRequest = socket.sent.length;
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "provider_diagnostic_request",
+          provider: "grok",
+          requestId: "failing-provider-diagnostic",
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(sentEnvelopes(socket).slice(sentBeforeRequest)).toContainEqual({
+        type: "session",
+        message: {
+          type: "rpc_error",
+          payload: {
+            requestId: "failing-provider-diagnostic",
+            requestType: "provider_diagnostic_request",
+            error: "Invalid message",
+            code: "invalid_message",
+          },
+        },
+      });
+    });
+
+    await server.close();
+  });
+
   test("reuses direct session when same clientId reconnects within grace window", async () => {
     const server = createServer();
     const clientId = "cid-direct-reconnect";
@@ -884,6 +927,47 @@ describe("relay external socket reconnect behavior", () => {
     expect(frame.opcode).toBe(TerminalStreamOpcode.Input);
     expect(frame.slot).toBe(9);
     expect(new TextDecoder().decode(frame.payload)).toBe("ls\r");
+
+    await server.close();
+  });
+
+  test("sends status error when async binary frame handling fails", async () => {
+    const server = createServer();
+
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-binary-inbound-failure",
+    });
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0];
+    session.handleBinaryFrame.mockRejectedValueOnce(new Error("binary exploded"));
+
+    const sentBeforeFrame = socket.sent.length;
+    socket.emit(
+      "message",
+      Buffer.from(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Input,
+          slot: 11,
+          payload: new TextEncoder().encode("pwd\r"),
+        }),
+      ),
+    );
+
+    await vi.waitFor(() => {
+      expect(sentEnvelopes(socket).slice(sentBeforeFrame)).toContainEqual({
+        type: "session",
+        message: {
+          type: "status",
+          payload: {
+            status: "error",
+            message: "Invalid message: binary exploded",
+          },
+        },
+      });
+    });
 
     await server.close();
   });

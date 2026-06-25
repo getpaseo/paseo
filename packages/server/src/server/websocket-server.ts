@@ -1438,8 +1438,12 @@ export class VoiceAssistantWebSocketServer {
     }
     void Promise.resolve(activeConnection.session.handleBinaryFrame(decodedFrame)).catch(
       (error: unknown) => {
-        const err = error instanceof Error ? error : new Error(String(error));
-        activeConnection.connectionLogger.error({ err }, "Failed to handle binary frame");
+        this.handleRawMessageError({
+          ws,
+          data: buffer,
+          error,
+          log: activeConnection.connectionLogger,
+        });
       },
     );
     return true;
@@ -1550,11 +1554,7 @@ export class VoiceAssistantWebSocketServer {
 
       if (message.type === "session") {
         void this.dispatchSessionMessage(activeConnection, message).catch((error: unknown) => {
-          const err = error instanceof Error ? error : new Error(String(error));
-          activeConnection.connectionLogger.error(
-            { err, requestType: message.message.type },
-            "Failed to dispatch session message",
-          );
+          this.handleRawMessageError({ ws, data, error, log: activeConnection.connectionLogger });
         });
       }
     } catch (error) {
