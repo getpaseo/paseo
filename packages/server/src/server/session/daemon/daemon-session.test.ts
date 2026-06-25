@@ -26,6 +26,14 @@ function makeHome(): string {
   return home;
 }
 
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
+
 function makeSubsystem(overrides: {
   serverId?: string;
   daemonVersion?: string;
@@ -210,6 +218,37 @@ describe("DaemonSession", () => {
     expect(message.payload.diagnostic).not.toContain("relay.secret.test:443");
     expect(message.payload.diagnostic).not.toContain("super-secret");
     expect(message.payload.diagnostic).not.toContain("pairing-secret");
+  });
+
+  test("diagnostics includes the PATH and shell visible to the daemon", async () => {
+    const originalPath = process.env.PATH;
+    const originalShell = process.env.SHELL;
+    const originalComSpec = process.env.ComSpec;
+    const originalCOMSPEC = process.env.COMSPEC;
+    try {
+      process.env.PATH = "/opt/paseo-test/bin:/usr/bin";
+      process.env.SHELL = "/bin/paseo-test-shell";
+      delete process.env.ComSpec;
+      delete process.env.COMSPEC;
+
+      const { subsystem, emitted } = makeSubsystem({});
+
+      await subsystem.handleDiagnosticsRequest({ type: "diagnostics.request", requestId: "d-env" });
+
+      expect(emitted).toHaveLength(1);
+      const message = emitted[0];
+      expect(message.type).toBe("diagnostics.response");
+      if (message.type !== "diagnostics.response") {
+        throw new Error("expected diagnostics response");
+      }
+      expect(message.payload.diagnostic).toContain("PATH: /opt/paseo-test/bin:/usr/bin");
+      expect(message.payload.diagnostic).toContain("Shell: SHELL=/bin/paseo-test-shell");
+    } finally {
+      restoreEnv("PATH", originalPath);
+      restoreEnv("SHELL", originalShell);
+      restoreEnv("ComSpec", originalComSpec);
+      restoreEnv("COMSPEC", originalCOMSPEC);
+    }
   });
 
   test("diagnostics includes the last flushed websocket runtime metrics", async () => {

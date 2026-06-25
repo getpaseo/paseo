@@ -119,6 +119,8 @@ function collectProcessEntries(options: DaemonDiagnosticsOptions): DiagnosticEnt
     { label: "PID", value: String(process.pid) },
     { label: "Node", value: process.version },
     { label: "Node path", value: process.execPath },
+    { label: "PATH", value: getEnvValue("PATH", "Path") ?? "unset" },
+    { label: "Shell", value: formatDaemonShell() },
     { label: "Uptime", value: formatDurationMs(process.uptime() * 1000) },
     { label: "Paseo home", value: options.paseoHome },
     { label: "RSS", value: formatBytes(memory.rss) },
@@ -487,6 +489,28 @@ function truncateForDiagnostic(value: string, maxLength: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, maxLength)}...(truncated)`;
+}
+
+function formatDaemonShell(): string {
+  const shell = getEnvValue("SHELL");
+  if (shell) return `SHELL=${shell}`;
+  const comspec = getEnvValue("ComSpec", "COMSPEC");
+  if (comspec) return `ComSpec=${comspec}`;
+  return "unset";
+}
+
+function getEnvValue(...names: string[]): string | null {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+
+  const lowerNames = new Set(names.map((name) => name.toLowerCase()));
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value && lowerNames.has(key.toLowerCase())) return value;
+  }
+
+  return null;
 }
 
 function toErrorMessage(error: unknown): string {
