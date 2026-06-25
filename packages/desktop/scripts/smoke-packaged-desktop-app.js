@@ -367,7 +367,7 @@ async function smokeCliShim({ appPath, env }) {
     args: ["daemon", "status"],
     label: "Bundled CLI shim daemon status",
   });
-  assertCleanDaemonStatusOutput(result.stdout);
+  assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
 }
 
 function assertCleanDaemonStatusOutput(output) {
