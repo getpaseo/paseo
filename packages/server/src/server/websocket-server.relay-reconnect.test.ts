@@ -425,6 +425,21 @@ async function attachDirectAndHello(params: {
   return serverInfo!;
 }
 
+function holdNextSessionMessage(session: (typeof sessionMock.instances)[number]): {
+  finish: () => void;
+} {
+  let finish = () => {};
+  session.handleMessage.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  return {
+    finish: () => finish(),
+  };
+}
+
 describe("relay external socket reconnect behavior", () => {
   beforeEach(() => {
     sessionMock.instances.length = 0;
@@ -591,15 +606,7 @@ describe("relay external socket reconnect behavior", () => {
     });
 
     const session = sessionMock.instances[0];
-    let finishProviderDiagnostic = () => {
-      throw new Error("provider diagnostic did not start");
-    };
-    session.handleMessage.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProviderDiagnostic = resolve;
-        }),
-    );
+    const providerDiagnostic = holdNextSessionMessage(session);
 
     const sentBeforeDiagnostic = socket.sent.length;
     socket.emit(
@@ -617,16 +624,61 @@ describe("relay external socket reconnect behavior", () => {
       expect(session.handleMessage).toHaveBeenCalledTimes(1);
     });
 
-    try {
-      socket.emit("message", JSON.stringify({ type: "ping" }));
-      await Promise.resolve();
+    socket.emit("message", JSON.stringify({ type: "ping" }));
+    await Promise.resolve();
 
-      expect(sentEnvelopes(socket).slice(sentBeforeDiagnostic)).toContainEqual({ type: "pong" });
-    } finally {
-      finishProviderDiagnostic();
-      await Promise.resolve();
-      await server.close();
-    }
+    expect(sentEnvelopes(socket).slice(sentBeforeDiagnostic)).toContainEqual({ type: "pong" });
+
+    providerDiagnostic.finish();
+    await Promise.resolve();
+    await server.close();
+  });
+
+  test("routes later session requests while provider diagnostic is still running", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-session-request-during-provider-diagnostic",
+    });
+
+    const session = sessionMock.instances[0];
+    const providerDiagnostic = holdNextSessionMessage(session);
+
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "provider_diagnostic_request",
+          provider: "grok",
+          requestId: "slow-provider-diagnostic",
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(session.handleMessage).toHaveBeenCalledTimes(1);
+    });
+
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "ping",
+          requestId: "second-session-request",
+          clientSentAt: Date.now(),
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(session.handleMessage).toHaveBeenCalledTimes(2);
+    });
+
+    providerDiagnostic.finish();
+    await Promise.resolve();
+    await server.close();
   });
 
   test("reuses direct session when same clientId reconnects within grace window", async () => {
