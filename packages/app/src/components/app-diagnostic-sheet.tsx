@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Platform,
   Pressable,
@@ -23,9 +23,10 @@ import {
   formatServerInfoSection,
   redactAppDiagnosticReport,
 } from "@/diagnostics/app-diagnostic-report";
-import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import type { HostProfile } from "@/types/host-connection";
 
 interface AppDiagnosticSheetProps {
   visible: boolean;
@@ -39,6 +40,11 @@ type ProgressStatus = "pending" | "running" | "done" | "failed";
 interface ProgressRow {
   id: string;
   label: string;
+  status: ProgressStatus;
+}
+
+interface DiagnosticCollectionResult {
+  sections: string[];
   status: ProgressStatus;
 }
 
@@ -62,6 +68,7 @@ export function AppDiagnosticSheet({
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<ProgressRow[]>([]);
+  const runIdRef = useRef(0);
 
   const updateProgress = useCallback((id: string, label: string, status: ProgressStatus) => {
     setProgress((current) => {
@@ -74,13 +81,22 @@ export function AppDiagnosticSheet({
   }, []);
 
   const runDiagnostics = useCallback(async () => {
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
+    const isCurrentRun = () => runIdRef.current === runId;
+    const updateRunProgress = (id: string, label: string, status: ProgressStatus) => {
+      if (isCurrentRun()) {
+        updateProgress(id, label, status);
+      }
+    };
+
     setLoading(true);
     setDiagnostic(null);
     setProgress([]);
 
     const sections: string[] = [];
     try {
-      updateProgress("client", t("settings.diagnostics.app.progress.client"), "running");
+      updateRunProgress("client", t("settings.diagnostics.app.progress.client"), "running");
       sections.push(
         formatAppDiagnosticHeader({
           appVersion,
@@ -89,94 +105,33 @@ export function AppDiagnosticSheet({
           hostCount: hosts.length,
         }),
       );
-      updateProgress("client", t("settings.diagnostics.app.progress.client"), "done");
+      updateRunProgress("client", t("settings.diagnostics.app.progress.client"), "done");
 
       if (isDesktopApp) {
-        updateProgress("desktop", t("settings.diagnostics.app.progress.desktop"), "running");
-        try {
-          const [status, logs] = await Promise.all([
-            getDesktopDaemonStatus(),
-            getDesktopDaemonLogs(),
-          ]);
-          sections.push(
-            formatDiagnosticSection("Desktop", [
-              { label: "Daemon status", value: status.status },
-              { label: "Desktop managed", value: String(status.desktopManaged) },
-              { label: "Daemon PID", value: status.pid === null ? "none" : String(status.pid) },
-              { label: "Daemon version", value: status.version ?? "unknown" },
-              { label: "Daemon home", value: status.home || "unknown" },
-              { label: "Log path", value: logs.logPath || "unknown" },
-              { label: "Error", value: status.error ?? "none" },
-            ]),
-          );
-          sections.push(
-            [
-              "Desktop daemon log tail",
-              logs.contents ? indentBlock(logs.contents) : "  No log lines found",
-            ].join("\n"),
-          );
-          updateProgress("desktop", t("settings.diagnostics.app.progress.desktop"), "done");
-        } catch (error) {
-          sections.push(
-            formatDiagnosticSection("Desktop", [{ label: "Error", value: toMessage(error) }]),
-          );
-          updateProgress("desktop", t("settings.diagnostics.app.progress.desktop"), "failed");
-        }
+        const desktopLabel = t("settings.diagnostics.app.progress.desktop");
+        updateRunProgress("desktop", desktopLabel, "running");
+        const desktopResult = await collectDesktopDiagnosticSections();
+        sections.push(...desktopResult.sections);
+        updateRunProgress("desktop", desktopLabel, desktopResult.status);
       }
 
       const store = getHostRuntimeStore();
       for (const host of hosts) {
         const hostProgressId = `host:${host.serverId}`;
-        updateProgress(hostProgressId, host.label, "running");
+        updateRunProgress(hostProgressId, host.label, "running");
         const snapshot = store.getSnapshot(host.serverId);
-        sections.push(formatHostRuntimeSection({ host, snapshot }));
-
-        const client = snapshot?.client ?? null;
-        if (snapshot?.connectionStatus !== "online" || !client) {
-          sections.push(
-            formatDiagnosticSection(`Host diagnostics: ${host.label}`, [
-              { label: "Status", value: "host is not connected" },
-            ]),
-          );
-          updateProgress(hostProgressId, host.label, "done");
-          continue;
-        }
-
-        try {
-          const serverInfo = client.getLastServerInfoMessage();
-          sections.push(formatServerInfoSection(serverInfo));
-
-          const rttMs = await client.measureLatency({ timeoutMs: 5000 });
-          sections.push(
-            formatDiagnosticSection(`Host latency: ${host.label}`, [
-              { label: "Active RTT", value: `${Math.round(rttMs)}ms` },
-            ]),
-          );
-
-          if (serverInfo?.features?.daemonDiagnostics === true) {
-            const result = await client.collectDiagnostics();
-            sections.push(result.diagnostic);
-          } else {
-            sections.push(
-              formatDiagnosticSection(`Daemon diagnostics: ${host.label}`, [
-                { label: "Status", value: "unsupported by this daemon" },
-              ]),
-            );
-          }
-          updateProgress(hostProgressId, host.label, "done");
-        } catch (error) {
-          sections.push(
-            formatDiagnosticSection(`Host diagnostics: ${host.label}`, [
-              { label: "Error", value: toMessage(error) },
-            ]),
-          );
-          updateProgress(hostProgressId, host.label, "failed");
-        }
+        const hostResult = await collectHostDiagnosticSections(host, snapshot);
+        sections.push(...hostResult.sections);
+        updateRunProgress(hostProgressId, host.label, hostResult.status);
       }
 
-      setDiagnostic(redactAppDiagnosticReport(sections.join("\n\n"), hosts));
+      if (isCurrentRun()) {
+        setDiagnostic(redactAppDiagnosticReport(sections.join("\n\n"), hosts));
+      }
     } finally {
-      setLoading(false);
+      if (isCurrentRun()) {
+        setLoading(false);
+      }
     }
   }, [appVersion, hosts, isDesktopApp, t, updateProgress]);
 
@@ -184,6 +139,8 @@ export function AppDiagnosticSheet({
     if (visible) {
       void runDiagnostics();
     } else {
+      runIdRef.current += 1;
+      setLoading(false);
       setDiagnostic(null);
       setProgress([]);
     }
@@ -315,6 +272,83 @@ export function AppDiagnosticSheet({
   );
 }
 
+async function collectDesktopDiagnosticSections(): Promise<DiagnosticCollectionResult> {
+  try {
+    const [status, logs] = await Promise.all([getDesktopDaemonStatus(), getDesktopDaemonLogs()]);
+    return {
+      status: "done",
+      sections: [
+        formatDiagnosticSection("Desktop", [
+          { label: "Daemon status", value: status.status },
+          { label: "Desktop managed", value: String(status.desktopManaged) },
+          { label: "Daemon PID", value: status.pid === null ? "none" : String(status.pid) },
+          { label: "Daemon version", value: status.version ?? "unknown" },
+          { label: "Daemon home", value: status.home || "unknown" },
+          { label: "Log path", value: logs.logPath || "unknown" },
+          { label: "Error", value: status.error ?? "none" },
+        ]),
+        [
+          "Desktop daemon log tail",
+          logs.contents ? indentBlock(logs.contents) : "  No log lines found",
+        ].join("\n"),
+      ],
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      sections: [formatDiagnosticSection("Desktop", [{ label: "Error", value: toMessage(error) }])],
+    };
+  }
+}
+
+async function collectHostDiagnosticSections(
+  host: HostProfile,
+  snapshot: HostRuntimeSnapshot | null,
+): Promise<DiagnosticCollectionResult> {
+  const sections = [formatHostRuntimeSection({ host, snapshot })];
+  const client = snapshot?.client ?? null;
+  if (snapshot?.connectionStatus !== "online" || !client) {
+    sections.push(
+      formatDiagnosticSection(`Host diagnostics: ${host.label}`, [
+        { label: "Status", value: "host is not connected" },
+      ]),
+    );
+    return { sections, status: "done" };
+  }
+
+  try {
+    const serverInfo = client.getLastServerInfoMessage();
+    sections.push(formatServerInfoSection(serverInfo));
+
+    const rttMs = await client.measureLatency({ timeoutMs: 5000 });
+    sections.push(
+      formatDiagnosticSection(`Host latency: ${host.label}`, [
+        { label: "Active RTT", value: `${Math.round(rttMs)}ms` },
+      ]),
+    );
+
+    if (serverInfo?.features?.daemonDiagnostics === true) {
+      const result = await client.collectDiagnostics();
+      sections.push(result.diagnostic);
+    } else {
+      sections.push(
+        formatDiagnosticSection(`Daemon diagnostics: ${host.label}`, [
+          { label: "Status", value: "unsupported by this daemon" },
+        ]),
+      );
+    }
+
+    return { sections, status: "done" };
+  } catch (error) {
+    sections.push(
+      formatDiagnosticSection(`Host diagnostics: ${host.label}`, [
+        { label: "Error", value: toMessage(error) },
+      ]),
+    );
+    return { sections, status: "failed" };
+  }
+}
+
 function indentBlock(value: string): string {
   return value
     .split("\n")
@@ -334,9 +368,8 @@ function formatProgressStatus(status: ProgressStatus): string {
     case "failed":
       return "failed";
     case "running":
-      return "running";
     case "pending":
-      return "pending";
+      return "running";
   }
 }
 
