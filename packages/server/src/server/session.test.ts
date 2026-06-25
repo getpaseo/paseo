@@ -65,7 +65,6 @@ interface SessionHandlerInternals {
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
-  createBranchFromBase(params: unknown): Promise<unknown>;
   handleCheckoutSwitchBranchRequest(params: unknown): Promise<unknown>;
   handleBranchSuggestionsRequest(params: unknown): Promise<unknown>;
   handleStashListRequest(params: unknown): Promise<unknown>;
@@ -3250,101 +3249,6 @@ describe("session branch validation", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
-  });
-});
-
-describe("session branch creation handling", () => {
-  test("validates the base branch through the workspace git service", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn(),
-      validateBranchRef: vi.fn().mockResolvedValue({ kind: "not-found" }),
-      hasLocalBranch: vi.fn(),
-    };
-    const session = createSessionForTest({ workspaceGitService });
-
-    await expect(
-      asSessionInternals(session).createBranchFromBase({
-        cwd: "/tmp/repo",
-        baseBranch: "missing-base",
-        newBranchName: "feature/new-work",
-      }),
-    ).rejects.toThrow("Base branch not found: missing-base");
-
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledWith("/tmp/repo", "missing-base");
-    expect(workspaceGitService.hasLocalBranch).not.toHaveBeenCalled();
-    expect(spawnMocks.execCommand).not.toHaveBeenCalledWith(
-      "git",
-      ["rev-parse", "--verify", "missing-base"],
-      { cwd: "/tmp/repo" },
-    );
-  });
-
-  test("checks local branch existence through the workspace git service", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn(),
-      validateBranchRef: vi.fn().mockResolvedValue({ kind: "local", name: "main" }),
-      hasLocalBranch: vi.fn().mockResolvedValue(true),
-    };
-    const session = createSessionForTest({ workspaceGitService });
-
-    await expect(
-      asSessionInternals(session).createBranchFromBase({
-        cwd: "/tmp/repo",
-        baseBranch: "main",
-        newBranchName: "feature/existing",
-      }),
-    ).rejects.toThrow("Branch already exists: feature/existing");
-
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledWith("/tmp/repo", "main");
-    expect(workspaceGitService.hasLocalBranch).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.hasLocalBranch).toHaveBeenCalledWith(
-      "/tmp/repo",
-      "feature/existing",
-    );
-    expect(spawnMocks.execCommand).not.toHaveBeenCalledWith(
-      "git",
-      ["show-ref", "--verify", "--quiet", "refs/heads/feature/existing"],
-      { cwd: "/tmp/repo" },
-    );
-  });
-
-  test("forces a workspace git snapshot refresh after creating a branch", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/repo", {
-          git: {
-            isDirty: false,
-          },
-        }),
-      ),
-      validateBranchRef: vi.fn().mockResolvedValue({ kind: "local", name: "main" }),
-      hasLocalBranch: vi.fn().mockResolvedValue(false),
-    };
-    const session = createSessionForTest({ workspaceGitService });
-    spawnMocks.execCommand.mockResolvedValue({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      signal: null,
-      truncated: false,
-    });
-
-    await asSessionInternals(session).createBranchFromBase({
-      cwd: "/tmp/repo",
-      baseBranch: "main",
-      newBranchName: "feature/new-work",
-    });
-
-    expect(spawnMocks.execCommand).toHaveBeenCalledWith(
-      "git",
-      ["checkout", "-b", "feature/new-work", "main"],
-      { cwd: "/tmp/repo" },
-    );
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
-      force: true,
-      reason: "create-branch",
-    });
   });
 });
 

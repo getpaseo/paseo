@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
+import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-service.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
@@ -113,7 +114,7 @@ interface SessionTestAccess {
     get(workspaceId: string): Promise<unknown>;
     upsert(record: unknown): Promise<unknown>;
   };
-  agentUpdatesSubscription: unknown;
+  agentUpdates: AgentUpdatesService;
   workspaceUpdatesSubscription: unknown;
   interruptAgentIfRunning(agentId: string): unknown;
   recreateOwningWorktreeForRestore(
@@ -128,7 +129,6 @@ interface SessionTestAccess {
     [key: string]: unknown;
   }>;
   reconcileAndEmitWorkspaceUpdates(...args: unknown[]): Promise<unknown>;
-  forwardAgentUpdate(...args: unknown[]): Promise<unknown>;
   handleArchiveAgentRequest(agentId: string, requestId: string): Promise<unknown>;
   handleMessage(message: unknown): Promise<unknown>;
   handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
@@ -180,6 +180,22 @@ type TestSession = SessionTestAccess;
 
 function asTestSession(session: Session | TestSession): TestSession {
   return asSessionInternals<TestSession>(session);
+}
+
+type AgentUpdatesSubscriptionFilter = Parameters<
+  AgentUpdatesService["beginSubscription"]
+>[0]["filter"];
+
+// Drives the agent-updates module to a live (non-bootstrapping) subscription —
+// the post-extraction equivalent of assigning a subscription with
+// `isBootstrapping: false`. begin → flush leaves an empty buffer and emits nothing.
+function activateAgentUpdatesSubscription(
+  session: TestSession,
+  subscriptionId: string,
+  filter?: AgentUpdatesSubscriptionFilter,
+): void {
+  session.agentUpdates.beginSubscription({ subscriptionId, filter });
+  session.agentUpdates.flushBootstrapped(subscriptionId);
 }
 
 const AgentIdEntrySchema = z.object({ agent: z.object({ id: z.string() }) });
@@ -491,8 +507,11 @@ class CreateAgentTestClient implements AgentClient {
     });
   }
 
-  async listModels() {
-    return [{ provider: this.provider, id: "gpt-test", label: "GPT Test", isDefault: true }];
+  async fetchCatalog() {
+    return {
+      models: [{ provider: this.provider, id: "gpt-test", label: "GPT Test", isDefault: true }],
+      modes: [],
+    };
   }
 
   async isAvailable(): Promise<boolean> {
@@ -1081,14 +1100,9 @@ test("agent_update placement does not refresh git snapshots", async () => {
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async (id: string) =>
     id === workspace.workspaceId ? workspace : null;
-  session.agentUpdatesSubscription = {
-    subscriptionId: "sub-agents",
-    filter: {},
-    isBootstrapping: false,
-    pendingUpdatesByAgentId: new Map(),
-  };
+  activateAgentUpdatesSubscription(session, "sub-agents", {});
 
-  await session.forwardAgentUpdate(
+  await session.agentUpdates.forwardLiveAgent(
     makeManagedAgent({
       id: "agent-1",
       cwd: REPO_CWD,
@@ -1128,14 +1142,9 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
     }),
   );
 
-  session.agentUpdatesSubscription = {
-    subscriptionId: "sub-agents",
-    filter: {},
-    isBootstrapping: false,
-    pendingUpdatesByAgentId: new Map(),
-  };
+  activateAgentUpdatesSubscription(session, "sub-agents", {});
 
-  await session.forwardAgentUpdate(
+  await session.agentUpdates.forwardLiveAgent(
     makeManagedAgent({
       id: "agent-1",
       cwd: UNREGISTERED_CWD,
@@ -1292,12 +1301,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
     }),
   );
 
-  session.agentUpdatesSubscription = {
-    subscriptionId: "sub-agents",
-    filter: { includeArchived: true },
-    isBootstrapping: false,
-    pendingUpdatesByAgentId: new Map(),
-  };
+  activateAgentUpdatesSubscription(session, "sub-agents", { includeArchived: true });
 
   await session.handleArchiveAgentRequest("agent-1", "req-archive");
 
@@ -1660,12 +1664,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     }),
   );
 
-  session.agentUpdatesSubscription = {
-    subscriptionId: "sub-agents",
-    filter: { includeArchived: true },
-    isBootstrapping: false,
-    pendingUpdatesByAgentId: new Map(),
-  };
+  activateAgentUpdatesSubscription(session, "sub-agents", { includeArchived: true });
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1847,12 +1846,7 @@ test("close_items_request archives stored agents that are not currently loaded",
     }),
   );
 
-  session.agentUpdatesSubscription = {
-    subscriptionId: "sub-agents",
-    filter: { includeArchived: true },
-    isBootstrapping: false,
-    pendingUpdatesByAgentId: new Map(),
-  };
+  activateAgentUpdatesSubscription(session, "sub-agents", { includeArchived: true });
 
   await session.handleMessage({
     type: "close_items_request",
@@ -2002,12 +1996,7 @@ test("close_items_request continues after an archive failure", async () => {
     }),
   );
 
-  session.agentUpdatesSubscription = {
-    subscriptionId: "sub-agents",
-    filter: { includeArchived: true },
-    isBootstrapping: false,
-    pendingUpdatesByAgentId: new Map(),
-  };
+  activateAgentUpdatesSubscription(session, "sub-agents", { includeArchived: true });
 
   await session.handleMessage({
     type: "close_items_request",
@@ -2390,7 +2379,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
       }),
     },
   ]);
-  expect(session.agentUpdatesSubscription).toBeNull();
+  expect(session.agentUpdates.hasSubscription()).toBe(false);
 });
 
 test("fetch_agent_history_request skips rows whose workspace project record is missing", async () => {
@@ -3598,7 +3587,7 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
   session.agentManager.setTitle = async () => undefined;
   session.agentStorage.list = async () => [];
   session.agentStorage.get = async () => null;
-  session.forwardAgentUpdate = async () => undefined;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   session.workspaceUpdatesSubscription = {
     subscriptionId: "sub-import",
@@ -4462,7 +4451,7 @@ test("refresh_agent_request unarchives the owning workspace when its directory e
   session.agentManager.reloadAgentSession = async () => managed;
   session.agentManager.hydrateTimelineFromProvider = async () => undefined;
   session.agentManager.getTimeline = () => [];
-  session.forwardAgentUpdate = async () => undefined;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   const unarchivedWorkspaceIds: string[][] = [];
   const realEmit = session.emitWorkspaceUpdatesForWorkspaceIds.bind(session);
@@ -4560,7 +4549,7 @@ test("refresh_agent_request leaves the owning workspace archived when its direct
   session.agentManager.reloadAgentSession = async () => managed;
   session.agentManager.hydrateTimelineFromProvider = async () => undefined;
   session.agentManager.getTimeline = () => [];
-  session.forwardAgentUpdate = async () => undefined;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   await session.handleMessage({
     type: "refresh_agent_request",
@@ -4657,7 +4646,7 @@ test("refresh_agent_request recreates a deleted worktree directory and unarchive
   session.agentManager.reloadAgentSession = async () => managed;
   session.agentManager.hydrateTimelineFromProvider = async () => undefined;
   session.agentManager.getTimeline = () => [];
-  session.forwardAgentUpdate = async () => undefined;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   const unarchivedWorkspaceIds: string[][] = [];
   const realEmit = session.emitWorkspaceUpdatesForWorkspaceIds.bind(session);
@@ -4761,7 +4750,7 @@ test("refresh_agent_request leaves the worktree archived and surfaces a typed er
   session.agentManager.reloadAgentSession = async () => managed;
   session.agentManager.hydrateTimelineFromProvider = async () => undefined;
   session.agentManager.getTimeline = () => [];
-  session.forwardAgentUpdate = async () => undefined;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   await session.handleMessage({
     type: "refresh_agent_request",
@@ -4891,7 +4880,7 @@ test("refresh_agent_request recreates a real deleted worktree against a temp git
   session.agentManager.reloadAgentSession = async () => managed;
   session.agentManager.hydrateTimelineFromProvider = async () => undefined;
   session.agentManager.getTimeline = () => [];
-  session.forwardAgentUpdate = async () => undefined;
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   await session.handleMessage({
     type: "refresh_agent_request",

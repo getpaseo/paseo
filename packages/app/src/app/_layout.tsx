@@ -28,6 +28,7 @@ import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { LeftSidebar } from "@/components/left-sidebar";
+import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
@@ -40,6 +41,7 @@ import {
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
+import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import {
   SidebarAnimationProvider,
   useSidebarAnimation,
@@ -54,7 +56,7 @@ import {
   startDaemonIfGateAllows,
   startHostRuntimeBootstrap,
   type StartupBlocker,
-} from "@/app/host-runtime-bootstrap";
+} from "@/navigation/host-runtime-bootstrap";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
@@ -465,14 +467,26 @@ function AppContainer({
   useActiveWorktreeNewAction();
   useGlobalNewWorkspaceAction();
 
+  const workspaceChrome = (
+    <View style={rowStyle}>
+      {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
+        <LeftSidebar selectedAgentId={selectedAgentId} />
+      )}
+      {isCompactLayout && chromeEnabled ? (
+        <ExplorerSidebarAnimationProvider>
+          <CompactExplorerSidebarHost enabled={chromeEnabled}>
+            <View style={flexStyle}>{children}</View>
+          </CompactExplorerSidebarHost>
+        </ExplorerSidebarAnimationProvider>
+      ) : (
+        <View style={flexStyle}>{children}</View>
+      )}
+    </View>
+  );
+
   const content = (
     <View style={layoutStyles.surfaceFill}>
-      <View style={rowStyle}>
-        {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
-          <LeftSidebar selectedAgentId={selectedAgentId} />
-        )}
-        <View style={flexStyle}>{children}</View>
-      </View>
+      {workspaceChrome}
       <FloatingPanelPortalHost />
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
@@ -863,8 +877,6 @@ function FaviconStatusSync() {
   return null;
 }
 
-const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
-
 function RootStack() {
   const storeReady = useStoreReady();
   const { theme } = useUnistyles();
@@ -889,19 +901,7 @@ function RootStack() {
         <Stack.Screen name="settings/projects/[projectKey]" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
-      {/*
-        Do not add getId or dangerouslySingular back to the workspace route.
-        Expo Router maps dangerouslySingular to React Navigation getId, and
-        getId repeatedly breaks Android native-stack/Fabric by reordering an
-        already-mounted workspace screen. Keep workspace identity/retention
-        outside this route-level native-stack API.
-      */}
-      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
-      <Stack.Screen name="h/[serverId]/index" />
-      <Stack.Screen name="h/[serverId]/sessions" />
-      <Stack.Screen name="h/[serverId]/open-project" />
-      <Stack.Screen name="h/[serverId]/settings" />
+      <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
     </Stack>

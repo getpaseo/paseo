@@ -26,20 +26,19 @@ import {
   type AgentTimelineItem,
   type ToolCallTimelineItem,
   type AgentUsage,
+  type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
-  type ListModelsOptions,
+  type ProviderCatalog,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import type { Logger } from "pino";
-import { homedir } from "node:os";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
-import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -79,18 +78,17 @@ import {
 } from "./codex/app-server-transport.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
+  materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "./provider-image-output.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import {
-  formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
   resolveBinaryVersion,
-  toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
 import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../provider-notices.js";
@@ -116,7 +114,6 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
-const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -1628,25 +1625,6 @@ function codexImageOutputFromResult(result: unknown): ProviderImageOutput | null
   };
 }
 
-function writeImageAttachmentSync(mimeType: string, data: string): string {
-  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
-  fsSync.mkdirSync(attachmentsDir, { recursive: true });
-  const normalized = normalizeImageData(mimeType, data);
-  const extension = getImageExtension(normalized.mimeType);
-  const filename = `${randomUUID()}.${extension}`;
-  const filePath = path.join(attachmentsDir, filename);
-  fsSync.writeFileSync(filePath, Buffer.from(normalized.data, "base64"));
-  return filePath;
-}
-
-function materializeCodexImageOutput(image: { data: string; mimeType: string | null }): {
-  path: string;
-} {
-  return {
-    path: writeImageAttachmentSync(image.mimeType ?? "image/png", image.data),
-  };
-}
-
 function mapCodexThreadImageItem(
   normalizedType: string,
   normalizedItem: Record<string, unknown>,
@@ -1666,7 +1644,7 @@ function mapCodexThreadImageItem(
       data: result?.data ?? null,
       mimeType: result?.mimeType ?? null,
     },
-    { materialize: materializeCodexImageOutput },
+    { materialize: materializeProviderImage },
   );
 }
 
@@ -1809,40 +1787,6 @@ function toSandboxPolicy(type: string, networkAccess?: boolean): Record<string, 
     default:
       return { type: "workspaceWrite", networkAccess: networkAccess ?? false };
   }
-}
-
-function getImageExtension(mimeType: string): string {
-  switch (mimeType) {
-    case "image/jpeg":
-      return "jpg";
-    case "image/png":
-      return "png";
-    case "image/webp":
-      return "webp";
-    case "image/gif":
-      return "gif";
-    case "image/bmp":
-      return "bmp";
-    case "image/tiff":
-      return "tiff";
-    default:
-      return "bin";
-  }
-}
-
-interface ImageDataPayload {
-  mimeType: string;
-  data: string;
-}
-
-function normalizeImageData(mimeType: string, data: string): ImageDataPayload {
-  if (data.startsWith("data:")) {
-    const match = data.match(/^data:([^;]+);base64,(.*)$/);
-    if (match) {
-      return { mimeType: match[1], data: match[2] };
-    }
-  }
-  return { mimeType, data };
 }
 
 const ThreadStartedNotificationSchema = z
@@ -2693,17 +2637,6 @@ const CodexNotificationSchema = z.union([
     ),
 ]);
 
-async function writeImageAttachment(mimeType: string, data: string): Promise<string> {
-  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
-  await fs.mkdir(attachmentsDir, { recursive: true });
-  const normalized = normalizeImageData(mimeType, data);
-  const extension = getImageExtension(normalized.mimeType);
-  const filename = `${randomUUID()}.${extension}`;
-  const filePath = path.join(attachmentsDir, filename);
-  await fs.writeFile(filePath, Buffer.from(normalized.data, "base64"));
-  return filePath;
-}
-
 async function readCodexConfiguredDefaults(
   client: CodexAppServerClient,
   logger: Logger,
@@ -2796,7 +2729,10 @@ export async function codexAppServerTurnInputFromPrompt(
     }
     if (block.type === "image") {
       try {
-        const filePath = await writeImageAttachment(block.mimeType, block.data);
+        const filePath = materializeProviderImage({
+          data: block.data,
+          mimeType: block.mimeType,
+        }).path;
         output.push({ type: "localImage", path: filePath });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -5561,7 +5497,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const models = await this.fetchModelsFromAppServer();
+    return { models, modes: CODEX_MODES };
+  }
+
+  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
     const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
@@ -5645,34 +5586,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     try {
       const launch = await resolveCodexLaunch(this.runtimeSettings);
       const availability = await checkCodexLaunchAvailable(launch);
-      const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
         ...(await buildCommandResolutionDiagnosticRows(launch, {
           knownBinaryNames: ["codex"],
         })),
         ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
-      let status = formatDiagnosticStatus(available);
-
-      if (!available) {
-        entries.push({ label: "Models", value: "Not checked" });
-      } else {
-        try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
-          entries.push({ label: "Models", value: String(models.length) });
-        } catch (error) {
-          entries.push({
-            label: "Models",
-            value: `Error - ${toDiagnosticErrorMessage(error)}`,
-          });
-          status = formatDiagnosticStatus(available, {
-            source: "model fetch",
-            cause: error,
-          });
-        }
-      }
-
-      entries.push({ label: "Status", value: status });
 
       return {
         diagnostic: formatProviderDiagnostic("Codex", entries),

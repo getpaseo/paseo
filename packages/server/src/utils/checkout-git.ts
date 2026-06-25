@@ -70,6 +70,15 @@ interface PullRequestStatusLookupTarget {
   headRepositoryOwner?: string;
 }
 
+interface PullRequestLookupTargetBranchConfig {
+  currentBranch: string;
+  branchRemoteName: string | null;
+  branchMergeRef: string | null;
+  branchRemoteUrl: string | null;
+  originRemoteUrl: string | null;
+  resolvedBaseRef: string | null;
+}
+
 function getErrorStderr(error: Error): string {
   return "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
 }
@@ -1132,24 +1141,37 @@ async function resolvePullRequestStatusLookupTarget(
   if (context?.facts?.isGit && context.facts.pullRequestLookupTarget) {
     return context.facts.pullRequestLookupTarget;
   }
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
-  if (!remoteName?.startsWith("paseo-pr-")) {
-    return { headRef: currentBranch };
+  const branchRemoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
+  let branchMergeRef: string | null = null;
+  if (branchRemoteName) {
+    branchMergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
   }
 
-  const mergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`);
-  const trackedHeadRef = parseBranchMergeHeadRef(mergeRef);
-  if (!trackedHeadRef) {
-    return { headRef: currentBranch };
+  const localBranchTarget = buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch,
+    branchRemoteName,
+    branchMergeRef,
+    branchRemoteUrl: null,
+    originRemoteUrl: null,
+    resolvedBaseRef: null,
+  });
+  if (localBranchTarget.headRef === currentBranch) {
+    return localBranchTarget;
   }
 
-  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
-  const remoteRepo = remoteUrl ? parseGitHubRepoFromRemote(remoteUrl) : null;
-  const headRepositoryOwner = remoteRepo?.split("/")[0];
-  return {
-    headRef: trackedHeadRef,
-    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
-  };
+  const [branchRemoteUrl, originRemoteUrl, resolvedBaseRef] = await Promise.all([
+    branchRemoteName ? getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context) : null,
+    getGitConfigValue(cwd, "remote.origin.url", context),
+    getResolvedBaseRefForCwd(cwd, context),
+  ]);
+  return buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch,
+    branchRemoteName,
+    branchMergeRef,
+    branchRemoteUrl,
+    originRemoteUrl,
+    resolvedBaseRef,
+  });
 }
 
 export async function resolveAbsoluteGitDir(cwd: string): Promise<string | null> {
@@ -1498,25 +1520,33 @@ async function inspectCheckoutContext(
   }
 }
 
-function buildPullRequestLookupTargetFromBranchConfig(input: {
-  currentBranch: string;
-  branchRemoteName: string | null;
-  branchMergeRef: string | null;
-  branchRemoteUrl: string | null;
-}): PullRequestStatusLookupTarget {
-  if (!input.branchRemoteName?.startsWith("paseo-pr-")) {
-    return { headRef: input.currentBranch };
-  }
-
+function buildPullRequestLookupTargetFromBranchConfig(
+  input: PullRequestLookupTargetBranchConfig,
+): PullRequestStatusLookupTarget {
   const trackedHeadRef = parseBranchMergeHeadRef(input.branchMergeRef);
-  if (!trackedHeadRef) {
+  if (!input.branchRemoteName || !trackedHeadRef || trackedHeadRef === input.currentBranch) {
     return { headRef: input.currentBranch };
   }
 
   const remoteRepo = input.branchRemoteUrl
     ? parseGitHubRepoFromRemote(input.branchRemoteUrl)
     : null;
-  const headRepositoryOwner = remoteRepo?.split("/")[0];
+  const originRepo = input.originRemoteUrl
+    ? parseGitHubRepoFromRemote(input.originRemoteUrl)
+    : null;
+  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
+  const normalizedBaseRef = input.resolvedBaseRef
+    ? normalizeLocalBranchRefName(input.resolvedBaseRef)
+    : null;
+  if (trackedHeadRef === normalizedBaseRef && !headRepositoryOwner) {
+    return { headRef: input.currentBranch };
+  }
+
+  if (isSameRepo) {
+    return { headRef: trackedHeadRef };
+  }
+
   return {
     headRef: trackedHeadRef,
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
@@ -1559,21 +1589,17 @@ export async function getCheckoutSnapshotFacts(
   let branchRemoteName: string | null = null;
   let branchMergeRef: string | null = null;
   let branchRemoteUrl: string | null = null;
-  if (inspected.remoteUrl && inspected.currentBranch) {
+  if (inspected.currentBranch) {
     branchRemoteName = await getGitConfigValue(
       cwd,
       `branch.${inspected.currentBranch}.remote`,
       context,
     );
     if (branchRemoteName) {
-      branchMergeRef = await getGitConfigValue(
-        cwd,
-        `branch.${inspected.currentBranch}.merge`,
-        context,
-      );
-      if (branchRemoteName.startsWith("paseo-pr-")) {
-        branchRemoteUrl = await getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context);
-      }
+      [branchMergeRef, branchRemoteUrl] = await Promise.all([
+        getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
+        getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
+      ]);
     }
   }
   const pullRequestLookupTarget = inspected.currentBranch
@@ -1582,6 +1608,8 @@ export async function getCheckoutSnapshotFacts(
         branchRemoteName,
         branchMergeRef,
         branchRemoteUrl,
+        originRemoteUrl: inspected.remoteUrl,
+        resolvedBaseRef,
       })
     : null;
 

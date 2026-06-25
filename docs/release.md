@@ -27,6 +27,7 @@ Rules that apply to both steps:
 - No code changes bundled into the changelog commit or the release commit. Code shims live in their own commit, reviewed on their own merits.
 - A sanity-check finding is information, not a directive. The agent surfaces it; the user decides.
 - Invoking a release skill is intent to start the flow, not blanket authorization to publish.
+- If the user asks for a release preview, show the prospective changelog/release contents and answer questions, but do not commit, tag, publish, or run release commands until they explicitly authorize the release.
 
 ## Two paths
 

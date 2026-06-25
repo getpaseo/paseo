@@ -1,5 +1,4 @@
 import type { Logger } from "pino";
-import { homedir } from "node:os";
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 
 import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
@@ -10,18 +9,17 @@ import {
 } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
+  type ACPConfigFeatureOption,
   type ACPBeforeModeWriteResult,
   type ACPProviderModeWriteResult,
   type ACPProviderModeWriterContext,
   type SessionStateResponse,
 } from "./acp-agent.js";
 import {
-  formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
-  toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
 const COPILOT_CAPABILITIES: AgentCapabilityFlags = {
@@ -46,6 +44,16 @@ const COPILOT_ALLOW_ALL_CONFIG_ID = "allow_all";
 const COPILOT_ALLOW_ALL_ON = "on";
 const COPILOT_ALLOW_ALL_OFF = "off";
 type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
+
+export const COPILOT_AGENT_FEATURE_OPTION: ACPConfigFeatureOption = {
+  id: "agent",
+  configId: "agent",
+  category: "_agent",
+  label: "Agent",
+  description: "Use a Copilot custom agent profile",
+  tooltip: "Select Copilot agent",
+  emptyOptionLabel: "Default",
+};
 
 export const COPILOT_MODES: AgentMode[] = [
   {
@@ -80,6 +88,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
       defaultModes: COPILOT_MODES,
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
       modeIdTransformer: transformCopilotModeId,
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
@@ -98,33 +107,6 @@ export class CopilotACPAgentClient extends ACPAgentClient {
         defaultBinary: "copilot",
       });
       const availability = await checkProviderLaunchAvailable(launch);
-      const available = availability.available;
-      let modelsValue = "Not checked";
-      let status = formatDiagnosticStatus(available);
-
-      if (available) {
-        try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
-          modelsValue = String(models.length);
-        } catch (error) {
-          modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
-          status = formatDiagnosticStatus(available, {
-            source: "model fetch",
-            cause: error,
-          });
-        }
-
-        if (!modelsValue.startsWith("Error -")) {
-          try {
-            await this.listModes({ cwd: homedir(), force: false });
-          } catch (error) {
-            status = formatDiagnosticStatus(available, {
-              source: "mode fetch",
-              cause: error,
-            });
-          }
-        }
-      }
 
       return {
         diagnostic: formatProviderDiagnostic("Copilot", [
@@ -132,8 +114,6 @@ export class CopilotACPAgentClient extends ACPAgentClient {
             knownBinaryNames: ["copilot"],
           })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
-          { label: "Models", value: modelsValue },
-          { label: "Status", value: status },
         ]),
       };
     } catch (error) {

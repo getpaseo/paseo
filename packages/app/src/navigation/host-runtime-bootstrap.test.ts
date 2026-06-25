@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  resolveHostIndexRoute,
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   resolveStartupRoute,
@@ -200,6 +201,7 @@ describe("resolveStartupRoute", () => {
     hosts: [],
     anyOnlineHostServerId: null,
     workspaceSelection: null,
+    workspaceSelectionStatus: "unknown" as const,
     isWorkspaceSelectionLoaded: true,
     hasGivenUpWaitingForHost: false,
   };
@@ -255,8 +257,20 @@ describe("resolveStartupRoute", () => {
         ...baseIndexInput,
         hosts: [{ serverId: "server-1" }],
         workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
       }),
     ).toEqual({ kind: "redirect", href: "/h/server-1/workspace/workspace-a" });
+  });
+
+  it("does not restore a saved workspace after workspace hydration proves it is missing", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "missing",
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-1" });
   });
 
   it("falls back to a saved host when the restored workspace host is no longer saved", () => {
@@ -342,5 +356,47 @@ describe("resolveStartupRoute", () => {
         route: { kind: "host", serverId: "server-removed" },
       }),
     ).toEqual({ kind: "redirect", href: "/welcome" });
+  });
+});
+
+describe("resolveHostIndexRoute", () => {
+  it("restores the remembered workspace when the host index is reopened for the same host", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+      }),
+    ).toEqual("/h/server-saved/workspace/workspace-a");
+  });
+
+  it("keeps restoring a remembered workspace before the host workspace list hydrates", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "unknown",
+      }),
+    ).toEqual("/h/server-saved/workspace/workspace-a");
+  });
+
+  it("opens project selection when the remembered workspace is proven missing", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "missing",
+      }),
+    ).toEqual("/h/server-saved/open-project");
+  });
+
+  it("opens project selection when the remembered workspace belongs to another host", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-other", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+      }),
+    ).toEqual("/h/server-saved/open-project");
   });
 });

@@ -163,7 +163,7 @@ export const en = {
     hints: {
       thinking: "Thinking mode",
       model: "Change model",
-      mode: "Change permission mode",
+      mode: "Change mode",
     },
   },
   agentStream: {
@@ -724,6 +724,9 @@ export const en = {
         failedOpen: "Failed to open workspace",
       },
       pr: {
+        actions: {
+          viewPullRequest: "View",
+        },
         sections: {
           checks: "Checks",
           reviews: "Reviews",
@@ -1441,6 +1444,7 @@ export const en = {
           en: "English",
           es: "Spanish",
           fr: "French",
+          ja: "Japanese",
           ru: "Russian",
           zhCN: "Simplified Chinese",
         },
@@ -1570,6 +1574,7 @@ export const en = {
         toggleFocusMode: "Toggle focus mode",
         cycleTheme: "Cycle theme",
         focusMessageInput: "Focus message input",
+        cycleAgentMode: "Cycle agent mode",
         toggleVoiceMode: "Toggle voice mode",
         startStopDictation: "Start/stop dictation",
         interruptAgent: "Interrupt agent",

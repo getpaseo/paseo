@@ -6,7 +6,7 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 describe("CodexAppServerAgentClient spawn error handling", () => {
   const logger = createTestLogger();
 
-  test("listModels rejects gracefully when the codex binary does not exist", async () => {
+  test("fetchCatalog rejects gracefully when the codex binary does not exist", async () => {
     const client = new CodexAppServerAgentClient(logger, {
       command: {
         mode: "replace",
@@ -21,7 +21,9 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
     process.on("uncaughtException", onUncaught);
 
     try {
-      await expect(client.listModels({ cwd: "/tmp/codex-models", force: false })).rejects.toThrow();
+      await expect(
+        client.fetchCatalog({ cwd: "/tmp/codex-models", force: false }),
+      ).rejects.toThrow();
       // Drain microtask queue to ensure no deferred uncaught errors
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(uncaughtErrors).toHaveLength(0);

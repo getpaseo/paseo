@@ -165,7 +165,7 @@ export const zhCN: TranslationResources = {
     hints: {
       thinking: "Thinking mode",
       model: "切换 Model",
-      mode: "切换权限 Mode",
+      mode: "更改模式",
     },
   },
   agentStream: {
@@ -711,6 +711,9 @@ export const zhCN: TranslationResources = {
         failedOpen: "打开 workspace 失败",
       },
       pr: {
+        actions: {
+          viewPullRequest: "查看",
+        },
         sections: {
           checks: "Checks",
           reviews: "Reviews",
@@ -1417,6 +1420,7 @@ export const zhCN: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
           ru: "Русский",
           zhCN: "简体中文",
         },
@@ -1545,6 +1549,7 @@ export const zhCN: TranslationResources = {
         toggleFocusMode: "切换专注模式",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
+        cycleAgentMode: "循环切换代理模式",
         toggleVoiceMode: "切换语音模式",
         startStopDictation: "开始/停止听写",
         interruptAgent: "中断 Agent",

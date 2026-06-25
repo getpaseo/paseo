@@ -62,6 +62,7 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -81,13 +82,13 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
-  type ListModesOptions,
-  type ListModelsOptions,
   type McpServerConfig,
+  type ProviderCatalog,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -318,6 +319,7 @@ interface ACPAgentClientOptions {
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  configFeatureOptions?: ACPConfigFeatureOption[];
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -344,6 +346,7 @@ interface ACPAgentSessionOptions {
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  configFeatureOptions?: ACPConfigFeatureOption[];
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -393,6 +396,12 @@ interface MessageAssemblyState {
   text: string;
 }
 
+interface SubmittedUserMessageEcho {
+  messageId: string;
+  text: string;
+  turnId: string;
+}
+
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
 
 interface TerminalExit {
@@ -418,6 +427,17 @@ interface ConfigOptionSelector {
   description?: string;
   isDefault?: boolean;
   metadata?: AgentMetadata;
+}
+
+export interface ACPConfigFeatureOption {
+  id: string;
+  configId: string;
+  category: string;
+  label: string;
+  description?: string;
+  tooltip?: string;
+  icon?: string;
+  emptyOptionLabel?: string;
 }
 
 type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
@@ -579,6 +599,31 @@ export function deriveModelDefinitionsFromACP(
   }));
 }
 
+export function deriveFeaturesFromACP(
+  configOptions: SessionConfigOption[] | null | undefined,
+  featureOptions: ACPConfigFeatureOption[],
+): AgentFeature[] {
+  return featureOptions.flatMap((featureOption) => {
+    const option = findSelectConfigFeatureOption(configOptions, featureOption);
+    if (!option) {
+      return [];
+    }
+
+    return [
+      {
+        type: "select",
+        id: featureOption.id,
+        label: featureOption.label,
+        description: featureOption.description,
+        tooltip: featureOption.tooltip,
+        icon: featureOption.icon,
+        value: option.currentValue ?? null,
+        options: deriveConfigFeatureSelectOptions(option, featureOption),
+      },
+    ];
+  });
+}
+
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
@@ -594,6 +639,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly configOptionsTransformer?: (
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
+  private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -625,6 +671,7 @@ export class ACPAgentClient implements AgentClient {
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
+    this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -650,6 +697,7 @@ export class ACPAgentClient implements AgentClient {
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
+        configFeatureOptions: this.configFeatureOptions,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
@@ -696,6 +744,7 @@ export class ACPAgentClient implements AgentClient {
       modelTransformer: this.modelTransformer,
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
+      configFeatureOptions: this.configFeatureOptions,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
@@ -712,7 +761,7 @@ export class ACPAgentClient implements AgentClient {
     return session;
   }
 
-  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     const { cwd } = options;
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
@@ -728,29 +777,36 @@ export class ACPAgentClient implements AgentClient {
         transformed.models,
         transformed.configOptions,
       );
-      return this.modelTransformer ? this.modelTransformer(models) : models;
-    } finally {
-      await this.closeProbe(probe);
-    }
-  }
-
-  async listModes(options: ListModesOptions): Promise<AgentMode[]> {
-    const { cwd } = options;
-    const probe = await this.spawnProcess(PROBE_ENV);
-    try {
-      const response = await this.runACPRequest(() =>
-        probe.connection.newSession({
-          cwd,
-          mcpServers: [],
-        }),
-      );
-      const transformed = this.transformSessionResponse(response);
       const modeInfo = deriveModesFromACP(
         this.defaultModes,
         transformed.modes,
         transformed.configOptions,
       );
-      return modeInfo.modes;
+      return {
+        models: this.modelTransformer ? this.modelTransformer(models) : models,
+        modes: modeInfo.modes,
+      };
+    } finally {
+      await this.closeProbe(probe);
+    }
+  }
+
+  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    if (this.configFeatureOptions.length === 0) {
+      return [];
+    }
+
+    this.assertProvider(config);
+    const probe = await this.spawnProcess(PROBE_ENV);
+    try {
+      const response = await this.runACPRequest(() =>
+        probe.connection.newSession({
+          cwd: config.cwd,
+          mcpServers: [],
+        }),
+      );
+      const transformed = this.transformSessionResponse(response);
+      return deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions);
     } finally {
       await this.closeProbe(probe);
     }
@@ -973,6 +1029,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly configOptionsTransformer?: (
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
+  private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -992,6 +1049,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private readonly messageAssemblies = new Map<string, MessageAssemblyState>();
   private readonly submittedUserMessageIds = new Set<string>();
+  private activeSubmittedUserMessage: SubmittedUserMessageEcho | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
@@ -1034,6 +1092,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
+    this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -1150,6 +1209,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.messageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.activeSubmittedUserMessage = null;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId);
@@ -1215,6 +1275,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async getCurrentMode(): Promise<string | null> {
     return this.currentMode;
+  }
+
+  get features(): AgentFeature[] {
+    return deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions);
   }
 
   private ensureCommandsReadyDeferred(): void {
@@ -1547,6 +1611,44 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       provider: this.provider,
       thinkingOptionId: this.thinkingOptionId,
     });
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (!this.connection || !this.sessionId) {
+      throw new Error("ACP session not initialized");
+    }
+
+    const featureOption = this.configFeatureOptions.find((option) => option.id === featureId);
+    if (!featureOption) {
+      throw new Error(`Unknown ${this.provider} feature: ${featureId}`);
+    }
+
+    const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
+    if (!option) {
+      throw new Error(`${this.provider} does not expose ACP feature '${featureId}'`);
+    }
+
+    const requestedValue = normalizeConfigFeatureValue(value);
+    const choice = findSelectConfigChoice({ option, value: requestedValue });
+    if (!choice) {
+      throw new Error(
+        `${this.provider} feature '${featureId}' does not include option '${requestedValue}'`,
+      );
+    }
+
+    const response = await this.connection.setSessionConfigOption({
+      sessionId: this.sessionId,
+      configId: option.id,
+      value: requestedValue,
+    });
+    const currentValue = this.applyConfigOptionResponse({
+      response,
+      configId: option.id,
+      category: featureOption.category,
+      requestedValue,
+      label: featureOption.label,
+    });
+    this.config.featureValues = { ...this.config.featureValues, [featureId]: currentValue };
   }
 
   private applyConfigOptionResponse({
@@ -2009,6 +2111,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
       await this.setThinkingOption(this.config.thinkingOptionId);
     }
+    const configuredFeatureValues = this.config.featureValues ?? {};
+    for (const featureOption of this.configFeatureOptions) {
+      if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
+        continue;
+      }
+      await this.setFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
+    }
   }
 
   private warnInvalidSelection(value: string, message: string): void {
@@ -2030,7 +2139,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         if (!item) {
           return [];
         }
-        if (update.messageId && this.submittedUserMessageIds.has(update.messageId)) {
+        if (item.type !== "user_message") {
+          return [this.wrapTimeline(item)];
+        }
+        if (this.isSubmittedUserMessageEcho(item)) {
           return [];
         }
         return [this.wrapTimeline(item)];
@@ -2113,7 +2225,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!chunkText) {
       return null;
     }
-    const key = `${type}:${update.messageId ?? "default"}`;
+    const key = this.messageAssemblyKey(type, update.messageId);
     const state = this.messageAssemblies.get(key) ?? { text: "" };
     state.text += chunkText;
     this.messageAssemblies.set(key, state);
@@ -2125,6 +2237,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return { type: "assistant_message", text: chunkText };
     }
     return { type: "reasoning", text: chunkText };
+  }
+
+  private messageAssemblyKey(
+    type: "user_message" | "assistant_message" | "reasoning",
+    messageId: string | null | undefined,
+  ): string {
+    const fallbackId =
+      type === "user_message" ? (this.activeForegroundTurnId ?? "default") : "default";
+    return `${type}:${messageId ?? fallbackId}`;
   }
 
   private handleCurrentModeUpdate(update: CurrentModeUpdate): void {
@@ -2245,6 +2366,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.submittedUserMessageIds.add(messageId);
+    this.activeSubmittedUserMessage = { messageId, text, turnId };
     this.pushEvent({
       type: "timeline",
       provider: this.provider,
@@ -2271,7 +2393,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
     this.activeForegroundTurnId = null;
+    if (this.activeSubmittedUserMessage?.turnId === event.turnId) {
+      this.activeSubmittedUserMessage = null;
+    }
     this.pushEvent(event);
+  }
+
+  private isSubmittedUserMessageEcho(
+    item: Extract<AgentTimelineItem, { type: "user_message" }>,
+  ): boolean {
+    const active = this.activeSubmittedUserMessage;
+    if (!active || active.turnId !== this.activeForegroundTurnId) {
+      return false;
+    }
+    if (item.messageId) {
+      if (this.submittedUserMessageIds.has(item.messageId)) {
+        return true;
+      }
+    }
+    return active.text.startsWith(item.text);
   }
 
   private emitBootstrapThreadEvent(): void {
@@ -2337,6 +2477,19 @@ function findSelectConfigOption({
   return option ?? null;
 }
 
+function findSelectConfigFeatureOption(
+  configOptions: SessionConfigOption[] | null | undefined,
+  featureOption: ACPConfigFeatureOption,
+): SelectConfigOption | null {
+  const option = configOptions?.find(
+    (entry): entry is SelectConfigOption =>
+      entry.type === "select" &&
+      entry.id === featureOption.configId &&
+      entry.category === featureOption.category,
+  );
+  return option ?? null;
+}
+
 function findSelectConfigChoice({
   option,
   value,
@@ -2362,6 +2515,43 @@ function flattenSelectOptions(options: SelectConfigOption["options"]): SelectCon
     }
   }
   return flattened;
+}
+
+function deriveConfigFeatureSelectOptions(
+  option: SelectConfigOption,
+  featureOption: ACPConfigFeatureOption,
+): ConfigOptionSelector[] {
+  return flattenSelectOptions(option.options).map((choice) => ({
+    id: choice.value,
+    label: normalizeConfigFeatureOptionLabel(choice, featureOption),
+    description: choice.description ?? undefined,
+    isDefault: choice.value === option.currentValue,
+    metadata: choice.group ? { group: choice.group } : undefined,
+  }));
+}
+
+function normalizeConfigFeatureOptionLabel(
+  choice: SelectConfigChoice,
+  featureOption: ACPConfigFeatureOption,
+): string {
+  const name = choice.name.trim();
+  if (name) {
+    return name;
+  }
+  if (choice.value === "" && featureOption.emptyOptionLabel) {
+    return featureOption.emptyOptionLabel;
+  }
+  return choice.value;
+}
+
+function normalizeConfigFeatureValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null) {
+    return "";
+  }
+  throw new Error(`ACP feature value must be a string`);
 }
 
 function deriveSelectorOptions(

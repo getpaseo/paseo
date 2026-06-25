@@ -165,7 +165,7 @@ export const ar: TranslationResources = {
     hints: {
       thinking: "وضع التفكير",
       model: "تغيير النموذج",
-      mode: "تغيير وضع الإذن",
+      mode: "تغيير الوضع",
     },
   },
   agentStream: {
@@ -717,6 +717,9 @@ export const ar: TranslationResources = {
         failedOpen: "فشل في فتح مساحة العمل",
       },
       pr: {
+        actions: {
+          viewPullRequest: "عرض",
+        },
         sections: {
           checks: "الشيكات",
           reviews: "التعليقات",
@@ -1435,6 +1438,7 @@ export const ar: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1564,6 +1568,7 @@ export const ar: TranslationResources = {
         toggleFocusMode: "تبديل وضع التركيز",
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
+        cycleAgentMode: "تبديل وضع الوكيل",
         toggleVoiceMode: "تبديل الوضع الصوتي",
         startStopDictation: "بدء إملاء /stop",
         interruptAgent: "عامل المقاطعة",

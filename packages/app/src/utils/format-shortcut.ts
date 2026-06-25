@@ -27,18 +27,22 @@ export function formatShortcut(keys: ShortcutKey[], os: ShortcutOs): string {
     const order = ["ctrl", "alt", "shift", "mod", "meta"];
     const symbols: Record<string, string> = {
       mod: "⌘",
-      shift: "⇧",
       alt: "⌥",
       ctrl: "⌃",
       meta: "⌘",
     };
 
     const modifierSet = new Set(normalized);
-    const mods = order.filter((k) => modifierSet.has(k)).map((k) => symbols[k] ?? "");
+    const mods = order
+      .filter((k) => modifierSet.has(k))
+      .map((k) => (k === "shift" ? "Shift" : (symbols[k] ?? "")));
     const main = normalized
       .filter((k) => !order.includes(k))
       .map(normalizeKey)
       .join("");
+    if (mods.includes("Shift")) {
+      return [...mods, main].filter(Boolean).join("+");
+    }
     return `${mods.join("")}${main}`;
   }
 
