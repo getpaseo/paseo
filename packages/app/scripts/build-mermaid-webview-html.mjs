@@ -43,6 +43,8 @@ const result = await esbuild.build({
   format: "iife",
   platform: "browser",
   target: ["ios15", "chrome100"],
+  minify: true,
+  legalComments: "none",
   plugins: [aliasPlugin],
   logLevel: "info",
 });
