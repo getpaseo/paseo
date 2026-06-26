@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import {
   deriveTurnWorkTraceLayout,
-  shouldHideCollapsedTurnTraceItem,
+  shouldHideCompletedTurnTraceFromMainList,
   shouldShowTurnWorkTracesHeader,
   shouldSuppressCompletedTurnFooter,
 } from "./turn-work-traces";
@@ -69,26 +69,31 @@ describe("deriveTurnWorkTraceLayout", () => {
   });
 });
 
-describe("shouldHideCollapsedTurnTraceItem", () => {
-  it("hides completed turn trace items until expanded", () => {
+describe("shouldHideCompletedTurnTraceFromMainList", () => {
+  it("hides completed turn trace items from the main list even when expanded", () => {
     const layout = deriveTurnWorkTraceLayout({
       agentStatus: "idle",
       items: [user("u1", 1), tool("t1", 2), assistant("a1", 3)],
     });
     expect(
-      shouldHideCollapsedTurnTraceItem({
+      shouldHideCompletedTurnTraceFromMainList({
         itemId: "t1",
         traceItemIdToTurnKey: layout.traceItemIdToTurnKey,
         bundlesByTurnKey: layout.bundlesByTurnKey,
-        expandedTurnKeys: new Set(),
       }),
     ).toBe(true);
+  });
+
+  it("keeps in-flight trace items in the main list", () => {
+    const layout = deriveTurnWorkTraceLayout({
+      agentStatus: "running",
+      items: [user("u1", 1), tool("t1", 2)],
+    });
     expect(
-      shouldHideCollapsedTurnTraceItem({
+      shouldHideCompletedTurnTraceFromMainList({
         itemId: "t1",
         traceItemIdToTurnKey: layout.traceItemIdToTurnKey,
         bundlesByTurnKey: layout.bundlesByTurnKey,
-        expandedTurnKeys: new Set(["u1"]),
       }),
     ).toBe(false);
   });

@@ -117,11 +117,11 @@ export function deriveTurnWorkTraceLayout(input: {
   };
 }
 
-export function shouldHideCollapsedTurnTraceItem(input: {
+/** Completed-turn trace rows render only inside the work-traces panel, not in the main list. */
+export function shouldHideCompletedTurnTraceFromMainList(input: {
   itemId: string;
   traceItemIdToTurnKey: Map<string, string>;
   bundlesByTurnKey: Map<string, TurnWorkTraceBundle>;
-  expandedTurnKeys: ReadonlySet<string>;
 }): boolean {
   const turnKey = input.traceItemIdToTurnKey.get(input.itemId);
   if (!turnKey) {
@@ -131,7 +131,7 @@ export function shouldHideCollapsedTurnTraceItem(input: {
   if (!bundle || !bundle.hasTrace || bundle.isInFlight) {
     return false;
   }
-  return !input.expandedTurnKeys.has(turnKey);
+  return true;
 }
 
 export function shouldShowTurnWorkTracesHeader(input: {
@@ -157,4 +157,51 @@ export function shouldSuppressCompletedTurnFooter(input: {
     }
   }
   return false;
+}
+
+export interface StreamRenderRow {
+  key: string;
+  kind: "stream_item" | "turn_work_traces_header";
+  streamItem?: StreamItem;
+  turnKey?: string;
+}
+
+export function buildStreamRenderRows(input: {
+  items: StreamItem[];
+  agentStatus: string;
+}): StreamRenderRow[] {
+  const layout = deriveTurnWorkTraceLayout({
+    items: input.items,
+    agentStatus: input.agentStatus,
+  });
+  const rows: StreamRenderRow[] = [];
+
+  for (const item of input.items) {
+    if (
+      shouldHideCompletedTurnTraceFromMainList({
+        itemId: item.id,
+        traceItemIdToTurnKey: layout.traceItemIdToTurnKey,
+        bundlesByTurnKey: layout.bundlesByTurnKey,
+      })
+    ) {
+      continue;
+    }
+
+    if (item.kind === "user_message") {
+      rows.push({ key: item.id, kind: "stream_item", streamItem: item });
+      const bundle = layout.userMessageIdToBundle.get(item.id);
+      if (shouldShowTurnWorkTracesHeader({ bundle })) {
+        rows.push({
+          key: `work-traces:${item.id}`,
+          kind: "turn_work_traces_header",
+          turnKey: item.id,
+        });
+      }
+      continue;
+    }
+
+    rows.push({ key: item.id, kind: "stream_item", streamItem: item });
+  }
+
+  return rows;
 }
