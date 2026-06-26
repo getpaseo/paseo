@@ -297,6 +297,17 @@ export const ru: TranslationResources = {
       completed: "Контекст сжат",
     },
   },
+  markdown: {
+    mermaid: {
+      diagram: "Диаграмма",
+      source: "Исходник",
+      viewDiagram: "Показать диаграмму",
+      viewSource: "Показать исходный код",
+      renderFailed: "Не удалось отрисовать диаграмму",
+      openFullscreen: "На весь экран",
+      closeFullscreen: "Закрыть полноэкранный режим",
+    },
+  },
   importSession: {
     title: "Импортировать сеанс",
     filters: {

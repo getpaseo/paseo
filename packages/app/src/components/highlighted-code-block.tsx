@@ -17,6 +17,8 @@ interface HighlightedCodeBlockProps {
   language: string | null | undefined;
   inheritedStyles: TextStyle;
   textStyle: TextStyle;
+  /** Render highlighted code only (no fence chrome or copy button). */
+  bodyOnly?: boolean;
 }
 
 // Fence info strings ("```ts", "```typescript", "```ts {1,3}") map to the
@@ -54,6 +56,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   language,
   inheritedStyles,
   textStyle,
+  bodyOnly = false,
 }: HighlightedCodeBlockProps) {
   // Box styles (bg / padding / border / radius / margin) go on the wrapper View
   // so the absolute copy button positions relative to the visible code area,
@@ -76,6 +79,16 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   const controlsVisible = isHovered || isNative || isCompact;
   const getCode = useCallback(() => code, [code]);
 
+  const codeBody = keyedLines ? (
+    <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
+  ) : (
+    <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
+  );
+
+  if (bodyOnly) {
+    return <View style={fenceBodyOnlyStyles.wrap}>{codeBody}</View>;
+  }
+
   return (
     <View
       style={containerStyle}
@@ -83,11 +96,7 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
-      {keyedLines ? (
-        <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
-      ) : (
-        <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
-      )}
+      {codeBody}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>
   );
@@ -135,7 +144,7 @@ interface SplitStyles {
 const CONTAINER_BASE: ViewStyle = { position: "relative" };
 const WEB_SELECTABLE: TextStyle = isWeb ? ({ userSelect: "text" } as TextStyle) : {};
 
-function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): SplitStyles {
+export function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): SplitStyles {
   const { fontFamily, fontSize, color, ...box } = textStyle;
   const textOnly: TextStyle = { ...WEB_SELECTABLE };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
@@ -209,6 +218,12 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
     </Pressable>
   );
 });
+
+const fenceBodyOnlyStyles = StyleSheet.create(() => ({
+  wrap: {
+    width: "100%",
+  },
+}));
 
 const copyButtonStyles = StyleSheet.create((theme) => ({
   container: {

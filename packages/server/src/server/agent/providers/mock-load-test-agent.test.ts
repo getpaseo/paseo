@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager } from "../agent-manager.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
+import { MOCK_MERMAID_DIAGRAM_IDS } from "./mock-mermaid-samples.js";
 import {
   MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
   MockLoadTestAgentClient,
@@ -150,6 +151,66 @@ describe("MockLoadTestAgentClient", () => {
     expect(completedNames).toContain("grep");
     expect(completedNames).toContain("edit");
     expect(completedNames).toContain("bash");
+  });
+
+  test("emit synthetic mermaid returns the full diagram gallery in one assistant message", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run("emit synthetic mermaid");
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await resultPromise;
+    unsubscribe();
+
+    expect(result).toMatchObject({
+      finalText: "Synthetic mermaid gallery complete",
+      canceled: false,
+    });
+
+    const assistantText = events
+      .flatMap((event): AgentTimelineItem[] => (event.type === "timeline" ? [event.item] : []))
+      .filter((item) => item.type === "assistant_message")
+      .map((item) => (item.type === "assistant_message" ? item.text : ""))
+      .join("");
+
+    expect(assistantText).toContain("## Mermaid gallery");
+    expect(assistantText.match(/```mermaid/g)?.length).toBe(MOCK_MERMAID_DIAGRAM_IDS.length);
+  });
+
+  test("long synthetic stream includes the mermaid gallery on cycle 1", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run("Exercise the app while terminals are busy.");
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await resultPromise;
+    unsubscribe();
+
+    const assistantText = events
+      .flatMap((event): AgentTimelineItem[] => (event.type === "timeline" ? [event.item] : []))
+      .filter((item) => item.type === "assistant_message")
+      .map((item) => (item.type === "assistant_message" ? item.text : ""))
+      .join("");
+
+    expect(assistantText).toContain("## Mermaid gallery (mock stream)");
+    expect(assistantText.match(/```mermaid/g)?.length).toBeGreaterThanOrEqual(
+      MOCK_MERMAID_DIAGRAM_IDS.length,
+    );
   });
 
   test("interrupt cancels the active foreground turn and stops future chunks", async () => {

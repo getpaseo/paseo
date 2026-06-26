@@ -298,6 +298,17 @@ export const fr: TranslationResources = {
       completed: "Contexte compacté",
     },
   },
+  markdown: {
+    mermaid: {
+      diagram: "Diagramme",
+      source: "Source",
+      viewDiagram: "Voir le diagramme",
+      viewSource: "Voir le code source",
+      renderFailed: "Échec du rendu du diagramme",
+      openFullscreen: "Plein écran",
+      closeFullscreen: "Quitter le plein écran",
+    },
+  },
   importSession: {
     title: "Session d'importation",
     filters: {

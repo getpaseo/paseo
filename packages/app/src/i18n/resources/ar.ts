@@ -295,6 +295,17 @@ export const ar: TranslationResources = {
       completed: "تم ضغط السياق",
     },
   },
+  markdown: {
+    mermaid: {
+      diagram: "مخطط",
+      source: "المصدر",
+      viewDiagram: "عرض المخطط",
+      viewSource: "عرض المصدر",
+      renderFailed: "تعذّر عرض المخطط",
+      openFullscreen: "ملء الشاشة",
+      closeFullscreen: "إغلاق ملء الشاشة",
+    },
+  },
   importSession: {
     title: "جلسة الاستيراد",
     filters: {

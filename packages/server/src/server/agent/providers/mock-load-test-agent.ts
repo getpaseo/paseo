@@ -30,6 +30,7 @@ import type {
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import { buildMermaidMarkdownGallery } from "./mock-mermaid-samples.js";
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
 export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
@@ -149,6 +150,10 @@ interface MockQuestionPromptRequest {
 
 function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+plan\s+approval/i.test(promptToText(prompt));
+}
+
+function shouldEmitSyntheticMermaidGallery(prompt: AgentPromptInput): boolean {
+  return /emit\s+(?:a\s+)?synthetic\s+mermaid/i.test(promptToText(prompt));
 }
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
@@ -450,6 +455,10 @@ function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
     queue.push({ kind: "assistant_token", text: tok });
   }
 
+  if (cycle === 1) {
+    queue.push({ kind: "assistant_token", text: `\n\n${buildMermaidMarkdownGallery()}\n\n` });
+  }
+
   const editFile = "packages/app/src/hooks/use-scroll-anchor.ts";
   const editDetail: ToolCallDetail = {
     type: "edit",
@@ -651,6 +660,8 @@ export class MockLoadTestAgentSession implements AgentSession {
     const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
     if (structuredBranchName) {
       this.scheduleStructuredJsonTurn(turn, structuredBranchName);
+    } else if (shouldEmitSyntheticMermaidGallery(prompt)) {
+      this.scheduleMermaidGalleryTurn(turn);
     } else if (shouldEmitPlanApprovalPrompt(prompt)) {
       this.schedulePlanApprovalTurn(turn);
     } else if (questionPrompt) {
@@ -820,6 +831,13 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer.unref?.();
   }
 
+  private scheduleMermaidGalleryTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      this.emitMermaidGalleryTurn(turn);
+    }, 0);
+    turn.timer.unref?.();
+  }
+
   private schedulePlanApprovalTurn(turn: ActiveTurn): void {
     turn.timer = setTimeout(() => {
       this.emitPlanApprovalTurn(turn);
@@ -842,6 +860,24 @@ export class MockLoadTestAgentSession implements AgentSession {
       this.emitStructuredJsonTurn(turn, result);
     }, 0);
     turn.timer.unref?.();
+  }
+
+  private emitMermaidGalleryTurn(turn: ActiveTurn): void {
+    if (this.activeTurn !== turn) {
+      return;
+    }
+
+    this.clearTurnTimer(turn);
+    this.emit({
+      type: "turn_started",
+      provider: this.provider,
+      turnId: turn.turnId,
+    });
+    this.emitTimeline(turn.turnId, {
+      type: "assistant_message",
+      text: buildMermaidMarkdownGallery(),
+    });
+    this.finishTurnWithText(turn, "Synthetic mermaid gallery complete");
   }
 
   private emitStructuredJsonTurn(turn: ActiveTurn, result: Record<string, string>): void {
