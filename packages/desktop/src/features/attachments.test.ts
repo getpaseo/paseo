@@ -27,7 +27,7 @@ describe("desktop attachment files", () => {
     }
   });
 
-  it("accepts picker-style bare extensions for managed copies", async () => {
+  it("accepts dot-prefixed picker extensions for managed copies", async () => {
     const paseoHome = await useTempPaseoHome();
     const sourcePath = path.join(paseoHome, "report.md");
     await writeFile(sourcePath, "# Report\n");
@@ -35,11 +35,29 @@ describe("desktop attachment files", () => {
     const result = await copyAttachmentFileToManagedStorage({
       attachmentId: "att_markdown",
       sourcePath,
-      extension: "md",
+      extension: ".md",
     });
 
     expect(result).toEqual({
       path: path.join(paseoHome, "desktop-attachments", "att_markdown.md"),
+      byteSize: 9,
+    });
+    await expect(readFile(result.path, "utf8")).resolves.toBe("# Report\n");
+  });
+
+  it("normalizes legacy bare extensions for managed copies", async () => {
+    const paseoHome = await useTempPaseoHome();
+    const sourcePath = path.join(paseoHome, "report.md");
+    await writeFile(sourcePath, "# Report\n");
+
+    const result = await copyAttachmentFileToManagedStorage({
+      attachmentId: "att_markdown_legacy",
+      sourcePath,
+      extension: "md",
+    });
+
+    expect(result).toEqual({
+      path: path.join(paseoHome, "desktop-attachments", "att_markdown_legacy.md"),
       byteSize: 9,
     });
     await expect(readFile(result.path, "utf8")).resolves.toBe("# Report\n");
