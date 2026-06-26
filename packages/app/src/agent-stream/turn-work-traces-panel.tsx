@@ -1,13 +1,10 @@
-import React, { memo, useCallback, useMemo, useState, type ReactNode } from "react";
+import React, { memo, useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import type { TurnTiming } from "@/timeline/turn-time";
-import type { StreamItem } from "@/types/stream";
-import { formatDuration, formatMessageTimestamp } from "@/utils/time";
-import { STREAM_METADATA_FONT_SIZE } from "@/components/message";
+import { formatDuration } from "@/utils/time";
 import type { Theme } from "@/styles/theme";
-import { isWeb } from "@/constants/platform";
 import type { StreamLayoutItem } from "./layout";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -23,30 +20,17 @@ export const TurnWorkTracesHeader = memo(function TurnWorkTracesHeader({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const [hovered, setHovered] = useState(false);
   const durationMs = timing?.durationMs;
-  const completedAt = timing?.completedAt;
   const durationLabel = useMemo(
     () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : "Worked"),
     [durationMs],
   );
-  const timestampLabel = useMemo(
-    () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
-    [completedAt],
-  );
-  const canSwap = Boolean(timestampLabel);
-  const showTimestamp = canSwap && hovered && isWeb;
-
-  const handleHoverIn = useCallback(() => setHovered(true), []);
-  const handleHoverOut = useCallback(() => setHovered(false), []);
 
   const Chevron = isExpanded ? ThemedChevronDown : ThemedChevronRight;
 
   return (
     <Pressable
       onPress={onToggle}
-      onHoverIn={handleHoverIn}
-      onHoverOut={handleHoverOut}
       accessibilityRole="button"
       accessibilityState={{ expanded: isExpanded }}
       accessibilityLabel={`${durationLabel}, work traces`}
@@ -54,7 +38,7 @@ export const TurnWorkTracesHeader = memo(function TurnWorkTracesHeader({
     >
       <View style={stylesheet.headerRow}>
         <Chevron size={14} uniProps={chevronColorMapping} />
-        <Text style={stylesheet.headerLabel}>{showTimestamp ? timestampLabel : durationLabel}</Text>
+        <Text style={stylesheet.headerLabel}>{durationLabel}</Text>
       </View>
     </Pressable>
   );
@@ -101,7 +85,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   headerLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: STREAM_METADATA_FONT_SIZE,
+    fontSize: theme.fontSize.sm,
     fontVariant: ["tabular-nums"],
   },
   traceBody: {

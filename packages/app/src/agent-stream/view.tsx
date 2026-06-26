@@ -128,22 +128,20 @@ function renderStreamItemWithTurnFooter(input: {
   content: ReactNode;
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
-  suppressCompletedTurnFooter?: boolean;
+  completedFooterShowsTimestampOnly?: boolean;
 }): ReactNode {
   if (!input.content) {
     return null;
   }
 
-  const footerHost =
-    input.suppressCompletedTurnFooter || !input.layoutItem.completedFooter
-      ? null
-      : input.layoutItem.completedFooter;
+  const footerHost = input.layoutItem.completedFooter;
   const footer = footerHost ? (
     <CompletedTurnFooterRow
       strategy={input.strategy}
       items={footerHost.items}
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
+      showCompletedTimestampOnly={input.completedFooterShowsTimestampOnly}
     />
   ) : null;
   const content = (
@@ -702,7 +700,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderLayoutItemForStream = useCallback(
       (layoutItem: StreamLayoutItem) => {
         const content = renderStreamItemContent(layoutItem);
-        const suppressCompletedTurnFooter =
+        const completedFooterShowsTimestampOnly =
           layoutItem.item.kind === "assistant_message" &&
           shouldSuppressCompletedTurnFooter({
             assistantMessageId: layoutItem.item.id,
@@ -712,7 +710,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           content,
           layoutItem,
           strategy: streamRenderStrategy,
-          suppressCompletedTurnFooter,
+          completedFooterShowsTimestampOnly,
         });
       },
       [renderStreamItemContent, streamRenderStrategy, turnWorkTraceLayout.bundlesByTurnKey],
@@ -787,7 +785,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [client, pendingPermissionItems],
     );
-    const suppressBottomCompletedFooter = useMemo(() => {
+    const bottomFooterShowsTimestampOnly = useMemo(() => {
       if (!bottomTurnFooterHost) {
         return false;
       }
@@ -799,16 +797,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const turnFooterNode = useMemo(
       () => {
-        const bottomHost = suppressBottomCompletedFooter ? null : bottomTurnFooterHost;
-        if (!showRunningTurnFooter && !bottomHost) {
+        if (!showRunningTurnFooter && !bottomTurnFooterHost) {
           return null;
         }
         return (
           <TurnFooter
             isRunning={showRunningTurnFooter}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
-            host={bottomHost}
+            host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
+            showCompletedTimestampOnly={bottomFooterShowsTimestampOnly}
           />
         );
       },
@@ -816,7 +814,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         showRunningTurnFooter,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
-        suppressBottomCompletedFooter,
+        bottomFooterShowsTimestampOnly,
         streamRenderStrategy,
       ],
     );

@@ -28,11 +28,13 @@ export const TurnFooter = memo(function TurnFooter({
   inFlightTurnStartedAt,
   host,
   strategy,
+  showCompletedTimestampOnly = false,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
+  showCompletedTimestampOnly?: boolean;
 }) {
   if (isRunning) {
     return (
@@ -50,6 +52,7 @@ export const TurnFooter = memo(function TurnFooter({
       items={host.items}
       timing={host.timing}
       startIndex={host.startIndex}
+      showCompletedTimestampOnly={showCompletedTimestampOnly}
     />
   );
 });
@@ -59,11 +62,13 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   items,
   timing,
   startIndex,
+  showCompletedTimestampOnly = false,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  showCompletedTimestampOnly?: boolean;
 }) {
   return (
     <TurnFooterRow>
@@ -72,6 +77,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         items={items}
         timing={timing}
         startIndex={startIndex}
+        showCompletedTimestampOnly={showCompletedTimestampOnly}
       />
     </TurnFooterRow>
   );
@@ -111,11 +117,13 @@ function CompletedTurnFooter({
   items,
   timing,
   startIndex,
+  showCompletedTimestampOnly = false,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  showCompletedTimestampOnly?: boolean;
 }) {
   const getContent = useCallback(
     () =>
@@ -132,6 +140,7 @@ function CompletedTurnFooter({
         getContent={getContent}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
+        showCompletedTimestampOnly={showCompletedTimestampOnly}
       />
     </View>
   );

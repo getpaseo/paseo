@@ -629,6 +629,8 @@ interface AssistantTurnFooterProps {
   getContent: () => string;
   completedAt?: Date;
   durationMs?: number;
+  /** When set, show end time beside copy instead of "Worked for" (work traces header owns duration). */
+  showCompletedTimestampOnly?: boolean;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -659,6 +661,11 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
   },
+  timestampOnly: {
+    color: theme.colors.foregroundMuted,
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    fontVariant: ["tabular-nums"],
+  },
 }));
 
 const TIMESTAMP_REVEAL_MS = 3000;
@@ -673,6 +680,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
   completedAt,
   durationMs,
+  showCompletedTimestampOnly = false,
 }: AssistantTurnFooterProps) {
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
@@ -696,13 +704,17 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     [completedAt],
   );
 
-  const canSwap = Boolean(timestampLabel);
-  const showTimestamp = canSwap && (isWeb ? hovered : pressedReveal);
+  const canSwap = Boolean(timestampLabel) && !showCompletedTimestampOnly;
+  const showTimestamp = showCompletedTimestampOnly
+    ? Boolean(timestampLabel)
+    : canSwap && (isWeb ? hovered : pressedReveal);
+  const primaryDurationLabel = durationLabel;
+  const visibleLabel = showTimestamp ? timestampLabel : primaryDurationLabel;
 
   const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
   const handlePress = useCallback(() => {
-    if (isWeb || !canSwap) return;
+    if (showCompletedTimestampOnly || isWeb || !canSwap) return;
     if (revealTimerRef.current) {
       clearTimeout(revealTimerRef.current);
     }
@@ -711,7 +723,11 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       setPressedReveal(false);
       revealTimerRef.current = null;
     }, TIMESTAMP_REVEAL_MS);
-  }, [canSwap]);
+  }, [canSwap, showCompletedTimestampOnly]);
+
+  const showMetadata = showCompletedTimestampOnly
+    ? Boolean(timestampLabel)
+    : Boolean(primaryDurationLabel);
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
@@ -719,25 +735,29 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
-      {durationLabel ? (
-        <Pressable
-          onPress={handlePress}
-          onHoverIn={handleHoverIn}
-          onHoverOut={handleHoverOut}
-          accessibilityRole={canSwap ? "button" : undefined}
-          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : durationLabel}
-        >
-          <View style={assistantTurnFooterStylesheet.labelWrapper}>
-            {/* Sizer reserves space for whichever label is longer so the
-                container width is stable across hover transitions. */}
-            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-              {durationLabel.length >= timestampLabel.length ? durationLabel : timestampLabel}
-            </Text>
-            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-              {showTimestamp ? timestampLabel : durationLabel}
-            </Text>
-          </View>
-        </Pressable>
+      {showMetadata ? (
+        showCompletedTimestampOnly ? (
+          <Text style={assistantTurnFooterStylesheet.timestampOnly}>{timestampLabel}</Text>
+        ) : (
+          <Pressable
+            onPress={handlePress}
+            onHoverIn={handleHoverIn}
+            onHoverOut={handleHoverOut}
+            accessibilityRole={canSwap ? "button" : undefined}
+            accessibilityLabel={
+              canSwap ? `${primaryDurationLabel}, ended ${timestampLabel}` : primaryDurationLabel
+            }
+          >
+            <View style={assistantTurnFooterStylesheet.labelWrapper}>
+              <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
+                {primaryDurationLabel.length >= timestampLabel.length
+                  ? primaryDurationLabel
+                  : timestampLabel}
+              </Text>
+              <Text style={assistantTurnFooterStylesheet.labelOverlay}>{visibleLabel}</Text>
+            </View>
+          </Pressable>
+        )
       ) : null}
     </View>
   );
