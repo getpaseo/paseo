@@ -62,6 +62,13 @@ import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strate
 import { CompletedTurnFooterRow, TurnFooter, type TurnContentStrategy } from "./turn-footer";
 import { layoutStream, type StreamLayoutItem } from "./layout";
 import {
+  deriveTurnWorkTraceLayout,
+  shouldHideCompletedTurnTraceFromMainList,
+  shouldShowTurnWorkTracesHeader,
+  shouldSuppressCompletedTurnFooter,
+} from "./turn-work-traces";
+import { TurnWorkTracesPanel } from "./turn-work-traces-panel";
+import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./bottom-anchor-controller";
@@ -121,12 +128,16 @@ function renderStreamItemWithTurnFooter(input: {
   content: ReactNode;
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
+  suppressCompletedTurnFooter?: boolean;
 }): ReactNode {
   if (!input.content) {
     return null;
   }
 
-  const footerHost = input.layoutItem.completedFooter;
+  const footerHost =
+    input.suppressCompletedTurnFooter || !input.layoutItem.completedFooter
+      ? null
+      : input.layoutItem.completedFooter;
   const footer = footerHost ? (
     <CompletedTurnFooterRow
       strategy={input.strategy}
@@ -233,6 +244,18 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
 
+function filterStreamItemsForMainList(items: StreamItem[], agentStatus: string): StreamItem[] {
+  const layout = deriveTurnWorkTraceLayout({ items, agentStatus });
+  return items.filter(
+    (item) =>
+      !shouldHideCompletedTurnTraceFromMainList({
+        itemId: item.id,
+        traceItemIdToTurnKey: layout.traceItemIdToTurnKey,
+        bundlesByTurnKey: layout.bundlesByTurnKey,
+      }),
+  );
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -261,6 +284,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     const [isNearBottom, setIsNearBottom] = useState(true);
     const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(
+      new Set(),
+    );
+    const [expandedTurnWorkTraceKeys, setExpandedTurnWorkTraceKeys] = useState<Set<string>>(
       new Set(),
     );
     const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
@@ -298,6 +324,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     useEffect(() => {
       setIsNearBottom(true);
       setExpandedInlineToolCallIds(new Set());
+      setExpandedTurnWorkTraceKeys(new Set());
     }, [agentId]);
 
     const handleInlinePathPress = useStableEvent(
@@ -401,6 +428,54 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         streamRenderStrategy,
       ],
     );
+
+    const orderedFullStreamItems = useMemo(
+      () => [...baseRenderModel.history, ...baseRenderModel.segments.liveHead],
+      [baseRenderModel.history, baseRenderModel.segments.liveHead],
+    );
+    const turnWorkTraceLayout = useMemo(
+      () =>
+        deriveTurnWorkTraceLayout({
+          items: orderedFullStreamItems,
+          agentStatus: agent.status,
+        }),
+      [agent.status, orderedFullStreamItems],
+    );
+    const filteredStreamSegments = useMemo(
+      () => ({
+        historyVirtualized: filterStreamItemsForMainList(
+          baseRenderModel.segments.historyVirtualized,
+          agent.status,
+        ),
+        historyMounted: filterStreamItemsForMainList(
+          baseRenderModel.segments.historyMounted,
+          agent.status,
+        ),
+        liveHead: filterStreamItemsForMainList(baseRenderModel.segments.liveHead, agent.status),
+      }),
+      [agent.status, baseRenderModel.segments],
+    );
+    const filteredStreamBoundary = useMemo(
+      () => ({
+        hasVirtualizedHistory: filteredStreamSegments.historyVirtualized.length > 0,
+        hasMountedHistory: filteredStreamSegments.historyMounted.length > 0,
+        hasLiveHead: filteredStreamSegments.liveHead.length > 0,
+      }),
+      [filteredStreamSegments],
+    );
+
+    const toggleTurnWorkTraces = useCallback((turnKey: string) => {
+      setExpandedTurnWorkTraceKeys((previous) => {
+        const next = new Set(previous);
+        if (next.has(turnKey)) {
+          next.delete(turnKey);
+        } else {
+          next.add(turnKey);
+        }
+        return next;
+      });
+    }, []);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -595,73 +670,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;
 
-    const renderStreamItem = useCallback(
-      (layoutItem: StreamLayoutItem) => {
-        const content = renderStreamItemContent(layoutItem);
-        return renderStreamItemWithTurnFooter({
-          content,
-          layoutItem,
-          strategy: streamRenderStrategy,
-        });
-      },
-      [renderStreamItemContent, streamRenderStrategy],
-    );
-
-    const pendingPermissionItems = useMemo(
-      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
-      [pendingPermissions, agentId],
-    );
-
-    const showRunningTurnFooter = agent.status === "running";
-    const pendingPermissionsNode = useMemo(
-      () =>
-        renderPendingPermissionsNode({
-          pendingPermissions: pendingPermissionItems,
-          client,
-        }),
-      [client, pendingPermissionItems],
-    );
-    const turnFooterNode = useMemo(
-      () =>
-        showRunningTurnFooter || bottomTurnFooterHost ? (
-          <TurnFooter
-            isRunning={showRunningTurnFooter}
-            inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
-            host={bottomTurnFooterHost}
-            strategy={streamRenderStrategy}
-          />
-        ) : null,
-      [
-        showRunningTurnFooter,
-        baseRenderModel.turnTiming.runningStartedAt,
-        bottomTurnFooterHost,
-        streamRenderStrategy,
-      ],
-    );
-    const renderModel = useMemo<AgentStreamRenderModel>(() => {
-      return {
-        ...baseRenderModel,
-        boundary: baseRenderModel.boundary,
-        auxiliary: {
-          pendingPermissions: pendingPermissionsNode,
-          turnFooter: turnFooterNode,
-        },
-      };
-    }, [baseRenderModel, pendingPermissionsNode, turnFooterNode]);
-
-    const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
-    const listEmptyComponent = useMemo(
-      () =>
-        renderListEmptyComponent({
-          renderModel,
-          emptyStateStyle,
-          emptyText: t("agentStream.empty"),
-        }),
-      [renderModel, emptyStateStyle, t],
-    );
-
-    const { boundary, auxiliary } = renderModel;
-
     const layoutHistoryItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
       for (const item of streamLayout.history) {
@@ -678,34 +686,180 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return itemById;
     }, [streamLayout.liveHead]);
 
-    const renderHistoryRow = useCallback(
-      (item: StreamItem) =>
-        renderHistoryStreamItem({
-          item,
-          layoutItemById: layoutHistoryItemById,
-          renderStreamItem,
-        }),
-      [layoutHistoryItemById, renderStreamItem],
+    const renderTraceLayoutItemOnly = useCallback(
+      (layoutItem: StreamLayoutItem) => {
+        const content = renderStreamItemContent(layoutItem);
+        if (!content) {
+          return null;
+        }
+        return (
+          <StreamItemWrapper gapBelow={layoutItem.gapBelow}>{content}</StreamItemWrapper>
+        );
+      },
+      [renderStreamItemContent],
     );
+
+    const renderLayoutItemForStream = useCallback(
+      (layoutItem: StreamLayoutItem) => {
+        const content = renderStreamItemContent(layoutItem);
+        const suppressCompletedTurnFooter =
+          layoutItem.item.kind === "assistant_message" &&
+          shouldSuppressCompletedTurnFooter({
+            assistantMessageId: layoutItem.item.id,
+            bundlesByTurnKey: turnWorkTraceLayout.bundlesByTurnKey,
+          });
+        return renderStreamItemWithTurnFooter({
+          content,
+          layoutItem,
+          strategy: streamRenderStrategy,
+          suppressCompletedTurnFooter,
+        });
+      },
+      [renderStreamItemContent, streamRenderStrategy, turnWorkTraceLayout.bundlesByTurnKey],
+    );
+
+    const renderStreamItem = renderLayoutItemForStream;
+
+    const renderRow = useCallback(
+      (item: StreamItem) => {
+        const layoutItem =
+          layoutHistoryItemById.get(item.id) ?? layoutLiveHeadItemById.get(item.id);
+        if (!layoutItem) {
+          return null;
+        }
+        let streamNode = renderLayoutItemForStream(layoutItem);
+        if (item.kind !== "user_message") {
+          return streamNode;
+        }
+        const bundle = turnWorkTraceLayout.userMessageIdToBundle.get(item.id);
+        if (!shouldShowTurnWorkTracesHeader({ bundle })) {
+          return streamNode;
+        }
+        streamNode = (
+          <StreamItemWrapper gapBelow={0}>{renderStreamItemContent(layoutItem)}</StreamItemWrapper>
+        );
+        const traceLayoutItems = orderedFullStreamItems
+          .filter((candidate) => bundle?.traceItemIds.has(candidate.id))
+          .map((traceItem) => layoutHistoryItemById.get(traceItem.id) ?? layoutLiveHeadItemById.get(traceItem.id))
+          .filter((candidate): candidate is StreamLayoutItem => candidate !== undefined);
+        const turnKey = item.id;
+        const panel = (
+          <StreamItemWrapper gapBelow={layoutItem.gapBelow}>
+            <TurnWorkTracesPanel
+              timing={bundle?.timing ?? null}
+              isExpanded={expandedTurnWorkTraceKeys.has(turnKey)}
+              onToggle={() => toggleTurnWorkTraces(turnKey)}
+              traceItems={traceLayoutItems}
+              renderTraceLayoutItem={renderTraceLayoutItemOnly}
+            />
+          </StreamItemWrapper>
+        );
+        return (
+          <>
+            {streamNode}
+            {panel}
+          </>
+        );
+      },
+      [
+        expandedTurnWorkTraceKeys,
+        layoutHistoryItemById,
+        layoutLiveHeadItemById,
+        orderedFullStreamItems,
+        renderLayoutItemForStream,
+        renderTraceLayoutItemOnly,
+        toggleTurnWorkTraces,
+        turnWorkTraceLayout.userMessageIdToBundle,
+      ],
+    );
+
+    const pendingPermissionItems = useMemo(
+      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
+      [pendingPermissions, agentId],
+    );
+
+    const showRunningTurnFooter = agent.status === "running";
+    const pendingPermissionsNode = useMemo(
+      () =>
+        renderPendingPermissionsNode({
+          pendingPermissions: pendingPermissionItems,
+          client,
+        }),
+      [client, pendingPermissionItems],
+    );
+    const suppressBottomCompletedFooter = useMemo(() => {
+      if (!bottomTurnFooterHost) {
+        return false;
+      }
+      return shouldSuppressCompletedTurnFooter({
+        assistantMessageId: bottomTurnFooterHost.itemId,
+        bundlesByTurnKey: turnWorkTraceLayout.bundlesByTurnKey,
+      });
+    }, [bottomTurnFooterHost, turnWorkTraceLayout.bundlesByTurnKey]);
+
+    const turnFooterNode = useMemo(
+      () => {
+        const bottomHost = suppressBottomCompletedFooter ? null : bottomTurnFooterHost;
+        if (!showRunningTurnFooter && !bottomHost) {
+          return null;
+        }
+        return (
+          <TurnFooter
+            isRunning={showRunningTurnFooter}
+            inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+            host={bottomHost}
+            strategy={streamRenderStrategy}
+          />
+        );
+      },
+      [
+        showRunningTurnFooter,
+        baseRenderModel.turnTiming.runningStartedAt,
+        bottomTurnFooterHost,
+        suppressBottomCompletedFooter,
+        streamRenderStrategy,
+      ],
+    );
+    const renderModel = useMemo<AgentStreamRenderModel>(() => {
+      return {
+        ...baseRenderModel,
+        segments: filteredStreamSegments,
+        boundary: filteredStreamBoundary,
+        auxiliary: {
+          pendingPermissions: pendingPermissionsNode,
+          turnFooter: turnFooterNode,
+        },
+      };
+    }, [
+      baseRenderModel,
+      filteredStreamBoundary,
+      filteredStreamSegments,
+      pendingPermissionsNode,
+      turnFooterNode,
+    ]);
+
+    const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
+    const listEmptyComponent = useMemo(
+      () =>
+        renderListEmptyComponent({
+          renderModel,
+          emptyStateStyle,
+          emptyText: t("agentStream.empty"),
+        }),
+      [renderModel, emptyStateStyle, t],
+    );
+
+    const { boundary, auxiliary } = renderModel;
 
     const renderHistoryVirtualizedRow = useCallback<
       StreamSegmentRenderers["renderHistoryVirtualizedRow"]
-    >((item) => renderHistoryRow(item), [renderHistoryRow]);
+    >((item) => renderRow(item), [renderRow]);
     const renderHistoryMountedRow = useCallback<StreamSegmentRenderers["renderHistoryMountedRow"]>(
-      (item) => renderHistoryRow(item),
-      [renderHistoryRow],
+      (item) => renderRow(item),
+      [renderRow],
     );
-    // useStableEvent keeps the function reference stable across flushes.
-    // layoutLiveHeadItemById and renderStreamItem are read from the ref at call time,
-    // so the live-head render always uses the latest layout without causing renderers
-    // to be a new object on every text-chunk flush.
     const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
-      (item: StreamItem) =>
-        renderLiveHeadStreamItem({
-          item,
-          layoutItemById: layoutLiveHeadItemById,
-          renderStreamItem,
-        }),
+      (item: StreamItem) => renderRow(item),
     );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       return renderLiveAuxiliaryNode({
