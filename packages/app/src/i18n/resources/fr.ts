@@ -1088,6 +1088,10 @@ export const fr: TranslationResources = {
   },
   projectPicker: {
     placeholder: "Tapez un chemin de répertoire...",
+    browsing: "Parcours de {{path}}",
+    browseHostFolders: "Parcourir les dossiers de l’hôte",
+    selectCurrentFolder: "Sélectionner le dossier actuel",
+    parentFolder: "Dossier parent",
     opening: "Projet d'ouverture...",
     empty: "Commencez à taper un chemin",
     errors: {

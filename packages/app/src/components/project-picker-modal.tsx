@@ -8,7 +8,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { Folder, FolderPlus } from "lucide-react-native";
+import { Check, Folder, FolderOpen, FolderPlus, Home, Undo2 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -21,16 +21,21 @@ import type { OpenProjectFailure, OpenProjectResult } from "@/hooks/open-project
 import { isNative } from "@/constants/platform";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
 import {
+  buildProjectPickerBrowseOptions,
   buildProjectPickerOptions,
+  PROJECT_PICKER_HOME_CWD,
   isOpenableProjectPath,
-  type ProjectPickerOption,
+  type ProjectPickerListOption,
 } from "./project-picker-options";
 
 interface PathRowProps {
-  option: ProjectPickerOption;
+  option: ProjectPickerListOption;
   active: boolean;
+  browseHostFoldersLabel: string;
   openPathLabel: string;
-  onSelect: (path: string) => void;
+  selectCurrentFolderLabel: string;
+  parentFolderLabel: string;
+  onSelect: (option: ProjectPickerListOption) => void;
 }
 
 type ProjectPickerErrorCode = NonNullable<OpenProjectFailure["errorCode"]>;
@@ -53,15 +58,29 @@ function getProjectPickerErrorMessage(
   return null;
 }
 
-function PathRow({ option, active, openPathLabel, onSelect }: PathRowProps) {
+function PathRow({
+  option,
+  active,
+  browseHostFoldersLabel,
+  openPathLabel,
+  selectCurrentFolderLabel,
+  parentFolderLabel,
+  onSelect,
+}: PathRowProps) {
   const { theme } = useUnistyles();
-  const Icon = option.kind === "path" ? FolderPlus : Folder;
-  const path = option.path;
-  const displayPath = shortenPath(path);
-  const label = option.kind === "path" ? `${openPathLabel}: ${displayPath}` : displayPath;
+  const Icon = getPathRowIcon(option.kind);
+  const displayPath = shortenPath(option.path);
+  const label = getPathRowLabel({
+    option,
+    displayPath,
+    browseHostFoldersLabel,
+    openPathLabel,
+    selectCurrentFolderLabel,
+    parentFolderLabel,
+  });
   const handlePress = useCallback(() => {
-    onSelect(path);
-  }, [onSelect, path]);
+    onSelect(option);
+  }, [onSelect, option]);
   const pressableStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
@@ -89,6 +108,45 @@ function PathRow({ option, active, openPathLabel, onSelect }: PathRowProps) {
   );
 }
 
+function getPathRowIcon(kind: ProjectPickerListOption["kind"]) {
+  switch (kind) {
+    case "path":
+      return FolderPlus;
+    case "browse-root":
+      return Home;
+    case "browse-current":
+      return Check;
+    case "browse-parent":
+      return Undo2;
+    case "browse-directory":
+      return FolderOpen;
+    case "suggestion":
+      return Folder;
+  }
+}
+
+function getPathRowLabel(input: {
+  option: ProjectPickerListOption;
+  displayPath: string;
+  browseHostFoldersLabel: string;
+  openPathLabel: string;
+  selectCurrentFolderLabel: string;
+  parentFolderLabel: string;
+}): string {
+  switch (input.option.kind) {
+    case "path":
+      return `${input.openPathLabel}: ${input.displayPath}`;
+    case "browse-root":
+      return input.browseHostFoldersLabel;
+    case "browse-current":
+      return `${input.selectCurrentFolderLabel}: ${input.displayPath}`;
+    case "browse-parent":
+      return `${input.parentFolderLabel}: ${input.displayPath}`;
+    case "browse-directory":
+    case "suggestion":
+      return input.displayPath;
+  }
+}
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -104,6 +162,7 @@ export function ProjectPickerModal() {
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [browseCwd, setBrowseCwd] = useState<string | null>(null);
   const openProject = useOpenProject(serverId);
 
   const openProjectMutation = useMutation({
@@ -123,12 +182,15 @@ export function ProjectPickerModal() {
     () => t("projectPicker.errors.open_failed"),
   );
 
+  const isBrowsing = browseCwd !== null;
+
   const directorySuggestionsQuery = useQuery({
-    queryKey: ["project-picker-directory-suggestions", serverId, query],
+    queryKey: ["project-picker-directory-suggestions", serverId, query, browseCwd],
     queryFn: async () => {
       if (!client) return [];
       const result = await client.getDirectorySuggestions({
-        query,
+        query: isBrowsing ? "" : query,
+        ...(browseCwd ? { cwd: browseCwd } : {}),
         includeDirectories: true,
         includeFiles: false,
         limit: 30,
@@ -142,13 +204,22 @@ export function ProjectPickerModal() {
     retry: false,
   });
 
-  const options = useMemo(() => {
-    return buildProjectPickerOptions({
+  const options = useMemo<ProjectPickerListOption[]>(() => {
+    if (browseCwd) {
+      return buildProjectPickerBrowseOptions({
+        cwd: browseCwd,
+        childPaths: directorySuggestionsQuery.data ?? [],
+      });
+    }
+
+    const searchOptions = buildProjectPickerOptions({
       recommendedPaths,
       serverPaths: directorySuggestionsQuery.data ?? [],
       query,
     });
-  }, [query, directorySuggestionsQuery.data, recommendedPaths]);
+
+    return [{ kind: "browse-root", path: PROJECT_PICKER_HOME_CWD }, ...searchOptions];
+  }, [browseCwd, query, directorySuggestionsQuery.data, recommendedPaths]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -163,6 +234,34 @@ export function ProjectPickerModal() {
     [client, serverId, submitPath],
   );
 
+  const handleBrowse = useCallback(
+    (path: string) => {
+      setBrowseCwd(path);
+      setQuery("");
+      setActiveIndex(0);
+      resetSubmit();
+    },
+    [resetSubmit],
+  );
+
+  const handleSelectOption = useCallback(
+    (option: ProjectPickerListOption) => {
+      switch (option.kind) {
+        case "browse-root":
+        case "browse-parent":
+        case "browse-directory":
+          handleBrowse(option.path);
+          return;
+        case "browse-current":
+        case "path":
+        case "suggestion":
+          handleSelectPath(option.path);
+          return;
+      }
+    },
+    [handleBrowse, handleSelectPath],
+  );
+
   const handleSubmitCustom = useCallback(() => {
     const trimmed = query.trim();
     if (!isOpenableProjectPath(trimmed)) return;
@@ -172,6 +271,7 @@ export function ProjectPickerModal() {
   const handleChangeQuery = useCallback(
     (text: string) => {
       setQuery(text);
+      setBrowseCwd(null);
       setActiveIndex(0);
       resetSubmit();
     },
@@ -186,6 +286,7 @@ export function ProjectPickerModal() {
     }
 
     setQuery("");
+    setBrowseCwd(null);
     setActiveIndex(0);
     const id = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(id);
@@ -216,7 +317,7 @@ export function ProjectPickerModal() {
       if (key === "Enter") {
         event.preventDefault();
         if (options.length > 0 && activeIndex < options.length) {
-          handleSelectPath(options[activeIndex].path);
+          handleSelectOption(options[activeIndex]);
         } else if (query.trim()) {
           handleSubmitCustom();
         }
@@ -238,7 +339,7 @@ export function ProjectPickerModal() {
 
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [activeIndex, handleClose, handleSelectPath, handleSubmitCustom, open, options, query]);
+  }, [activeIndex, handleClose, handleSelectOption, handleSubmitCustom, open, options, query]);
 
   const panelStyle = useMemo(
     () => [
@@ -280,7 +381,11 @@ export function ProjectPickerModal() {
               ref={inputRef}
               value={query}
               onChangeText={handleChangeQuery}
-              placeholder={t("projectPicker.placeholder")}
+              placeholder={
+                isBrowsing
+                  ? t("projectPicker.browsing", { path: shortenPath(browseCwd) })
+                  : t("projectPicker.placeholder")
+              }
               placeholderTextColor={theme.colors.foregroundMuted}
               style={inputStyle}
               autoCapitalize="none"
@@ -310,8 +415,11 @@ export function ProjectPickerModal() {
                     key={`${option.kind}:${option.path}`}
                     option={option}
                     active={index === activeIndex}
+                    browseHostFoldersLabel={t("projectPicker.browseHostFolders")}
                     openPathLabel={t("projectPicker.openPath")}
-                    onSelect={handleSelectPath}
+                    selectCurrentFolderLabel={t("projectPicker.selectCurrentFolder")}
+                    parentFolderLabel={t("projectPicker.parentFolder")}
+                    onSelect={handleSelectOption}
                   />
                 ))}
               </>

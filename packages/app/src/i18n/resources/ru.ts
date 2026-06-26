@@ -1076,6 +1076,10 @@ export const ru: TranslationResources = {
   },
   projectPicker: {
     placeholder: "Введите путь к каталогу...",
+    browsing: "Просмотр {{path}}",
+    browseHostFolders: "Просмотреть папки хоста",
+    selectCurrentFolder: "Выбрать текущую папку",
+    parentFolder: "Родительская папка",
     opening: "Открытие проекта...",
     empty: "Начните вводить путь",
     errors: {

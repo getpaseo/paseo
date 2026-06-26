@@ -1038,6 +1038,10 @@ export const zhCN: TranslationResources = {
   },
   projectPicker: {
     placeholder: "输入目录路径...",
+    browsing: "正在浏览 {{path}}",
+    browseHostFolders: "浏览主机文件夹",
+    selectCurrentFolder: "选择当前文件夹",
+    parentFolder: "上级文件夹",
     opening: "正在打开 project...",
     empty: "开始输入路径",
     errors: {
