@@ -326,6 +326,7 @@ export interface PaseoDaemonConfig {
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
+  trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   autoArchiveAfterMerge?: boolean;
@@ -423,6 +424,10 @@ function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger:
   );
 }
 
+function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | string[] {
+  return config.trustedProxies ?? ["loopback"];
+}
+
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger,
@@ -487,7 +492,7 @@ export async function createPaseoDaemon(
   const listenTarget = parseListenString(config.listen);
 
   const app = express();
-  app.set("trust proxy", "loopback");
+  app.set("trust proxy", resolveExpressTrustProxySetting(config));
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
   const terminalManager = createConfiguredTerminalManager({

@@ -150,6 +150,7 @@ Single file, validated with `PersistedConfigSchema`.
   daemon: {
     listen: "127.0.0.1:6767",
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
+    trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     cors: { allowedOrigins: string[] },

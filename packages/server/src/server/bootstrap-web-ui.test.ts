@@ -57,6 +57,17 @@ describe("daemon web UI bootstrap", () => {
   let tempRoot: string | null = null;
   let daemonHandle: TestPaseoDaemon | null = null;
 
+  async function createWebUiDist(): Promise<string> {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-bootstrap-web-ui-"));
+    const distDir = path.join(tempRoot, "dist");
+    await mkdir(distDir, { recursive: true });
+    await writeFile(
+      path.join(distDir, "index.html"),
+      "<!DOCTYPE html><html><head></head><body>app</body></html>",
+    );
+    return distDir;
+  }
+
   afterEach(async () => {
     await daemonHandle?.close();
     daemonHandle = null;
@@ -67,13 +78,7 @@ describe("daemon web UI bootstrap", () => {
   });
 
   test("injects a TLS initial connection hint only for HTTPS forwarded by a trusted proxy", async () => {
-    tempRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-bootstrap-web-ui-"));
-    const distDir = path.join(tempRoot, "dist");
-    await mkdir(distDir, { recursive: true });
-    await writeFile(
-      path.join(distDir, "index.html"),
-      "<!DOCTYPE html><html><head></head><body>app</body></html>",
-    );
+    const distDir = await createWebUiDist();
 
     daemonHandle = await createTestPaseoDaemon({
       mcpEnabled: false,
@@ -101,6 +106,32 @@ describe("daemon web UI bootstrap", () => {
     expect(httpsHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
       useTls: true,
+      label: os.hostname(),
+    });
+  });
+
+  test("ignores forwarded HTTPS when proxy trust is disabled", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      trustedProxies: [],
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const httpsHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { "x-forwarded-proto": "https" },
+      }),
+    );
+
+    expect(httpsHint).toEqual({
+      listen: `daemon.example.test:${daemonHandle.port}`,
+      useTls: false,
       label: os.hostname(),
     });
   });

@@ -25,6 +25,7 @@ import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostn
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+const DEFAULT_TRUSTED_PROXIES = ["loopback"];
 
 export function resolveBundledWebUiDistDir(moduleUrl: string | URL = import.meta.url): string {
   const moduleDir = path.dirname(fileURLToPath(moduleUrl));
@@ -71,6 +72,8 @@ export type CliConfigOverrides = Partial<{
   webUiEnabled: boolean;
   hostnames: HostnamesConfig;
 }>;
+
+type TrustedProxiesConfig = true | string[];
 
 function resolveLogConfigFromEnv(
   env: NodeJS.ProcessEnv,
@@ -307,6 +310,37 @@ function resolveCorsAllowedOrigins(
   );
 }
 
+function parseTrustedProxiesEnv(value: string | undefined): TrustedProxiesConfig | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return [];
+  }
+
+  return trimmed
+    .split(",")
+    .map((proxy) => proxy.trim())
+    .filter((proxy) => proxy.length > 0);
+}
+
+function resolveTrustedProxiesConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): TrustedProxiesConfig {
+  return (
+    parseTrustedProxiesEnv(env.PASEO_TRUSTED_PROXIES) ??
+    persisted.daemon?.trustedProxies ??
+    DEFAULT_TRUSTED_PROXIES
+  );
+}
+
 // PASEO_LISTEN can be:
 // - host:port (TCP)
 // - /path/to/socket (Unix socket)
@@ -374,6 +408,7 @@ function resolveStaticLoadConfigSettings(
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
       cli?.hostnames,
     ]),
+    trustedProxies: resolveTrustedProxiesConfig(env, persisted),
     appBaseUrl: env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL,
   };
 }
@@ -396,6 +431,7 @@ export function loadConfig(
     appendSystemPrompt,
     terminalProfiles,
     hostnames,
+    trustedProxies,
     appBaseUrl,
   } = resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
@@ -425,6 +461,7 @@ export function loadConfig(
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
+    trustedProxies,
     mcpEnabled,
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,

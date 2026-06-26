@@ -63,6 +63,28 @@ describe("PersistedConfigSchema daemon relay config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon trusted proxy config", () => {
+  test("accepts optional trusted proxy ranges", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        trustedProxies: ["loopback", "172.16.0.0/12"],
+      },
+    });
+
+    expect(parsed.daemon?.trustedProxies).toEqual(["loopback", "172.16.0.0/12"]);
+  });
+
+  test("accepts explicit trust-all proxy config", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        trustedProxies: true,
+      },
+    });
+
+    expect(parsed.daemon?.trustedProxies).toBe(true);
+  });
+});
+
 describe("PersistedConfigSchema daemon web UI feature config", () => {
   test("accepts optional web UI enable flag and dist dir", () => {
     const parsed = PersistedConfigSchema.parse({

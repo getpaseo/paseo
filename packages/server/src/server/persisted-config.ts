@@ -231,6 +231,7 @@ export const PersistedConfigSchema = z
         listen: z.string().optional(),
         hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
+        trustedProxies: z.union([z.literal(true), z.array(z.string())]).optional(),
         mcp: z
           .object({
             enabled: z.boolean().optional(),
