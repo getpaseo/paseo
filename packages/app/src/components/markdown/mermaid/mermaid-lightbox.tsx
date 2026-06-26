@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { Modal, Pressable, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { isWeb } from "@/constants/platform";
 import { MermaidZoomableView } from "@/components/markdown/mermaid/mermaid-zoomable-view";
+import type { Theme } from "@/styles/theme";
 
 interface MermaidLightboxProps {
   svg: string | null;
   onClose: () => void;
 }
 
+const LIGHTBOX_EDGE_GAP = 12;
+
+const ThemedX = withUnistyles(X);
+
+const mutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
 export function MermaidLightbox({ svg, onClose }: MermaidLightboxProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
@@ -36,11 +42,11 @@ export function MermaidLightbox({ svg, onClose }: MermaidLightboxProps) {
     () => [
       styles.closeButton,
       {
-        top: insets.top + theme.spacing[3],
-        right: insets.right + theme.spacing[3],
+        top: insets.top + LIGHTBOX_EDGE_GAP,
+        right: insets.right + LIGHTBOX_EDGE_GAP,
       },
     ],
-    [insets.right, insets.top, theme.spacing],
+    [insets.right, insets.top],
   );
 
   const handleBackdropPress = useCallback(() => onClose(), [onClose]);
@@ -69,7 +75,7 @@ export function MermaidLightbox({ svg, onClose }: MermaidLightboxProps) {
             onPress={onClose}
             style={closeButtonStyle}
           >
-            <X size={16} color={theme.colors.foregroundMuted} />
+            <ThemedX size={16} uniProps={mutedIconColorMapping} />
           </Pressable>
         </View>
       </View>
