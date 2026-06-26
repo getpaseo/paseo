@@ -10,6 +10,8 @@ category: Getting started
 
 The official Paseo Docker image runs the daemon and serves the bundled browser UI from the same HTTP origin. It is meant for servers, dev boxes, NAS devices, homelab hosts, and other places where you want Paseo running without the desktop app.
 
+Docker images follow the stable Paseo release cadence. `ghcr.io/getpaseo/paseo:latest` points at the latest stable release, not an arbitrary `main` build.
+
 ```bash
 docker run -d --name paseo \
   -p 6767:6767 \

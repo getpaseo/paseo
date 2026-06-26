@@ -201,8 +201,13 @@ docker build \
   docker/base
 ```
 
-The release workflow publishes multi-arch images to GHCR for `linux/amd64` and
-`linux/arm64`.
+The Docker workflow builds the image on pull requests and on `main` as a
+non-publishing check. GHCR publishing follows the stable release cadence: only a
+stable `vX.Y.Z` tag push publishes `ghcr.io/getpaseo/paseo:X.Y.Z` and
+`ghcr.io/getpaseo/paseo:latest`. Beta tags and manual workflow runs build for
+validation only.
+
+The published image is multi-arch for `linux/amd64` and `linux/arm64`.
 
 ## Troubleshooting
 
