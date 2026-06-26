@@ -107,6 +107,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
 
   return (
     <View
+      testID="mermaid-fence"
       style={containerStyle}
       dataSet={CODE_SURFACE_DATASET}
       onPointerEnter={isWeb ? handlePointerEnter : undefined}
@@ -115,6 +116,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
       <View style={fenceStyles.toolbar} pointerEvents={controlsVisible ? "auto" : "none"}>
         <View style={toolbarInnerStyle}>
           <Pressable
+            testID="mermaid-diagram-toggle"
             accessibilityRole="button"
             accessibilityLabel={t("markdown.mermaid.viewDiagram")}
             onPress={handleShowDiagram}
@@ -124,6 +126,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
             <Text style={fenceStyles.segmentLabel}>{t("markdown.mermaid.diagram")}</Text>
           </Pressable>
           <Pressable
+            testID="mermaid-source-toggle"
             accessibilityRole="button"
             accessibilityLabel={t("markdown.mermaid.viewSource")}
             onPress={handleShowSource}
@@ -167,7 +170,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
           <MermaidDiagramView source={code} onSvgChange={handleSvgChange} />
         </View>
       ) : (
-        <View style={fenceStyles.sourceBody}>
+        <View testID="mermaid-source" style={fenceStyles.sourceBody}>
           <HighlightedCodeBlock
             code={code}
             language="mermaid"

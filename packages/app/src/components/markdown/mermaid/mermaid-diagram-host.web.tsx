@@ -70,7 +70,7 @@ export function MermaidDiagramHost({ svg, style, layout = "intrinsic" }: Mermaid
         };
 
   return (
-    <View style={wrapperStyle}>
+    <View testID="mermaid-diagram-host" style={wrapperStyle}>
       {createElement("div", {
         ref: hostRef,
         style: hostDivStyle,

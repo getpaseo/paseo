@@ -27,7 +27,7 @@ export function MermaidDiagramViewInner({
 
   if (error) {
     return (
-      <View style={diagramStyles.errorWrap}>
+      <View testID="mermaid-error" style={diagramStyles.errorWrap}>
         <Text style={diagramStyles.errorText}>{t("markdown.mermaid.renderFailed")}</Text>
       </View>
     );
