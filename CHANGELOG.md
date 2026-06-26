@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.101 - 2026-06-26
+
+### Added
+
+- Copy a troubleshooting report from Settings when support needs host, daemon, provider, and log details ([#1728](https://github.com/getpaseo/paseo/pull/1728))
+- Claude image tool results now render as images in chat ([#1717](https://github.com/getpaseo/paseo/pull/1717))
+- Added Japanese ([#1694](https://github.com/getpaseo/paseo/pull/1694) by [@sysCat64](https://github.com/sysCat64))
+- Added Brazilian Portuguese ([#1653](https://github.com/getpaseo/paseo/pull/1653) by [@Alcimerio](https://github.com/Alcimerio))
+
+### Improved
+
+- Provider diagnostics stay useful even when model discovery is slow ([#1724](https://github.com/getpaseo/paseo/pull/1724))
+- Slow provider requests no longer make the app look disconnected ([#1723](https://github.com/getpaseo/paseo/pull/1723))
+- Worktrees linked to differently named tracked branches find their PRs correctly ([#1718](https://github.com/getpaseo/paseo/pull/1718))
+- Workspaces started from slash-command prompts get clearer names ([#1709](https://github.com/getpaseo/paseo/pull/1709))
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Pi no longer creates empty sessions while loading new-agent options ([#1727](https://github.com/getpaseo/paseo/pull/1727))
+- Windows daemon status finds the daemon process more reliably ([#1725](https://github.com/getpaseo/paseo/pull/1725))
+- OpenAI voice credentials no longer affect other OpenAI-backed tools
+- Provider model lists no longer disappear during refresh
+
 ## 0.1.100 - 2026-06-24
 
 ### Added

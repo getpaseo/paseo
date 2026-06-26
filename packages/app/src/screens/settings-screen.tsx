@@ -1,13 +1,5 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import type { ComponentType, ReactElement, ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
   Pressable,
@@ -26,7 +18,6 @@ import type { TFunction } from "i18next";
 import { Buffer } from "buffer";
 import {
   ArrowLeft,
-  Monitor,
   Settings,
   Palette,
   Server,
@@ -44,9 +35,11 @@ import {
   SquareTerminal,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
+import { AppDiagnosticSheet } from "@/components/app-diagnostic-sheet";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
+import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { SettingsSection } from "@/screens/settings/settings-section";
@@ -60,14 +53,9 @@ import {
   type ServiceUrlBehavior,
   type Settings as EffectiveSettings,
 } from "@/hooks/use-settings";
-import {
-  getHostRuntimeStore,
-  isHostRuntimeConnected,
-  useHostRuntimeIsConnected,
-  useHosts,
-} from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import type { HostProfile } from "@/types/host-connection";
+import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -81,7 +69,6 @@ import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
@@ -114,7 +101,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
-  buildHostOpenProjectRoute,
+  buildOpenProjectRoute,
   buildProjectsSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsSectionRoute,
@@ -455,6 +442,8 @@ interface DiagnosticsSectionProps {
   isPlaybackTestRunning: boolean;
   playbackTestResult: string | null;
   handlePlaybackTest: () => Promise<void>;
+  appVersion: string | null;
+  isDesktopApp: boolean;
 }
 
 function DiagnosticsSection({
@@ -462,14 +451,28 @@ function DiagnosticsSection({
   isPlaybackTestRunning,
   playbackTestResult,
   handlePlaybackTest,
+  appVersion,
+  isDesktopApp,
 }: DiagnosticsSectionProps) {
   const { t } = useTranslation();
+  const [diagnosticSheetOpen, setDiagnosticSheetOpen] = useState(false);
   const handlePlayPress = useCallback(() => {
     void handlePlaybackTest();
   }, [handlePlaybackTest]);
+  const handleOpenDiagnostic = useCallback(() => setDiagnosticSheetOpen(true), []);
+  const handleCloseDiagnostic = useCallback(() => setDiagnosticSheetOpen(false), []);
   return (
     <SettingsSection title={t("settings.diagnostics.title")}>
       <View style={settingsStyles.card}>
+        <View style={settingsStyles.row} testID="app-diagnostic-row">
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("settings.diagnostics.app.rowTitle")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.diagnostics.app.rowHint")}</Text>
+          </View>
+          <Button variant="secondary" size="sm" onPress={handleOpenDiagnostic}>
+            {t("settings.diagnostics.app.run")}
+          </Button>
+        </View>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{t("settings.diagnostics.testAudio")}</Text>
@@ -489,6 +492,12 @@ function DiagnosticsSection({
           </Button>
         </View>
       </View>
+      <AppDiagnosticSheet
+        visible={diagnosticSheetOpen}
+        onClose={handleCloseDiagnostic}
+        appVersion={appVersion}
+        isDesktopApp={isDesktopApp}
+      />
     </SettingsSection>
   );
 }
@@ -751,48 +760,11 @@ function DesktopAppUpdateRow() {
 // Sidebar
 // ---------------------------------------------------------------------------
 
-function useAnyOnlineHostServerId(serverIds: string[]): string | null {
-  const runtime = getHostRuntimeStore();
-  return useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => {
-      let firstOnlineServerId: string | null = null;
-      let firstOnlineAt: string | null = null;
-      for (const serverId of serverIds) {
-        const snapshot = runtime.getSnapshot(serverId);
-        const lastOnlineAt = snapshot?.lastOnlineAt ?? null;
-        if (!isHostRuntimeConnected(snapshot) || !lastOnlineAt) {
-          continue;
-        }
-        if (!firstOnlineAt || lastOnlineAt < firstOnlineAt) {
-          firstOnlineAt = lastOnlineAt;
-          firstOnlineServerId = serverId;
-        }
-      }
-      return firstOnlineServerId;
-    },
-    () => null,
-  );
-}
-
 /**
- * Local daemon first, then remaining hosts in their existing order. Lets the
- * picker and the active-host resolver agree on a stable "first" host.
+ * Local daemon first, then remaining hosts in their existing order.
  */
 function useSortedHosts(hosts: HostProfile[], localServerId: string | null): HostProfile[] {
-  return useMemo(() => {
-    if (!localServerId) {
-      return hosts;
-    }
-    const localIndex = hosts.findIndex((host) => host.serverId === localServerId);
-    if (localIndex <= 0) {
-      return hosts;
-    }
-    const next = hosts.slice();
-    const [local] = next.splice(localIndex, 1);
-    next.unshift(local);
-    return next;
-  }, [hosts, localServerId]);
+  return useMemo(() => orderHostsLocalFirst(hosts, localServerId), [hosts, localServerId]);
 }
 
 interface SidebarSectionButtonProps {
@@ -912,78 +884,9 @@ function SidebarProjectsButton({ isSelected, onSelect }: SidebarProjectsButtonPr
   );
 }
 
-// Sentinel option id for the "Add host" row appended to the picker list.
-const ADD_HOST_OPTION_ID = "__add_host__";
-
-interface HostPickerOptionProps {
-  serverId: string;
-  label: string;
-  isLocal: boolean;
-  selected: boolean;
-  active: boolean;
-  onPress: () => void;
-}
-
-function HostPickerOption({
-  serverId,
-  label,
-  isLocal,
-  selected,
-  active,
-  onPress,
-}: HostPickerOptionProps) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const leadingSlot = useMemo(
-    () => <Server size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-    [theme.iconSize.sm, theme.colors.foregroundMuted],
-  );
-  // The local host carries a "Local" marker; the active host is conveyed by the
-  // row's selected check, so both can coexist on one row.
-  const trailingSlot = useMemo(
-    () =>
-      isLocal ? (
-        <Text style={sidebarStyles.localMarker} testID="settings-host-local-marker">
-          {t("settings.hostPicker.local")}
-        </Text>
-      ) : undefined,
-    [isLocal, t],
-  );
-  return (
-    <ComboboxItem
-      label={label}
-      leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
-      selected={selected}
-      active={active}
-      onPress={onPress}
-      testID={`settings-host-picker-item-${serverId}`}
-    />
-  );
-}
-
-function AddHostOption({ active, onPress }: { active: boolean; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const leadingSlot = useMemo(
-    () => <Plus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-    [theme.iconSize.sm, theme.colors.foregroundMuted],
-  );
-  return (
-    <ComboboxItem
-      label={t("settings.addHost")}
-      leadingSlot={leadingSlot}
-      active={active}
-      onPress={onPress}
-      testID="settings-add-host"
-    />
-  );
-}
-
 interface HostPickerProps {
   activeServerId: string | null;
   sortedHosts: HostProfile[];
-  localServerId: string | null;
   onSelectHost: (serverId: string) => void;
   onAddHost: () => void;
 }
@@ -994,66 +897,19 @@ interface HostPickerProps {
  * <Combobox>. The local host is listed first and tagged "Local"; an "Add host"
  * row is always reachable from the list — even with a single host.
  */
-function HostPicker({
-  activeServerId,
-  sortedHosts,
-  localServerId,
-  onSelectHost,
-  onAddHost,
-}: HostPickerProps) {
-  const { theme } = useUnistyles();
+function HostPicker({ activeServerId, sortedHosts, onSelectHost, onAddHost }: HostPickerProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<View | null>(null);
   const activeHost =
     sortedHosts.find((host) => host.serverId === activeServerId) ?? sortedHosts[0] ?? null;
 
-  const options = useMemo<ComboboxOption[]>(() => {
-    const hostOptions = sortedHosts.map((host) => ({ id: host.serverId, label: host.label }));
-    return [...hostOptions, { id: ADD_HOST_OPTION_ID, label: t("settings.addHost") }];
-  }, [sortedHosts, t]);
-
-  const handleSelect = useCallback(
-    (id: string) => {
-      if (id === ADD_HOST_OPTION_ID) {
-        onAddHost();
-        return;
-      }
-      onSelectHost(id);
-    },
-    [onAddHost, onSelectHost],
-  );
-
-  const renderOption = useCallback(
-    ({
-      option,
-      selected,
-      active,
-      onPress,
-    }: {
-      option: ComboboxOption;
-      selected: boolean;
-      active: boolean;
-      onPress: () => void;
-    }): ReactElement => {
-      if (option.id === ADD_HOST_OPTION_ID) {
-        return <AddHostOption active={active} onPress={onPress} />;
-      }
-      return (
-        <HostPickerOption
-          serverId={option.id}
-          label={option.label}
-          isLocal={localServerId !== null && option.id === localServerId}
-          selected={selected}
-          active={active}
-          onPress={onPress}
-        />
-      );
-    },
-    [localServerId],
-  );
-
   const handleOpen = useCallback(() => setIsOpen(true), []);
+  const hostLocalMarkerTestID = useCallback(() => "settings-host-local-marker", []);
+  const hostOptionTestID = useCallback(
+    (serverId: string) => `settings-host-picker-item-${serverId}`,
+    [],
+  );
   const triggerStyle = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       sidebarStyles.pickerTrigger,
@@ -1063,7 +919,23 @@ function HostPicker({
   );
 
   return (
-    <>
+    <SharedHostPicker
+      hosts={sortedHosts}
+      value={activeServerId ?? ""}
+      onSelect={onSelectHost}
+      open={isOpen}
+      onOpenChange={setIsOpen}
+      anchorRef={triggerRef}
+      includeAddHost
+      onAddHost={onAddHost}
+      showLocalMarker
+      searchable={false}
+      title={t("settings.hostPicker.switchHost")}
+      desktopMinWidth={240}
+      addHostTestID="settings-add-host"
+      hostLocalMarkerTestID={hostLocalMarkerTestID}
+      hostOptionTestID={hostOptionTestID}
+    >
       <ComboboxTrigger
         ref={triggerRef}
         style={triggerStyle}
@@ -1072,24 +944,12 @@ function HostPicker({
         accessibilityLabel={t("settings.hostPicker.switchHost")}
         testID="settings-host-picker"
       >
-        <Monitor size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        {activeHost ? <HostStatusDotSlot serverId={activeHost.serverId} /> : null}
         <Text style={sidebarStyles.pickerTriggerLabel} numberOfLines={1}>
           {activeHost?.label ?? t("settings.groups.host")}
         </Text>
       </ComboboxTrigger>
-      <Combobox
-        options={options}
-        value={activeServerId ?? ""}
-        onSelect={handleSelect}
-        renderOption={renderOption}
-        searchable={false}
-        title={t("settings.hostPicker.switchHost")}
-        desktopMinWidth={240}
-        open={isOpen}
-        onOpenChange={setIsOpen}
-        anchorRef={triggerRef}
-      />
-    </>
+    </SharedHostPicker>
   );
 }
 
@@ -1166,7 +1026,6 @@ function SettingsSidebar({
           <HostPicker
             activeServerId={activeHostServerId}
             sortedHosts={sortedHosts}
-            localServerId={localServerId}
             onSelectHost={onSelectHost}
             onAddHost={onAddHost}
           />
@@ -1231,9 +1090,10 @@ function SettingsSidebar({
 
 export interface SettingsScreenProps {
   view: SettingsView;
+  openAddHostIntent?: string | null;
 }
 
-export default function SettingsScreen({ view }: SettingsScreenProps) {
+export default function SettingsScreen({ view, openAddHostIntent = null }: SettingsScreenProps) {
   const router = useRouter();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -1244,6 +1104,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
   const [isPlaybackTestRunning, setIsPlaybackTestRunning] = useState(false);
   const [playbackTestResult, setPlaybackTestResult] = useState<string | null>(null);
+  const lastOpenedAddHostIntentRef = useRef<string | null>(null);
   const isDesktopApp = isElectronRuntime();
   const appVersion = resolveAppVersion();
   const appVersionText = formatVersionWithPrefix(appVersion);
@@ -1258,8 +1119,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
-  const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
-  const anyOnlineServerId = useAnyOnlineHostServerId(hostServerIds);
   const [selectedSettingsHostServerId, setSelectedSettingsHostServerId] = useState<string | null>(
     view.kind === "host" ? view.serverId : null,
   );
@@ -1357,6 +1216,14 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const handleAddHost = useCallback(() => {
     setIsAddHostMethodVisible(true);
   }, []);
+
+  useEffect(() => {
+    if (!openAddHostIntent || lastOpenedAddHostIntentRef.current === openAddHostIntent) {
+      return;
+    }
+    lastOpenedAddHostIntentRef.current = openAddHostIntent;
+    handleAddHost();
+  }, [handleAddHost, openAddHostIntent]);
 
   const handleSelectDirectConnection = useCallback(() => {
     setIsAddHostMethodVisible(false);
@@ -1465,12 +1332,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     if (navigateToLastWorkspace()) {
       return;
     }
-    if (anyOnlineServerId) {
-      router.replace(buildHostOpenProjectRoute(anyOnlineServerId));
-      return;
-    }
-    router.replace("/");
-  }, [anyOnlineServerId, router]);
+    router.replace(buildOpenProjectRoute());
+  }, [router]);
 
   const detailHeader = ((): {
     title: string;
@@ -1533,6 +1396,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               isPlaybackTestRunning={isPlaybackTestRunning}
               playbackTestResult={playbackTestResult}
               handlePlaybackTest={handlePlaybackTest}
+              appVersion={appVersion}
+              isDesktopApp={isDesktopApp}
             />
           );
         case "about":
@@ -1823,11 +1688,6 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontWeight: theme.fontWeight.normal,
     flex: 1,
-  },
-  localMarker: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    marginLeft: theme.spacing[1],
   },
   pickerTrigger: {
     flexDirection: "row",

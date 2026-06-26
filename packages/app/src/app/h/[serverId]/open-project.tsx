@@ -1,18 +1,12 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import { OpenProjectScreen } from "@/screens/open-project-screen";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
 
 export default function HostOpenProjectRoute() {
+  // COMPAT(hostOpenProjectRoute): added 2026-06-11, remove after 2026-12-11.
   return (
     <HostRouteBootstrapBoundary>
-      <HostOpenProjectRouteContent />
+      <Redirect href={buildOpenProjectRoute()} />
     </HostRouteBootstrapBoundary>
   );
-}
-
-function HostOpenProjectRouteContent() {
-  const params = useLocalSearchParams<{ serverId?: string }>();
-  const serverId = typeof params.serverId === "string" ? params.serverId : "";
-
-  return <OpenProjectScreen serverId={serverId} />;
 }

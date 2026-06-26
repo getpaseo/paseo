@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -1981,6 +1982,10 @@ export class PiRpcAgentClient implements AgentClient {
     } finally {
       await runtimeSession.close();
     }
+  }
+
+  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return [];
   }
 
   async listImportableSessions(

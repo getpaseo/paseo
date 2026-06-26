@@ -10,7 +10,7 @@ import {
   selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
-  selectWorkspaceOrderByScopeForServer,
+  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
@@ -86,15 +86,15 @@ function trackSelector<S, T>(
 
 function emptySidebarOrder(): SidebarOrderSnapshot {
   return {
-    projectOrderByServerId: {},
-    workspaceOrderByServerAndProject: {},
+    projectOrder: [],
+    workspaceOrderByProject: {},
   };
 }
 
 function selectWorkspaceStructureProjectKeys(
   state: Parameters<typeof selectWorkspaceStructureProjects>[0],
 ): string[] {
-  return selectWorkspaceStructureProjects(state, SERVER_ID).map((project) => project.projectKey);
+  return selectWorkspaceStructureProjects(state, [SERVER_ID]).map((project) => project.projectKey);
 }
 
 afterEach(() => {
@@ -211,10 +211,9 @@ describe("workspace structure composition", () => {
     sidebar: SidebarOrderSnapshot,
   ): ReturnType<typeof composeWorkspaceStructure> {
     return composeWorkspaceStructure({
-      serverId,
-      projects: selectWorkspaceStructureProjects(useSessionStore.getState(), serverId),
-      projectOrder: selectProjectOrder(sidebar, serverId),
-      workspaceOrderByScope: selectWorkspaceOrderByScopeForServer(sidebar, serverId),
+      projects: selectWorkspaceStructureProjects(useSessionStore.getState(), [serverId]),
+      projectOrder: selectProjectOrder(sidebar),
+      workspaceOrderByScope: selectWorkspaceOrderByScope(sidebar),
     });
   }
 
@@ -257,7 +256,7 @@ describe("workspace structure composition", () => {
 
     const tracked = trackSelector(
       useSessionStore,
-      (state) => selectWorkspaceStructureProjects(state, SERVER_ID),
+      (state) => selectWorkspaceStructureProjects(state, [SERVER_ID]),
       workspaceEqualityFns.deep,
     );
     const before = tracked.current;
@@ -265,7 +264,10 @@ describe("workspace structure composition", () => {
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspaceB]);
     const afterAdd = tracked.current;
     expect(afterAdd).not.toBe(before);
-    expect(afterAdd[0]?.workspaceKeys).toEqual(["workspace-a", "workspace-b"]);
+    expect(afterAdd[0]?.workspaceKeys).toEqual([
+      "test-server:workspace-a",
+      "test-server:workspace-b",
+    ]);
 
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceA, status: "running" }]);
     expect(tracked.current).toBe(afterAdd);
@@ -286,7 +288,7 @@ describe("workspace structure composition", () => {
       },
     ]);
 
-    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
+    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), [SERVER_ID]);
     expect(projects).toEqual([
       expect.objectContaining({
         projectKey: "empty-project",
@@ -305,7 +307,7 @@ describe("workspace structure composition", () => {
 
     const tracked = trackSelector(
       useSessionStore,
-      (state) => selectWorkspaceStructureProjects(state, SERVER_ID),
+      (state) => selectWorkspaceStructureProjects(state, [SERVER_ID]),
       workspaceEqualityFns.deep,
     );
     const before = tracked.current;
@@ -334,7 +336,7 @@ describe("workspace structure composition", () => {
     const before = snapshotStructure(SERVER_ID, emptySidebarOrder());
     const after = snapshotStructure(SERVER_ID, {
       ...emptySidebarOrder(),
-      projectOrderByServerId: { [SERVER_ID]: ["project-b", "project-a"] },
+      projectOrder: ["project-b", "project-a"],
     });
 
     expect(after.projects.map((project) => project.projectKey)).toEqual(["project-b", "project-a"]);

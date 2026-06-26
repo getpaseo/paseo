@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  resolveHostIndexRoute,
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   resolveStartupRoute,
@@ -339,14 +338,14 @@ describe("resolveStartupRoute", () => {
     ).toEqual({ kind: "render" });
   });
 
-  it("sends removed host routes to a saved host instead of welcome", () => {
+  it("sends removed host routes to global project selection instead of welcome", () => {
     expect(
       resolveStartupRoute({
         ...baseHostInput,
         route: { kind: "host", serverId: "server-removed" },
         hosts: [{ serverId: "server-next" }],
       }),
-    ).toEqual({ kind: "redirect", href: "/h/server-next/open-project" });
+    ).toEqual({ kind: "redirect", href: "/open-project" });
   });
 
   it("shows welcome from a host route only after the registry proves no hosts exist", () => {
@@ -356,47 +355,5 @@ describe("resolveStartupRoute", () => {
         route: { kind: "host", serverId: "server-removed" },
       }),
     ).toEqual({ kind: "redirect", href: "/welcome" });
-  });
-});
-
-describe("resolveHostIndexRoute", () => {
-  it("restores the remembered workspace when the host index is reopened for the same host", () => {
-    expect(
-      resolveHostIndexRoute({
-        serverId: "server-saved",
-        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
-        workspaceSelectionStatus: "exists",
-      }),
-    ).toEqual("/h/server-saved/workspace/workspace-a");
-  });
-
-  it("keeps restoring a remembered workspace before the host workspace list hydrates", () => {
-    expect(
-      resolveHostIndexRoute({
-        serverId: "server-saved",
-        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
-        workspaceSelectionStatus: "unknown",
-      }),
-    ).toEqual("/h/server-saved/workspace/workspace-a");
-  });
-
-  it("opens project selection when the remembered workspace is proven missing", () => {
-    expect(
-      resolveHostIndexRoute({
-        serverId: "server-saved",
-        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
-        workspaceSelectionStatus: "missing",
-      }),
-    ).toEqual("/h/server-saved/open-project");
-  });
-
-  it("opens project selection when the remembered workspace belongs to another host", () => {
-    expect(
-      resolveHostIndexRoute({
-        serverId: "server-saved",
-        workspaceSelection: { serverId: "server-other", workspaceId: "workspace-a" },
-        workspaceSelectionStatus: "exists",
-      }),
-    ).toEqual("/h/server-saved/open-project");
   });
 });

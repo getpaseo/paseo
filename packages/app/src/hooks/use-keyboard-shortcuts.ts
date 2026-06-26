@@ -23,7 +23,6 @@ import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-over
 import { isNative } from "@/constants/platform";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
-import { useActiveServerId } from "@/hooks/use-active-server-id";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
@@ -55,8 +54,7 @@ export function useKeyboardShortcuts({
     step: 0,
     timeoutId: null,
   });
-  const activeServerId = useActiveServerId();
-  const openProjectPickerAction = useOpenProjectPicker(activeServerId);
+  const openProjectPickerAction = useOpenProjectPicker();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
 

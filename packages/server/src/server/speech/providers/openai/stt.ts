@@ -17,6 +17,7 @@ export type { LogprobToken, TranscriptionResult };
 
 export interface STTConfig {
   apiKey: string;
+  baseUrl?: string;
   model?: "whisper-1" | "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | (string & {});
   confidenceThreshold?: number; // Default: -3.0
 }
@@ -56,6 +57,7 @@ export class OpenAISTT implements SpeechToTextProvider {
     this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "stt" });
     this.openaiClient = new OpenAI({
       apiKey: sttConfig.apiKey,
+      ...(sttConfig.baseUrl ? { baseURL: sttConfig.baseUrl } : {}),
     });
     this.logger.info({ model: sttConfig.model || "whisper-1" }, "STT (OpenAI Whisper) initialized");
   }
@@ -138,7 +140,13 @@ export class OpenAISTT implements SpeechToTextProvider {
             }
 
             const wav = convertPCMToWavBuffer(pcm16);
-            const result = await transcribeAudio(wav, "audio/wav", params.language ?? "en", logger);
+            const result = await transcribeAudio(
+              wav,
+              "audio/wav",
+              params.language ?? "en",
+              logger,
+              params.prompt,
+            );
 
             emitter.emit("transcript", {
               segmentId: committedId,
@@ -178,6 +186,7 @@ export class OpenAISTT implements SpeechToTextProvider {
     format: string,
     language: string,
     logger: pino.Logger,
+    prompt?: string,
   ): Promise<TranscriptionResult> {
     const startTime = Date.now();
     let tempFilePath: string | null = null;
@@ -198,6 +207,7 @@ export class OpenAISTT implements SpeechToTextProvider {
         file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
         language,
         model: modelToUse,
+        ...(prompt ? { prompt } : {}),
         ...(supportsLogprobs ? { include: includeLogprobs } : {}),
         response_format: "json",
       });

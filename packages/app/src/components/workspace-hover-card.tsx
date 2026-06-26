@@ -39,6 +39,8 @@ import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
+import { useHosts, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
+import { formatConnectionStatus } from "@/utils/daemons";
 
 interface Rect {
   x: number;
@@ -284,6 +286,7 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          <HostRow serverId={workspace.serverId} />
           {workspace.currentBranch ? (
             <CopyableInfoRow
               icon={ThemedGitBranch}
@@ -327,6 +330,22 @@ function WorkspaceHoverCardContent({
 
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
+
+function HostRow({ serverId }: { serverId: string }): ReactElement | null {
+  const hosts = useHosts();
+  const host = hosts.find((h) => h.serverId === serverId);
+  const snapshot = useHostRuntimeSnapshot(serverId);
+  const label = host?.label?.trim() || serverId;
+  const status = formatConnectionStatus(snapshot?.connectionStatus ?? "idle");
+
+  return (
+    <View style={styles.hostRow}>
+      <Text style={styles.hostRowLabel}>{label}</Text>
+      <Text style={styles.hostRowStatus}>{status}</Text>
+    </View>
+  );
+}
+
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
@@ -547,6 +566,22 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     flex: 1,
     minWidth: 0,
+  },
+  hostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+  },
+  hostRowLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  hostRowStatus: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
   cardMetaRow: {
     flexDirection: "row",

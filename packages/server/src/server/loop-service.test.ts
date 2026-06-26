@@ -635,6 +635,7 @@ describe("LoopService", () => {
 
   test("stops a running loop and cancels the active worker", async () => {
     let release: (() => void) | null = null;
+    const cancelledAgentIds: string[] = [];
     const blocker = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -653,6 +654,11 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
+    const cancelAgentRun = manager.cancelAgentRun.bind(manager);
+    manager.cancelAgentRun = async (agentId) => {
+      cancelledAgentIds.push(agentId);
+      return cancelAgentRun(agentId);
+    };
     const service = new LoopService({
       paseoHome,
       agentManager: manager,
@@ -667,14 +673,26 @@ describe("LoopService", () => {
       verifyChecks: ["test -f never.txt"],
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    const stopped = await service.stopLoop(loop.id);
-    release?.();
+    const workerAgentId = await waitForActiveWorkerRun(service, manager, loop.id);
+    const stopPromise = service.stopLoop(loop.id);
+    let cancelWaitError: unknown;
+    try {
+      await waitForCancelledAgent(cancelledAgentIds, workerAgentId);
+    } catch (error) {
+      cancelWaitError = error;
+    } finally {
+      release?.();
+    }
+    const stopped = await stopPromise;
+    if (cancelWaitError) {
+      throw cancelWaitError;
+    }
 
     expect(stopped.status).toBe("stopped");
     const finalLoop = await service.inspectLoop(loop.id);
     expect(finalLoop.status).toBe("stopped");
     expect(finalLoop.iterations[0]?.status).toBe("stopped");
+    expect(cancelledAgentIds).toEqual([workerAgentId]);
     expect(finalLoop.logs.some((entry) => entry.text.includes("Stop requested"))).toBe(true);
   });
 });
@@ -691,4 +709,35 @@ async function waitForLoopCompletion(service: LoopService, loopId: string): Prom
   while ((await service.inspectLoop(loopId)).status === "running") {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function waitForActiveWorkerRun(
+  service: LoopService,
+  manager: AgentManager,
+  loopId: string,
+): Promise<string> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const loop = await service.inspectLoop(loopId);
+    const workerAgentId = loop.activeWorkerAgentId;
+    if (workerAgentId && manager.getAgent(workerAgentId)?.activeForegroundTurnId) {
+      return workerAgentId;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for loop worker run to start");
+}
+
+async function waitForCancelledAgent(
+  cancelledAgentIds: readonly string[],
+  agentId: string,
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (cancelledAgentIds.includes(agentId)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for loop worker cancellation");
 }

@@ -647,11 +647,13 @@ export type FetchCatalogOptions =
   | {
       scope: "global";
       force: boolean;
+      timeoutMs?: number;
     }
   | {
       scope: "workspace";
       cwd: string;
       force: boolean;
+      timeoutMs?: number;
     };
 
 export interface ProviderCatalog {

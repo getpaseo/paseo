@@ -1473,6 +1473,22 @@ export const ptBR: TranslationResources = {
       playTest: "Reproduzir teste",
       playing: "Reproduzindo...",
       playbackFailed: "Falha na reprodução: {{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "Sobre",
@@ -1754,6 +1770,31 @@ export const ptBR: TranslationResources = {
           requestFailedMessage:
             "Falha ao enviar a solicitação de reinício. O Paseo reconecta automaticamente. Tente novamente quando o host aparecer como online.",
           dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação de reinício.",
+        },
+        update: {
+          title: "Atualizar daemon",
+          hint: "Atualiza o daemon para a versão mais recente e o reinicia",
+          confirm: "Atualizar",
+          confirmTitle: "Atualizar {{name}}",
+          confirmMessage:
+            "Isso vai atualizar o daemon para a versão mais recente e reiniciá-lo. Agentes em execução serão interrompidos brevemente.",
+          updating: "Atualizando...",
+          phaseStarting: "Preparando atualização...",
+          phaseDownloading: "Baixando pacotes...",
+          phaseInstalling: "Instalando...",
+          phaseComplete: "Atualização concluída, reiniciando...",
+          unableToReconnectTitle: "Não foi possível reconectar",
+          unableToReconnectMessage:
+            "{{name}} não voltou a ficar online após a atualização. Verifique se o daemon reiniciou.",
+          unavailableTitle: "Host indisponível",
+          unavailableMessage:
+            "Este host não está conectado. Aguarde até ele ficar online antes de atualizar.",
+          offlineTitle: "Host offline",
+          offlineMessage:
+            "Este host está offline. Aguarde até ele voltar a ficar online antes de atualizar.",
+          requestFailedTitle: "Falha na atualização",
+          requestFailedMessage: "Falha ao atualizar o daemon: {{error}}",
+          dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação da atualização.",
         },
         dangerZone: "Zona de perigo",
         remove: {

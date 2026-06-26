@@ -10,6 +10,7 @@ import {
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
+  DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
   WSOutboundMessageSchema,
@@ -67,6 +68,7 @@ import type {
   ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
+  DiagnosticsResponse,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -351,6 +353,7 @@ type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
+type DiagnosticsPayload = DiagnosticsResponse["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -466,6 +469,7 @@ export interface FetchAgentTimelineOptions {
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
+type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_agents_response" }
@@ -1882,7 +1886,9 @@ export class DaemonClient {
         cwd,
       },
       responseType: "open_project_response",
-      timeout: 10000,
+      // Large local repos (e.g. a big monorepo/brain checkout) need >10s for the
+      // daemon to resolve the path, detect git, and materialize the workspace.
+      timeout: 60000,
     });
   }
 
@@ -2630,6 +2636,30 @@ export class DaemonClient {
           return null;
         }
         return shutdown.data;
+      },
+    });
+  }
+
+  async updateDaemon(requestId?: string): Promise<DaemonUpdateResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "daemon.update.request",
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 300_000, // 5 minutes — npm update can be slow on remote machines
+      options: { skipQueue: true },
+      select: (msg) => {
+        const parsed = DaemonUpdateResponseSchema.safeParse(msg);
+        if (!parsed.success) {
+          return null;
+        }
+        if (parsed.data.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return parsed.data.payload;
       },
     });
   }
@@ -3484,7 +3514,9 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "directory_suggestions_response",
-      timeout: 10000,
+      // Home-tree scans on large home dirs can take several seconds; don't cut
+      // the suggestion request off early (it would surface as an empty list).
+      timeout: 30000,
     });
   }
 
@@ -3656,8 +3688,8 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_models_response",
-      // Provider SDK cold starts (especially model discovery) can exceed 30s.
-      timeout: 45000,
+      // Provider SDK cold starts (especially model discovery) can exceed 60s.
+      timeout: 90000,
     });
   }
 
@@ -3673,7 +3705,7 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_modes_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3688,7 +3720,7 @@ export class DaemonClient {
         draftConfig,
       },
       responseType: "list_provider_features_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3701,7 +3733,7 @@ export class DaemonClient {
         type: "list_available_providers_request",
       },
       responseType: "list_available_providers_response",
-      timeout: 30000,
+      timeout: 60000,
     });
   }
 
@@ -3752,6 +3784,16 @@ export class DaemonClient {
       },
       responseType: "daemon.get_pairing_offer.response",
       timeout: 10000,
+    });
+  }
+
+  async collectDiagnostics(requestId?: string): Promise<DiagnosticsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "diagnostics.request",
+      },
+      timeout: 30000,
     });
   }
 
@@ -3809,7 +3851,7 @@ export class DaemonClient {
         providers: options?.providers,
       },
       responseType: "refresh_providers_snapshot_response",
-      timeout: 60000,
+      timeout: 120000,
     });
   }
 
@@ -3824,7 +3866,7 @@ export class DaemonClient {
         provider,
       },
       responseType: "provider_diagnostic_response",
-      timeout: 30000,
+      timeout: 180000,
     });
   }
 

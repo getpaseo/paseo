@@ -94,6 +94,12 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
   if (process.argv.includes("--no-inject-mcp")) {
     config.mcpInjectIntoAgents = false;
   }
+  if (process.argv.includes("--web-ui")) {
+    config.webUi = { ...(config.webUi ?? { distDir: null }), enabled: true };
+  }
+  if (process.argv.includes("--no-web-ui")) {
+    config.webUi = { ...(config.webUi ?? { distDir: null }), enabled: false };
+  }
 }
 
 async function main() {

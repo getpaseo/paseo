@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { gotoHome } from "./app";
-import { escapeRegex } from "./regex";
+import { expectAppRoute } from "./route-assertions";
 
 export async function openNewAgentComposer(page: Page): Promise<void> {
   await gotoHome(page);
@@ -59,9 +59,7 @@ export async function switchWorkspaceViaSidebar(input: {
   await row.click();
 
   const targetWorkspaceRoute = buildHostWorkspaceRoute(input.serverId, input.workspaceId);
-  await expect(input.page).toHaveURL(new RegExp(escapeRegex(targetWorkspaceRoute)), {
-    timeout: 30_000,
-  });
+  await expectAppRoute(input.page, targetWorkspaceRoute, { timeout: 30_000 });
 }
 
 /**

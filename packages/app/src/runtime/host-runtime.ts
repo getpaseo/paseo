@@ -25,6 +25,7 @@ import {
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { isWeb } from "@/constants/platform";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { getOrCreateClientId } from "@/utils/client-id";
 import {
@@ -136,6 +137,12 @@ export interface HostRuntimeControllerDeps {
     hostname: string | null;
   }>;
   getClientId: () => Promise<string>;
+  readInitialConnectionHint?: () => InitialDaemonConnectionHint | null;
+}
+
+export interface HostRuntimeStorage {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
 }
 
 export interface HostRuntimeStartOptions {
@@ -1273,6 +1280,37 @@ const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
 const LOCALHOST_FALLBACK_ENDPOINT = "localhost:6767";
 const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500;
 const E2E_STORAGE_KEY = "@paseo:e2e";
+const INITIAL_DAEMON_CONNECTION_HINT_GLOBAL_KEY = "__PASEO_INITIAL_DAEMON_CONNECTION__";
+
+export interface InitialDaemonConnectionHint {
+  listen: string;
+  useTls?: boolean;
+}
+
+function isInitialConnectionHintRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function readInitialDaemonConnectionHint(input?: {
+  isWebRuntime?: boolean;
+}): InitialDaemonConnectionHint | null {
+  const isWebRuntime = input?.isWebRuntime ?? isWeb;
+  if (!isWebRuntime || typeof globalThis === "undefined") {
+    return null;
+  }
+  const value = (globalThis as Record<string, unknown>)[INITIAL_DAEMON_CONNECTION_HINT_GLOBAL_KEY];
+  if (!isInitialConnectionHintRecord(value)) {
+    return null;
+  }
+  const listen = typeof value.listen === "string" ? value.listen.trim() : "";
+  if (!listen) {
+    return null;
+  }
+  return {
+    listen,
+    useTls: value.useTls === true,
+  };
+}
 
 function readConfiguredLocalDaemonOverride(): string | null {
   const value = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim();
@@ -1307,6 +1345,7 @@ export class HostRuntimeStore {
   private hostListListeners = new Set<() => void>();
   private version = 0;
   private hostListVersion = 0;
+  private hostRegistryLoaded = false;
   private hosts: HostProfile[] = [];
   private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
@@ -1314,9 +1353,11 @@ export class HostRuntimeStore {
   private agentDirectoryBootstrapInFlight = new Map<string, Promise<void>>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootStarted = false;
+  private storage: HostRuntimeStorage;
 
-  constructor(input?: { deps?: HostRuntimeControllerDeps }) {
+  constructor(input?: { deps?: HostRuntimeControllerDeps; storage?: HostRuntimeStorage }) {
     this.deps = input?.deps ?? createDefaultDeps();
+    this.storage = input?.storage ?? AsyncStorage;
   }
 
   // --- Host registry ---
@@ -1340,6 +1381,10 @@ export class HostRuntimeStore {
     return this.hostListVersion;
   }
 
+  isHostRegistryLoaded(): boolean {
+    return this.hostRegistryLoaded;
+  }
+
   boot(): void {
     if (this.bootStarted) {
       return;
@@ -1351,10 +1396,11 @@ export class HostRuntimeStore {
   private async runBoot(): Promise<void> {
     const override = readConfiguredLocalDaemonOverride();
     await this.loadFromStorage();
+    this.markHostRegistryLoaded();
 
     let isE2E: string | null = null;
     try {
-      isE2E = await AsyncStorage.getItem(E2E_STORAGE_KEY);
+      isE2E = await this.storage.getItem(E2E_STORAGE_KEY);
     } catch {
       return;
     }
@@ -1364,6 +1410,16 @@ export class HostRuntimeStore {
 
     if (shouldUseDesktopDaemon()) {
       return;
+    }
+
+    const initialHint = this.deps.readInitialConnectionHint
+      ? this.deps.readInitialConnectionHint()
+      : readInitialDaemonConnectionHint();
+    if (initialHint) {
+      const bootstrapped = await this.bootstrapInitialConnectionHint(initialHint);
+      if (bootstrapped) {
+        return;
+      }
     }
 
     if (override) {
@@ -1376,7 +1432,7 @@ export class HostRuntimeStore {
   private async loadFromStorage(): Promise<void> {
     let shouldPersistHosts = false;
     try {
-      const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
+      const stored = await this.storage.getItem(REGISTRY_STORAGE_KEY);
       if (!stored) {
         return;
       }
@@ -1402,6 +1458,14 @@ export class HostRuntimeStore {
         void this.persistHosts();
       }
     }
+  }
+
+  private markHostRegistryLoaded(): void {
+    if (this.hostRegistryLoaded) {
+      return;
+    }
+    this.hostRegistryLoaded = true;
+    this.emitHostList();
   }
 
   private async bootstrapDefaultLocalhost(): Promise<void> {
@@ -1466,6 +1530,37 @@ export class HostRuntimeStore {
         }
         await delay(CONFIGURED_OVERRIDE_BOOTSTRAP_RETRY_MS);
       }
+    }
+  }
+
+  private async bootstrapInitialConnectionHint(
+    hint: InitialDaemonConnectionHint,
+  ): Promise<boolean> {
+    const connection = connectionFromListen(hint.listen);
+    if (!connection) {
+      return false;
+    }
+    const connectionWithHint: HostConnection =
+      connection.type === "directTcp"
+        ? { ...connection, useTls: hint.useTls ?? connection.useTls ?? false }
+        : connection;
+    if (registryHasConnection(this.hosts, connectionWithHint)) {
+      return true;
+    }
+
+    try {
+      await this.probeAndUpsertConnection({
+        connection: connectionWithHint,
+        timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS,
+      });
+      return true;
+    } catch (error) {
+      console.warn("[HostRuntime] initial connection hint probe failed", {
+        listen: hint.listen,
+        useTls: hint.useTls,
+        error,
+      });
+      return false;
     }
   }
 
@@ -1746,7 +1841,7 @@ export class HostRuntimeStore {
 
   private async persistHosts(): Promise<void> {
     try {
-      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(this.hosts));
+      await this.storage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(this.hosts));
     } catch (error) {
       console.error("[HostRuntime] Failed to persist host registry", error);
     }
@@ -2151,6 +2246,15 @@ export function useHostRegistryStatus(): HostRegistryStatus {
     (onStoreChange) => store.subscribeHostList(onStoreChange),
     () => store.getHostRegistryStatus(),
     () => store.getHostRegistryStatus(),
+  );
+}
+
+export function useHostRegistryLoaded(): boolean {
+  const store = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => store.subscribeHostList(onStoreChange),
+    () => store.isHostRegistryLoaded(),
+    () => store.isHostRegistryLoaded(),
   );
 }
 

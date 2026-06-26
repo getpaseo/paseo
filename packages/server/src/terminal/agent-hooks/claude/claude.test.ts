@@ -1,8 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { isPlatform } from "../../../test-utils/platform.js";
 import { buildTerminalEnvironment } from "../../terminal.js";
 import { buildAgentHookShellCommand } from "../agent-hook-installer.js";
 import {
@@ -81,7 +83,7 @@ describe("Claude terminal agent hooks", () => {
       );
       expect(paseoCommands).toHaveLength(1);
       expect(paseoCommands[0]).toBe(
-        `[ -n "$PASEO_TERMINAL_ID" ] && "\${PASEO_HOOK_CLI:-paseo}" hooks ${provider.id} ${event.event}`,
+        `if [ -n "$PASEO_TERMINAL_ID" ]; then "\${PASEO_HOOK_CLI:-paseo}" hooks ${provider.id} ${event.event}; fi`,
       );
     }
     expect(registeredAgentHooksAreInstalled({ configDir })).toBe(true);
@@ -146,9 +148,24 @@ describe("Claude terminal agent hooks", () => {
     const command = buildAgentHookShellCommand(provider, provider.events[0]);
 
     expect(command).toBe(
-      '[ -n "$PASEO_TERMINAL_ID" ] && "${PASEO_HOOK_CLI:-paseo}" hooks claude UserPromptSubmit',
+      'if [ -n "$PASEO_TERMINAL_ID" ]; then "${PASEO_HOOK_CLI:-paseo}" hooks claude UserPromptSubmit; fi',
     );
   });
+
+  it.skipIf(isPlatform("win32")).each(AGENT_HOOK_PROVIDERS.claude.events)(
+    "$event hook command exits 0 when PASEO_TERMINAL_ID is unset",
+    (event) => {
+      const provider = AGENT_HOOK_PROVIDERS.claude;
+      const command = buildAgentHookShellCommand(provider, event);
+
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        env: { PATH: process.env.PATH ?? "", PASEO_HOOK_CLI: "paseo" },
+        stdio: "ignore",
+      });
+
+      expect(result.status).toBe(0);
+    },
+  );
 
   it("keeps provider names out of generic CLI and bootstrap integration points", () => {
     const genericFiles = [

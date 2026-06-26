@@ -1466,6 +1466,22 @@ export const ja: TranslationResources = {
       playTest: "テスト再生",
       playing: "再生中...",
       playbackFailed: "再生に失敗しました: {{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "アプリ情報",
@@ -1748,6 +1764,31 @@ export const ja: TranslationResources = {
           requestFailedMessage:
             "再起動リクエストの送信に失敗しました。Paseoは自動的に再接続します。ホストがオンラインになったら再試行してください。",
           dialogFailedMessage: "再起動確認ダイアログを開けませんでした。",
+        },
+        update: {
+          title: "デーモンを更新",
+          hint: "デーモンを最新バージョンに更新して再起動します",
+          confirm: "更新",
+          confirmTitle: "{{name}}を更新",
+          confirmMessage:
+            "これによりデーモンが最新バージョンに更新され、再起動されます。実行中のエージェントは一時的に中断されます。",
+          updating: "更新中...",
+          phaseStarting: "更新を準備中...",
+          phaseDownloading: "パッケージをダウンロード中...",
+          phaseInstalling: "インストール中...",
+          phaseComplete: "更新が完了しました。再起動中...",
+          unableToReconnectTitle: "再接続できません",
+          unableToReconnectMessage:
+            "{{name}}が更新後にオンラインに戻りませんでした。デーモンが再起動されたことを確認してください。",
+          unavailableTitle: "ホストが利用できません",
+          unavailableMessage:
+            "このホストは接続されていません。更新する前にオンラインになるまでお待ちください。",
+          offlineTitle: "ホストオフライン",
+          offlineMessage:
+            "このホストはオフラインです。オンラインに戻るまで待ってから更新してください。",
+          requestFailedTitle: "更新に失敗しました",
+          requestFailedMessage: "デーモンの更新に失敗しました: {{error}}",
+          dialogFailedMessage: "更新確認ダイアログを開けませんでした。",
         },
         dangerZone: "危険ゾーン",
         remove: {

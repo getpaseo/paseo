@@ -3,12 +3,7 @@ import type { Logger } from "pino";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
-import {
-  DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-  DEFAULT_OPENAI_TTS_MODEL,
-  type OpenAiSpeechProviderConfig,
-} from "./config.js";
-import { OpenAIRealtimeTranscriptionSession } from "./realtime-transcription-session.js";
+import { DEFAULT_OPENAI_TTS_MODEL, type OpenAiSpeechProviderConfig } from "./config.js";
 import { OpenAISTT } from "./stt.js";
 import { OpenAITTS } from "./tts.js";
 
@@ -126,25 +121,6 @@ function createOpenAiTts(
   );
 }
 
-function createOpenAiDictationService(
-  apiKey: string,
-  openaiConfig: OpenAiSpeechProviderConfig | undefined,
-): SpeechToTextProvider {
-  return {
-    id: "openai",
-    createSession: ({ logger: sessionLogger, language, prompt }) =>
-      new OpenAIRealtimeTranscriptionSession({
-        apiKey,
-        logger: sessionLogger,
-        transcriptionModel:
-          openaiConfig?.realtimeTranscriptionModel ?? DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-        ...(language ? { language } : {}),
-        ...(prompt ? { prompt } : {}),
-        turnDetection: null,
-      }),
-  };
-}
-
 export function initializeOpenAiSpeechServices(params: {
   providers: RequestedSpeechProviders;
   openaiConfig: OpenAiSpeechProviderConfig | undefined;
@@ -186,9 +162,10 @@ export function initializeOpenAiSpeechServices(params: {
     }
 
     if (needsOpenAiDictation && openAiCredentials.openaiDictationApiKey) {
-      dictationSttService = createOpenAiDictationService(
+      dictationSttService = createOpenAiStt(
         openAiCredentials.openaiDictationApiKey,
         openaiConfig,
+        logger,
       );
     }
   } else if (needsAnyOpenAi) {

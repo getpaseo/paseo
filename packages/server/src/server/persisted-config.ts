@@ -45,9 +45,18 @@ const LogConfigSchema = z
   })
   .strict();
 
-const ProviderCredentialsSchema = z
+const OpenAiVoiceProviderSchema = z
+  .object({
+    apiKey: z.string().trim().min(1).optional(),
+    baseUrl: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+const OpenAiProviderSchema = z
   .object({
     apiKey: z.string().min(1).optional(),
+    voice: OpenAiVoiceProviderSchema.optional(),
+    baseUrl: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -59,7 +68,7 @@ const LocalSpeechProviderSchema = z
 
 const ProvidersSchema = z
   .object({
-    openai: ProviderCredentialsSchema.optional(),
+    openai: OpenAiProviderSchema.optional(),
     local: LocalSpeechProviderSchema.optional(),
   })
   .strict();
@@ -135,6 +144,13 @@ const FeatureVoiceModeSchema = z
       })
       .strict()
       .optional(),
+  })
+  .strict();
+
+const FeatureWebUiSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    distDir: z.string().min(1).optional(),
   })
   .strict();
 
@@ -215,6 +231,7 @@ export const PersistedConfigSchema = z
         listen: z.string().optional(),
         hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
+        trustedProxies: z.union([z.literal(true), z.array(z.string())]).optional(),
         mcp: z
           .object({
             enabled: z.boolean().optional(),
@@ -282,6 +299,7 @@ export const PersistedConfigSchema = z
       .object({
         dictation: FeatureDictationSchema.optional(),
         voiceMode: FeatureVoiceModeSchema.optional(),
+        webUi: FeatureWebUiSchema.optional(),
       })
       .strict()
       .optional(),

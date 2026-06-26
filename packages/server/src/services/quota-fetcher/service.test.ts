@@ -11,6 +11,7 @@ import { CopilotQuotaProvider } from "./providers/copilot.js";
 import { CursorQuotaProvider } from "./providers/cursor.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
+import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
 
@@ -48,6 +49,24 @@ function writeKimiCredentials(dir: string, accessToken: string): void {
       token_type: "Bearer",
     }),
   );
+}
+
+function writeMiniMaxConfig(dir: string, payload: Record<string, unknown>): void {
+  mkdirSync(join(dir, ".mmx"), { recursive: true });
+  writeFileSync(join(dir, ".mmx", "config.json"), JSON.stringify(payload));
+}
+
+function writeMiniMaxCredentials(
+  dir: string,
+  accessToken: string,
+  expiresAt?: string,
+  resourceUrl?: string,
+): void {
+  mkdirSync(join(dir, ".mmx"), { recursive: true });
+  const payload: Record<string, unknown> = { access_token: accessToken };
+  if (expiresAt !== undefined) payload["expires_at"] = expiresAt;
+  if (resourceUrl !== undefined) payload["resource_url"] = resourceUrl;
+  writeFileSync(join(dir, ".mmx", "credentials.json"), JSON.stringify(payload));
 }
 
 function makeClaudeResponse(
@@ -315,6 +334,8 @@ describe("real provider usage fetchers", () => {
       "KIMI_API_KEY",
       "KIMI_CODE_HOME",
       "CODEX_HOME",
+      "MINIMAX_API_KEY",
+      "MINIMAX_BASE_URL",
     ]) {
       delete process.env[key];
     }
@@ -339,6 +360,8 @@ describe("real provider usage fetchers", () => {
       platform?: typeof process.platform;
       keychain?: () => Promise<unknown | null>;
       kimiHomeDir?: string;
+      miniMaxConfigPath?: string;
+      miniMaxCredentialsPath?: string;
     } = {},
   ) {
     const logger = createLogger();
@@ -364,6 +387,13 @@ describe("real provider usage fetchers", () => {
           logger,
           fetch: fetchThroughTestDouble,
           homeDir: options.kimiHomeDir,
+        }),
+        new MiniMaxQuotaProvider({
+          logger,
+          fetch: fetchThroughTestDouble,
+          configPath: options.miniMaxConfigPath ?? join(homeDir, ".mmx", "config.json"),
+          credentialsPath:
+            options.miniMaxCredentialsPath ?? join(homeDir, ".mmx", "credentials.json"),
         }),
       ],
       cacheTtlMs: 0,
@@ -748,6 +778,145 @@ describe("real provider usage fetchers", () => {
           resetsAt: "2026-06-23T05:12:17Z",
         }),
       ],
+    });
+  });
+
+  it("fetches MiniMax usage from MINIMAX_API_KEY against the global endpoint", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    let requestedUrl: string | null = null;
+    let authorization: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      requestedUrl = url.toString();
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({
+        model_remains: [
+          {
+            model_name: "MiniMax-M2.7",
+            end_time: Date.parse("2026-06-19T05:00:00.000Z"),
+            weekly_end_time: Date.parse("2026-06-26T00:00:00.000Z"),
+            current_interval_total_count: 1000,
+            current_interval_usage_count: 250,
+            current_interval_remaining_percent: 75,
+            current_weekly_total_count: 5000,
+            current_weekly_usage_count: 1200,
+            current_weekly_remaining_percent: 76,
+          },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(requestedUrl).toBe("https://api.minimax.io/v1/token_plan/remains");
+    expect(authorization).toBe("Bearer minimax_test_token");
+    expect(miniMax).toMatchObject({
+      status: "available",
+      windows: expect.arrayContaining([
+        expect.objectContaining({
+          id: "interval_MiniMax-M2.7",
+          label: "MiniMax-M2.7 · Interval",
+          usedPct: 25,
+          remainingPct: 75,
+          resetsAt: "2026-06-19T05:00:00.000Z",
+        }),
+        expect.objectContaining({
+          id: "weekly_MiniMax-M2.7",
+          label: "MiniMax-M2.7 · Weekly",
+          usedPct: 24,
+          remainingPct: 76,
+          resetsAt: "2026-06-26T00:00:00.000Z",
+        }),
+      ]),
+    });
+  });
+
+  it("returns unavailable MiniMax usage when no credentials are configured", async () => {
+    fetchApi = vi.fn() as never;
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(miniMax.status).toBe("unavailable");
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+
+  it("reads MiniMax OAuth credentials from the CLI credentials file", async () => {
+    writeMiniMaxCredentials(
+      homeDir,
+      "minimax_oauth_token",
+      "2030-01-01T00:00:00.000Z",
+      "https://account.example.com",
+    );
+    let requestedUrl: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL) => {
+      requestedUrl = url.toString();
+      return jsonResponse({ model_remains: [] });
+    }) as unknown as typeof fetch;
+
+    await service().listUsage();
+
+    expect(requestedUrl).toBe("https://account.example.com/v1/token_plan/remains");
+  });
+
+  it("falls back to MiniMax api_key in the CLI config file", async () => {
+    writeMiniMaxConfig(homeDir, {
+      api_key: "minimax_config_key",
+      region: "cn",
+    });
+    let requestedUrl: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL) => {
+      requestedUrl = url.toString();
+      return jsonResponse({ model_remains: [] });
+    }) as unknown as typeof fetch;
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(requestedUrl).toBe("https://api.minimaxi.com/v1/token_plan/remains");
+    expect(miniMax.status).toBe("unavailable");
+  });
+
+  it("marks exhausted MiniMax interval windows with a danger tone", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.minimax.io/v1/token_plan/remains",
+          () =>
+            jsonResponse({
+              model_remains: [
+                {
+                  model_name: "MiniMax-M2.7",
+                  end_time: Date.parse("2026-06-19T05:00:00.000Z"),
+                  weekly_end_time: Date.parse("2026-06-26T00:00:00.000Z"),
+                  current_interval_total_count: 100,
+                  current_interval_usage_count: 100,
+                  current_interval_remaining_percent: 0,
+                  current_interval_status: 2,
+                  current_weekly_total_count: 100,
+                  current_weekly_usage_count: 10,
+                  current_weekly_remaining_percent: 90,
+                  current_weekly_status: 1,
+                },
+              ],
+            }),
+        ],
+      ]),
+    );
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(miniMax).toMatchObject({
+      status: "available",
+      windows: expect.arrayContaining([
+        expect.objectContaining({
+          id: "interval_MiniMax-M2.7",
+          usedPct: 100,
+          tone: "danger",
+        }),
+        expect.objectContaining({
+          id: "weekly_MiniMax-M2.7",
+          tone: "ok",
+        }),
+      ]),
     });
   });
 });

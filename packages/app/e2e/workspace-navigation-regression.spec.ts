@@ -33,6 +33,7 @@ import {
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { injectDesktopBridge } from "./helpers/desktop-updates";
+import { expectAppRoute } from "./helpers/route-assertions";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 
@@ -105,12 +106,8 @@ async function expectWorkspaceLocation(
     workspace: Awaited<ReturnType<typeof seedWorkspace>>;
   },
 ): Promise<void> {
-  await expect(page).toHaveURL(
-    buildHostWorkspaceRoute(input.serverId, input.workspace.workspaceId),
-    {
-      timeout: 30_000,
-    },
-  );
+  const workspaceRoute = buildHostWorkspaceRoute(input.serverId, input.workspace.workspaceId);
+  await expectAppRoute(page, workspaceRoute, { timeout: 30_000 });
   await expectWorkspaceHeader(page, {
     title: input.workspace.workspaceName,
     subtitle: input.workspace.projectDisplayName,

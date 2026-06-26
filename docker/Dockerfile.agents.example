@@ -1,0 +1,17 @@
+# Example child image that adds agent CLIs to the official Paseo image.
+#
+# Build:
+#   docker build -f docker/Dockerfile.agents.example -t paseo-with-agents .
+#
+# Then set `image: paseo-with-agents` in docker/docker-compose.example.yml.
+
+FROM ghcr.io/getpaseo/paseo:latest
+
+USER root
+RUN npm install -g \
+  @anthropic-ai/claude-code \
+  @openai/codex \
+  opencode-ai
+
+# Leave the image user as root. The base entrypoint prepares mounted volumes,
+# then drops the daemon and launched agents to the non-root `paseo` user.
