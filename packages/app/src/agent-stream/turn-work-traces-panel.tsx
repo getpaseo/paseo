@@ -1,4 +1,5 @@
 import React, { memo, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
@@ -20,10 +21,23 @@ export const TurnWorkTracesHeader = memo(function TurnWorkTracesHeader({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const durationMs = timing?.durationMs;
-  const durationLabel = useMemo(
-    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : "Worked"),
-    [durationMs],
+  const durationLabel = useMemo(() => {
+    if (durationMs === undefined) {
+      return t("agentStream.workTraces.worked");
+    }
+    return t("agentStream.workTraces.workedFor", {
+      duration: formatDuration(durationMs),
+    });
+  }, [durationMs, t]);
+
+  const accessibilityLabel = useMemo(
+    () =>
+      t("agentStream.workTraces.accessibilityLabel", {
+        durationLabel,
+      }),
+    [durationLabel, t],
   );
 
   const Chevron = isExpanded ? ThemedChevronDown : ThemedChevronRight;
@@ -33,7 +47,7 @@ export const TurnWorkTracesHeader = memo(function TurnWorkTracesHeader({
       onPress={onToggle}
       accessibilityRole="button"
       accessibilityState={{ expanded: isExpanded }}
-      accessibilityLabel={`${durationLabel}, work traces`}
+      accessibilityLabel={accessibilityLabel}
       testID="turn-work-traces-header"
     >
       <View style={stylesheet.headerRow}>

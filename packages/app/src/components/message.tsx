@@ -682,6 +682,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   durationMs,
   showCompletedTimestampOnly = false,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -696,8 +697,11 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   }, []);
 
   const durationLabel = useMemo(
-    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : ""),
-    [durationMs],
+    () =>
+      durationMs !== undefined
+        ? t("message.turnFooter.workedFor", { duration: formatDuration(durationMs) })
+        : "",
+    [durationMs, t],
   );
   const timestampLabel = useMemo(
     () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
@@ -745,7 +749,12 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
             onHoverOut={handleHoverOut}
             accessibilityRole={canSwap ? "button" : undefined}
             accessibilityLabel={
-              canSwap ? `${primaryDurationLabel}, ended ${timestampLabel}` : primaryDurationLabel
+              canSwap
+                ? t("message.turnFooter.endedAccessibility", {
+                    duration: primaryDurationLabel,
+                    timestamp: timestampLabel,
+                  })
+                : primaryDurationLabel
             }
           >
             <View style={assistantTurnFooterStylesheet.labelWrapper}>

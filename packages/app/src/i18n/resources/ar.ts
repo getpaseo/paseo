@@ -171,6 +171,11 @@ export const ar: TranslationResources = {
   agentStream: {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
+    workTraces: {
+      worked: "عمل",
+      workedFor: "عمل لمدة {{duration}}",
+      accessibilityLabel: "{{durationLabel}}، سجل العمل",
+    },
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",
@@ -241,6 +246,10 @@ export const ar: TranslationResources = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "عمل لمدة {{duration}}",
+      endedAccessibility: "{{duration}}، انتهى {{timestamp}}",
+    },
     actions: {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",

@@ -171,6 +171,11 @@ export const ptBR: TranslationResources = {
   agentStream: {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
+    workTraces: {
+      worked: "Trabalhou",
+      workedFor: "Trabalhou por {{duration}}",
+      accessibilityLabel: "{{durationLabel}}, rastros de trabalho",
+    },
     permission: {
       plan: "Plano",
       required: "Permissão necessária",
@@ -244,6 +249,10 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "Trabalhou por {{duration}}",
+      endedAccessibility: "{{duration}}, terminou {{timestamp}}",
+    },
     actions: {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
