@@ -90,7 +90,7 @@ For full setup and configuration, see:
 
 ### Docker
 
-Run the Paseo daemon headless in Docker:
+Run the Paseo daemon and self-hosted web UI in Docker:
 
 ```bash
 docker run -d --name paseo \
@@ -98,10 +98,10 @@ docker run -d --name paseo \
   -e PASEO_PASSWORD=change-me \
   -v "$PWD/paseo-home:/home/paseo" \
   -v "$PWD:/workspace" \
-  ghcr.io/getpaseo/paseo:debian
+  ghcr.io/getpaseo/paseo:latest
 ```
 
-Docker starts the daemon only. Configure agents and credentials with environment variables, volumes, and Docker Mods. See the [Docker documentation](docs/docker.md) for full setup details.
+Open `http://localhost:6767` after it starts. Extend the base image with the agent CLIs you use, then provide credentials through environment variables or the persistent `/home/paseo` volume. See the [Docker documentation](docs/docker.md) for full setup details.
 
 ## CLI
 

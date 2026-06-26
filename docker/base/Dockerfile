@@ -1,98 +1,79 @@
 # syntax=docker/dockerfile:1
-#
-# Paseo daemon base image.
-#
-# One Dockerfile, many distros: pass --build-arg BASE_IMAGE=<image>.
-# Supported families: Debian/Ubuntu (apt) and Alpine (apk).
-#
-#   docker build --build-arg BASE_IMAGE=debian:13-slim -t paseo:debian docker/base
-#   docker build --build-arg BASE_IMAGE=ubuntu:24.04   -t paseo:ubuntu docker/base
-#   docker build --build-arg BASE_IMAGE=alpine:3.21    -t paseo:alpine docker/base
-#
-ARG BASE_IMAGE=debian:13-slim
-FROM ${BASE_IMAGE}
 
-# TARGETARCH is provided automatically by buildx (amd64 / arm64).
-ARG TARGETARCH
-ARG S6_OVERLAY_VERSION=3.2.0.2
-# Paseo version to install from npm. Defaults to latest; CI pins to the release version.
+ARG NODE_IMAGE=node:22-bookworm-slim
+FROM ${NODE_IMAGE}
+
 ARG PASEO_VERSION=latest
 
 ENV HOME=/home/paseo \
     PASEO_HOME=/home/paseo/.paseo \
     PASEO_LISTEN=0.0.0.0:6767 \
+    PASEO_WEB_UI_ENABLED=true \
+    PASEO_LOG_FORMAT=json \
+    PASEO_LOG_LEVEL=info \
     CLAUDE_CONFIG_DIR=/home/paseo/.claude \
     CODEX_HOME=/home/paseo/.codex \
     XDG_CONFIG_HOME=/home/paseo/.config \
     XDG_DATA_HOME=/home/paseo/.local/share \
     XDG_STATE_HOME=/home/paseo/.local/state \
     XDG_CACHE_HOME=/home/paseo/.cache \
-    ONNXRUNTIME_NODE_INSTALL=skip \
-    PUID=911 \
-    PGID=911 \
-    S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
-    S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 \
-    S6_VERBOSITY=1
+    ONNXRUNTIME_NODE_INSTALL=skip
 
-# Base runtime deps + Node 22 (family-detected inside the script).
-COPY scripts/install-base.sh /tmp/install-base.sh
-RUN /tmp/install-base.sh && rm -f /tmp/install-base.sh
-
-# s6-overlay v3 (process supervisor + PID 1).
 RUN set -eux; \
-    case "${TARGETARCH}" in \
-      amd64) S6_ARCH=x86_64 ;; \
-      arm64) S6_ARCH=aarch64 ;; \
-      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    cd /tmp; \
-    curl -fsSL -O \
-      "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz"; \
-    curl -fsSL -O \
-      "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz.sha256"; \
-    curl -fsSL -O \
-      "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz"; \
-    curl -fsSL -O \
-      "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz.sha256"; \
-    sha256sum -c s6-overlay-noarch.tar.xz.sha256; \
-    sha256sum -c "s6-overlay-${S6_ARCH}.tar.xz.sha256"; \
-    tar -C / -Jxpf s6-overlay-noarch.tar.xz; \
-    tar -C / -Jxpf "s6-overlay-${S6_ARCH}.tar.xz"; \
-    rm -f s6-overlay-noarch.tar.xz s6-overlay-noarch.tar.xz.sha256 "s6-overlay-${S6_ARCH}.tar.xz" "s6-overlay-${S6_ARCH}.tar.xz.sha256"
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      bash \
+      ca-certificates \
+      curl \
+      git \
+      gosu \
+      openssh-client \
+      tini; \
+    rm -rf /var/lib/apt/lists/*
 
-# Paseo server + CLI from npm. On Alpine this compiles node-pty against musl
-# using a throwaway toolchain that the script removes afterwards.
-COPY scripts/install-paseo.sh /tmp/install-paseo.sh
-RUN PASEO_VERSION="${PASEO_VERSION}" /tmp/install-paseo.sh && rm -f /tmp/install-paseo.sh
-
-# Non-root runtime user. IDs are re-mapped at boot from PUID/PGID.
 RUN set -eux; \
-    if [ -f /etc/alpine-release ]; then \
-      addgroup -g 911 paseo; \
-      adduser -D -H -h /home/paseo -u 911 -G paseo -s /bin/bash paseo; \
-    else \
-      groupadd -g 911 paseo; \
-      useradd -u 911 -g paseo -d /home/paseo -M -s /bin/bash paseo; \
+    npm install -g --omit=optional \
+      "@getpaseo/server@${PASEO_VERSION}" \
+      "@getpaseo/cli@${PASEO_VERSION}"; \
+    npm cache clean --force; \
+    server_entry="$(npm root -g)/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"; \
+    test -f "$server_entry"; \
+    printf '%s\n' "$server_entry" > /etc/paseo-server-entry; \
+    node --check "$server_entry"
+
+RUN set -eux; \
+    existing_group="$(getent group 1000 | cut -d: -f1 || true)"; \
+    if [ -n "$existing_group" ] && [ "$existing_group" != "paseo" ]; then \
+      groupmod --new-name paseo "$existing_group"; \
+    elif [ -z "$existing_group" ]; then \
+      groupadd --gid 1000 paseo; \
     fi; \
-    paseo_shell="$(awk -F: '$1 == "paseo" { print $7 }' /etc/passwd)"; \
-    [ "$paseo_shell" = "/bin/bash" ]
+    existing_user="$(getent passwd 1000 | cut -d: -f1 || true)"; \
+    if [ -n "$existing_user" ] && [ "$existing_user" != "paseo" ]; then \
+      usermod --login paseo --gid paseo --home /home/paseo --shell /bin/bash "$existing_user"; \
+    elif [ -z "$existing_user" ]; then \
+      useradd --uid 1000 --gid paseo --create-home --home-dir /home/paseo --shell /bin/bash paseo; \
+    fi; \
+    mkdir -p \
+      /workspace \
+      "$PASEO_HOME" \
+      "$CLAUDE_CONFIG_DIR" \
+      "$CODEX_HOME" \
+      "$XDG_CONFIG_HOME" \
+      "$XDG_DATA_HOME" \
+      "$XDG_STATE_HOME" \
+      "$XDG_CACHE_HOME"; \
+    chown -R paseo:paseo /home/paseo /workspace
 
-# s6 service definitions, the docker-mods loader and the daemon launcher.
 COPY rootfs/ /
+RUN chmod +x /usr/local/bin/paseo-docker-entrypoint
 
-RUN set -eux; \
-    chmod +x \
-      /usr/local/bin/docker-mods \
-      /usr/local/bin/paseo-run \
-      /etc/s6-overlay/s6-rc.d/init-paseo/run \
-      /etc/s6-overlay/s6-rc.d/init-docker-mods/run \
-      /etc/s6-overlay/s6-rc.d/svc-paseo/run \
-      /etc/s6-overlay/s6-rc.d/svc-paseo-pair/run
+WORKDIR /workspace
 
 EXPOSE 6767
-VOLUME /home/paseo
+VOLUME ["/home/paseo"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "const listen=process.env.PASEO_LISTEN||'0.0.0.0:6767'; const match=listen.match(/:(\d+)$/); const port=match?Number(match[1]):6767; require('net').connect(port,'127.0.0.1').on('connect',function(){process.exit(0)}).on('error',function(){process.exit(1)})" || exit 1
+  CMD node -e "const listen=process.env.PASEO_LISTEN||'0.0.0.0:6767'; const m=listen.match(/:(\\d+)$/); const port=m?Number(m[1]):6767; require('net').connect(port,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"
 
-ENTRYPOINT ["/init"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/paseo-docker-entrypoint"]

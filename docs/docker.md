@@ -1,327 +1,217 @@
 # Running Paseo in Docker
 
-Paseo ships official container images that run the **daemon** headless. You mount
-your code and persistent state as volumes, pick which agents to install with
-**Docker Mods**, and connect the Paseo app/CLI to the exposed port.
+Paseo publishes a container image for running the daemon on a server, VM, NAS,
+or homelab box. The image also serves the bundled browser web UI, so one
+container gives you both the daemon API and a self-hosted UI.
 
-The image sources live in [`docker/`](../docker/).
+The image source lives in [`docker/`](../docker/).
 
 ## How it works
 
-- **Base image** (`docker/base`) — one Dockerfile parametrized by `BASE_IMAGE`,
-  built for Ubuntu 24.04/22.04, Debian 12/13 and Alpine. It bundles Node 22, the
-  Paseo server + CLI installed from npm (`@getpaseo/server`, `@getpaseo/cli`), a
-  vendored [s6-overlay](https://github.com/just-containers/s6-overlay) as PID 1,
-  and a small Docker Mods loader.
-- **Boot sequence** (s6 services, in order):
-  1. `init-paseo` — re-maps the `paseo` user to `PUID`/`PGID` and prepares
-     `PASEO_HOME`.
-  2. `init-docker-mods` — runs the loader: for each image in `DOCKER_MODS` it
-     pulls the layers straight from the registry, extracts them, and runs the
-     mod's install hook (`/etc/paseo-mods/<name>/install`).
-  3. `svc-paseo` — launches the daemon as the unprivileged `paseo` user. It
-     depends on the mods step, so any agents you requested are on `PATH` before
-     the daemon probes provider availability.
-- **Agent mods** (`docker/mods/*`) — tiny `FROM scratch` images whose only job is
-  to drop an install hook that runs `npm install -g <agent-cli>`. Paseo discovers
-  the agent by finding its binary on `PATH`.
+The official image:
 
-## Images
+- installs `@getpaseo/server` and `@getpaseo/cli` from npm
+- runs the daemon as the non-root `paseo` user
+- listens on `0.0.0.0:6767` inside the container
+- enables the bundled daemon web UI with `PASEO_WEB_UI_ENABLED=true`
+- stores daemon state and agent credentials under `/home/paseo`
+- leaves agent CLIs out of the base image
 
-| Image                                   | Base             | libc            |
-| --------------------------------------- | ---------------- | --------------- |
-| `ghcr.io/getpaseo/paseo:debian`         | `debian:13-slim` | glibc (default) |
-| `ghcr.io/getpaseo/paseo:ubuntu`         | `ubuntu:24.04`   | glibc           |
-| `ghcr.io/getpaseo/paseo:alpine`         | `alpine:3.21`    | musl            |
-| `ghcr.io/getpaseo/paseo:arch`           | `archlinux:base` | glibc           |
-| `ghcr.io/getpaseo/paseo:<ver>-<distro>` | pinned           | —               |
+Open the container's HTTP origin, for example `http://localhost:6767`, to load
+the web UI. The served app receives a same-origin connection hint and connects
+back to that daemon. Static UI files load without daemon auth; API and
+WebSocket requests still require `PASEO_PASSWORD` when one is configured.
 
-`<distro>` tags: `debian12`, `debian13`, `ubuntu2204`, `ubuntu2404`, `alpine`,
-`arch`. The moving `:debian` / `:ubuntu` / `:alpine` / `:arch` tags track the
-newest version. `:latest` aliases `:debian`. Debian and Ubuntu images are
-multi-arch (`amd64`, `arm64`). `:alpine` and `:arch` are `amd64`-only: Arch has
-no official arm64 base image, and Alpine arm64 builds are disabled because Node
-crashes with `Illegal instruction` under GitHub Actions QEMU emulation. On Apple
-Silicon / arm64 hosts use Debian or Ubuntu.
-
-## Quick start
+## Quick Start
 
 ```bash
 docker run -d --name paseo \
-  --hostname paseo \
   -p 6767:6767 \
   -e PASEO_PASSWORD=change-me \
-  -e DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
   -v "$PWD/paseo-home:/home/paseo" \
   -v "$PWD:/workspace" \
-  ghcr.io/getpaseo/paseo:debian
+  ghcr.io/getpaseo/paseo:latest
 ```
 
-Docker keeps the container name and hostname separate. If you rename the
-container, keep `--name` and `--hostname` in sync; in Compose, keep
-`container_name` and `hostname` in sync.
+Then open:
 
-If agents need to install OS packages inside the container, opt in to
-passwordless sudo for the `paseo` user:
+```text
+http://localhost:6767
+```
+
+If you set `PASEO_PASSWORD`, enter the same password when adding the direct
+daemon connection in the web UI or another Paseo client.
+
+## Docker Compose
+
+Use [`docker/docker-compose.example.yml`](../docker/docker-compose.example.yml):
 
 ```bash
-docker run -e PASEO_ENABLE_SUDO=true ...
+cp docker/docker-compose.example.yml docker-compose.yml
+$EDITOR docker-compose.yml
+docker compose up -d
 ```
 
-Connect the app/CLI to `http://<host>:6767` using `PASEO_PASSWORD`:
+Minimal example:
+
+```yaml
+services:
+  paseo:
+    image: ghcr.io/getpaseo/paseo:latest
+    restart: unless-stopped
+    ports:
+      - "6767:6767"
+    environment:
+      PASEO_PASSWORD: "change-me"
+    volumes:
+      - ./paseo-home:/home/paseo
+      - ./workspace:/workspace
+```
+
+## Installing Agents
+
+The base image does not preinstall Claude Code, Codex, OpenCode, Copilot, Pi, or
+other agent CLIs. That keeps the default image small and avoids coupling Paseo
+releases to third-party agent release cycles.
+
+Create a child image for the agents you use:
+
+```Dockerfile
+FROM ghcr.io/getpaseo/paseo:latest
+
+USER root
+RUN npm install -g @openai/codex @anthropic-ai/claude-code opencode-ai
+```
+
+Build it:
 
 ```bash
-PASEO_HOST=<host>:6767 PASEO_PASSWORD=change-me paseo daemon status
+docker build -f Dockerfile -t paseo-with-agents .
 ```
 
-A `docker compose` deployment is in
-[`docker/docker-compose.example.yml`](../docker/docker-compose.example.yml).
+Then use `image: paseo-with-agents` in Compose.
+
+Leave the child image user as root. The base entrypoint uses root only for
+first-run directory setup, then drops the daemon and launched agents to the
+non-root `paseo` user.
+
+An example child image is in
+[`docker/Dockerfile.agents.example`](../docker/Dockerfile.agents.example).
+
+You can also mount credentials from the host or run agent login once inside the
+container:
+
+```bash
+docker exec -it --user paseo paseo codex
+docker exec -it --user paseo paseo claude
+```
+
+Agent credentials and config persist in `/home/paseo`, alongside daemon state.
+Provider environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENAI_BASE_URL`, or `ANTHROPIC_BASE_URL` can be passed through `docker run -e`
+or `compose.environment`; Paseo passes them to launched agents.
 
 ## Volumes
 
-| Mount         | Purpose                                                                                                                                                                                                               |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/home/paseo` | Default `HOME`. It contains Paseo daemon state under `~/.paseo` (`config.json`, `agents/`, `projects/`, `loops/`, logs) and agent credentials/config (`~/.claude`, `~/.codex`, ...). Mount this path to persist both. |
-| `/workspace`  | The code Paseo operates on. Bind-mount one or more of your repos.                                                                                                                                                     |
+| Mount         | Purpose                                                                  |
+| ------------- | ------------------------------------------------------------------------ |
+| `/home/paseo` | Paseo state under `.paseo` plus agent config such as `.codex`, `.claude` |
+| `/workspace`  | Code that Paseo and launched agents can read and write                   |
 
-On boot, the image creates `PASEO_HOME` (`/home/paseo/.paseo` by default) and
-the small agent config directories under `HOME` (`.claude`, `.codex`, `.config`,
-`.local/share`, `.local/state`, `.cache`) and assigns them to the `paseo` user.
-Codex expects `CODEX_HOME` to exist before launch, so an empty fresh
-`/home/paseo` volume is still valid.
+The image defaults:
 
-To use a different persistent daemon state directory, set `PASEO_HOME` and mount
-the same container path. `HOME` stays `/home/paseo` unless you override it, so
-agent credentials remain separate. For example:
+| Variable       | Default              |
+| -------------- | -------------------- |
+| `HOME`         | `/home/paseo`        |
+| `PASEO_HOME`   | `/home/paseo/.paseo` |
+| `PASEO_LISTEN` | `0.0.0.0:6767`       |
 
-```bash
-docker volume create paseo-state
-docker run -d --name paseo \
-  --hostname paseo \
-  -p 6767:6767 \
-  -e PASEO_PASSWORD=change-me \
-  -e PASEO_HOME=/var/lib/paseo \
-  -v paseo-state:/var/lib/paseo \
-  -v "$PWD:/workspace" \
-  ghcr.io/getpaseo/paseo:debian
+If you bind-mount host directories on Linux, make sure the container user can
+write them. The built-in `paseo` user has uid/gid `1000:1000`. For a different
+host uid/gid, either adjust ownership on the mounted directories or run the
+container with Docker's `--user` / Compose `user:` option.
+
+## Reverse Proxies
+
+When serving Paseo behind a reverse proxy, forward normal HTTP requests and
+WebSocket upgrades to the same daemon port.
+
+Caddy example:
+
+```caddy
+paseo.example.com {
+  reverse_proxy 127.0.0.1:6767
+}
 ```
 
-If `PASEO_HOME` is set, the mounted container path must match it; otherwise
-Paseo uses `/home/paseo/.paseo`.
+Nginx example:
 
-Older Paseo Docker images stored daemon state directly in `/home/paseo`. To keep
-using an existing volume with that layout, run the new image with
-`-e PASEO_HOME=/home/paseo`; otherwise move the old Paseo files into
-`/home/paseo/.paseo` before switching to the new default.
+```nginx
+server {
+    listen 443 ssl;
+    server_name paseo.example.com;
 
-Set `PUID`/`PGID` to the uid/gid that owns the bind-mounted folders on the host
-(`id -u` / `id -g`) so the daemon and agents can read and write your files.
-
-## Choosing agents (Docker Mods)
-
-`DOCKER_MODS` is a pipe-separated list of mod images applied at startup:
-
-```
-DOCKER_MODS=ghcr.io/getpaseo/mods:claude-code|ghcr.io/getpaseo/mods:opencode
-```
-
-| Mod           | Package                           | Binary     | Alpine?                     |
-| ------------- | --------------------------------- | ---------- | --------------------------- |
-| `claude-code` | `@anthropic-ai/claude-code`       | `claude`   | yes (pure JS)               |
-| `opencode`    | `opencode-ai`                     | `opencode` | yes (pure JS)               |
-| `copilot`     | `@github/copilot`                 | `copilot`  | usually                     |
-| `codex`       | `@openai/codex`                   | `codex`    | **no** (native, glibc only) |
-| `pi`          | `@earendil-works/pi-coding-agent` | `pi`       | check                       |
-
-Agents that ship a native binary via npm (notably Codex) have no musl build, so
-use a glibc image (Debian/Ubuntu) for those. The `pi` package name is overridable
-with `-e PI_NPM_PACKAGE=...` if it ever changes upstream.
-
-Mod installs run on every fresh `docker run`; the hook skips reinstalling if the
-binary is already present (e.g. after `docker restart`).
-
-Install hooks run as root because they install system-wide agent CLIs, but the
-mods loader gives them a root-scoped install environment (`HOME`, XDG dirs,
-`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and the npm cache point under `/root` or
-`/tmp`). This prevents `npm install -g` package scripts from creating root-owned
-files in `/home/paseo`. Hooks that intentionally need the runtime user's paths
-should read the `PASEO_USER_*` variables exposed by the loader instead of
-`HOME`.
-
-### Agent credentials
-
-Each agent manages its own auth and stores it under `HOME` (`/home/paseo` by
-default), so it persists across restarts independently from `PASEO_HOME`.
-Provide credentials via env vars or by logging in once:
-
-- **Claude** — `ANTHROPIC_API_KEY`, or run `claude` once to OAuth; config in `$HOME/.claude`.
-- **Codex** — `OPENAI_API_KEY`; config in `$HOME/.codex`.
-- **Copilot** — GitHub auth handled by the CLI.
-- **OpenCode** — provider env vars (`OPENAI_API_KEY`, etc.).
-- **Pi** — `$HOME/.pi/agent/auth.json`.
-
-For interactive agent auth in Docker, the credential files must exist inside
-the container's `paseo` user home. Either mount the whole persistent home
-(`-v "$PWD/paseo-home:/home/paseo"` by default), or mount the specific agent
-config/auth directories into that home. If you do not mount existing host
-credentials, run the agent CLI once inside the container so it can create them
-there. You can do that from a Paseo Terminal, or from the host with
-`docker exec`:
-
-```bash
-docker exec -it --user paseo paseo claude
-docker exec -it --user paseo paseo codex
+    location / {
+        proxy_pass http://127.0.0.1:6767;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
 ```
 
-The image gives the unprivileged `paseo` user a real login shell. From a root
-shell inside the container, `su -l paseo` drops into the same persistent home
-used by agents; daemon state remains in `PASEO_HOME`.
+If you reach the daemon by DNS name, set `PASEO_HOSTNAMES` so host-header
+validation allows that name:
 
-This first-run login step is not needed for providers configured entirely with
-API key environment variables passed to the container, such as
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; those env vars are inherited by the
-daemon and by the agent processes it launches.
-
-You can also configure custom providers / API endpoints in
-`$PASEO_HOME/config.json` under `agents.providers` — see
-[custom-providers.md](custom-providers.md).
-
-## Environment variables
-
-Docker deployments use normal Paseo daemon/provider environment variables plus
-a small set of container-only variables.
-
-### Paseo daemon env vars
-
-The Docker image does not define a separate Paseo daemon/provider environment
-contract. Values passed with `docker run -e ...` or `compose.environment` are
-inherited by the daemon and by agent/provider processes the same way they are
-when you run Paseo directly on the host. This includes provider credentials and
-endpoint variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`ANTHROPIC_BASE_URL`, and `OPENAI_BASE_URL`.
-
-Set `PASEO_PASSWORD` for any daemon reachable beyond localhost.
-
-The image only changes a few container defaults:
-
-- `HOME=/home/paseo`, matching the persistent volume described above.
-- `PASEO_HOME=/home/paseo/.paseo`, keeping daemon state separate from agent
-  home/config files.
-- `PASEO_LISTEN=0.0.0.0:6767`, so the daemon is reachable through Docker port
-  publishing.
-- `PASEO_LOG_FORMAT=json` in production.
-- `PASEO_LOG_LEVEL=warn`, so `docker logs` and
-  `/home/paseo/.paseo/daemon.log` stay focused on warnings and errors unless
-  you opt into more verbose logging.
-
-For daemon/runtime env details, use the existing references:
-
-- [development.md](development.md) for `PASEO_HOME`, daemon logs/log rotation,
-  CLI host/password env, and workspace service script env.
-- [service-proxy.md](service-proxy.md) for `PASEO_SERVICE_PROXY_*`.
-- [custom-providers.md](custom-providers.md) for provider credentials, custom
-  endpoints, and `agents.providers.*.env`.
-- [SECURITY.md](../SECURITY.md) for exposed daemons, `PASEO_PASSWORD`, relay,
-  and TLS guidance.
-
-Generated workspace/service env vars such as `PASEO_SERVICE_<NAME>_URL`,
-`PASEO_SERVICE_<NAME>_PORT`, `PASEO_PORT`, and `PASEO_WORKTREE_*` are injected
-into scripts/agents by Paseo at runtime; you do not set them on the container.
-See [development.md](development.md) for the generated service script env
-contract.
-
-### Container-only env vars
-
-| Var                 | Default   | Purpose                                                            |
-| ------------------- | --------- | ------------------------------------------------------------------ |
-| `DOCKER_MODS`       | (unset)   | Pipe-separated agent mod images to install.                        |
-| `PUID` / `PGID`     | `911`     | uid/gid for the `paseo` user (match your volumes).                 |
-| `PASEO_ENABLE_SUDO` | `false`   | Set to `true` to grant passwordless sudo to `paseo`.               |
-| `PASEO_PAIRING_QR`  | (enabled) | Set to `0`/`false` to suppress the startup pairing QR in the logs. |
-
-On startup the container prints a pairing QR code and link to its logs once the
-daemon is listening (s6 `svc-paseo-pair` oneshot, best-effort — never blocks
-boot). Scan it from `docker logs` with the Paseo app.
-
-### Docker log verbosity
-
-The container keeps daemon logs quiet by default. `PASEO_LOG_LEVEL` controls the
-daemon log level; the Docker image defaults it to `warn`. Set it to `info` to
-see normal daemon activity:
-
-```bash
-docker run -e PASEO_LOG_LEVEL=info ...
+```yaml
+environment:
+  PASEO_HOSTNAMES: "paseo.example.com,.lan"
 ```
 
-For deeper debugging, use `debug` or `trace`:
-
-```bash
-docker run -e PASEO_LOG_LEVEL=trace ...
-```
-
-The setting affects both `docker logs` and the persisted daemon log. Use
-`docker exec paseo tail -f /home/paseo/.paseo/daemon.log` to follow the file
-directly.
+IPs and `localhost` are allowed by default.
 
 ## Security
 
-- The daemon binds `0.0.0.0` **inside** the container; you control exposure via
-  the host port mapping. For anything reachable beyond localhost, **set
-  `PASEO_PASSWORD`** and prefer the Paseo relay or a TLS reverse proxy. See
-  [SECURITY.md](../SECURITY.md).
-- Agents execute arbitrary code on your mounted workspace. The container is the
-  isolation boundary; the daemon and agents run as the non-root `paseo` user.
-- `PASEO_ENABLE_SUDO=true` lets the daemon and agents become root inside the
-  container with `sudo` and install or modify OS packages. Use it only for
-  trusted agents and trusted workspaces.
-- The Docker Mods loader pulls **public** images anonymously over HTTPS. Only
-  list mod images you trust — their layers are extracted into the container.
+- Set `PASEO_PASSWORD` for any published port or network-reachable deployment.
+- Prefer HTTPS at the reverse proxy for direct browser access.
+- Use the Paseo relay for untrusted networks or mobile access when you do not
+  want to expose the daemon port directly.
+- The container is the isolation boundary for agents. Agents can read and write
+  whatever you mount into `/workspace` and whatever credentials you place in
+  `/home/paseo`.
+- The bundled web UI static files are public on the daemon origin. The daemon
+  API and WebSocket remain protected by password auth when configured.
 
-## Building locally
+See [SECURITY.md](../SECURITY.md) for the daemon trust model.
+
+## Building Locally
 
 ```bash
-# Base image for one distro:
-docker build --build-arg BASE_IMAGE=debian:13-slim -t paseo:debian docker/base
-docker build --build-arg BASE_IMAGE=alpine:3.21    -t paseo:alpine docker/base
-docker build --build-arg BASE_IMAGE=archlinux:base -t paseo:arch   docker/base
-
-# Pin a Paseo version (defaults to the latest published):
-docker build --build-arg BASE_IMAGE=ubuntu:24.04 --build-arg PASEO_VERSION=0.1.89 \
-  -t paseo:ubuntu docker/base
-
-# An agent mod:
-docker build -t paseo-mod-claude docker/mods/claude-code
+docker build -t paseo:local docker/base
 ```
 
-Multi-arch builds and registry publishing are wired up in
-[`.github/workflows/docker.yml`](../.github/workflows/docker.yml), triggered on
-release tags.
+To bake a specific published npm version:
 
-For Debian/Ubuntu base images, Node 22 is installed from the official Node.js
-tarball rather than the NodeSource apt repository. The NodeSource arm64 package
-can trip `libc-bin` post-install triggers under QEMU during GitHub Actions
-multi-arch builds, which has caused intermittent segmentation faults on
-Ubuntu 22.04 arm64.
+```bash
+docker build \
+  --build-arg PASEO_VERSION=0.1.102 \
+  -t paseo:0.1.102 \
+  docker/base
+```
+
+The release workflow publishes multi-arch images to GHCR for `linux/amd64` and
+`linux/arm64`.
 
 ## Troubleshooting
 
-- **Provider not showing up** — check the boot log (`docker logs paseo`) for
-  `[mods]`/`[mod:<agent>]` lines. A failed `npm install` is logged but does not
-  stop the daemon. On Alpine, native agents (Codex) will not install.
-- **`tar (child): lbzip2: Cannot exec` at startup** — pull or rebuild an image
-  that includes the bzip2/lbzip2 runtime tools. This happens before the daemon
-  starts, while boot extracts archives or Docker Mod layers.
-- **Can't connect / 403** — set `PASEO_HOSTNAMES` if reaching the daemon by a DNS
-  name; IPs and `localhost` are allowed by default.
-- **OpenCode says `unable to open database file` or fails on
-  `PRAGMA wal_checkpoint(PASSIVE)`** — check that the OpenCode mod ran and that
-  `/home/paseo/.local/share/opencode` and its `log` directory are owned by the
-  container's `paseo` user. If `/home/paseo` is bind-mounted, set `PUID`/`PGID`
-  to match the host owner of that mounted folder. Running `opencode` with
-  `sudo` can leave root-owned OpenCode database, WAL, SHM, or log files in the
-  persistent home; the OpenCode mod repairs ownership for its config, data, and
-  state/cache directories on the next container start.
-- **Permission errors on your repo** — set `PUID`/`PGID` to match the host owner
-  of the bind mount.
-- **Daemon logs** — `docker exec paseo tail -f /home/paseo/.paseo/daemon.log`.
+- **The web UI loads but cannot connect**: if `PASEO_PASSWORD` is set, add a
+  direct connection with the same password.
+- **403 Host not allowed**: set `PASEO_HOSTNAMES` to the DNS names you use.
+- **Provider not available**: install that agent CLI in a child image or mount a
+  runtime where the binary is on `PATH`.
+- **Permission errors in `/workspace`**: make the mounted directory writable by
+  uid/gid `1000:1000`, or run the container as the host uid/gid.
+- **Logs**: inspect `docker logs paseo` or
+  `/home/paseo/.paseo/daemon.log` inside the container.

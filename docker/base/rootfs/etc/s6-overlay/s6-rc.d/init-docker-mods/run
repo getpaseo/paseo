@@ -1,3 +1,0 @@
-#!/command/with-contenv bash
-# Apply agent Docker Mods before the daemon starts so providers are detected.
-exec /usr/local/bin/docker-mods

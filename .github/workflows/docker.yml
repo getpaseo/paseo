@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       paseo_version:
-        description: "Paseo npm version to bake (defaults to package.json version)."
+        description: "Paseo npm version to bake. Defaults to the tag version, or latest for ad-hoc builds."
         required: false
         default: ""
 
@@ -25,163 +25,57 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
-  # Resolve the Paseo version to bake, the GHCR owner, and whether we publish.
   setup:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.v.outputs.version }}
-      push: ${{ steps.v.outputs.push }}
-      owner: ${{ steps.v.outputs.owner }}
+      image: ${{ steps.values.outputs.image }}
+      install_version: ${{ steps.values.outputs.install_version }}
+      push: ${{ steps.values.outputs.push }}
+      tags: ${{ steps.values.outputs.tags }}
     steps:
       - uses: actions/checkout@v6
-      - id: v
+
+      - id: values
         env:
           INPUT_PASEO_VERSION: ${{ inputs.paseo_version }}
           REPO_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
+
+          owner="$(printf '%s' "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/paseo"
+          push=false
+          install_version="${INPUT_PASEO_VERSION:-latest}"
+
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/v}"
+            install_version="${GITHUB_REF#refs/tags/v}"
             push=true
           elif [[ -n "${INPUT_PASEO_VERSION}" ]]; then
-            version="${INPUT_PASEO_VERSION}"
             push=true
-          else
-            version="$(node -p "require('./package.json').version")"
-            push=false
           fi
-          owner="$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "push=${push}" >> "$GITHUB_OUTPUT"
-          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
-          echo "Resolved version=${version} push=${push} owner=${owner}"
 
-  base:
-    needs: setup
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: debian13
-            base: debian:13-slim
-            moving: debian
-            latest: true
-          - name: debian12
-            base: debian:12-slim
-          - name: ubuntu2404
-            base: ubuntu:24.04
-            moving: ubuntu
-          - name: ubuntu2204
-            base: ubuntu:22.04
-          - name: alpine
-            base: alpine:3.21
-            moving: alpine
-            platforms: linux/amd64
-          - name: arch
-            base: archlinux:base
-            moving: arch
-            platforms: linux/amd64
-    steps:
-      - uses: actions/checkout@v6
+          tags="${image}:test"
+          if [[ "${push}" == "true" ]]; then
+            tags="${image}:${install_version}"$'\n'"${image}:latest"
+          fi
 
-      - name: Compute tags
-        id: tags
-        env:
-          IMAGE_BASE: ghcr.io/${{ needs.setup.outputs.owner }}/paseo
-          RESOLVED_VERSION: ${{ needs.setup.outputs.version }}
-          MATRIX_NAME: ${{ matrix.name }}
-          MATRIX_MOVING: ${{ matrix.moving }}
-          MATRIX_LATEST: ${{ matrix.latest }}
-        run: |
-          set -euo pipefail
-          V="${RESOLVED_VERSION}"
-          tags="${IMAGE_BASE}:${V}-${MATRIX_NAME}"
-          if [[ -n "${MATRIX_MOVING}" ]]; then
-            tags="${tags}"$'\n'"${IMAGE_BASE}:${MATRIX_MOVING}"
-          fi
-          if [[ "${MATRIX_LATEST}" == "true" ]]; then
-            tags="${tags}"$'\n'"${IMAGE_BASE}:latest"
-          fi
           {
+            echo "image=${image}"
+            echo "install_version=${install_version}"
+            echo "push=${push}"
             echo "tags<<EOF"
             echo "${tags}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - if: matrix.name != 'arch'
-        uses: docker/setup-qemu-action@v4
-      - if: matrix.name != 'arch'
-        uses: docker/setup-buildx-action@v4
+          echo "Resolved image=${image} install_version=${install_version} push=${push}"
 
-      - name: Log in to GHCR
-        if: needs.setup.outputs.push == 'true'
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - if: matrix.name != 'arch'
-        uses: docker/build-push-action@v7
-        with:
-          context: docker/base
-          file: docker/base/Dockerfile
-          platforms: ${{ matrix.platforms || env.PLATFORMS }}
-          build-args: |
-            BASE_IMAGE=${{ matrix.base }}
-            PASEO_VERSION=${{ needs.setup.outputs.version }}
-          tags: ${{ steps.tags.outputs.tags }}
-          push: ${{ needs.setup.outputs.push == 'true' }}
-          provenance: false
-          cache-from: type=gha,scope=base-${{ matrix.name }}
-          cache-to: type=gha,scope=base-${{ matrix.name }},mode=max
-
-      - name: Build and push Arch image
-        if: matrix.name == 'arch'
-        env:
-          TAGS: ${{ steps.tags.outputs.tags }}
-          ARCH_BASE_IMAGE: ${{ matrix.base }}
-          RESOLVED_VERSION: ${{ needs.setup.outputs.version }}
-          SHOULD_PUSH: ${{ needs.setup.outputs.push }}
-        run: |
-          set -euo pipefail
-          mapfile -t tags <<< "${TAGS}"
-          tag_args=()
-          for tag in "${tags[@]}"; do
-            if [[ -n "${tag}" ]]; then
-              tag_args+=("-t" "${tag}")
-            fi
-          done
-
-          docker build \
-            --platform linux/amd64 \
-            "${tag_args[@]}" \
-            --build-arg "BASE_IMAGE=${ARCH_BASE_IMAGE}" \
-            --build-arg "PASEO_VERSION=${RESOLVED_VERSION}" \
-            docker/base
-
-          if [[ "${SHOULD_PUSH}" == "true" ]]; then
-            for tag in "${tags[@]}"; do
-              if [[ -n "${tag}" ]]; then
-                docker push "${tag}"
-              fi
-            done
-          fi
-
-  mods:
+  image:
     needs: setup
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        agent: [claude-code, codex, copilot, opencode, pi]
     steps:
       - uses: actions/checkout@v6
 
@@ -198,11 +92,13 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: docker/mods/${{ matrix.agent }}
-          file: docker/mods/${{ matrix.agent }}/Dockerfile
+          context: docker/base
+          file: docker/base/Dockerfile
           platforms: ${{ env.PLATFORMS }}
-          tags: |
-            ghcr.io/${{ needs.setup.outputs.owner }}/mods:${{ matrix.agent }}
-            ghcr.io/${{ needs.setup.outputs.owner }}/mods:${{ matrix.agent }}-${{ needs.setup.outputs.version }}
+          build-args: |
+            PASEO_VERSION=${{ needs.setup.outputs.install_version }}
+          tags: ${{ needs.setup.outputs.tags }}
           push: ${{ needs.setup.outputs.push == 'true' }}
           provenance: false
+          cache-from: type=gha,scope=paseo
+          cache-to: type=gha,scope=paseo,mode=max

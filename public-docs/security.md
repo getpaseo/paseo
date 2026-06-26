@@ -110,6 +110,22 @@ The password is stored as a bcrypt hash in `config.json`, the daemon never store
 
 We still recommend the relay for mobile access, it combines authentication with end-to-end encryption out of the box. Password auth is primarily useful for direct LAN or VPN connections where you want access control without the relay.
 
+## Docker self-hosting
+
+The official Docker image runs the daemon and bundled web UI in one container. It binds to `0.0.0.0:6767` inside the container so Docker port publishing and reverse proxies work normally.
+
+For Docker deployments:
+
+- Set `PASEO_PASSWORD` before publishing the port to a LAN, VPN, or public address.
+- Use HTTPS at your reverse proxy for browser access outside localhost.
+- Set `PASEO_HOSTNAMES` for any DNS names you use to reach the container.
+- Keep `/workspace` mounts scoped to repositories the agents should be able to read and write.
+- Treat `/home/paseo` as sensitive, it can contain daemon state and provider credentials.
+
+The image runs the daemon and launched agents as the non-root `paseo` user, but container user isolation is not a substitute for careful mounts. Agents can still access whatever code and credentials you mount into the container.
+
+See [Docker](/docs/docker) for Compose and reverse proxy examples.
+
 ## Agent authentication
 
 Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials:
@@ -126,4 +142,5 @@ Paseo never stores or transmits provider API keys. Agents run in your user conte
 - **Treat the QR code like a password**, anyone with the pairing offer can connect to your daemon
 - **Set a password** if you bind to a network address, it prevents unauthorized clients from controlling your agents
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
+- **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials
 - **Keep your daemon updated**, security improvements are released regularly
