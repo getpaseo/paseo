@@ -363,6 +363,24 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(paseoHome, { recursive: true, force: true });
   });
 
+  test("fetchCatalog releases the acquired server when opencode-home cannot be resolved", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      resolveHomeDir: () => {
+        throw new Error("cannot resolve opencode-home");
+      },
+    });
+
+    await expect(client.fetchCatalog({ scope: "global", force: false })).rejects.toThrow(
+      "cannot resolve opencode-home",
+    );
+
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    expect(runtime.clientCreations).toEqual([]);
+  });
+
   test("limits concurrent OpenCode metadata requests across clients", async () => {
     const runtime = new TestOpenCodeHarness();
     let activeProviderListCalls = 0;

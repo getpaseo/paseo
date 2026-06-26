@@ -1356,11 +1356,12 @@ export class OpenCodeAgentClient implements AgentClient {
       : await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
     const isGlobalCatalog = options.scope === "global";
-    // OpenCode treats the catalog directory as a workspace. The global catalog
-    // is not a project, so use the neutral OpenCode home instead of user home.
-    const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
 
     try {
+      // OpenCode treats the catalog directory as a workspace. The global catalog
+      // is not a project, so use the neutral OpenCode home instead of user home.
+      const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
+
       if (isGlobalCatalog) {
         await fs.mkdir(directory, { recursive: true });
         this.logger.debug(
