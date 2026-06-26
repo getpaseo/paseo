@@ -7,12 +7,17 @@ export type FilePressHandler = (commit: CheckoutCommit, file: CheckoutCommitFile
 
 export const DOT_SIZE = 8;
 
+// The "on remote" dot is intentionally understated: the local-only ring is the
+// state worth noticing (you still have work to push), so the remote fill is
+// dimmed toward the background rather than rendered at full-strength green.
+const REMOTE_DOT_OPACITY = 0.55;
+
 /**
  * Shared local/remote commit dot styles used by both the commit rows and the
  * section legend so the two never drift.
  *
  * Semantics: a local-only commit is a hollow ring; a commit that has reached
- * the remote is a filled green dot.
+ * the remote is a subtle (dimmed) filled green dot.
  */
 export const dotStyles = StyleSheet.create((theme) => ({
   dotLocal: {
@@ -29,6 +34,7 @@ export const dotStyles = StyleSheet.create((theme) => ({
     height: DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.statusSuccess,
+    opacity: REMOTE_DOT_OPACITY,
     flexShrink: 0,
   },
   // Legend variant of the remote dot: same fill, with leading spacing so it
@@ -38,6 +44,7 @@ export const dotStyles = StyleSheet.create((theme) => ({
     height: DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.statusSuccess,
+    opacity: REMOTE_DOT_OPACITY,
     flexShrink: 0,
     marginLeft: theme.spacing[1],
   },
