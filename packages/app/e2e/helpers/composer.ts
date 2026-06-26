@@ -2,7 +2,8 @@ import { expect, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { createTempGitRepo } from "./workspace";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
-import { connectWorkspaceSetupClient, openHomeWithProject } from "./workspace-setup";
+import { gotoAppShell } from "./app";
+import { connectWorkspaceSetupClient } from "./workspace-setup";
 import { selectWorkspaceInSidebar } from "./sidebar";
 import { getServerId } from "./server-id";
 import { waitForTabBar } from "./launcher";
@@ -148,6 +149,7 @@ export async function selectGithubOption(
 export interface MockAgentSetup {
   client: SeedDaemonClient;
   repo: Awaited<ReturnType<typeof createTempGitRepo>>;
+  cleanup: () => Promise<void>;
 }
 
 /** Create a temp repo, start a mock agent, navigate to it, and wait for it to be running. */
@@ -159,21 +161,35 @@ export async function startRunningMockAgent(
 
   const repo = await createTempGitRepo(opts.prefix);
   const client = await connectSeedClient();
-  const opened = await client.openProject(repo.path);
-  if (!opened.workspace) throw new Error(opened.error ?? "Failed to open project");
+  const createdWorkspace = await client.createWorkspace({
+    source: { kind: "directory", path: repo.path },
+  });
+  if (!createdWorkspace.workspace) {
+    throw new Error(createdWorkspace.error ?? "Failed to create workspace");
+  }
+  const workspace = createdWorkspace.workspace;
   const agent = await client.createAgent({
     provider: "mock",
     cwd: repo.path,
+    workspaceId: workspace.id,
     model: opts.model,
   });
-  const agentUrl = `${buildHostWorkspaceRoute(serverId, opened.workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
+  const agentUrl = `${buildHostWorkspaceRoute(serverId, workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
   await page.goto(agentUrl);
   await expectComposerVisible(page);
   await client.sendAgentMessage(agent.id, opts.prompt);
   await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
     timeout: 30_000,
   });
-  return { client, repo };
+  return {
+    client,
+    repo,
+    cleanup: async () => {
+      await client.removeProject(workspace.projectId).catch(() => undefined);
+      await client.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    },
+  };
 }
 
 export interface GithubWorkspaceHandle {
@@ -186,10 +202,20 @@ export async function openGithubWorkspace(
   repoPath: string,
 ): Promise<GithubWorkspaceHandle> {
   const client = await connectWorkspaceSetupClient();
-  const opened = await client.openProject(repoPath);
-  if (!opened.workspace) throw new Error(opened.error ?? `Failed to open project ${repoPath}`);
-  await openHomeWithProject(page, repoPath);
-  await selectWorkspaceInSidebar(page, opened.workspace.id);
+  const createdWorkspace = await client.createWorkspace({
+    source: { kind: "directory", path: repoPath },
+  });
+  if (!createdWorkspace.workspace) {
+    throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repoPath}`);
+  }
+  const workspace = createdWorkspace.workspace;
+  await gotoAppShell(page);
+  await selectWorkspaceInSidebar(page, workspace.id);
   await waitForTabBar(page);
-  return { cleanup: () => client.close().catch(() => undefined) };
+  return {
+    cleanup: async () => {
+      await client.removeProject(workspace.projectId).catch(() => undefined);
+      await client.close().catch(() => undefined);
+    },
+  };
 }

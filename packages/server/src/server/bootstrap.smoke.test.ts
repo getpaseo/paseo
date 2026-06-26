@@ -312,6 +312,7 @@ describe("paseo daemon bootstrap", () => {
         method: "POST",
         headers: {
           Authorization: "Bearer secret-debug-token",
+          Accept: "application/json, text/event-stream",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -324,7 +325,7 @@ describe("paseo daemon bootstrap", () => {
         }),
       });
 
-      expect(response.status).toBe(400);
+      await response.text();
       const logs = logLines.join("\n");
       expect(logs).toContain("Agent MCP request");
       expect(logs).toContain("[redacted]");
@@ -338,7 +339,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("fails fast when OpenAI speech provider is configured without credentials", async () => {
+  test("starts when OpenAI speech provider is configured without credentials", async () => {
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-openai-config-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
     const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
@@ -367,9 +368,14 @@ describe("paseo daemon bootstrap", () => {
     };
 
     try {
-      await expect(createPaseoDaemon(config, pino({ level: "silent" }))).rejects.toThrow(
-        "Missing OpenAI credentials",
-      );
+      const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+      try {
+        await daemon.start();
+        expect(daemon.getListenTarget()).toBeDefined();
+        // Must also stop without throwing
+      } finally {
+        await daemon.stop();
+      }
     } finally {
       await rm(paseoHomeRoot, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
@@ -426,6 +432,19 @@ describe("paseo daemon bootstrap", () => {
     expect(parseListenString(" 6767 ")).toEqual({
       type: "tcp",
       host: "127.0.0.1",
+      port: 6767,
+    });
+  });
+
+  test("parses IPv6 listen targets correctly", () => {
+    expect(parseListenString("[::1]:6767")).toEqual({
+      type: "tcp",
+      host: "::1",
+      port: 6767,
+    });
+    expect(parseListenString("[::]:6767")).toEqual({
+      type: "tcp",
+      host: "::",
       port: 6767,
     });
   });

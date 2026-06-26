@@ -4,7 +4,7 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
-import { buildHostNewWorkspaceRoute } from "@/utils/host-routes";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 
 const WORKTREE_NEW_ACTIONS: readonly KeyboardActionId[] = ["worktree.new"];
@@ -14,7 +14,7 @@ export function useActiveWorktreeNewAction() {
   const serverId = selection?.serverId ?? null;
   const workspaceId = selection?.workspaceId ?? null;
 
-  const workingDir = useSessionStore((state) => {
+  const activeGitWorkspace = useSessionStore((state) => {
     if (!serverId || !workspaceId) {
       return null;
     }
@@ -22,31 +22,30 @@ export function useActiveWorktreeNewAction() {
     if (!workspace || workspace.projectKind !== "git") {
       return null;
     }
-    return workspace.projectRootPath;
+    return workspace;
   });
 
-  const displayName = useSessionStore((state) => {
-    if (!serverId || !workspaceId) {
-      return null;
-    }
-    const workspace = state.sessions[serverId]?.workspaces?.get(workspaceId);
-    if (!workspace || workspace.projectKind !== "git") {
-      return null;
-    }
-    return workspace.projectDisplayName || projectDisplayNameFromProjectId(workspace.projectId);
-  });
+  const workingDir = activeGitWorkspace?.projectRootPath ?? null;
+  const projectId = activeGitWorkspace?.projectId ?? null;
+  const displayName = activeGitWorkspace
+    ? activeGitWorkspace.projectDisplayName ||
+      projectDisplayNameFromProjectId(activeGitWorkspace.projectId)
+    : null;
 
   const handle = useCallback(() => {
     if (!serverId || !workingDir) {
       return false;
     }
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, workingDir, {
+      buildNewWorkspaceRoute({
+        serverId,
+        sourceDirectory: workingDir,
         displayName: displayName ?? undefined,
+        projectId: projectId ?? undefined,
       }) as never,
     );
     return true;
-  }, [serverId, workingDir, displayName]);
+  }, [serverId, workingDir, displayName, projectId]);
 
   useKeyboardActionHandler({
     handlerId: "worktree-new-active",

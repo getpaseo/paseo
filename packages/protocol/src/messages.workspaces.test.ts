@@ -4,6 +4,7 @@ import {
   RecentProviderSessionDescriptorPayloadSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
+  WorkspaceCreateRequestSchema,
   WorkspaceDescriptorPayloadSchema,
   WorkspaceScriptPayloadSchema,
 } from "./messages.js";
@@ -24,6 +25,50 @@ describe("workspace message schemas", () => {
     });
 
     expect(parsed.type).toBe("fetch_workspaces_request");
+  });
+
+  test("parses project.add request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "project.add.request",
+        requestId: "req-add-project",
+        cwd: "/repo",
+      }),
+    ).toEqual({
+      type: "project.add.request",
+      requestId: "req-add-project",
+      cwd: "/repo",
+    });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "project.add.response",
+        payload: {
+          requestId: "req-add-project",
+          project: {
+            projectId: "/repo",
+            projectDisplayName: "repo",
+            projectCustomName: null,
+            projectRootPath: "/repo",
+            projectKind: "git",
+          },
+          error: null,
+        },
+      }),
+    ).toEqual({
+      type: "project.add.response",
+      payload: {
+        requestId: "req-add-project",
+        project: {
+          projectId: "/repo",
+          projectDisplayName: "repo",
+          projectCustomName: null,
+          projectRootPath: "/repo",
+          projectKind: "git",
+        },
+        error: null,
+      },
+    });
   });
 
   test("parses active-scoped fetch_agents_request as an optional extension", () => {
@@ -865,5 +910,43 @@ describe("workspace message schemas", () => {
 
     const checkout = result.data.payload.entries[0]?.project.checkout;
     expect(checkout?.worktreeRoot).toBe("C:\\repo");
+  });
+
+  test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {
+    // Old flat shape with backing enum must be rejected.
+    const oldFlat = WorkspaceCreateRequestSchema.safeParse({
+      type: "workspace.create.request",
+      requestId: "req-old",
+      backing: "worktree",
+      cwd: "/tmp/repo",
+      branch: "feat/my-feature",
+    });
+    expect(oldFlat.success).toBe(false);
+
+    // New envelope shape with source discriminated union must be accepted.
+    const newWorktree = WorkspaceCreateRequestSchema.parse({
+      type: "workspace.create.request",
+      requestId: "req-worktree",
+      source: {
+        kind: "worktree",
+        cwd: "/tmp/repo",
+        action: "checkout",
+        refName: "feat/my-feature",
+      },
+    });
+    expect(newWorktree.type).toBe("workspace.create.request");
+    expect(newWorktree.source.kind).toBe("worktree");
+
+    // Directory source must also be accepted.
+    const newDirectory = WorkspaceCreateRequestSchema.parse({
+      type: "workspace.create.request",
+      requestId: "req-dir",
+      source: {
+        kind: "directory",
+        path: "/tmp/repo",
+      },
+    });
+    expect(newDirectory.type).toBe("workspace.create.request");
+    expect(newDirectory.source.kind).toBe("directory");
   });
 });

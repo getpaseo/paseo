@@ -37,6 +37,7 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
   let client: WorkspaceSetupDaemonClient | null = null;
   const repos: Array<{ cleanup: () => Promise<void> }> = [];
   const worktrees: WorktreeRecord[] = [];
+  const projectIds = new Set<string>();
 
   const withWorkspace: WithWorkspace = async (options) => {
     if (!client) {
@@ -60,14 +61,21 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
       );
       worktrees.push({ repoPath: repo.path, worktreePath: workspacePath });
       // Register the parent project so the sidebar lists it before we navigate.
-      await client.openProject(repo.path);
+      const added = await client.addProject(repo.path);
+      if (!added.project) {
+        throw new Error(added.error ?? `Failed to add project ${repo.path}`);
+      }
+      projectIds.add(added.project.projectId);
     }
 
-    const opened = await client.openProject(workspacePath);
-    if (!opened.workspace) {
-      throw new Error(opened.error ?? `Failed to open project ${workspacePath}`);
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: workspacePath },
+    });
+    if (!created.workspace) {
+      throw new Error(created.error ?? `Failed to create workspace ${workspacePath}`);
     }
-    const workspaceId = opened.workspace.id;
+    const workspaceId = created.workspace.id;
+    projectIds.add(created.workspace.projectId);
 
     return {
       workspaceId,
@@ -83,6 +91,11 @@ export function createWithWorkspace(page: Page): WithWorkspaceHandle {
   return {
     withWorkspace,
     cleanup: async () => {
+      if (client) {
+        for (const projectId of projectIds) {
+          await client.removeProject(projectId).catch(() => undefined);
+        }
+      }
       for (const { repoPath, worktreePath } of worktrees) {
         try {
           execSync(`git worktree remove ${JSON.stringify(worktreePath)} --force`, {

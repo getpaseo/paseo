@@ -165,7 +165,7 @@ export const ru: TranslationResources = {
     hints: {
       thinking: "Режим мышления",
       model: "Изменить модель",
-      mode: "Изменить режим разрешений",
+      mode: "Изменить режим",
     },
   },
   agentStream: {
@@ -208,7 +208,7 @@ export const ru: TranslationResources = {
     },
   },
   sessions: {
-    title: "Сессии",
+    title: "История",
     empty: "Сеансов пока нет",
     actions: {
       loadMore: "Загрузить больше",
@@ -330,15 +330,22 @@ export const ru: TranslationResources = {
   workspace: {
     route: {
       loading: "Загрузка рабочей области",
+      restoring: "Восстановление рабочей области",
+      restoreFailed:
+        "Не удалось восстановить эту рабочую область — каталог мог быть перемещён или удалён",
       connecting: "Подключение",
       hostOffline: "{{hostName}}не в сети",
       cannotReachHost: "Невозможно связаться с{{hostName}}",
       hostStatus: "Статус Host:{{status}}",
       missing: "Workspace не найден",
+      needsHostUpgrade: "Обновите хост, чтобы восстановить эту рабочую область",
       manageHost: "Управление хостом",
     },
     hoverCard: {
       scriptsAccessibility: "Скрипты Workspace",
+      copyPath: "Копировать путь",
+      copyBranchName: "Копировать имя ветки",
+      copied: "Скопировано",
     },
     fileExplorer: {
       sort: {
@@ -357,9 +364,12 @@ export const ru: TranslationResources = {
         retry: "Повторить попытку",
         refresh: "Обновить файлы",
         refreshing: "Обновление файлов",
+        hideHiddenFiles: "Скрыть скрытые файлы",
+        showHiddenFiles: "Показать скрытые файлы",
       },
       empty: {
         noFiles: "Нет файлов",
+        noVisibleFiles: "Нет видимых файлов",
       },
       states: {
         unavailable: "Workspace недоступен",
@@ -467,6 +477,8 @@ export const ru: TranslationResources = {
         splitDown: "Разделить панель вниз",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        pinTarget: "Закрепить",
+        unpinTarget: "Открепить",
       },
       explorer: {
         open: "Открыть проводник",
@@ -597,16 +609,16 @@ export const ru: TranslationResources = {
           success: "В архиве",
         },
         mergePr: {
-          squash: "Объединить",
-          merge: "Объединить",
-          rebase: "Объединить",
+          squash: "Объединить PR (squash)",
+          merge: "Объединить PR (merge)",
+          rebase: "Объединить PR (rebase)",
           pending: "Объединение PR...",
           success: "PR объединен",
         },
         autoMerge: {
-          enableSquash: "Автообъединение",
-          enableMerge: "Автообъединение",
-          enableRebase: "Автообъединение",
+          enableSquash: "Автообъединение (squash)",
+          enableMerge: "Автообъединение (merge)",
+          enableRebase: "Автообъединение (rebase)",
           enabled: "Автоматическое объединение включено",
           enabling: "Включение автоматического объединения...",
           disabling: "Отключение автоматического объединения...",
@@ -724,6 +736,9 @@ export const ru: TranslationResources = {
         failedOpen: "Не удалось открыть рабочую область",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Открыть",
+        },
         sections: {
           checks: "Чеки",
           reviews: "Отзывы",
@@ -761,12 +776,13 @@ export const ru: TranslationResources = {
     },
     actions: {
       addProject: "Добавить проект",
+      newWorkspace: "Новое рабочее пространство",
       home: "Дом",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
     },
     sections: {
-      sessions: "Сессии",
+      sessions: "История",
     },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",
@@ -793,6 +809,7 @@ export const ru: TranslationResources = {
       toasts: {
         hostDisconnected: "Host не подключен",
         removeFailed: "Не удалось удалить некоторые рабочие области.",
+        updateHostToRemove: "Обновите host, чтобы удалять проекты.",
       },
       empty: {
         title: "Пока нет проектов",
@@ -842,6 +859,17 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
+    isolation: {
+      local: "Локально",
+      worktree: "Новый worktree",
+      label: "Изоляция",
+    },
+    fields: {
+      project: "Проект",
+      base: "База",
+      baseNotApplicable: "Неприменимо",
+    },
+    titlePlaceholder: "Название (необязательно)",
     errors: {
       hostDisconnected: "Host не подключен",
       createWorktreeFailed: "Не удалось создать рабочее дерево.",
@@ -1310,6 +1338,8 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    detachAction: "Отсоединить {{label}}",
+    detachTooltip: "Отсоединить субагент",
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
   },
@@ -1395,6 +1425,7 @@ export const ru: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Провайдеры",
+      usage: "Использование",
       terminals: "Terminals",
       host: "Host",
     },
@@ -1434,6 +1465,8 @@ export const ru: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1445,6 +1478,22 @@ export const ru: TranslationResources = {
       playTest: "Игровой тест",
       playing: "Игра...",
       playbackFailed: "Ошибка воспроизведения:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "О",
@@ -1534,6 +1583,7 @@ export const ru: TranslationResources = {
       },
       help: {
         openProject: "Открыть проект",
+        newWorkspace: "Новое рабочее пространство",
         newWorktree: "Новое рабочее дерево",
         archiveWorktree: "Архив рабочего дерева",
         newTab: "Новая вкладка",
@@ -1565,6 +1615,7 @@ export const ru: TranslationResources = {
         toggleFocusMode: "Переключить режим фокусировки",
         cycleTheme: "Циклическая тема",
         focusMessageInput: "Фокус ввода сообщения",
+        cycleAgentMode: "Переключить режим агента",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать диктовку /stop",
         interruptAgent: "Агент прерываний",
@@ -1726,6 +1777,30 @@ export const ru: TranslationResources = {
             "Не удалось отправить запрос на перезапуск.Paseo автоматически повторно подключается. Повторите попытку, как только хост окажется в сети.",
           dialogFailedMessage: "Невозможно открыть диалоговое окно подтверждения перезапуска.",
         },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
+        },
         dangerZone: "Опасная зона",
         remove: {
           title: "Удалить хост",
@@ -1784,6 +1859,9 @@ export const ru: TranslationResources = {
         button: "Диагностика",
         refresh: "Обновить",
         refreshing: "Освежающий...",
+        copyLabel: "диагностика",
+        copyAccessibility: "Скопировать диагностику",
+        copyFailed: "Не удалось скопировать диагностику",
         refreshAccessibility: "Обновить диагностику",
         refreshingAccessibility: "Обновление диагностики",
         running: "Запускаю диагностику...",
@@ -1858,8 +1936,6 @@ export const ru: TranslationResources = {
       metadata: {
         title: "Генерация метаданных",
         info: "Инструкции для конкретного проекта, внедренные в подсказки ИИ, которые Paseo использует для генерации метаданных. Используйте их для обеспечения соблюдения соглашений вашей команды, таких как наименование ветвей, стиль фиксации или формат PR.",
-        agentTitle: "Agent заголовки",
-        agentTitlePlaceholder: "Сохраняйте заголовки обязательными и длиной не более 40 символов.",
         branchName: "Названия ветвей",
         branchNamePlaceholder: "Префиксные ветки с feat/ или fix/, mb/ для личных веток",
         commitMessage: "Фиксировать сообщения",

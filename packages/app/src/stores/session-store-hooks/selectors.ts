@@ -5,11 +5,8 @@ import {
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
-import {
-  resolveWorkspaceIdByDirectory,
-  resolveWorkspaceMapKeyByIdentity,
-} from "@/utils/workspace-identity";
-import type { WorkspaceDescriptor } from "../session-store";
+import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
 export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
@@ -17,13 +14,17 @@ export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/w
 export interface SessionsSnapshot {
   sessions: Record<
     string,
-    { hasHydratedWorkspaces?: boolean; workspaces: Map<string, WorkspaceDescriptor> }
+    {
+      hasHydratedWorkspaces?: boolean;
+      workspaces: Map<string, WorkspaceDescriptor>;
+      emptyProjects?: Map<string, EmptyProjectDescriptor>;
+    }
   >;
 }
 
 export interface SidebarOrderSnapshot {
-  projectOrderByServerId: Record<string, string[]>;
-  workspaceOrderByServerAndProject: Record<string, string[]>;
+  projectOrder: string[];
+  workspaceOrderByProject: Record<string, string[]>;
 }
 
 const EMPTY_WORKSPACE_KEYS: string[] = [];
@@ -33,10 +34,6 @@ export const workspaceEqualityFns = {
   identity: Object.is as (a: unknown, b: unknown) => boolean,
   deep: equal as (a: unknown, b: unknown) => boolean,
 };
-
-function getWorkspaceOrderScopeKey(serverId: string, projectKey: string): string {
-  return `${serverId.trim()}::${projectKey.trim()}`;
-}
 
 function applyStoredOrdering<T>(input: {
   items: T[];
@@ -136,70 +133,63 @@ export function selectHasHydratedWorkspaces(
 
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
-  serverId: string | null,
+  serverIds: readonly string[],
 ): WorkspaceStructureProject[] {
-  if (!serverId) {
-    return EMPTY_WORKSPACE_STRUCTURE.projects;
-  }
+  const sessions: Array<{
+    serverId: string;
+    workspaces: Iterable<WorkspaceDescriptor>;
+    emptyProjects: Iterable<EmptyProjectDescriptor>;
+  }> = [];
 
-  const workspaces = state.sessions[serverId]?.workspaces;
-  if (!workspaces || workspaces.size === 0) {
-    return EMPTY_WORKSPACE_STRUCTURE.projects;
-  }
-
-  return buildWorkspaceStructureProjects({ serverId, workspaces: workspaces.values() });
-}
-
-export function selectProjectOrder(state: SidebarOrderSnapshot, serverId: string | null): string[] {
-  return serverId
-    ? (state.projectOrderByServerId[serverId] ?? EMPTY_WORKSPACE_KEYS)
-    : EMPTY_WORKSPACE_KEYS;
-}
-
-export function selectWorkspaceOrderByScopeForServer(
-  state: SidebarOrderSnapshot,
-  serverId: string | null,
-): Record<string, string[]> {
-  if (!serverId) {
-    return {};
-  }
-  const prefix = `${serverId.trim()}::`;
-  const relevantOrderByScope: Record<string, string[]> = {};
-  for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject)) {
-    if (scopeKey.startsWith(prefix)) {
-      relevantOrderByScope[scopeKey] = order;
+  for (const serverId of serverIds) {
+    const session = state.sessions[serverId];
+    const workspaces = session?.workspaces;
+    const emptyProjects = session?.emptyProjects;
+    if ((!workspaces || workspaces.size === 0) && (!emptyProjects || emptyProjects.size === 0)) {
+      continue;
     }
+    sessions.push({
+      serverId,
+      workspaces: workspaces?.values() ?? [],
+      emptyProjects: emptyProjects?.values() ?? [],
+    });
   }
-  return relevantOrderByScope;
+
+  if (sessions.length === 0) {
+    return EMPTY_WORKSPACE_STRUCTURE.projects;
+  }
+
+  return buildWorkspaceStructureProjects({ sessions });
+}
+
+export function selectProjectOrder(state: SidebarOrderSnapshot): string[] {
+  return state.projectOrder ?? EMPTY_WORKSPACE_KEYS;
+}
+
+export function selectWorkspaceOrderByScope(state: SidebarOrderSnapshot): Record<string, string[]> {
+  return state.workspaceOrderByProject ?? {};
 }
 
 export function composeWorkspaceStructure(input: {
-  serverId: string | null;
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
   workspaceOrderByScope: Record<string, readonly string[]>;
 }): WorkspaceStructure {
-  if (!input.serverId || input.projects.length === 0) {
+  if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
   }
 
   const orderedProjects = applyStoredOrdering({
     items: input.projects.map((project) => {
       const workspaceOrder =
-        input.workspaceOrderByScope[
-          getWorkspaceOrderScopeKey(input.serverId as string, project.projectKey)
-        ] ?? EMPTY_WORKSPACE_KEYS;
-      const workspaceItems = project.workspaceKeys.map((workspaceId) => ({
-        workspaceId,
-        workspaceKey: `${input.serverId as string}:${workspaceId}`,
-      }));
+        input.workspaceOrderByScope[project.projectKey] ?? EMPTY_WORKSPACE_KEYS;
       return {
         ...project,
         workspaceKeys: applyStoredOrdering({
-          items: workspaceItems,
+          items: project.workspaceKeys,
           storedOrder: workspaceOrder,
-          getKey: (workspace) => workspace.workspaceKey,
-        }).map((workspace) => workspace.workspaceId),
+          getKey: (workspaceKey) => workspaceKey,
+        }),
       };
     }),
     storedOrder: input.projectOrder,
@@ -238,21 +228,6 @@ export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | 
     return false;
   }
   return (state.sessions[serverId]?.workspaces?.size ?? 0) > 0;
-}
-
-export function selectResolveWorkspaceIdByCwd(
-  state: SessionsSnapshot,
-  serverId: string | null,
-  cwd: string | null | undefined,
-): string | null {
-  if (!serverId || !cwd) {
-    return null;
-  }
-  const workspaces = state.sessions[serverId]?.workspaces;
-  return resolveWorkspaceIdByDirectory({
-    workspaces: workspaces?.values(),
-    workspaceDirectory: cwd,
-  });
 }
 
 export function selectWorkspaceStatusesForBadges(

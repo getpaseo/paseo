@@ -5,7 +5,7 @@ import {
   deriveWorkspaceAgentVisibility,
   type WorkspaceAgentVisibility,
 } from "@/workspace-tabs/agent-visibility";
-import { selectSubagentsForParent } from "@/subagents";
+import { selectSubagentsForParent } from "@/subagents/select";
 import { buildWorkspaceTabPersistenceKey, useWorkspaceLayoutStore } from "./workspace-layout-store";
 import { useSessionStore, type Agent } from "./session-store";
 
@@ -56,6 +56,7 @@ const AGENT_DEFAULTS: Agent = {
   lastError: null,
   title: "Agent",
   cwd: WORKSPACE_DIRECTORY,
+  workspaceId: WORKSPACE_ID,
   model: null,
   features: undefined,
   thinkingOptionId: undefined,
@@ -91,7 +92,7 @@ function deriveVisibilityFromSession(): WorkspaceAgentVisibility {
   const sessionAgents = useSessionStore.getState().sessions[SERVER_ID]?.agents ?? new Map();
   return deriveWorkspaceAgentVisibility({
     sessionAgents,
-    workspaceDirectory: WORKSPACE_DIRECTORY,
+    workspaceId: WORKSPACE_ID,
   });
 }
 
@@ -165,5 +166,53 @@ describe("workspace subagents integration", () => {
         new Set(),
       ).map((row) => row.id),
     ).toEqual(["child-agent"]);
+  });
+
+  it("moves a detached child out of the parent section and back into normal workspace tabs", () => {
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(workspaceKey).toBeTruthy();
+
+    const parent = makeAgent({
+      id: "parent-agent",
+      title: "Parent agent",
+    });
+    const child = makeAgent({
+      id: "child-agent",
+      parentAgentId: "parent-agent",
+      title: "Child agent",
+    });
+
+    initializeAgents([parent, child]);
+    reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
+
+    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
+    expect(
+      selectSubagentsForParent(
+        useSessionStore.getState(),
+        {
+          serverId: SERVER_ID,
+          parentAgentId: "parent-agent",
+        },
+        new Set(),
+      ).map((row) => row.id),
+    ).toEqual(["child-agent"]);
+
+    appendAgent({ ...child, parentAgentId: null, labels: {} });
+    reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
+
+    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent", "agent_child-agent"]);
+    expect(
+      selectSubagentsForParent(
+        useSessionStore.getState(),
+        {
+          serverId: SERVER_ID,
+          parentAgentId: "parent-agent",
+        },
+        new Set(),
+      ),
+    ).toEqual([]);
   });
 });

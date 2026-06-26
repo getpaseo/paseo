@@ -5,6 +5,8 @@ import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
+import { ja } from "./resources/ja";
+import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
@@ -20,6 +22,8 @@ observeI18nInit(
       en: { translation: en },
       es: { translation: es },
       fr: { translation: fr },
+      ja: { translation: ja },
+      "pt-BR": { translation: ptBR },
       ru: { translation: ru },
       "zh-CN": { translation: zhCN },
     },

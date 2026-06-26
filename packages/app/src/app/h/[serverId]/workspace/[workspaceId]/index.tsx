@@ -24,6 +24,10 @@ import {
   parseWorkspaceOpenIntent,
   type WorkspaceOpenIntent,
 } from "@/utils/host-routes";
+import {
+  replaceBrowserRouteWithCanonicalHostWorkspaceRoute,
+  stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
+} from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { isWeb } from "@/constants/platform";
 
@@ -63,7 +67,7 @@ function stripOpenSearchParamFromBrowserUrl() {
     return;
   }
   url.searchParams.delete("open");
-  window.history.replaceState(null, "", url.toString());
+  replaceBrowserRouteWithCanonicalHostWorkspaceRoute(`${url.pathname}${url.search}${url.hash}`);
 }
 
 function clearConsumedOpenIntent(input: {
@@ -102,6 +106,13 @@ function HostWorkspaceRouteContent() {
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
   const openValue = getParamValue(globalParams.open);
+  useEffect(() => {
+    if (!serverId || !workspaceId) {
+      return;
+    }
+    stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit();
+  }, [serverId, workspaceId]);
+
   useEffect(() => {
     if (!openValue) {
       return;

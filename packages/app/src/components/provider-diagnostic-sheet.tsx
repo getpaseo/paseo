@@ -1,4 +1,5 @@
-import { AlertTriangle, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import * as Clipboard from "expo-clipboard";
+import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -6,7 +7,6 @@ import {
   ActivityIndicator,
   Pressable,
   type PressableStateCallbackType,
-  ScrollView,
   Text,
   View,
 } from "react-native";
@@ -18,8 +18,10 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -30,6 +32,10 @@ import { formatTimeAgo } from "@/utils/time";
 import { compareMatchScores, scoreTextFields } from "@/utils/score-match";
 import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
+import {
+  resolveProviderDiscoveredModels,
+  type ProviderDiscoveredModelsCache,
+} from "./provider-diagnostic-models";
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -248,6 +254,7 @@ function DiagnosticSubSheet({
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const toast = useToast();
   const client = useHostRuntimeClient(serverId);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -288,31 +295,62 @@ function DiagnosticSubSheet({
     void fetchDiagnostic();
   }, [fetchDiagnostic]);
 
+  const copyButtonStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      sheetStyles.iconButton,
+      (Boolean(hovered) || pressed) && Boolean(diagnostic) && sheetStyles.iconButtonHovered,
+      diagnostic ? null : sheetStyles.disabled,
+    ],
+    [diagnostic],
+  );
+
+  const handleCopyPress = useCallback(() => {
+    if (!diagnostic) return;
+    void Clipboard.setStringAsync(diagnostic)
+      .then(() => toast.copied(t("settings.providers.diagnostic.copyLabel")))
+      .catch(() => toast.error(t("settings.providers.diagnostic.copyFailed")));
+  }, [diagnostic, t, toast]);
+
   const header = useMemo<SheetHeader>(
     () => ({
       title: t("settings.providers.diagnostic.title"),
       actions: (
-        <Pressable
-          onPress={handleRefreshPress}
-          disabled={loading}
-          hitSlop={8}
-          style={refreshButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={
-            loading
-              ? t("settings.providers.diagnostic.refreshingAccessibility")
-              : t("settings.providers.diagnostic.refreshAccessibility")
-          }
-        >
-          {loading ? (
-            <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          ) : (
-            <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          )}
-        </Pressable>
+        <View style={sheetStyles.headerActions}>
+          <Pressable
+            onPress={handleCopyPress}
+            disabled={!diagnostic}
+            hitSlop={8}
+            style={copyButtonStyle}
+            accessibilityRole="button"
+            accessibilityLabel={t("settings.providers.diagnostic.copyAccessibility")}
+          >
+            <Copy size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </Pressable>
+          <Pressable
+            onPress={handleRefreshPress}
+            disabled={loading}
+            hitSlop={8}
+            style={refreshButtonStyle}
+            accessibilityRole="button"
+            accessibilityLabel={
+              loading
+                ? t("settings.providers.diagnostic.refreshingAccessibility")
+                : t("settings.providers.diagnostic.refreshAccessibility")
+            }
+          >
+            {loading ? (
+              <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            ) : (
+              <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            )}
+          </Pressable>
+        </View>
       ),
     }),
     [
+      copyButtonStyle,
+      diagnostic,
+      handleCopyPress,
       handleRefreshPress,
       loading,
       refreshButtonStyle,
@@ -325,26 +363,26 @@ function DiagnosticSubSheet({
   let body: React.ReactNode;
   if (loading && !diagnostic) {
     body = (
-      <View style={sheetStyles.codeBlockLoading}>
-        <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-        <Text style={sheetStyles.mutedText}>{t("settings.providers.diagnostic.running")}</Text>
-      </View>
+      <SurfaceCard key={visible ? "visible" : "hidden"}>
+        <View style={sheetStyles.codeBlockLoading}>
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <Text style={sheetStyles.mutedText}>{t("settings.providers.diagnostic.running")}</Text>
+        </View>
+      </SurfaceCard>
     );
   } else if (diagnostic) {
     body = (
-      <ScrollView style={sheetStyles.codeScroll} contentContainerStyle={sheetStyles.codeContent}>
-        <ScrollView horizontal showsHorizontalScrollIndicator>
-          <Text style={sheetStyles.codeText} selectable dataSet={CODE_SURFACE_DATASET}>
-            {diagnostic}
-          </Text>
-        </ScrollView>
-      </ScrollView>
+      <ScrollableCodeSurface key={visible ? "visible" : "hidden"} maxHeight={480}>
+        {diagnostic}
+      </ScrollableCodeSurface>
     );
   } else {
     body = (
-      <View style={sheetStyles.codeBlockLoading}>
-        <Text style={sheetStyles.mutedText}>{t("settings.providers.diagnostic.none")}</Text>
-      </View>
+      <SurfaceCard key={visible ? "visible" : "hidden"}>
+        <View style={sheetStyles.codeBlockLoading}>
+          <Text style={sheetStyles.mutedText}>{t("settings.providers.diagnostic.none")}</Text>
+        </View>
+      </SurfaceCard>
     );
   }
 
@@ -357,7 +395,7 @@ function DiagnosticSubSheet({
       scrollable={false}
       testID="provider-diagnostic-sheet"
     >
-      <View style={DIAGNOSTIC_CARD_STYLE}>{body}</View>
+      {body}
     </AdaptiveModalSheet>
   );
 }
@@ -565,14 +603,16 @@ export function ProviderDiagnosticSheet({
       : null;
   const modelsRefreshing = isRefreshing || providerSnapshotRefreshing;
 
-  const stableDiscoveredRef = useRef<AgentModelDefinition[]>([]);
-  if (providerEntry?.models && providerEntry.models.length > 0) {
-    stableDiscoveredRef.current = providerEntry.models;
-  }
-  const discoveredModels =
-    providerEntry?.models && providerEntry.models.length > 0
-      ? providerEntry.models
-      : stableDiscoveredRef.current;
+  const stableDiscoveredRef = useRef<ProviderDiscoveredModelsCache | null>(null);
+  const currentModels = providerEntry?.models;
+  const { models: discoveredModels, cache: nextDiscoveredCache } = resolveProviderDiscoveredModels({
+    serverId,
+    provider,
+    currentModels,
+    providerSnapshotRefreshing,
+    previousCache: stableDiscoveredRef.current,
+  });
+  stableDiscoveredRef.current = nextDiscoveredCache;
 
   const [clockTick, setClockTick] = useState(0);
   useEffect(() => {
@@ -733,6 +773,11 @@ const sheetStyles = StyleSheet.create((theme) => ({
   iconButtonHovered: {
     backgroundColor: theme.colors.surface2,
   },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   disabled: {
     opacity: 0.5,
   },
@@ -817,22 +862,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     gap: theme.spacing[2],
   },
-  diagnosticCard: {
-    overflow: "hidden",
-  },
-  codeScroll: {
-    maxHeight: 480,
-  },
-  codeContent: {
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-  },
-  codeText: {
-    fontFamily: theme.fontFamily.mono,
-    fontSize: theme.fontSize.code,
-    color: theme.colors.foreground,
-    lineHeight: 18,
-  },
   codeBlockLoading: {
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
@@ -848,4 +877,3 @@ const COMPACT_FOOTER_META_STYLE = [sheetStyles.footerMeta, sheetStyles.compactFo
 const MAIN_SNAP_POINTS = ["65%", "92%"];
 const ADD_SNAP_POINTS = ["40%"];
 const DIAGNOSTIC_SNAP_POINTS = ["50%", "85%"];
-const DIAGNOSTIC_CARD_STYLE = [settingsStyles.card, sheetStyles.diagnosticCard];

@@ -6,7 +6,8 @@
 
 <p align="center">
   <a href="README.md">English</a> ·
-  <a href="README.zh-CN.md">简体中文</a>
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="README.ja.md">日本語</a>
 </p>
 
 <p align="center">
@@ -86,6 +87,21 @@ For full setup and configuration, see:
 
 - [Docs](https://paseo.sh/docs)
 - [Configuration reference](https://paseo.sh/docs/configuration)
+
+### Docker
+
+Run the Paseo daemon and self-hosted web UI in Docker:
+
+```bash
+docker run -d --name paseo \
+  -p 6767:6767 \
+  -e PASEO_PASSWORD=change-me \
+  -v "$PWD/paseo-home:/home/paseo" \
+  -v "$PWD:/workspace" \
+  ghcr.io/getpaseo/paseo:latest
+```
+
+Open `http://localhost:6767` after it starts. Extend the base image with the agent CLIs you use, then provide credentials through environment variables or the persistent `/home/paseo` volume. See the [Docker documentation](docs/docker.md) for full setup details.
 
 ## CLI
 

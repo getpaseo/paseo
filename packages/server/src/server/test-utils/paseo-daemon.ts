@@ -18,10 +18,13 @@ interface TestPaseoDaemonOptions {
   corsAllowedOrigins?: string[];
   listen?: string;
   logger?: Parameters<typeof createPaseoDaemon>[1];
+  mcpEnabled?: boolean;
   mcpDebug?: boolean;
+  isDev?: boolean;
   relayEnabled?: boolean;
   relayEndpoint?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
+  providerOverrides?: PaseoDaemonConfig["providerOverrides"];
   paseoHomeRoot?: string;
   staticDir?: string;
   cleanup?: boolean;
@@ -34,6 +37,8 @@ interface TestPaseoDaemonOptions {
   auth?: PaseoDaemonConfig["auth"];
   pushNotificationSender?: PushNotificationSender;
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
+  webUi?: PaseoDaemonConfig["webUi"];
+  trustedProxies?: PaseoDaemonConfig["trustedProxies"];
 }
 
 export interface TestPaseoDaemon {
@@ -152,10 +157,12 @@ async function prepareTestDaemonConfig(
     paseoHome,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
-    mcpEnabled: true,
+    mcpEnabled: options.mcpEnabled ?? true,
     staticDir,
     mcpDebug: options.mcpDebug ?? false,
+    isDev: options.isDev,
     agentClients: options.agentClients ?? createTestAgentClients(),
+    providerOverrides: options.providerOverrides,
     agentStoragePath: path.join(paseoHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
@@ -163,6 +170,8 @@ async function prepareTestDaemonConfig(
     auth: options.auth,
     pushNotificationSender: options.pushNotificationSender,
     serviceProxy: options.serviceProxy,
+    webUi: options.webUi,
+    trustedProxies: options.trustedProxies,
     openai: options.openai,
     speech: options.speech,
     voiceLlmProvider: options.voiceLlmProvider ?? null,

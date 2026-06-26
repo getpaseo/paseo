@@ -49,6 +49,38 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 
 In Paseo-managed worktree services, use the injected service environment rather than hardcoded root checkout ports.
 
+### Expo Router layout ownership
+
+Each layout owns only the routes directly inside its directory. In the root
+layout, register `h/[serverId]`; do not register host leaf routes such as
+`h/[serverId]/workspace/[workspaceId]`, `h/[serverId]/open-project`, or
+`h/[serverId]/index` there. The `h/[serverId]/_layout.tsx` file owns those leaf
+routes with its own nested stack and relative screen names:
+`workspace/[workspaceId]/index`, `open-project`, `index`, and so on. Expo Router
+warns with `[Layout children]: No route named ...` when a layout registers
+grandchildren. Treat that warning as a route-tree bug: on native, this shape can
+leave a nested index route mounted without its local dynamic params and render a
+blank screen.
+
+Do not paper over missing required route params by reading global params in the
+leaf. Required dynamic params belong to the matched route. If
+`useLocalSearchParams()` misses one, fix the layout ownership.
+
+Keep non-route modules out of `src/app`. Expo Router treats ordinary `.ts` and
+`.tsx` files there as routes, which produces `missing the required default
+export` warnings and pollutes the route tree. Put shared route policy in
+`src/navigation`, `src/utils`, or another non-route directory.
+
+Treat `/h/[serverId]` as the host home route. It resolves to the last remembered
+workspace for that host after the workspace-selection store hydrates unless the
+host's hydrated workspace list proves that workspace is gone; hosts without a
+remembered workspace go to `open-project`.
+
+Keep workspace identity and retention outside native-stack `getId`/
+`dangerouslySingular`. Expo Router maps `dangerouslySingular` to React
+Navigation `getId`, and `getId` has broken Android native-stack/Fabric by
+reordering an already-mounted workspace screen.
+
 ### iOS simulator preview service
 
 Paseo worktrees expose the native iOS dev app through the `ios-simulator` service in `paseo.json`. The service URL serves the simulator preview at `/.sim`, so the preview link is `${PASEO_URL}/.sim`.
@@ -203,6 +235,56 @@ Service proxy hostnames use the double-dash shape: `web--feature-auth--project.l
   }
 }
 ```
+
+## Bundled daemon web UI
+
+> The user-facing guide for this feature (enabling it, reverse proxy, TLS, tunnels, security) lives at [public-docs/web-ui.md](../public-docs/web-ui.md). This section is the contributor/build reference: how the artifact is produced, bundled, and excluded from desktop packaging.
+
+The daemon can optionally serve the browser web client from the same HTTP server. This is disabled by default.
+
+Enable it for a running daemon with:
+
+```bash
+paseo daemon start --web-ui
+```
+
+Or set the environment variable:
+
+```bash
+PASEO_WEB_UI_ENABLED=true paseo daemon start
+```
+
+Or persist it in `config.json`:
+
+```json
+{
+  "features": {
+    "webUi": {
+      "enabled": true
+    }
+  }
+}
+```
+
+When enabled, opening the daemon HTTP origin (for example `http://localhost:6767/`) serves the web app. The same HTTP server continues to serve `/api/*`, `/mcp/*`, `/public/*`, the WebSocket upgrade, and service-proxy routes. Static files load without daemon bearer auth; API and WebSocket calls still enforce auth.
+
+The served app auto-bootstraps a connection to the same origin, so opening `http://localhost:6767/` directly usually skips the Add Host step.
+
+Build the artifact for packaging or measurement with:
+
+```bash
+npm run build:daemon-web-ui
+```
+
+This exports the normal browser web app (not the Electron-flavored desktop renderer) and copies it into `packages/server/dist/server/web-ui`, precompressing `.html`, `.js`, `.css`, and JSON assets as `.br` and `.gz`.
+
+Measured bundle size for a standard Expo web export:
+
+- raw: 10.77 MiB
+- gzip: 2.55 MiB
+- brotli: 1.93 MiB
+
+The desktop-managed daemon disables the bundled web UI by default (`PASEO_WEB_UI_ENABLED=false`) because the desktop app already ships the renderer as `app-dist`. Shipping the same assets again inside `@getpaseo/server` would duplicate the ~10.8 MiB install. Desktop packaging also excludes `node_modules/@getpaseo/server/dist/server/web-ui/**` from the packaged app.
 
 ## Built workspace packages
 

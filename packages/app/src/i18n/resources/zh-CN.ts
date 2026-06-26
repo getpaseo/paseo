@@ -165,7 +165,7 @@ export const zhCN: TranslationResources = {
     hints: {
       thinking: "Thinking mode",
       model: "切换 Model",
-      mode: "切换权限 Mode",
+      mode: "更改模式",
     },
   },
   agentStream: {
@@ -206,7 +206,7 @@ export const zhCN: TranslationResources = {
     },
   },
   sessions: {
-    title: "会话",
+    title: "历史",
     empty: "还没有会话",
     actions: {
       loadMore: "加载更多",
@@ -328,15 +328,21 @@ export const zhCN: TranslationResources = {
   workspace: {
     route: {
       loading: "正在加载 workspace",
+      restoring: "正在恢复 workspace",
+      restoreFailed: "无法恢复此 workspace — 目录可能已被移动或删除",
       connecting: "正在连接",
       hostOffline: "{{hostName}} 已离线",
       cannotReachHost: "无法连接 {{hostName}}",
       hostStatus: "Host 状态：{{status}}",
       missing: "Workspace 未找到",
+      needsHostUpgrade: "更新你的 Host 以恢复此 workspace",
       manageHost: "管理 Host",
     },
     hoverCard: {
       scriptsAccessibility: "Workspace scripts",
+      copyPath: "复制路径",
+      copyBranchName: "复制分支名称",
+      copied: "已复制",
     },
     fileExplorer: {
       sort: {
@@ -355,9 +361,12 @@ export const zhCN: TranslationResources = {
         retry: "重试",
         refresh: "刷新文件",
         refreshing: "正在刷新文件",
+        hideHiddenFiles: "隐藏隐藏文件",
+        showHiddenFiles: "显示隐藏文件",
       },
       empty: {
         noFiles: "没有文件",
+        noVisibleFiles: "没有可见文件",
       },
       states: {
         unavailable: "Workspace 不可用",
@@ -464,6 +473,8 @@ export const zhCN: TranslationResources = {
         splitDown: "向下拆分窗格",
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles…",
+        pinTarget: "固定",
+        unpinTarget: "取消固定",
       },
       explorer: {
         open: "打开 explorer",
@@ -591,16 +602,16 @@ export const zhCN: TranslationResources = {
           success: "已归档",
         },
         mergePr: {
-          squash: "Merge",
-          merge: "Merge",
-          rebase: "Merge",
+          squash: "Merge PR (squash)",
+          merge: "Merge PR (merge)",
+          rebase: "Merge PR (rebase)",
           pending: "正在 merge PR...",
           success: "PR 已 merge",
         },
         autoMerge: {
-          enableSquash: "Auto merge",
-          enableMerge: "Auto merge",
-          enableRebase: "Auto merge",
+          enableSquash: "Auto merge (squash)",
+          enableMerge: "Auto merge (merge)",
+          enableRebase: "Auto merge (rebase)",
           enabled: "Auto-merge 已启用",
           enabling: "正在启用 auto-merge...",
           disabling: "正在禁用 auto-merge...",
@@ -700,6 +711,9 @@ export const zhCN: TranslationResources = {
         failedOpen: "打开 workspace 失败",
       },
       pr: {
+        actions: {
+          viewPullRequest: "查看",
+        },
         sections: {
           checks: "Checks",
           reviews: "Reviews",
@@ -737,12 +751,13 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       addProject: "添加 project",
+      newWorkspace: "新建工作区",
       home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
     },
     sections: {
-      sessions: "会话",
+      sessions: "历史",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -767,6 +782,7 @@ export const zhCN: TranslationResources = {
       toasts: {
         hostDisconnected: "Host 未连接",
         removeFailed: "部分 workspace 移除失败",
+        updateHostToRemove: "更新 host 以移除 projects。",
       },
       empty: {
         title: "还没有 projects",
@@ -815,6 +831,17 @@ export const zhCN: TranslationResources = {
   newWorkspace: {
     title: "新建 workspace",
     create: "创建",
+    isolation: {
+      local: "本地",
+      worktree: "新建 worktree",
+      label: "隔离",
+    },
+    fields: {
+      project: "项目",
+      base: "基线",
+      baseNotApplicable: "不适用",
+    },
+    titlePlaceholder: "标题（可选）",
     errors: {
       hostDisconnected: "Host 未连接",
       createWorktreeFailed: "创建 worktree 失败",
@@ -1266,6 +1293,8 @@ export const zhCN: TranslationResources = {
     backdrop: "菜单背景",
   },
   subagents: {
+    detachAction: "分离 {{label}}",
+    detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
   },
@@ -1351,6 +1380,7 @@ export const zhCN: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Providers",
+      usage: "使用情况",
       terminals: "Terminals",
       host: "Host",
     },
@@ -1390,6 +1420,8 @@ export const zhCN: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "简体中文",
         },
@@ -1401,6 +1433,22 @@ export const zhCN: TranslationResources = {
       playTest: "播放测试",
       playing: "正在播放...",
       playbackFailed: "播放失败：{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "关于",
@@ -1486,6 +1534,7 @@ export const zhCN: TranslationResources = {
       },
       help: {
         openProject: "打开项目",
+        newWorkspace: "新建 workspace",
         newWorktree: "新建 worktree",
         archiveWorktree: "归档 worktree",
         newTab: "新建标签",
@@ -1517,6 +1566,7 @@ export const zhCN: TranslationResources = {
         toggleFocusMode: "切换专注模式",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
+        cycleAgentMode: "循环切换代理模式",
         toggleVoiceMode: "切换语音模式",
         startStopDictation: "开始/停止听写",
         interruptAgent: "中断 Agent",
@@ -1672,6 +1722,30 @@ export const zhCN: TranslationResources = {
           requestFailedMessage: "发送重启请求失败。Paseo 会自动重连，请在 Host 显示在线后重试。",
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
+        },
         dangerZone: "危险区域",
         remove: {
           title: "移除 Host",
@@ -1730,6 +1804,9 @@ export const zhCN: TranslationResources = {
         button: "诊断",
         refresh: "刷新",
         refreshing: "正在刷新...",
+        copyLabel: "诊断",
+        copyAccessibility: "复制诊断",
+        copyFailed: "复制诊断失败",
         refreshAccessibility: "刷新诊断",
         refreshingAccessibility: "正在刷新诊断",
         running: "正在运行诊断...",
@@ -1802,8 +1879,6 @@ export const zhCN: TranslationResources = {
       metadata: {
         title: "元数据生成",
         info: "注入到 Paseo 用来生成元数据的 AI prompts 中的 Project 专属指令，可用于强制执行团队约定，例如分支命名、提交风格或 PR 格式",
-        agentTitle: "Agent 标题",
-        agentTitlePlaceholder: "标题保持祈使句且不超过 40 个字符",
         branchName: "分支名称",
         branchNamePlaceholder: "分支以 feat/ 或 fix/ 开头，个人分支使用 mb/",
         commitMessage: "提交消息",

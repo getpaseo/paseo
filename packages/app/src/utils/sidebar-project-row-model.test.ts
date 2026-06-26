@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildSidebarProjectRowModel,
-  isSidebarProjectFlattened,
-} from "./sidebar-project-row-model";
 import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
+import {
+  buildSidebarProjectRowModel,
+  resolveSidebarProjectIconTarget,
+} from "./sidebar-project-row-model";
 
 function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorkspaceEntry {
   return {
@@ -14,10 +14,13 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     serverId: "srv",
     workspaceId: "ws-root",
     projectKey: "project-1",
+    projectName: "paseo",
     workspaceDirectory: "/repo",
     projectKind: "git",
     workspaceKind: "checkout",
     name: "paseo",
+    title: null,
+    currentBranch: null,
     statusBucket: "done",
     diffStat: null,
     prHint: null,
@@ -38,69 +41,36 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
     projectName: "paseo",
     projectKind,
     iconWorkingDir: "/repo",
-    canCreateWorktree: overrides.canCreateWorktree ?? projectKind === "git",
+    hosts: overrides.hosts ?? [
+      { serverId: "srv", iconWorkingDir: "/repo", canCreateWorktree: projectKind === "git" },
+    ],
     workspaces: [workspace()],
     ...overrides,
   };
 }
 
 describe("buildSidebarProjectRowModel", () => {
-  it("flattens non-git projects with one workspace into a direct workspace row model", () => {
-    const flattenedWorkspace = workspace({
-      workspaceId: "ws-non-git",
-      workspaceKind: "checkout",
-      statusBucket: "running",
-    });
-
+  it("renders a non-git single-workspace project as an expandable section", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "directory",
-        workspaces: [flattenedWorkspace],
+        workspaces: [workspace({ workspaceId: "ws-non-git", workspaceKind: "checkout" })],
       }),
       collapsed: false,
     });
 
     expect(result).toEqual({
-      kind: "workspace_link",
-      workspace: flattenedWorkspace,
-      chevron: null,
-      trailingAction: "none",
+      kind: "project_section",
+      chevron: "collapse",
+      trailingAction: { kind: "none" },
     });
   });
 
-  it("builds flattened non-git rows without route selection input", () => {
-    const flattenedWorkspace = workspace({
-      serverId: "srv-2",
-      workspaceId: "ws-non-git",
-    });
-
-    const result = buildSidebarProjectRowModel({
-      project: project({
-        projectKind: "directory",
-        workspaces: [flattenedWorkspace],
-      }),
-      collapsed: false,
-    });
-
-    expect(result).toMatchObject({
-      kind: "workspace_link",
-      workspace: flattenedWorkspace,
-      chevron: null,
-      trailingAction: "none",
-    });
-    expect(result).not.toHaveProperty("selected");
-  });
-
-  it("keeps single-workspace git projects as sections with the new worktree action", () => {
-    const onlyWorkspace = workspace({
-      workspaceId: "ws-main",
-      workspaceKind: "checkout",
-    });
-
+  it("renders a single-workspace git project as an expandable section with the new worktree action", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "git",
-        workspaces: [onlyWorkspace],
+        workspaces: [workspace({ workspaceId: "ws-main", workspaceKind: "checkout" })],
       }),
       collapsed: true,
     });
@@ -108,11 +78,33 @@ describe("buildSidebarProjectRowModel", () => {
     expect(result).toEqual({
       kind: "project_section",
       chevron: "expand",
-      trailingAction: "new_worktree",
+      trailingAction: {
+        kind: "new_worktree",
+        target: { serverId: "srv", iconWorkingDir: "/repo" },
+      },
     });
   });
 
-  it("keeps multi-workspace git projects as expandable sections with a new worktree action", () => {
+  it("targets the project host, not route state, for new worktree actions", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: false },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
+        ],
+      }),
+      collapsed: false,
+    });
+
+    expect(result).toMatchObject({
+      trailingAction: {
+        kind: "new_worktree",
+        target: { serverId: "host-b", iconWorkingDir: "/repo/b" },
+      },
+    });
+  });
+
+  it("renders a multi-workspace git project as an expandable section with a new worktree action", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "git",
@@ -127,31 +119,39 @@ describe("buildSidebarProjectRowModel", () => {
     expect(result).toEqual({
       kind: "project_section",
       chevron: "expand",
-      trailingAction: "new_worktree",
+      trailingAction: {
+        kind: "new_worktree",
+        target: { serverId: "srv", iconWorkingDir: "/repo" },
+      },
     });
   });
-});
 
-describe("isSidebarProjectFlattened", () => {
-  it("returns true only for single-workspace non-git projects", () => {
-    expect(
-      isSidebarProjectFlattened(project({ projectKind: "git", workspaces: [workspace()] })),
-    ).toBe(false);
-    expect(
-      isSidebarProjectFlattened(project({ projectKind: "directory", workspaces: [workspace()] })),
-    ).toBe(true);
+  it("resolves project icons from the project host, not the focused host", () => {
+    const iconTarget = resolveSidebarProjectIconTarget(
+      project({
+        hosts: [
+          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: true },
+          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: true },
+        ],
+      }),
+    );
+
+    expect(iconTarget).toEqual({ serverId: "host-b", iconWorkingDir: "/repo/b" });
   });
 
-  it("returns false for multi-workspace projects", () => {
-    expect(
-      isSidebarProjectFlattened(
-        project({
-          workspaces: [
-            workspace({ workspaceId: "ws-main" }),
-            workspace({ workspaceId: "ws-feat" }),
-          ],
-        }),
-      ),
-    ).toBe(false);
+  it("renders an empty project as an expandable section", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({ projectKind: "git", workspaces: [] }),
+      collapsed: false,
+    });
+
+    expect(result).toEqual({
+      kind: "project_section",
+      chevron: "collapse",
+      trailingAction: {
+        kind: "new_worktree",
+        target: { serverId: "srv", iconWorkingDir: "/repo" },
+      },
+    });
   });
 });

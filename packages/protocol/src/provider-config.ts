@@ -24,7 +24,7 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
 
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
 });
 
@@ -48,8 +48,8 @@ export const ProviderOverrideSchema = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
-  env: z.record(z.string()).optional(),
-  params: z.record(z.unknown()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),
@@ -61,7 +61,7 @@ const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "o
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 export const ProviderOverridesSchema = z
-  .record(ProviderOverrideSchema)
+  .record(z.string(), ProviderOverrideSchema)
   .superRefine((providers, ctx) => {
     const builtinProviderIdSet = new Set<string>(BUILTIN_PROVIDER_IDS);
     const validExtendsValues = new Set<string>([...BUILTIN_PROVIDER_IDS, "acp"]);
@@ -111,7 +111,7 @@ export const ProviderOverridesSchema = z
   });
 
 export const AgentProviderRuntimeSettingsMapSchema = z
-  .record(ProviderRuntimeSettingsSchema)
+  .record(z.string(), ProviderRuntimeSettingsSchema)
   .superRefine((providers, ctx) => {
     for (const providerId of Object.keys(providers)) {
       const parsedProviderId = AgentProviderSchema.safeParse(providerId);

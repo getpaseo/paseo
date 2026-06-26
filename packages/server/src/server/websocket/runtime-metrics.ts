@@ -42,6 +42,30 @@ export interface WebSocketRuntimeMetricsSnapshot {
   }>;
 }
 
+export interface WebSocketRuntimeDiagnosticSnapshot<
+  TRuntime = unknown,
+  TAgents = unknown,
+> extends WebSocketRuntimeMetricsSnapshot {
+  collectedAt: string;
+  final: boolean;
+  sessions: {
+    activeConnections: number;
+    externalSessionKeys: number;
+    reconnectGraceSessions: number;
+  };
+  sockets: {
+    activeSockets: number;
+    pendingConnections: number;
+  };
+  eventLoopDelay: {
+    p50Ms: number;
+    p99Ms: number;
+    maxMs: number;
+  } | null;
+  runtime: TRuntime;
+  agents: TAgents;
+}
+
 type Clock = () => number;
 
 export class WebSocketRuntimeMetricsWindow {

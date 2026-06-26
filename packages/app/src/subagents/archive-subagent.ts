@@ -41,6 +41,7 @@ export interface ArchiveSubagentDeps {
   getSubagent: (subagentId: string) => ResolveArchiveSubagentDialogInput | undefined;
   confirm: (input: ConfirmDialogInput) => Promise<boolean>;
   archiveAgent: (input: { serverId: string; agentId: string }) => Promise<void>;
+  reportError: (error: unknown) => void;
 }
 
 export interface RequestArchiveSubagentInput {
@@ -62,5 +63,9 @@ export async function requestArchiveSubagent(
   if (!confirmed) {
     return;
   }
-  void deps.archiveAgent({ serverId: input.serverId, agentId: input.subagentId }).catch(() => {});
+  try {
+    await deps.archiveAgent({ serverId: input.serverId, agentId: input.subagentId });
+  } catch (error) {
+    deps.reportError(error);
+  }
 }

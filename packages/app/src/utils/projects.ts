@@ -80,10 +80,8 @@ function findProjectCustomName(
 
 function buildHostProjectEntries(host: ProjectHost): HostProjectListItem[] {
   return buildHostProjectList({
-    serverId: host.serverId,
     projects: buildWorkspaceStructureProjects({
-      serverId: host.serverId,
-      workspaces: host.workspaces,
+      sessions: [{ serverId: host.serverId, workspaces: host.workspaces }],
     }),
   });
 }

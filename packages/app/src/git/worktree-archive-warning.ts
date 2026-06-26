@@ -7,6 +7,12 @@ export interface WorktreeArchiveRisk {
   diffStat?: { additions: number; deletions: number } | null;
 }
 
+export interface WorktreeArchiveRiskInput {
+  archiveHasUncommittedChanges?: boolean | null;
+  archiveUnpushedCommitCount?: number | null;
+  diffStat?: WorktreeArchiveRisk["diffStat"];
+}
+
 export interface WorktreeArchiveConfirmationInput extends WorktreeArchiveRisk {
   worktreeName: string;
 }
@@ -42,6 +48,14 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
       ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
       : i18n.t("workspace.git.actions.archiveWarning.unpushedCommits", { count }),
 };
+
+export function toWorktreeArchiveRisk(input: WorktreeArchiveRiskInput): WorktreeArchiveRisk {
+  return {
+    isDirty: input.archiveHasUncommittedChanges,
+    aheadOfOrigin: input.archiveUnpushedCommitCount,
+    diffStat: input.diffStat,
+  };
+}
 
 function formatDiffStat(
   diffStat: WorktreeArchiveRisk["diffStat"],

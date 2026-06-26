@@ -6,6 +6,7 @@ import { getStarCount } from "~/stars";
 
 interface ReleaseContext {
   version: string;
+  linuxAppImageAsset: string;
   windowsX64Asset: string | null;
   windowsArm64Asset: string | null;
 }
@@ -16,6 +17,7 @@ interface StarsContext {
 
 const ReleaseCtx = createContext<ReleaseContext>({
   version: "",
+  linuxAppImageAsset: "",
   windowsX64Asset: null,
   windowsArm64Asset: null,
 });

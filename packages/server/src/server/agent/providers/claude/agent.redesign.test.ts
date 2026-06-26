@@ -14,6 +14,7 @@ interface QueryMock {
   close: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
+  getContextUsage: ReturnType<typeof vi.fn>;
   supportedModels: ReturnType<typeof vi.fn>;
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
@@ -53,6 +54,7 @@ function createBaseQueryMock(nextImpl: QueryMock["next"]): QueryMock {
     close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
+    getContextUsage: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
@@ -675,6 +677,7 @@ test("maps tool_result content shapes into deterministic string output", async (
   const session = await createSession();
   const internal: {
     buildToolOutput: (
+      content: unknown,
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
     ) => Record<string, unknown> | undefined;
@@ -722,6 +725,7 @@ test("maps tool_result content shapes into deterministic string output", async (
   try {
     for (const fixture of fixtures) {
       const output = internal.buildToolOutput(
+        fixture.content,
         {
           type: "tool_result",
           tool_use_id: "tool-1",
@@ -748,6 +752,7 @@ test("Grep tool_result string content flows to a search detail with content", as
   const session = await createSession();
   const internal: {
     buildToolOutput: (
+      content: unknown,
       block: Record<string, unknown>,
       entry: Record<string, unknown> | undefined,
     ) => Record<string, unknown> | undefined;
@@ -763,12 +768,14 @@ test("Grep tool_result string content flows to a search detail with content", as
   };
 
   try {
+    const grepContent = "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx";
     const output = internal.buildToolOutput(
+      grepContent,
       {
         type: "tool_result",
         tool_use_id: "tool-grep-1",
         tool_name: "Grep",
-        content: "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx",
+        content: grepContent,
         is_error: false,
       },
       grepEntry,
@@ -1078,39 +1085,52 @@ test("reuses one autonomous run for unbound stream_event bursts with no foregrou
   const internal: {
     turnState: "idle" | "foreground" | "autonomous";
     nextTurnOrdinal: number;
-    routeSdkMessageFromPump: (message: Record<string, unknown>) => void;
+    routeSdkMessageFromPump: (
+      message: Record<string, unknown>,
+      activeQuery: QueryMock,
+    ) => Promise<void>;
     autonomousTurn: { id: string } | null;
   } = asInternals(session);
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
 
   internal.turnState = "idle";
-  internal.routeSdkMessageFromPump({
-    type: "stream_event",
-    event: {
-      type: "content_block_delta",
-      delta: { type: "text_delta", text: "AUTO " },
+  await internal.routeSdkMessageFromPump(
+    {
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "AUTO " },
+      },
     },
-  });
+    queryMock,
+  );
 
   const firstRunId = internal.autonomousTurn?.id ?? null;
   expect(firstRunId).toBe("autonomous-turn-1");
   expect(internal.nextTurnOrdinal).toBe(2);
 
-  internal.routeSdkMessageFromPump({
-    type: "stream_event",
-    event: {
-      type: "content_block_delta",
-      delta: { type: "text_delta", text: "WAKE" },
+  await internal.routeSdkMessageFromPump(
+    {
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "WAKE" },
+      },
     },
-  });
+    queryMock,
+  );
   expect(internal.autonomousTurn?.id).toBe(firstRunId);
   expect(internal.nextTurnOrdinal).toBe(2);
 
-  internal.routeSdkMessageFromPump({
-    type: "result",
-    subtype: "success",
-    usage: buildUsage(),
-    total_cost_usd: 0,
-  });
+  await internal.routeSdkMessageFromPump(
+    {
+      type: "result",
+      subtype: "success",
+      usage: buildUsage(),
+      total_cost_usd: 0,
+    },
+    queryMock,
+  );
   expect(internal.autonomousTurn).toBeNull();
 
   await session.close();

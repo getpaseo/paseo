@@ -22,14 +22,15 @@ import { GitHubIcon } from "@/components/icons/github-icon";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import { SyncedLoader } from "@/components/synced-loader";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/use-pr-status-query";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 
-const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
@@ -111,6 +112,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   children?: ReactNode;
 }) {
+  const {
+    settings: { workspaceTitleSource },
+  } = useAppSettings();
+  const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -124,33 +129,37 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        <View style={styles.workspaceRowLeft}>
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-          />
-          <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-            {workspace.name}
-          </Text>
-          {scriptIconKind ? <WorkspaceScriptIcon kind={scriptIconKind} /> : null}
+        <WorkspaceStatusIndicator
+          bucket={workspace.statusBucket}
+          workspaceKind={workspace.workspaceKind}
+          loading={isLoading}
+        />
+        <View style={styles.workspaceContentColumn}>
+          <View style={styles.workspaceTitleRow}>
+            <View style={styles.workspaceTitleLeft}>
+              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+                {workspaceLabel}
+              </Text>
+              {scriptIconKind ? <WorkspaceScriptIcon kind={scriptIconKind} /> : null}
+            </View>
+            <View style={styles.workspaceRowRight}>{children}</View>
+          </View>
+          {subtitle ? (
+            <Text style={styles.workspaceSubtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+          {workspace.prHint ? (
+            <View style={styles.workspacePrBadgeRow}>
+              <PrBadge hint={workspace.prHint} />
+              <ChecksBadge checks={workspace.prHint.checks} />
+            </View>
+          ) : null}
         </View>
-        <View style={styles.workspaceRowRight}>{children}</View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.shortcutBadgeOverlay} pointerEvents="none">
           <SidebarWorkspaceShortcutBadge number={shortcutNumber} />
-        </View>
-      ) : null}
-      {subtitle ? (
-        <Text style={styles.workspaceSubtitle} numberOfLines={1}>
-          {subtitle}
-        </Text>
-      ) : null}
-      {workspace.prHint ? (
-        <View style={styles.workspacePrBadgeRow}>
-          <PrBadge hint={workspace.prHint} />
-          <ChecksBadge checks={workspace.prHint.checks} />
         </View>
       ) : null}
     </View>
@@ -202,10 +211,22 @@ function WorkspaceStatusIndicator({
 
   if (bucket === "needs_input") {
     return (
-      <View style={styles.workspaceStatusDot}>
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-needs_input">
         <ThemedCircleAlert size={14} uniProps={amberColorMapping} />
       </View>
     );
+  }
+
+  if (bucket === "attention") {
+    return (
+      <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-attention">
+        <View style={styles.standaloneStatusDot} />
+      </View>
+    );
+  }
+
+  if (bucket === "done") {
+    return <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />;
   }
 
   let KindIcon: typeof ThemedMonitor;
@@ -222,7 +243,7 @@ function WorkspaceStatusIndicator({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
   return (
-    <View style={styles.workspaceStatusDot}>
+    <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
       <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
       {dotColorStyle ? (
         <StatusDotOverlay
@@ -301,7 +322,7 @@ function PrBadge({ hint }: { hint: PrHint }) {
         <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
       )}
       <Text style={textStyle} numberOfLines={1}>
-        #{hint.number}
+        {hint.number}
       </Text>
     </Pressable>
   );
@@ -461,11 +482,20 @@ const styles = StyleSheet.create((theme) => ({
   workspaceRowMain: {
     flexDirection: "row",
     alignItems: "flex-start",
-    justifyContent: "space-between",
     gap: theme.spacing[2],
     width: "100%",
   },
-  workspaceRowLeft: {
+  workspaceContentColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  workspaceTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
+  workspaceTitleLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -480,7 +510,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceStatusDot: {
     position: "relative",
-    width: WORKSPACE_STATUS_DOT_WIDTH,
+    width: theme.iconSize.md,
     height: 20,
     borderRadius: theme.borderRadius.full,
     flexShrink: 0,
@@ -491,6 +521,12 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
+  },
+  standaloneStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.palette.green[500],
   },
   workspaceBranchText: {
     color: theme.colors.foreground,
@@ -522,14 +558,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     lineHeight: 14,
-    marginLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
   },
   workspacePrBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     marginTop: theme.spacing[1],
-    paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
   },
   statusDotNeedsInput: {
     backgroundColor: theme.colors.palette.amber[500],

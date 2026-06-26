@@ -3,11 +3,12 @@ import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { getE2EDaemonPort } from "./daemon-port";
 import { getServerId } from "./server-id";
+import { expectAppRoute } from "./route-assertions";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
   buildHostAgentDetailRoute,
-  buildHostSessionsRoute,
   buildHostWorkspaceRoute,
+  buildSessionsRoute,
 } from "@/utils/host-routes";
 
 export interface ArchiveTabAgent {
@@ -35,15 +36,12 @@ function buildSeededStoragePayload() {
  * idle agent from the same client it uses for everything else.
  */
 export interface IdleAgentSeedClient {
-  openProject(cwd: string): Promise<{
-    workspace: { id: string } | null;
-    error: string | null;
-  }>;
   createAgent(options: {
     provider: string;
     model: string;
     modeId: string;
     cwd: string;
+    workspaceId: string;
     title: string;
   }): Promise<{ id: string }>;
   waitForAgentUpsert(
@@ -55,17 +53,14 @@ export interface IdleAgentSeedClient {
 
 export async function createIdleAgent(
   client: IdleAgentSeedClient,
-  input: { cwd: string; title: string },
+  input: { cwd: string; workspaceId: string; title: string },
 ): Promise<ArchiveTabAgent> {
-  const opened = await client.openProject(input.cwd);
-  if (!opened.workspace) {
-    throw new Error(opened.error ?? `Failed to open project ${input.cwd}`);
-  }
   const created = await client.createAgent({
     provider: "opencode",
     model: "opencode/gpt-5-nano",
     modeId: "bypassPermissions",
     cwd: input.cwd,
+    workspaceId: input.workspaceId,
     title: input.title,
   });
   const snapshot = await client.waitForAgentUpsert(
@@ -80,7 +75,7 @@ export async function createIdleAgent(
     id: created.id,
     title: input.title,
     cwd: input.cwd,
-    workspaceId: opened.workspace.id,
+    workspaceId: input.workspaceId,
   };
 }
 
@@ -89,6 +84,22 @@ export async function archiveAgentFromDaemon(
   agentId: string,
 ): Promise<void> {
   await client.archiveAgent(agentId);
+}
+
+export async function fetchAgentArchivedAt(
+  client: {
+    fetchAgent(agentId: string): Promise<{ agent: { archivedAt?: string | null } } | null>;
+  },
+  agentId: string,
+): Promise<string | null> {
+  const result = await client.fetchAgent(agentId);
+  return result?.agent.archivedAt ?? null;
+}
+
+export function getWorktreeRestoreFeature(client: {
+  getLastServerInfoMessage(): { features?: { worktreeRestore?: boolean } | null } | null;
+}): boolean {
+  return client.getLastServerInfoMessage()?.features?.worktreeRestore === true;
 }
 
 export async function primeAdditionalPage(page: Page): Promise<void> {
@@ -209,10 +220,8 @@ export async function openSessions(page: Page): Promise<void> {
   const sessionsButton = page.getByTestId("sidebar-sessions");
   await expect(sessionsButton).toBeVisible({ timeout: 30_000 });
   await sessionsButton.click();
-  await expect(page).toHaveURL(new RegExp(`${buildHostSessionsRoute(getServerId())}$`), {
-    timeout: 30_000,
-  });
-  await expect(page.getByText("Sessions", { exact: true }).last()).toBeVisible({
+  await expectAppRoute(page, buildSessionsRoute(), { timeout: 30_000 });
+  await expect(page.getByText("History", { exact: true }).last()).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -229,6 +238,12 @@ export async function expectSessionRowVisible(page: Page, title: string): Promis
 
 export async function expectSessionRowArchived(page: Page, title: string): Promise<void> {
   await expect(getSessionRowByTitle(page, title)).toContainText("Archived", { timeout: 30_000 });
+}
+
+export async function expectSessionRowNotArchived(page: Page, title: string): Promise<void> {
+  await expect(getSessionRowByTitle(page, title)).not.toContainText("Archived", {
+    timeout: 30_000,
+  });
 }
 
 export async function clickSessionRow(page: Page, title: string): Promise<void> {

@@ -199,6 +199,7 @@ test("createPaseoClient exposes workspace list through the daemon client", async
   await expect(listPromise).resolves.toEqual({
     requestId: request.requestId,
     entries: [],
+    emptyProjects: [],
     pageInfo: {
       nextCursor: null,
       prevCursor: null,

@@ -314,7 +314,7 @@ describe("checkout-git-actions-store", () => {
 
     const archive = useCheckoutGitActionsStore
       .getState()
-      .archiveWorktree({ serverId, cwd, worktreePath: cwd });
+      .archiveWorktree({ serverId, cwd, worktreePath: cwd, workspaceId });
 
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)).toBe(false);
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(cwd)).toBe(false);
@@ -371,7 +371,9 @@ describe("checkout-git-actions-store", () => {
     appQueryClient.setQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"], listSnapshot);
 
     await expect(
-      useCheckoutGitActionsStore.getState().archiveWorktree({ serverId, cwd, worktreePath: cwd }),
+      useCheckoutGitActionsStore
+        .getState()
+        .archiveWorktree({ serverId, cwd, worktreePath: cwd, workspaceId }),
     ).rejects.toThrow("archive failed");
 
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(workspaceId)).toEqual(

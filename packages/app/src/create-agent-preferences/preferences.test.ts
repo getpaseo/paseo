@@ -81,7 +81,63 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("does not erase a saved mode when a later partial update has no mode", () => {
+    expect(
+      mergeProviderPreferences({
+        preferences: {
+          provider: "codex",
+          providerPreferences: {
+            codex: {
+              model: "gpt-5.5",
+              mode: "full-access",
+              thinkingByModel: { "gpt-5.5": "high" },
+            },
+          },
+        },
+        provider: "codex",
+        updates: {
+          model: "gpt-5.6",
+          mode: undefined,
+          thinkingByModel: undefined,
+          featureValues: undefined,
+        },
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "gpt-5.6",
+          mode: "full-access",
+          thinkingByModel: { "gpt-5.5": "high" },
+        },
+      },
+    });
+  });
+
   it("loads invalid stored preferences as empty preferences", () => {
     expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({});
+  });
+
+  it("persists and reloads the workspace isolation choice", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const save = preferences.update({ isolation: "worktree" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await save;
+
+    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+    expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
+      isolation: "worktree",
+    });
+  });
+
+  it("treats stored preferences without an isolation choice as undefined", () => {
+    expect(parseFormPreferences({ provider: "codex" }).isolation).toBeUndefined();
+  });
+
+  it("rejects an unknown isolation value as invalid stored preferences", () => {
+    expect(parseFormPreferences({ provider: "codex", isolation: "sandbox" })).toEqual({});
   });
 });

@@ -289,8 +289,8 @@ describe("daemon checkout PR merge loop", () => {
         });
         expect(archiveResult.error).toBeNull();
         expect(archiveResult.success).toBe(true);
-        expect(existsSync(worktree.worktreePath)).toBe(false);
-        worktreePath = null;
+        // Archiving leaves the worktree on disk; disk deletion is a separate step.
+        expect(existsSync(worktree.worktreePath)).toBe(true);
 
         const remainingAgents = await ctx.client.fetchAgents();
         expect(remainingAgents.entries.some((entry) => entry.agent.id === agent.id)).toBe(false);

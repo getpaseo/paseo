@@ -1,5 +1,11 @@
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, posix, resolve, win32 } from "node:path";
+
+export function assertAbsolutePath(cwd: string): void {
+  if (!posix.isAbsolute(cwd) && !win32.isAbsolute(cwd)) {
+    throw new Error("cwd must be absolute path");
+  }
+}
 
 function hasHomePrefix(value: string): boolean {
   return value === "~" || value.startsWith("~/");

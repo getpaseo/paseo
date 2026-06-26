@@ -153,6 +153,44 @@ describe("local daemon launch supervision", () => {
     expect(launch?.options?.env?.PASEO_RELAY_USE_TLS).toBe("true");
   });
 
+  test("web UI flag is passed to the supervised daemon", async () => {
+    const runtime = new FakeDaemonRuntime();
+
+    const status = startLocalDaemonForeground(
+      {
+        home: "/tmp/paseo-test",
+        webUi: true,
+      },
+      runtime,
+    );
+
+    expect(status).toBe(0);
+    expect(runtime.recordedLaunches.map((launch) => launch.mode)).toEqual(["foreground"]);
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.mode).toBe("foreground");
+    expect(launch?.args).toContain("--web-ui");
+    expect(launch?.options?.env?.PASEO_WEB_UI_ENABLED).toBe("true");
+  });
+
+  test("no-web UI flag is passed to the supervised daemon", async () => {
+    const runtime = new FakeDaemonRuntime();
+
+    const status = startLocalDaemonForeground(
+      {
+        home: "/tmp/paseo-test",
+        webUi: false,
+      },
+      runtime,
+    );
+
+    expect(status).toBe(0);
+    expect(runtime.recordedLaunches.map((launch) => launch.mode)).toEqual(["foreground"]);
+    const launch = runtime.recordedLaunches[0];
+    expect(launch?.mode).toBe("foreground");
+    expect(launch?.args).toContain("--no-web-ui");
+    expect(launch?.options?.env?.PASEO_WEB_UI_ENABLED).toBe("false");
+  });
+
   test("local daemon state keeps public relay TLS separate from daemon relay TLS", async () => {
     const home = await createPaseoHome({
       version: 1,

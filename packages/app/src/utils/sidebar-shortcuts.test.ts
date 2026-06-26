@@ -24,10 +24,13 @@ function workspace(input: {
     serverId: input.serverId,
     workspaceId: input.workspaceId,
     projectKey: input.projectKey ?? "project-default",
+    projectName: input.projectKey ?? "Project",
     workspaceDirectory: input.workspaceDirectory,
     projectKind: "git",
     workspaceKind: "checkout",
     name: input.name,
+    title: null,
+    currentBranch: null,
     statusBucket: input.statusBucket ?? "done",
     archivingAt: null,
     statusEnteredAt: input.statusEnteredAt ?? null,
@@ -46,7 +49,13 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
-    canCreateWorktree: true,
+    hosts: [
+      {
+        serverId: workspaces[0]?.serverId ?? "s1",
+        iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
+        canCreateWorktree: true,
+      },
+    ],
     workspaces,
   };
 }
@@ -119,21 +128,32 @@ describe("buildSidebarShortcutModel", () => {
     expect(model.shortcutTargets[8]).toEqual({ serverId: "s", workspaceId: "ws-9" });
   });
 
-  it("still excludes collapsed single-workspace git projects because they are not flattened", () => {
-    const projects = [
-      project("p1", [
-        workspace({
-          serverId: "s1",
-          workspaceId: "ws-main",
-          workspaceDirectory: "/repo/main",
-          name: "main",
-        }),
-      ]),
-    ];
+  it("excludes a collapsed project's workspaces regardless of project kind", () => {
+    const gitProject = project("p1", [
+      workspace({
+        serverId: "s1",
+        workspaceId: "ws-main",
+        workspaceDirectory: "/repo/main",
+        name: "main",
+      }),
+    ]);
+    const directoryProject = project("p2", [
+      workspace({
+        serverId: "s1",
+        workspaceId: "ws-script",
+        workspaceDirectory: "/scripts",
+        name: "scripts",
+      }),
+    ]);
+    directoryProject.projectKind = "directory";
+    directoryProject.hosts = directoryProject.hosts.map((host) => ({
+      ...host,
+      canCreateWorktree: false,
+    }));
 
     const model = buildSidebarShortcutModel({
-      projects,
-      collapsedProjectKeys: new Set<string>(["p1"]),
+      projects: [gitProject, directoryProject],
+      collapsedProjectKeys: new Set<string>(["p1", "p2"]),
     });
 
     expect(model.shortcutTargets).toEqual([]);

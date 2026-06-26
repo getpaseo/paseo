@@ -1,6 +1,6 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
-import { DaemonClient, type DaemonTransport } from "./daemon-client";
+import { DaemonClient, type DaemonTransport, type Logger } from "./daemon-client";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -42,7 +42,16 @@ function createMockTransport() {
   let serverInfoOrdinal = 1;
 
   const transport: DaemonTransport = {
-    send: (data) => sent.push(data),
+    send: (data) => {
+      sent.push(data);
+      if (typeof data !== "string") {
+        return;
+      }
+      const frame = JSON.parse(data) as { type?: string };
+      if (frame.type === "ping") {
+        onMessage(JSON.stringify({ type: "pong" }));
+      }
+    },
     close: () => {},
     onMessage: (handler) => {
       onMessage = handler;
@@ -116,7 +125,7 @@ function parseSentFrame(
   return z
     .object({
       type: z.literal("session"),
-      message: z.record(z.unknown()),
+      message: z.record(z.string(), z.unknown()),
     })
     .parse(JSON.parse(assertStr(data))).message;
 }
@@ -126,7 +135,204 @@ const clients: DaemonClient[] = [];
 afterEach(async () => {
   await Promise.all(clients.map((client) => client.close()));
   clients.length = 0;
+  vi.useRealTimers();
 });
+
+const noopLogger: Logger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+type PongMode = { kind: "answer"; delayMs: number } | { kind: "silent" };
+
+class FakeDaemon {
+  private onMessage: (data: unknown) => void = () => {};
+  private onOpen: () => void = () => {};
+  private onClose: (event?: unknown) => void = () => {};
+  private onError: (event?: unknown) => void = () => {};
+  private pongMode: PongMode = { kind: "answer", delayMs: 0 };
+  private withheldPongs = 0;
+  private pingsSentAt: number[] = [];
+  private closeEvents: Array<{ code?: number; reason?: string }> = [];
+
+  readonly transport: DaemonTransport = {
+    send: (data) => {
+      if (typeof data !== "string") {
+        return;
+      }
+      const frame = JSON.parse(data) as { type?: string };
+      if (frame.type !== "ping") {
+        return;
+      }
+      this.pingsSentAt.push(performance.now());
+      if (this.withheldPongs > 0) {
+        this.withheldPongs -= 1;
+        return;
+      }
+      if (this.pongMode.kind === "silent") {
+        return;
+      }
+      if (this.pongMode.delayMs === 0) {
+        this.onMessage(JSON.stringify({ type: "pong" }));
+        return;
+      }
+      setTimeout(() => {
+        this.onMessage(JSON.stringify({ type: "pong" }));
+      }, this.pongMode.delayMs);
+    },
+    close: (code?: number, reason?: string) => {
+      this.closeEvents.push({ code, reason });
+    },
+    onMessage: (handler) => {
+      this.onMessage = handler;
+      return () => {};
+    },
+    onOpen: (handler) => {
+      this.onOpen = handler;
+      return () => {};
+    },
+    onClose: (handler) => {
+      this.onClose = handler;
+      return () => {};
+    },
+    onError: (handler) => {
+      this.onError = handler;
+      return () => {};
+    },
+  };
+
+  openConnection(): void {
+    this.onOpen();
+    this.onMessage(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "status",
+          payload: {
+            status: "server_info",
+            serverId: "srv_heartbeat_test",
+            hostname: null,
+            version: null,
+          },
+        },
+      }),
+    );
+  }
+
+  daemonAnswersPingsAfter(delay: "fast" | `${number}s`): void {
+    this.pongMode = {
+      kind: "answer",
+      delayMs: delay === "fast" ? 0 : Number.parseFloat(delay) * 1000,
+    };
+  }
+
+  daemonGoesSilent(): void {
+    this.pongMode = { kind: "silent" };
+  }
+
+  daemonWithholdsNextPongThenAnswersFast(): void {
+    this.withheldPongs += 1;
+    this.daemonAnswersPingsAfter("fast");
+  }
+
+  daemonClosesWith(reason: string): void {
+    this.onClose({ reason });
+  }
+
+  triggerError(event?: unknown): void {
+    this.onError(event);
+  }
+
+  pingTimestamps(): string[] {
+    return this.pingsSentAt.map((timestamp) => `${timestamp / 1000}s`);
+  }
+
+  teardownCount(): number {
+    return this.closeEvents.filter((event) => event.reason === "Liveness check timed out").length;
+  }
+
+  closesFromClient(): Array<{ code?: number; reason?: string }> {
+    return this.closeEvents;
+  }
+}
+
+class DaemonClientSession {
+  private readonly daemon = new FakeDaemon();
+  private readonly client: DaemonClient;
+
+  constructor() {
+    this.client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_heartbeat_test",
+      logger: noopLogger,
+      reconnect: { enabled: false },
+      transportFactory: () => this.daemon.transport,
+    });
+    clients.push(this.client);
+  }
+
+  async connect(): Promise<void> {
+    const connection = this.client.connect();
+    this.daemon.openConnection();
+    await connection;
+  }
+
+  async advance(ms: number): Promise<void> {
+    await vi.advanceTimersByTimeAsync(ms);
+  }
+
+  daemonAnswersPingsAfter(delay: "fast" | `${number}s`): void {
+    this.daemon.daemonAnswersPingsAfter(delay);
+  }
+
+  daemonGoesSilent(): void {
+    this.daemon.daemonGoesSilent();
+  }
+
+  daemonWithholdsNextPongThenAnswersFast(): void {
+    this.daemon.daemonWithholdsNextPongThenAnswersFast();
+  }
+
+  daemonClosesWith(reason: string): void {
+    this.daemon.daemonClosesWith(reason);
+  }
+
+  pingTimestamps(): string[] {
+    return this.daemon.pingTimestamps();
+  }
+
+  state(): ReturnType<DaemonClient["getConnectionState"]> {
+    return this.client.getConnectionState();
+  }
+
+  lastError(): string | null {
+    return this.client.lastError;
+  }
+
+  teardownCount(): number {
+    return this.daemon.teardownCount();
+  }
+
+  closesFromClient(): Array<{ code?: number; reason?: string }> {
+    return this.daemon.closesFromClient();
+  }
+
+  lastLivenessRttMs(): number | null {
+    return this.client.getLastLivenessRttMs();
+  }
+
+  measureLatency(input: { timeoutMs: number }): Promise<number> {
+    return this.client.measureLatency(input);
+  }
+}
+
+function useHeartbeatClock(): void {
+  vi.useFakeTimers({
+    toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"],
+  });
+}
 
 test("dedupes in-flight checkout status requests per agentId", async () => {
   const logger = createMockLogger();
@@ -316,59 +522,205 @@ test("keeps the transport connected when a session RPC ping times out", async ()
   expect(client.getConnectionState().status).toBe("connected");
 });
 
-test("reconnects after repeated top-level liveness checks time out", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test("stays online through ten minutes of pongs that arrive five seconds late", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("5.5s");
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+  await session.connect();
+  await session.advance(10 * 60 * 1000);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-  expect(client.getConnectionState().status).toBe("connected");
-
-  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
-  expect(client.getConnectionState().status).toBe("connected");
-
-  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
-  expect(client.getConnectionState()).toEqual({
-    status: "disconnected",
-    reason: "Liveness check timed out (1ms)",
-  });
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.teardownCount()).toBe(0);
+  expect(session.lastError()).toBeNull();
+  expect(session.pingTimestamps().length).toBeGreaterThan(0);
+  expect(session.lastLivenessRttMs()).toBe(5500);
 });
 
-test("resets liveness failures after a top-level pong", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test("tears down and reports a liveness timeout after the daemon goes silent for two cycles", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonGoesSilent();
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
+  await session.connect();
+  await session.advance(51_000);
+
+  expect(session.state()).toEqual({
+    status: "disconnected",
+    reason: "Liveness check timed out (15000ms)",
   });
-  clients.push(client);
+  expect(session.teardownCount()).toBe(1);
+});
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+test("survives a single missed pong when answers resume", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonWithholdsNextPongThenAnswersFast();
 
-  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
+  await session.connect();
+  await session.advance(40_000);
 
-  const healthyProbe = client.checkLiveness({ timeoutMs: 100 });
-  mock.triggerMessage(JSON.stringify({ type: "pong" }));
-  await expect(healthyProbe).resolves.toEqual({ rttMs: expect.any(Number) });
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.teardownCount()).toBe(0);
+});
 
-  await expect(client.checkLiveness({ timeoutMs: 1 })).rejects.toThrow("Liveness check timed out");
-  expect(client.getConnectionState().status).toBe("connected");
+test("keeps the connection proven online from heartbeats alone when no other traffic flows", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(35_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
+});
+
+test("starts pinging one interval after connecting and holds the cadence", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(9_999);
+  expect(session.pingTimestamps()).toEqual([]);
+
+  await session.advance(20_001);
+  expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
+});
+
+test("stops pinging once the connection is gone", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(10_000);
+  session.daemonClosesWith("daemon shutting down");
+  await session.advance(30_000);
+
+  expect(session.pingTimestamps()).toEqual(["10s"]);
+});
+
+test("sends only one ping while a slow pong is still outstanding", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("15.1s");
+
+  await session.connect();
+  await session.advance(20_000);
+
+  expect(session.pingTimestamps()).toEqual(["10s"]);
+});
+
+test("reports the round-trip time of the last successful heartbeat", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("2.3s");
+
+  await session.connect();
+  await session.advance(12_300);
+
+  expect(session.lastLivenessRttMs()).toBe(2300);
+});
+
+test("treats a pong just under the timeout as alive and just over as a miss", async () => {
+  useHeartbeatClock();
+  const alive = new DaemonClientSession();
+  alive.daemonAnswersPingsAfter("14.9s");
+
+  await alive.connect();
+  await alive.advance(24_900);
+
+  expect(alive.state()).toEqual({ status: "connected" });
+
+  const missed = new DaemonClientSession();
+  missed.daemonAnswersPingsAfter("15.1s");
+
+  await missed.connect();
+  await missed.advance(25_000);
+
+  expect(missed.state()).toEqual({ status: "connected" });
+  expect(missed.lastLivenessRttMs()).toBeNull();
+});
+
+test("goes red with the daemon's reason when the connection is closed", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+
+  await session.connect();
+  session.daemonClosesWith("Control unresponsive");
+
+  expect(session.state()).toEqual({
+    status: "disconnected",
+    reason: "Control unresponsive",
+  });
+  expect(session.lastError()).toBe("Control unresponsive");
+  expect(session.closesFromClient()).toEqual([]);
+});
+
+test("two candidate latency timeouts do not tear down the live connection", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonGoesSilent();
+
+  await session.connect();
+  const firstMeasurement = session.measureLatency({ timeoutMs: 1000 });
+  const firstMeasurementError = firstMeasurement.then(
+    () => null,
+    (error) => error,
+  );
+  await session.advance(1000);
+
+  await expect(firstMeasurementError).resolves.toEqual(
+    expect.objectContaining({
+      message: "Latency measurement timed out (1000ms)",
+    }),
+  );
+
+  const secondMeasurement = session.measureLatency({ timeoutMs: 1000 });
+  const secondMeasurementError = secondMeasurement.then(
+    () => null,
+    (error) => error,
+  );
+  await session.advance(1000);
+
+  await expect(secondMeasurementError).resolves.toEqual(
+    expect.objectContaining({
+      message: "Latency measurement timed out (1000ms)",
+    }),
+  );
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.teardownCount()).toBe(0);
+  expect(session.pingTimestamps()).toEqual(["0s", "1s"]);
+});
+
+test("a candidate measurement that times out under a heartbeat tick does not count toward teardown", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonGoesSilent();
+
+  await session.connect();
+
+  // A candidate measurement is still in flight when the +10s heartbeat tick lands,
+  // so the heartbeat shares the in-flight ping. Let the measurement time out.
+  await session.advance(9_000);
+  const measurement = session.measureLatency({ timeoutMs: 5_000 });
+  const measurementError = measurement.then(
+    () => null,
+    (error) => error,
+  );
+  await session.advance(5_500);
+  await expect(measurementError).resolves.toEqual(
+    expect.objectContaining({ message: "Latency measurement timed out (5000ms)" }),
+  );
+
+  // The measurement timeout must not have been recorded as a liveness failure: a
+  // single genuine heartbeat miss after it must still leave the connection up.
+  await session.advance(25_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.teardownCount()).toBe(0);
 });
 
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {
@@ -1102,6 +1454,170 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("sends project.add.request without creating a workspace", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const addPromise = client.addProject("/tmp/project", "req-add-project");
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.add.request",
+    requestId: "req-add-project",
+    cwd: "/tmp/project",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.add.response",
+      payload: {
+        requestId: "req-add-project",
+        project: {
+          projectId: "/tmp/project",
+          projectDisplayName: "project",
+          projectCustomName: null,
+          projectRootPath: "/tmp/project",
+          projectKind: "git",
+        },
+        error: null,
+      },
+    }),
+  );
+
+  await expect(addPromise).resolves.toEqual({
+    requestId: "req-add-project",
+    project: {
+      projectId: "/tmp/project",
+      projectDisplayName: "project",
+      projectCustomName: null,
+      projectRootPath: "/tmp/project",
+      projectKind: "git",
+    },
+    error: null,
+  });
+});
+
+test("sends first-agent prompt context with workspace.create.request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createWorkspace(
+    {
+      source: {
+        kind: "directory",
+        path: "/tmp/project",
+        projectId: "local:/tmp/project",
+      },
+      firstAgentContext: {
+        prompt: "Fix login bug",
+        attachments: [],
+      },
+    },
+    "req-local-title",
+  );
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.create.request",
+    requestId: "req-local-title",
+    source: {
+      kind: "directory",
+      path: "/tmp/project",
+      projectId: "local:/tmp/project",
+    },
+    firstAgentContext: {
+      prompt: "Fix login bug",
+      attachments: [],
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: "req-local-title",
+        workspace: null,
+        error: "local title sentinel",
+        setupTerminalId: null,
+      },
+    }),
+  );
+
+  await expect(createPromise).resolves.toEqual({
+    requestId: "req-local-title",
+    workspace: null,
+    error: "local title sentinel",
+    setupTerminalId: null,
+  });
+});
+
+test("sends project.remove.request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const removePromise = client.removeProject("remote:github.com/acme/app", "req-remove-project");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.remove.request",
+    requestId: "req-remove-project",
+    projectId: "remote:github.com/acme/app",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.remove.response",
+      payload: {
+        requestId: "req-remove-project",
+        projectId: "remote:github.com/acme/app",
+        accepted: true,
+        removedWorkspaceIds: ["ws-main"],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(removePromise).resolves.toEqual({ removedWorkspaceIds: ["ws-main"] });
+});
+
 test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -1322,7 +1838,7 @@ test("restartServer remains restart-only and sends restart_server_request", asyn
 });
 
 test("transitions out of connecting when connect timeout elapses", async () => {
-  vi.useFakeTimers();
+  useHeartbeatClock();
   try {
     const logger = createMockLogger();
     const mock = createMockTransport();
@@ -1359,7 +1875,7 @@ test("transitions out of connecting when connect timeout elapses", async () => {
 });
 
 test("reconnects after relay close with replaced-by-new-connection reason", async () => {
-  vi.useFakeTimers();
+  useHeartbeatClock();
   try {
     const logger = createMockLogger();
     const first = createMockTransport();
@@ -2302,6 +2818,48 @@ test("fetches agents via RPC with filters, sort, and pagination", async () => {
   });
 });
 
+test("detaches an agent through the namespaced detach RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.detachAgent("child-agent");
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.detach.request",
+    agentId: "child-agent",
+  });
+  expect(typeof request.requestId).toBe("string");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.detach.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "child-agent",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toBeUndefined();
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -2591,7 +3149,7 @@ test("imports an agent by provider handle id", async () => {
 });
 
 test("uses server-provided dictation finish timeout budget", async () => {
-  vi.useFakeTimers();
+  useHeartbeatClock();
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -2681,7 +3239,7 @@ test("resolves dictation finish when final arrives after finish accepted", async
 });
 
 test("cancels waiters when send fails (no leaked timeouts)", async () => {
-  vi.useFakeTimers();
+  useHeartbeatClock();
   const logger = createMockLogger();
   const mock = createMockTransport();
   let sendCount = 0;
@@ -2716,7 +3274,7 @@ test("cancels waiters when send fails (no leaked timeouts)", async () => {
   const internal = client as unknown as { waiters: Set<unknown> };
   expect(internal.waiters.size).toBe(0);
 
-  vi.runOnlyPendingTimers();
+  await vi.advanceTimersByTimeAsync(0);
   vi.useRealTimers();
 });
 
@@ -3568,6 +4126,81 @@ test("dispatches terminals_changed events to typed listeners", async () => {
   ]);
 });
 
+test("sends provider.usage.list.request and resolves provider.usage.list.response", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const usagePromise = client.listProviderUsage({ requestId: "usage-1" });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.usage.list.request",
+      requestId: "usage-1",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-1",
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "glm",
+            displayName: "GLM coding plan",
+            status: "available",
+            planLabel: "GLM coding plan",
+            windows: [
+              {
+                id: "biweekly",
+                label: "Biweekly",
+                usedPct: 23,
+                remainingPct: 77,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "usage-1",
+    fetchedAt: "2026-06-19T00:00:00.000Z",
+    providers: [
+      {
+        providerId: "glm",
+        displayName: "GLM coding plan",
+        status: "available",
+        planLabel: "GLM coding plan",
+        windows: [
+          {
+            id: "biweekly",
+            label: "Biweekly",
+            usedPct: 23,
+            remainingPct: 77,
+          },
+        ],
+      },
+    ],
+  });
+});
+
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3622,7 +4255,7 @@ test("sends close_items_request and resolves close_items_response", async () => 
 });
 
 test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", async () => {
-  vi.useFakeTimers();
+  useHeartbeatClock();
   try {
     const logger = createMockLogger();
     const mock = createMockTransport();
@@ -3648,14 +4281,20 @@ test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", 
     expect(request.agentId).toBe("agent-wait-zero-timeout");
     expect(request).not.toHaveProperty("timeoutMs");
 
-    const settled = vi.fn();
+    let settled: "pending" | "resolved" | "rejected" = "pending";
     void waitPromise.then(
-      () => settled("resolved"),
-      () => settled("rejected"),
+      () => {
+        settled = "resolved";
+        return null;
+      },
+      () => {
+        settled = "rejected";
+        return null;
+      },
     );
 
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-    expect(settled).not.toHaveBeenCalled();
+    expect(settled).toBe("pending");
 
     mock.triggerMessage(
       wrapSessionMessage({

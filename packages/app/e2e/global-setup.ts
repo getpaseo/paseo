@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
@@ -23,7 +23,7 @@ async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (!address || typeof address === "string") {
         server.close(() => reject(new Error("Failed to acquire port")));
@@ -33,6 +33,14 @@ async function getAvailablePort(): Promise<number> {
     });
   });
 }
+
+const RESERVED_LOCAL_PORTS = new Set([
+  // Default developer daemon.
+  6767,
+  // OpenCode's default local server port. Some provider probes can spawn it
+  // during daemon startup, so the E2E daemon must not choose the same port.
+  61680,
+]);
 
 function createLineBuffer(maxLines = 120): { add: (line: string) => void; dump: () => string } {
   const lines: string[] = [];
@@ -144,6 +152,67 @@ async function stopProcess(child: ChildProcess | null): Promise<void> {
     }, 5000);
     child.once("exit", settle);
   });
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readSupervisorPidLock(home: string): Promise<number | null> {
+  try {
+    const content = await readFile(path.join(home, "paseo.pid"), "utf8");
+    const parsed = JSON.parse(content) as { pid?: unknown };
+    return typeof parsed.pid === "number" ? parsed.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function stopProcessByPid(pid: number): Promise<void> {
+  if (!isProcessRunning(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) {
+      return;
+    }
+    await sleep(100);
+  }
+
+  if (isProcessRunning(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      return;
+    }
+  }
+}
+
+async function stopCurrentDaemonFromPidLock(): Promise<void> {
+  if (!paseoHome) {
+    return;
+  }
+  if (process.env.E2E_DAEMON_PORT === "6767") {
+    throw new Error("Refusing to clean up daemon PID lock for developer daemon port 6767.");
+  }
+
+  const pid = await readSupervisorPidLock(paseoHome);
+  if (pid === null) {
+    return;
+  }
+  await stopProcessByPid(pid);
 }
 
 function summarizeOpenAiErrorBody(body: string): string {
@@ -334,10 +403,14 @@ async function waitForPairingOfferFromDaemon(args: {
   );
 }
 
-interface DictationConfig {
-  openAiUsable: boolean;
-  localModelsDir: string | null;
-}
+const LOCAL_SPEECH_ENV_KEYS = [
+  "PASEO_LOCAL_MODELS_DIR",
+  "PASEO_DICTATION_LOCAL_STT_MODEL",
+  "PASEO_VOICE_LOCAL_STT_MODEL",
+  "PASEO_VOICE_LOCAL_TTS_MODEL",
+  "PASEO_VOICE_LOCAL_TTS_SPEAKER_ID",
+  "PASEO_VOICE_LOCAL_TTS_SPEED",
+] as const;
 
 async function loadEnvTestFile(repoRoot: string): Promise<void> {
   const envTestPath = path.join(repoRoot, ".env.test");
@@ -371,7 +444,7 @@ async function applyPaseoHomeFork(targetHome: string): Promise<void> {
   }
 }
 
-async function resolveDictationConfig(): Promise<DictationConfig> {
+async function logSpeechHarnessConfig(): Promise<void> {
   const openAiUsable = await isOpenAiApiKeyUsable(process.env.OPENAI_API_KEY);
   const defaultLocalModelsDir = path.join(
     process.env.HOME ?? "",
@@ -382,23 +455,20 @@ async function resolveDictationConfig(): Promise<DictationConfig> {
   const hasDefaultLocalModelsDir =
     defaultLocalModelsDir.trim().length > 0 && existsSync(defaultLocalModelsDir);
 
-  // Fork PRs run without secrets and usually without local models. Don't crash
-  // the whole Playwright run — disable dictation/voice and let tests that need
-  // them gate on PASEO_DICTATION_ENABLED.
+  // Default app E2E does not cover speech flows. Keep speech disabled here so
+  // unrelated tests never start background local-model downloads.
   if (!openAiUsable && !hasDefaultLocalModelsDir) {
     console.warn(
-      "[e2e] Neither OPENAI_API_KEY nor local speech models found — running with dictation/voice disabled. " +
+      "[e2e] Neither OPENAI_API_KEY nor local speech models found — app E2E keeps dictation/voice disabled. " +
         "Tests that require dictation should gate on PASEO_DICTATION_ENABLED.",
     );
-    return { openAiUsable: false, localModelsDir: null };
+    return;
   }
 
-  const dictationProvider = openAiUsable ? "openai" : "local";
-  const localModelsDir = dictationProvider === "local" ? defaultLocalModelsDir : null;
+  const speechAssets = openAiUsable ? "OpenAI" : `local models at ${defaultLocalModelsDir}`;
   console.log(
-    `[e2e] Dictation STT provider: ${dictationProvider}${openAiUsable ? "" : " (OpenAI probe failed)"}`,
+    `[e2e] Speech assets available from ${speechAssets}; app E2E keeps dictation/voice disabled.`,
   );
-  return { openAiUsable, localModelsDir };
 }
 
 interface RelayStreamState {
@@ -486,7 +556,7 @@ async function awaitRelayReady(
 async function getAvailablePortExcluding(excludedPorts: Set<number>): Promise<number> {
   for (;;) {
     const port = await getAvailablePort();
-    if (!excludedPorts.has(port)) {
+    if (!excludedPorts.has(port) && !RESERVED_LOCAL_PORTS.has(port)) {
       return port;
     }
   }
@@ -587,39 +657,40 @@ interface DaemonSpawnArgs {
   paseoHome: string;
   fakeEditorBinDir: string;
   editorRecordPath: string;
-  dictation: DictationConfig;
   buffer: ReturnType<typeof createLineBuffer>;
 }
 
 function startDaemon(args: DaemonSpawnArgs): ChildProcess {
   const serverDir = path.resolve(__dirname, "../../..", "packages/server");
   const tsxBin = execSync("which tsx").toString().trim();
-  const { openAiUsable, localModelsDir } = args.dictation;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${args.fakeEditorBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    PASEO_HOME: args.paseoHome,
+    PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
+    PASEO_SERVER_ID: "srv_e2e_test_daemon",
+    PASEO_LISTEN: `0.0.0.0:${args.port}`,
+    PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
+    PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
+    // Default app E2E does not cover speech flows. Keep these disabled so
+    // unrelated tests never start background local-model downloads.
+    PASEO_DICTATION_ENABLED: "0",
+    PASEO_VOICE_MODE_ENABLED: "0",
+    PASEO_DICTATION_STT_PROVIDER: "openai",
+    PASEO_VOICE_TURN_DETECTION_PROVIDER: "openai",
+    PASEO_VOICE_STT_PROVIDER: "openai",
+    PASEO_VOICE_TTS_PROVIDER: "openai",
+    PASEO_NODE_ENV: "development",
+    NODE_ENV: "development",
+  };
+
+  for (const key of LOCAL_SPEECH_ENV_KEYS) {
+    delete env[key];
+  }
 
   const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
     cwd: serverDir,
-    env: {
-      ...process.env,
-      PATH: `${args.fakeEditorBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      PASEO_HOME: args.paseoHome,
-      PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
-      PASEO_SERVER_ID: "srv_e2e_test_daemon",
-      PASEO_LISTEN: `0.0.0.0:${args.port}`,
-      PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
-      PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
-      PASEO_DICTATION_ENABLED: openAiUsable ? "1" : "0",
-      PASEO_VOICE_MODE_ENABLED: openAiUsable ? "1" : "0",
-      PASEO_NODE_ENV: "development",
-      ...(openAiUsable
-        ? {
-            PASEO_DICTATION_STT_PROVIDER: "openai",
-            PASEO_VOICE_STT_PROVIDER: "openai",
-            PASEO_VOICE_TTS_PROVIDER: "openai",
-          }
-        : {}),
-      ...(localModelsDir ? { PASEO_LOCAL_MODELS_DIR: localModelsDir } : {}),
-      NODE_ENV: "development",
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });
@@ -651,23 +722,33 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
   return child;
 }
 
+async function removeTempTree(targetPath: string): Promise<void> {
+  await rm(targetPath, {
+    recursive: true,
+    force: true,
+    maxRetries: 40,
+    retryDelay: 250,
+  });
+}
+
 async function performCleanup(shouldRemovePaseoHome: boolean): Promise<void> {
   await Promise.all([
     stopProcess(daemonProcess),
     stopProcess(metroProcess),
     stopProcess(relayProcess),
   ]);
+  await stopCurrentDaemonFromPidLock();
   daemonProcess = null;
   metroProcess = null;
   relayProcess = null;
   if (paseoHome && shouldRemovePaseoHome) {
-    await rm(paseoHome, { recursive: true, force: true });
+    await removeTempTree(paseoHome);
     paseoHome = null;
   } else if (paseoHome) {
     console.log(`[e2e] Preserving PASEO_HOME: ${paseoHome}`);
   }
   if (fakeEditorBinDir) {
-    await rm(fakeEditorBinDir, { recursive: true, force: true });
+    await removeTempTree(fakeEditorBinDir);
     fakeEditorBinDir = null;
   }
 }
@@ -677,8 +758,8 @@ export default async function globalSetup() {
   ensureRelayBuildArtifact(repoRoot);
   await loadEnvTestFile(repoRoot);
 
-  const port = await getAvailablePort();
-  const metroPort = await getAvailablePort();
+  const port = await getAvailablePortExcluding(new Set());
+  const metroPort = await getAvailablePortExcluding(new Set([port]));
   const requestedPaseoHome = resolveOptionalPaseoHomeEnv(process.env.E2E_PASEO_HOME);
   const shouldRemovePaseoHome = !requestedPaseoHome && process.env.E2E_KEEP_PASEO_HOME !== "1";
   paseoHome = requestedPaseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-")));
@@ -691,7 +772,7 @@ export default async function globalSetup() {
 
   const cleanup = () => performCleanup(shouldRemovePaseoHome);
 
-  const dictation = await resolveDictationConfig();
+  await logSpeechHarnessConfig();
 
   try {
     const relayPort = await startRelay(new Set([port, metroPort]));
@@ -707,7 +788,6 @@ export default async function globalSetup() {
       paseoHome,
       fakeEditorBinDir,
       editorRecordPath,
-      dictation,
       buffer: daemonLineBuffer,
     });
 

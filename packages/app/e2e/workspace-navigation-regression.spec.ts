@@ -33,6 +33,7 @@ import {
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { injectDesktopBridge } from "./helpers/desktop-updates";
+import { expectAppRoute } from "./helpers/route-assertions";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 
@@ -105,12 +106,8 @@ async function expectWorkspaceLocation(
     workspace: Awaited<ReturnType<typeof seedWorkspace>>;
   },
 ): Promise<void> {
-  await expect(page).toHaveURL(
-    buildHostWorkspaceRoute(input.serverId, input.workspace.workspaceId),
-    {
-      timeout: 30_000,
-    },
-  );
+  const workspaceRoute = buildHostWorkspaceRoute(input.serverId, input.workspace.workspaceId);
+  await expectAppRoute(page, workspaceRoute, { timeout: 30_000 });
   await expectWorkspaceHeader(page, {
     title: input.workspace.workspaceName,
     subtitle: input.workspace.projectDisplayName,
@@ -204,6 +201,7 @@ test.describe("Workspace navigation regression", () => {
     try {
       const agent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `workspace-reconnect-${Date.now()}`,
       });
 
@@ -306,6 +304,7 @@ test.describe("Workspace navigation regression", () => {
     try {
       const agent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `workspace-refresh-route-${Date.now()}`,
       });
       await injectDesktopBridge(page, {
@@ -344,10 +343,12 @@ test.describe("Workspace navigation regression", () => {
     try {
       const firstAgent = await createIdleAgent(firstWorkspace.client, {
         cwd: firstWorkspace.repoPath,
+        workspaceId: firstWorkspace.workspaceId,
         title: `workspace-nav-a-${Date.now()}`,
       });
       const secondAgent = await createIdleAgent(secondWorkspace.client, {
         cwd: secondWorkspace.repoPath,
+        workspaceId: secondWorkspace.workspaceId,
         title: `workspace-nav-b-${Date.now()}`,
       });
 

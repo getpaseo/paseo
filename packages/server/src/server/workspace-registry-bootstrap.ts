@@ -8,6 +8,7 @@ import {
   classifyDirectoryForProjectMembership,
   generateWorkspaceId,
 } from "./workspace-registry-model.js";
+import { backfillWorkspaceIdForLegacyAgents } from "./migrations/backfill-workspace-id.migration.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   createPersistedProjectRecord,
@@ -60,6 +61,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   await Promise.all([options.projectRegistry.initialize(), options.workspaceRegistry.initialize()]);
 
   if (projectsExists && workspacesExists) {
+    await backfillWorkspaceIdForLegacyAgents(options);
     return;
   }
 
@@ -167,6 +169,8 @@ export async function bootstrapWorkspaceRegistries(options: {
       },
     ),
   );
+
+  await backfillWorkspaceIdForLegacyAgents(options);
 
   options.logger.info(
     {

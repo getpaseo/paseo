@@ -542,6 +542,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     gap: theme.spacing[1.5],
+    minHeight: theme.fontSize.sm * 1.5,
   },
   scriptList: {
     paddingVertical: theme.spacing[1],

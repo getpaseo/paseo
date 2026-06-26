@@ -1,9 +1,6 @@
 import { useEffect, useMemo } from "react";
-import {
-  useProjectNamesMap,
-  useStatusModeWorkspaceEntries,
-} from "@/hooks/use-status-mode-workspaces";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
+import { useStatusModeWorkspacePlacements } from "@/hooks/use-status-mode-workspaces";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
@@ -12,28 +9,16 @@ import {
   buildStatusSidebarShortcutModel,
 } from "@/utils/sidebar-shortcuts";
 
-export function WorkspaceShortcutTargetsSubscriber({
-  enabled,
-  serverId,
-}: {
-  enabled: boolean;
-  serverId: string | null;
-}) {
-  const { projects } = useSidebarWorkspacesList({ serverId, enabled });
-  // groupMode must be resolved before gating the status-mode subscriptions below.
-  const groupMode = useSidebarViewStore((state) =>
-    enabled && serverId ? state.getGroupMode(serverId) : "project",
-  );
-  // Only subscribe to agents/workspaces when the status-group view is actually active.
-  // In project mode (the default), these subscriptions would fire on every agent update
-  // (agents Map identity is replaced on every status transition) with no effect on
-  // the shortcut targets, causing ~15-46 wasted re-renders per agent switch.
-  const isStatusMode = enabled && groupMode === "status";
-  const statusWorkspaces = useStatusModeWorkspaceEntries({
-    serverId: isStatusMode ? serverId : null,
-    projects,
+export function WorkspaceShortcutTargetsSubscriber({ enabled }: { enabled: boolean }) {
+  const { workspacePlacements, projects, projectNamesByKey } = useSidebarWorkspacesList({
+    enabled,
   });
-  const projectNamesByKey = useProjectNamesMap(isStatusMode ? serverId : null);
+  const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const isStatusMode = enabled && groupMode === "status";
+  const statusWorkspacePlacements = useStatusModeWorkspacePlacements({
+    placements: workspacePlacements,
+    enabled: isStatusMode,
+  });
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -47,7 +32,7 @@ export function WorkspaceShortcutTargetsSubscriber({
   const shortcutModel = useMemo(() => {
     if (groupMode === "status") {
       return buildStatusSidebarShortcutModel({
-        workspaces: statusWorkspaces,
+        workspaces: statusWorkspacePlacements,
         projectNamesByKey,
         collapsedStatusGroupKeys,
       });
@@ -63,17 +48,17 @@ export function WorkspaceShortcutTargetsSubscriber({
     groupMode,
     projectNamesByKey,
     projects,
-    statusWorkspaces,
+    statusWorkspacePlacements,
   ]);
 
   useEffect(() => {
-    if (!enabled || !serverId) {
+    if (!enabled) {
       setSidebarShortcutWorkspaceTargets([]);
       return;
     }
 
     setSidebarShortcutWorkspaceTargets(shortcutModel.shortcutTargets);
-  }, [enabled, serverId, setSidebarShortcutWorkspaceTargets, shortcutModel.shortcutTargets]);
+  }, [enabled, setSidebarShortcutWorkspaceTargets, shortcutModel.shortcutTargets]);
 
   useEffect(() => {
     return () => {

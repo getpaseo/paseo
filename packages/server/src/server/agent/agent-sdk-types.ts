@@ -1,5 +1,9 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { PaseoToolCatalog } from "./tools/types.js";
+
+export type { AgentProviderNotice };
 
 export type AgentProvider = string;
 
@@ -166,6 +170,7 @@ export interface AgentCapabilityFlags {
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
+  supportsNativePaseoTools?: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
   supportsRewindConversation?: boolean;
@@ -574,6 +579,11 @@ export interface AgentSessionConfig {
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
+  /**
+   * Runtime-only internal Paseo tools. This must never be persisted into
+   * AgentSessionConfig; providers may adapt it to their native tool surface.
+   */
+  paseoTools?: PaseoToolCatalog;
 }
 
 export interface AgentCreateSessionOptions {
@@ -604,7 +614,7 @@ export interface AgentSession {
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
-  setMode(modeId: string): Promise<void>;
+  setMode(modeId: string): Promise<void | AgentProviderNotice>;
   getPendingPermissions(): AgentPermissionRequest[];
   respondToPermission(
     requestId: string,
@@ -615,7 +625,7 @@ export interface AgentSession {
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
-  setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
+  setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
@@ -633,14 +643,15 @@ export interface AgentSession {
   } | null;
 }
 
-export interface ListModelsOptions {
+export interface FetchCatalogOptions {
   cwd: string;
   force: boolean;
+  timeoutMs?: number;
 }
 
-export interface ListModesOptions {
-  cwd: string;
-  force: boolean;
+export interface ProviderCatalog {
+  models: AgentModelDefinition[];
+  modes: AgentMode[];
 }
 
 export interface AgentClient {
@@ -656,8 +667,13 @@ export interface AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
-  listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
-  listModes?(options: ListModesOptions): Promise<AgentMode[]>;
+  /**
+   * Discover models and modes together. Implementations may use one upstream
+   * process, separate upstream calls, static modes, or private helpers; callers
+   * outside the provider do not get separate runtime model/mode probes.
+   * The registry is responsible for merging configured model overrides.
+   */
+  fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
@@ -680,6 +696,11 @@ export interface AgentClient {
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
   archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  /**
+   * Unarchive a persisted session in the native provider.
+   * Called before Paseo clears its archived flag so provider resume can succeed.
+   */
+  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

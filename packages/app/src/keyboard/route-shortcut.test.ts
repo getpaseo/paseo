@@ -29,6 +29,7 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
   it.each([
     ["agent.interrupt", { id: "agent.interrupt", scope: "global" }],
     ["workspace.tab.new", { id: "workspace.tab.new", scope: "workspace" }],
+    ["workspace.new", { id: "workspace.new", scope: "sidebar" }],
     ["worktree.archive", { id: "worktree.archive", scope: "sidebar" }],
     ["worktree.new", { id: "worktree.new", scope: "sidebar" }],
     ["workspace.terminal.new", { id: "workspace.terminal.new", scope: "workspace" }],
@@ -275,6 +276,7 @@ describe("routeKeyboardShortcut — message-input.action", () => {
     ["dictation-confirm", "message-input.dictation-confirm"],
     ["voice-toggle", "message-input.voice-toggle"],
     ["voice-mute-toggle", "message-input.voice-mute-toggle"],
+    ["mode-cycle", "message-input.mode-cycle"],
   ] as const)("kind=%s → dispatch %s", (kind, id) => {
     expect(
       routeKeyboardShortcut({ action: "message-input.action", payload: { kind } }, makeCtx()),

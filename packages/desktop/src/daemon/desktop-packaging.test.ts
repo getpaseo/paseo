@@ -26,6 +26,12 @@ describe("desktop packaging", () => {
     expect(config).toContain("!node_modules/@getpaseo/**/*.spec.*");
   });
 
+  it("excludes the bundled daemon web UI from the packaged app", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain("!node_modules/@getpaseo/server/dist/server/web-ui/**");
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot

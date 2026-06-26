@@ -28,8 +28,9 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
-import * as treeKillModule from "../../../utils/tree-kill.js";
+import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
+  COPILOT_AGENT_FEATURE_OPTION,
   COPILOT_ALLOW_ALL_MODE_ID,
   COPILOT_MODES,
   CopilotACPAgentClient,
@@ -86,7 +87,7 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(): ACPAgentSession {
+function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -105,8 +106,34 @@ function createSession(): ACPAgentSession {
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      ...(terminateProcess ? { terminateProcess } : {}),
     },
   );
+}
+
+// Typed substitute for the real tree-kill terminator. Records which child
+// processes it was asked to terminate, so tests assert on observable state
+// instead of spying on the production function. In "deferred" mode the
+// terminations hang until releaseAll(), letting tests observe parallelism.
+class FakeTerminator {
+  readonly terminated: TreeKillTarget[] = [];
+  private readonly pending: Array<() => void> = [];
+
+  constructor(private readonly mode: "immediate" | "deferred" = "immediate") {}
+
+  readonly terminate: ProcessTerminator = async (child) => {
+    this.terminated.push(child);
+    if (this.mode === "deferred") {
+      await new Promise<void>((resolve) => this.pending.push(resolve));
+    }
+    return "terminated";
+  };
+
+  releaseAll(): void {
+    for (const resolve of this.pending.splice(0)) {
+      resolve();
+    }
+  }
 }
 
 function createSessionWithConfig(
@@ -145,33 +172,23 @@ function createTerminalChildStub(): ChildProcess {
   return child;
 }
 
-function createProbeChildStub(order: string[]): ChildProcessWithoutNullStreams {
-  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
-  child.stdin = {
-    destroy: vi.fn(() => {
-      order.push("stdin.destroy");
-    }),
-  } as ChildProcessWithoutNullStreams["stdin"];
-  child.stdout = {
-    destroy: vi.fn(() => {
-      order.push("stdout.destroy");
-    }),
-  } as ChildProcessWithoutNullStreams["stdout"];
-  child.stderr = {
-    destroy: vi.fn(() => {
-      order.push("stderr.destroy");
-    }),
-  } as ChildProcessWithoutNullStreams["stderr"];
-  child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
-  return child;
+function createDestroyableStream(): { destroyed: boolean; destroy: () => void } {
+  const stream = {
+    destroyed: false,
+    destroy() {
+      stream.destroyed = true;
+    },
+  };
+  return stream;
 }
 
-function createDeferredTermination(): { promise: Promise<"terminated">; resolve: () => void } {
-  let resolveTermination: () => void = () => {};
-  const promise = new Promise<"terminated">((resolve) => {
-    resolveTermination = () => resolve("terminated");
-  });
-  return { promise, resolve: resolveTermination };
+function createProbeChildStub(): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+  child.stdin = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stdin"];
+  child.stdout = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stdout"];
+  child.stderr = createDestroyableStream() as unknown as ChildProcessWithoutNullStreams["stderr"];
+  child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+  return child;
 }
 
 function selectConfigOption(
@@ -189,12 +206,16 @@ function selectConfigOption(
   };
 }
 
-function createCopilotSessionWithConfig(modeId?: string | null): ACPAgentSession {
+function createCopilotSessionWithConfig(
+  modeId?: string | null,
+  featureValues?: Record<string, unknown>,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "copilot",
       cwd: "/tmp/paseo-acp-test",
       modeId: modeId ?? undefined,
+      ...(featureValues ? { featureValues } : {}),
     },
     {
       provider: "copilot",
@@ -203,6 +224,7 @@ function createCopilotSessionWithConfig(modeId?: string | null): ACPAgentSession
       defaultModes: COPILOT_MODES,
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
       modeIdTransformer: transformCopilotModeId,
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
@@ -252,6 +274,27 @@ function copilotAllowAllConfigOption(currentValue: "on" | "off"): SessionConfigO
     options: [
       { value: "on", name: "On" },
       { value: "off", name: "Off" },
+    ],
+  };
+}
+
+function copilotAgentConfigOption(currentValue: string): SessionConfigOption {
+  return {
+    id: "agent",
+    name: "Agent",
+    category: "_agent",
+    type: "select",
+    currentValue,
+    options: [
+      {
+        value: "",
+        name: "",
+      },
+      {
+        value: "Probe Agent",
+        name: "Probe Agent",
+        description: "Temporary probe agent",
+      },
     ],
   };
 }
@@ -1121,6 +1164,90 @@ describe("ACPAgentSession Zed parity", () => {
     ]);
     await expect(session.getCurrentMode()).resolves.toBe(COPILOT_ALLOW_ALL_MODE_ID);
   });
+
+  test("exposes Copilot custom agents as a select feature", () => {
+    const session = createCopilotSessionWithConfig();
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.configOptions = [copilotAgentConfigOption("")];
+
+    expect(session.features).toEqual([
+      {
+        type: "select",
+        id: "agent",
+        label: "Agent",
+        description: "Use a Copilot custom agent profile",
+        tooltip: "Select Copilot agent",
+        icon: undefined,
+        value: "",
+        options: [
+          {
+            id: "",
+            label: "Default",
+            description: undefined,
+            isDefault: true,
+            metadata: undefined,
+          },
+          {
+            id: "Probe Agent",
+            label: "Probe Agent",
+            description: "Temporary probe agent",
+            isDefault: false,
+            metadata: undefined,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("applies configured Copilot custom agent before the first turn", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+    }));
+    const session = createCopilotSessionWithConfig(null, { agent: "Probe Agent" });
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("")],
+      connection: { setSessionConfigOption },
+    });
+
+    await internals.applyConfiguredOverrides();
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "agent",
+      value: "Probe Agent",
+    });
+    expect(session.features).toEqual([
+      expect.objectContaining({
+        id: "agent",
+        value: "Probe Agent",
+      }),
+    ]);
+  });
+
+  test("sets Copilot custom agent through ACP config options", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+    }));
+    const session = createCopilotSessionWithConfig();
+    prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("")],
+      connection: { setSessionConfigOption },
+    });
+
+    await session.setFeature("agent", "Probe Agent");
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "agent",
+      value: "Probe Agent",
+    });
+    expect(session.features).toEqual([
+      expect.objectContaining({
+        id: "agent",
+        value: "Probe Agent",
+      }),
+    ]);
+  });
 });
 
 describe("deriveModelDefinitionsFromACP", () => {
@@ -1252,16 +1379,64 @@ describe("ACPAgentClient modelTransformer", () => {
       modelTransformer: transformPiModels,
     });
 
-    await expect(client.listModels({ cwd: "/tmp/acp-models", force: false })).resolves.toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-        isDefault: true,
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-      },
+    await expect(client.fetchCatalog({ cwd: "/tmp/acp-models", force: false })).resolves.toEqual({
+      models: [
+        {
+          provider: "pi",
+          id: "openrouter/openai/gpt-4.1-mini",
+          label: "gpt-4.1-mini",
+          description: "openrouter/openai/gpt-4.1-mini",
+          isDefault: true,
+          thinkingOptions: undefined,
+          defaultThinkingOptionId: undefined,
+        },
+      ],
+      modes: [],
+    });
+  });
+});
+
+describe("ACPAgentClient config features", () => {
+  test("derives features from configured ACP select options", async () => {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "session-1",
+              configOptions: [copilotAgentConfigOption("Probe Agent")],
+            }),
+          },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        type: "select",
+        id: "agent",
+        value: "Probe Agent",
+        options: [
+          expect.objectContaining({ id: "", label: "Default", isDefault: false }),
+          expect.objectContaining({ id: "Probe Agent", label: "Probe Agent", isDefault: true }),
+        ],
+      }),
     ]);
   });
 });
@@ -1291,7 +1466,7 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
     protected override async closeProbe(): Promise<void> {}
   }
 
-  test("applies sessionResponseTransformer before deriving list probe modes", async () => {
+  test("applies sessionResponseTransformer before deriving catalog modes", async () => {
     const client = new TestACPAgentClient({
       provider: "claude-acp",
       logger: createTestLogger(),
@@ -1306,18 +1481,21 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
       }),
     });
 
-    await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([
-      {
-        id: "review",
-        label: "Review",
-        description: "After transform",
-      },
-    ]);
+    await expect(client.fetchCatalog({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual({
+      models: [],
+      modes: [
+        {
+          id: "review",
+          label: "Review",
+          description: "After transform",
+        },
+      ],
+    });
   });
 });
 
-describe("ACPAgentClient listModes", () => {
-  test("passes the requested cwd to list model and mode probes", async () => {
+describe("ACPAgentClient fetchCatalog", () => {
+  test("passes the requested cwd to the catalog probe", async () => {
     const newSession = vi.fn().mockResolvedValue({ modes: null, models: null, configOptions: [] });
 
     class TestACPAgentClient extends ACPAgentClient {
@@ -1339,20 +1517,15 @@ describe("ACPAgentClient listModes", () => {
       defaultModes: [],
     });
 
-    await client.listModels({ cwd: "/tmp/acp-model-cwd", force: false });
-    await client.listModes({ cwd: "/tmp/acp-mode-cwd", force: false });
+    await client.fetchCatalog({ cwd: "/tmp/acp-catalog-cwd", force: false });
 
-    expect(newSession).toHaveBeenNthCalledWith(1, {
-      cwd: "/tmp/acp-model-cwd",
-      mcpServers: [],
-    });
-    expect(newSession).toHaveBeenNthCalledWith(2, {
-      cwd: "/tmp/acp-mode-cwd",
+    expect(newSession).toHaveBeenCalledWith({
+      cwd: "/tmp/acp-catalog-cwd",
       mcpServers: [],
     });
   });
 
-  test("returns an empty array when no ACP modes are reported and fallback modes are empty", async () => {
+  test("returns an empty modes array when no ACP modes are reported and fallback modes are empty", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
@@ -1390,7 +1563,10 @@ describe("ACPAgentClient listModes", () => {
       defaultModes: [],
     });
 
-    await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([]);
+    await expect(client.fetchCatalog({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual({
+      models: [],
+      modes: [],
+    });
   });
 });
 
@@ -1896,6 +2072,130 @@ describe("ACPAgentSession", () => {
     ).toHaveLength(1);
   });
 
+  test("startTurn dedupes ACP user echo chunks without message ids for the submitted message", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await session.startTurn("hello", { messageId: "msg-client-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "hello" },
+      } as SessionUpdate,
+    });
+
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: { type: "user_message", text: "hello", messageId: "msg-client-1" },
+        turnId: expect.any(String),
+      },
+    ]);
+  });
+
+  test("startTurn dedupes ACP user echo chunks without message ids across turns", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await session.startTurn("first", { messageId: "msg-client-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "first" },
+      } as SessionUpdate,
+    });
+    resolvePrompt({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await session.startTurn("second", { messageId: "msg-client-2" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "second" },
+      } as SessionUpdate,
+    });
+
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: { type: "user_message", text: "first", messageId: "msg-client-1" },
+        turnId: expect.any(String),
+      },
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: { type: "user_message", text: "second", messageId: "msg-client-2" },
+        turnId: expect.any(String),
+      },
+    ]);
+  });
+
+  test("startTurn dedupes ACP user echo chunks with provider-owned ids for the submitted message", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await session.startTurn("hello", { messageId: "msg-client-1" });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "msg-provider-1",
+        content: { type: "text", text: "hello" },
+      } as SessionUpdate,
+    });
+
+    expect(
+      events.filter((event) => event.type === "timeline" && event.item.type === "user_message"),
+    ).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: { type: "user_message", text: "hello", messageId: "msg-client-1" },
+        turnId: expect.any(String),
+      },
+    ]);
+  });
+
   test("startTurn converts background prompt rejections into turn_failed events", async () => {
     const session = createSession();
     const events: Array<{ type: string; turnId?: string; error?: string }> = [];
@@ -2007,12 +2307,23 @@ describe("ACPAgentSession", () => {
 
 interface ACPCloseInternals {
   child: ChildProcess | null;
-  closed: boolean;
   connection: unknown;
   sessionId: string | null;
-  terminalEntries: Map<string, { child: ChildProcess; exit: unknown }>;
-  subscribers: Map<unknown, unknown>;
-  activeForegroundTurnId: string | null;
+}
+
+async function startTerminal(
+  session: ACPAgentSession,
+  child: ChildProcess,
+  command = "sleep",
+): Promise<string> {
+  vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child as ChildProcessWithoutNullStreams);
+  const terminal = await session.createTerminal({
+    sessionId: "session-1",
+    command,
+    args: ["60"],
+  });
+  vi.restoreAllMocks();
+  return terminal.terminalId;
 }
 
 describe("ACPAgentSession close() tree-kill", () => {
@@ -2020,128 +2331,82 @@ describe("ACPAgentSession close() tree-kill", () => {
     vi.restoreAllMocks();
   });
 
-  test("close() uses terminateWithTreeKill for the main child process", async () => {
-    const terminateWithTreeKill = vi
-      .spyOn(treeKillModule, "terminateWithTreeKill")
-      .mockResolvedValue("terminated");
-    const session = createSession();
+  test("close() terminates the main child process via the process tree", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
     const internals = asInternals<ACPCloseInternals>(session);
 
     const child = createTerminalChildStub();
+    // The ACP host process is set by the live connect handshake, which has no
+    // in-test seam; everything else is driven through the public API.
     internals.child = child;
     internals.connection = null;
     internals.sessionId = null;
 
     await session.close();
 
-    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
-      gracefulTimeoutMs: 2_000,
-      forceTimeoutMs: 2_000,
-    });
+    expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
   });
 
-  test("close() uses terminateWithTreeKill for terminal child processes", async () => {
-    const terminateWithTreeKill = vi
-      .spyOn(treeKillModule, "terminateWithTreeKill")
-      .mockResolvedValue("terminated");
-    const session = createSession();
-    const internals = asInternals<ACPCloseInternals>(session);
+  test("close() terminates running terminal child processes", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
 
     const terminalChild = createTerminalChildStub();
-    internals.terminalEntries = new Map([["terminal-1", { child: terminalChild, exit: null }]]);
-    internals.child = null;
-    internals.connection = null;
-    internals.sessionId = null;
+    await startTerminal(session, terminalChild);
 
     await session.close();
 
-    expect(terminateWithTreeKill).toHaveBeenCalledWith(terminalChild, {
-      gracefulTimeoutMs: 2_000,
-      forceTimeoutMs: 2_000,
-    });
+    expect(terminator.terminated).toContain(terminalChild);
     expect(terminalChild.kill).not.toHaveBeenCalled();
   });
 
   test("close() terminates terminal child processes in parallel", async () => {
-    const resolvers: Array<() => void> = [];
-    const terminateWithTreeKill = vi
-      .spyOn(treeKillModule, "terminateWithTreeKill")
-      .mockImplementation(() => {
-        const termination = createDeferredTermination();
-        resolvers.push(termination.resolve);
-        return termination.promise;
-      });
-    const session = createSession();
-    const internals = asInternals<ACPCloseInternals>(session);
+    const terminator = new FakeTerminator("deferred");
+    const session = createSession(terminator.terminate);
 
-    const firstTerminalChild = createTerminalChildStub();
-    const secondTerminalChild = createTerminalChildStub();
-    internals.terminalEntries = new Map([
-      ["terminal-1", { child: firstTerminalChild, exit: null }],
-      ["terminal-2", { child: secondTerminalChild, exit: null }],
-    ]);
-    internals.child = null;
-    internals.connection = null;
-    internals.sessionId = null;
+    const firstChild = createTerminalChildStub();
+    const secondChild = createTerminalChildStub();
+    await startTerminal(session, firstChild);
+    await startTerminal(session, secondChild);
 
     const close = session.close();
     await Promise.resolve();
 
-    expect(terminateWithTreeKill).toHaveBeenCalledTimes(2);
+    expect(terminator.terminated).toEqual([firstChild, secondChild]);
 
-    for (const resolve of resolvers) {
-      resolve();
-    }
+    terminator.releaseAll();
     await close;
   });
 
-  test("killTerminal uses terminateWithTreeKill instead of direct SIGTERM", async () => {
-    const terminateWithTreeKill = vi
-      .spyOn(treeKillModule, "terminateWithTreeKill")
-      .mockResolvedValue("terminated");
-    const session = createSession();
-    const internals = asInternals<ACPCloseInternals>(session);
+  test("killTerminal terminates the terminal process tree without a direct SIGTERM", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
 
     const child = createTerminalChildStub();
-    internals.terminalEntries = new Map([["terminal-1", { child, exit: null }]]);
+    const terminalId = await startTerminal(session, child);
 
-    await session.killTerminal({ sessionId: "session-1", terminalId: "terminal-1" });
+    await session.killTerminal({ sessionId: "session-1", terminalId });
 
-    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
-      gracefulTimeoutMs: 2_000,
-      forceTimeoutMs: 2_000,
-    });
+    expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
   });
 
-  test("releaseTerminal uses terminateWithTreeKill before removing a running terminal", async () => {
-    const terminateWithTreeKill = vi
-      .spyOn(treeKillModule, "terminateWithTreeKill")
-      .mockResolvedValue("terminated");
+  test("releaseTerminal terminates and removes a running terminal", async () => {
+    const terminator = new FakeTerminator();
+    const session = createSession(terminator.terminate);
+
     const child = createTerminalChildStub();
-    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
-    const session = createSession();
+    const terminalId = await startTerminal(session, child);
 
-    const terminal = await session.createTerminal({
-      sessionId: "session-1",
-      command: "sleep",
-      args: ["60"],
-    });
+    await session.releaseTerminal({ sessionId: "session-1", terminalId });
 
-    await session.releaseTerminal({
-      sessionId: "session-1",
-      terminalId: terminal.terminalId,
-    });
-
-    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
-      gracefulTimeoutMs: 2_000,
-      forceTimeoutMs: 2_000,
-    });
+    expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
-    await expect(
-      session.terminalOutput({ sessionId: "session-1", terminalId: terminal.terminalId }),
-    ).rejects.toThrow(`Unknown terminal '${terminal.terminalId}'`);
+    await expect(session.terminalOutput({ sessionId: "session-1", terminalId })).rejects.toThrow(
+      `Unknown terminal '${terminalId}'`,
+    );
   });
 });
 
@@ -2150,15 +2415,9 @@ describe("ACPAgentClient probe cleanup", () => {
     vi.restoreAllMocks();
   });
 
-  test("signals the probe process tree before destroying stdio", async () => {
-    const order: string[] = [];
-    const terminateWithTreeKill = vi
-      .spyOn(treeKillModule, "terminateWithTreeKill")
-      .mockImplementation(async () => {
-        order.push("tree-kill");
-        return "terminated";
-      });
-    const child = createProbeChildStub(order);
+  test("terminates the probe process tree and closes its stdio", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
 
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
@@ -2181,14 +2440,14 @@ describe("ACPAgentClient probe cleanup", () => {
       logger: createTestLogger(),
       defaultCommand: ["claude", "--acp"],
       defaultModes: [],
+      terminateProcess: terminator.terminate,
     });
 
-    await client.listModels({ cwd: "/tmp/acp-models", force: false });
+    await client.fetchCatalog({ cwd: "/tmp/acp-models", force: false });
 
-    expect(terminateWithTreeKill).toHaveBeenCalledWith(child, {
-      gracefulTimeoutMs: 2_000,
-      forceTimeoutMs: 2_000,
-    });
-    expect(order).toEqual(["tree-kill", "stdin.destroy", "stdout.destroy", "stderr.destroy"]);
+    expect(terminator.terminated).toContain(child);
+    expect(child.stdin.destroyed).toBe(true);
+    expect(child.stdout.destroyed).toBe(true);
+    expect(child.stderr.destroyed).toBe(true);
   });
 });

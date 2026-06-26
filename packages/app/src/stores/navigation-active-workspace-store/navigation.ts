@@ -6,7 +6,7 @@ import {
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import {
-  resolveWorkspaceIdByDirectory,
+  normalizeWorkspaceOpaqueId,
   resolveWorkspaceMapKeyByIdentity,
 } from "@/utils/workspace-identity";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
@@ -76,11 +76,7 @@ export function navigateToWorkspace(
   });
   const workspaceAgents = resolvedWorkspaceId
     ? Array.from(deps.getSessionAgents(serverId)).filter(
-        (agent) =>
-          resolveWorkspaceIdByDirectory({
-            workspaces: workspaces?.values(),
-            workspaceDirectory: agent.cwd,
-          }) === resolvedWorkspaceId,
+        (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === resolvedWorkspaceId,
       )
     : [];
   const attentionAgentId = pickAttentionAgent(workspaceAgents);

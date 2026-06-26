@@ -14,6 +14,7 @@ import {
 } from "./navigation";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
@@ -41,7 +42,10 @@ function navigateDeps(): NavigateToWorkspaceDeps {
       useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, { kind: "agent", agentId });
     },
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
-    navigateToRoute: (route) => router.dismissTo(route as Href),
+    navigateToRoute: (route) => {
+      router.dismissTo(route as Href);
+      stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit();
+    },
   };
 }
 

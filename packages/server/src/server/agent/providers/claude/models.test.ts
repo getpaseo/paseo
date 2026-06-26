@@ -63,7 +63,7 @@ describe("getClaudeModels", () => {
   });
 });
 
-describe("ClaudeAgentClient.listModels", () => {
+describe("ClaudeAgentClient.fetchCatalog", () => {
   it("appends concrete models from Claude settings.json", async () => {
     const configDir = await createClaudeConfigDir({
       model: "us.anthropic.claude-opus-4-7[1m]",
@@ -78,7 +78,7 @@ describe("ClaudeAgentClient.listModels", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const models = await client.listModels({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
 
     expect(models).toEqual([
       ...getClaudeModels(),
@@ -127,7 +127,7 @@ describe("ClaudeAgentClient.listModels", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const models = await client.listModels({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -137,7 +137,7 @@ describe("ClaudeAgentClient.listModels", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const models = await client.listModels({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -153,7 +153,7 @@ describe("ClaudeAgentClient.listModels", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const models = await client.listModels({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -169,7 +169,7 @@ describe("ClaudeAgentClient.listModels", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const models = await client.listModels({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
 
     expect(models.map((model) => model.id)).toEqual([
       ...getClaudeModels().map((model) => model.id),

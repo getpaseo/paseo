@@ -40,6 +40,9 @@ export interface WorktreeBootstrapTerminalResult {
 
 export interface RunAsyncWorktreeBootstrapOptions {
   agentId: string;
+  // Workspace the bootstrapped terminals belong to. Stamping it lets
+  // workspaceId-scoped archive tear these terminals down.
+  workspaceId: string;
   worktree: WorktreeConfig;
   shouldBootstrap?: boolean;
   terminalManager: TerminalManager | null;
@@ -540,6 +543,7 @@ async function runWorktreeTerminalBootstrap(
           cwd: options.worktree.worktreePath,
           name: spec.name,
           env: runtimeEnv,
+          workspaceId: options.workspaceId,
         });
         await waitForTerminalBootstrapReadiness(terminal);
         terminal.send({
@@ -690,7 +694,7 @@ export interface WorktreeScriptResult {
   terminalId: string;
 }
 
-interface SpawnWorkspaceScriptOptions {
+export interface SpawnWorkspaceScriptOptions {
   repoRoot: string;
   workspaceId: string;
   projectSlug: string;
@@ -800,11 +804,19 @@ async function acquireWorkspaceScriptTerminal(params: {
   existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
   terminalManager: TerminalManager;
   repoRoot: string;
+  workspaceId: string;
   scriptName: string;
   env: Record<string, string> | undefined;
 }): Promise<{ terminal: TerminalSession; reusableTerminal: TerminalSession | null }> {
-  const { serviceScript, existingRuntimeEntry, terminalManager, repoRoot, scriptName, env } =
-    params;
+  const {
+    serviceScript,
+    existingRuntimeEntry,
+    terminalManager,
+    repoRoot,
+    workspaceId,
+    scriptName,
+    env,
+  } = params;
   let reusableTerminal: TerminalSession | null = null;
   if (!serviceScript && existingRuntimeEntry?.terminalId) {
     reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
@@ -813,6 +825,7 @@ async function acquireWorkspaceScriptTerminal(params: {
     reusableTerminal ??
     (await terminalManager.createTerminal({
       cwd: repoRoot,
+      workspaceId,
       name: scriptName,
       title: scriptName,
       env,
@@ -888,6 +901,7 @@ export async function spawnWorkspaceScript(
       existingRuntimeEntry,
       terminalManager,
       repoRoot,
+      workspaceId,
       scriptName,
       env,
     });

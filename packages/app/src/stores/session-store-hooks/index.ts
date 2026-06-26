@@ -7,13 +7,12 @@ import {
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
-  selectResolveWorkspaceIdByCwd,
   selectWorkspace,
   selectWorkspaceDirectory,
   selectWorkspaceExists,
   selectWorkspaceFields,
   selectWorkspaceKeys,
-  selectWorkspaceOrderByScopeForServer,
+  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
@@ -82,32 +81,31 @@ export function useWorkspaceDirectory(
   );
 }
 
-export function useWorkspaceStructure(serverId: string | null): WorkspaceStructure {
+export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
   const projects = useStoreWithEqualityFn(
     useSessionStore,
-    (state) => selectWorkspaceStructureProjects(state, serverId),
+    (state) => selectWorkspaceStructureProjects(state, serverIds),
     workspaceEqualityFns.deep,
   );
   const projectOrder = useStoreWithEqualityFn(
     useSidebarOrderStore,
-    (state) => selectProjectOrder(state, serverId),
+    (state) => selectProjectOrder(state),
     workspaceEqualityFns.deep,
   );
   const workspaceOrderByScope = useStoreWithEqualityFn(
     useSidebarOrderStore,
-    (state) => selectWorkspaceOrderByScopeForServer(state, serverId),
+    (state) => selectWorkspaceOrderByScope(state),
     workspaceEqualityFns.deep,
   );
 
   return useMemo(
     () =>
       composeWorkspaceStructure({
-        serverId,
         projects,
         projectOrder,
         workspaceOrderByScope,
       }),
-    [projectOrder, projects, serverId, workspaceOrderByScope],
+    [projectOrder, projects, workspaceOrderByScope],
   );
 }
 
@@ -131,17 +129,6 @@ export function useHasWorkspaces(serverId: string | null): boolean {
   return useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectHasWorkspaces(state, serverId),
-    workspaceEqualityFns.identity,
-  );
-}
-
-export function useResolveWorkspaceIdByCwd(
-  serverId: string | null,
-  cwd: string | null | undefined,
-): string | null {
-  return useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => selectResolveWorkspaceIdByCwd(state, serverId, cwd),
     workspaceEqualityFns.identity,
   );
 }

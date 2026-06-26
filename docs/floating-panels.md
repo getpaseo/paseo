@@ -60,12 +60,11 @@ quietly relying on:
   Gate `visible` on a screen-focus signal. For panes inside `agent-panel`, the
   `isPaneFocused` prop already exists and flips on pane switches; pass
   `visible={isYourOwnVisible && isPaneFocused}`.
-- **Transforms.** The composer is wrapped in a Reanimated `Animated.View` with
-  `translateY: -keyboardShift` (see `use-keyboard-shift-style.ts`). The chat
-  content has the same transform applied (`agent-panel.tsx:939`). They move
-  together because they share the SharedValue. A portal'd popover is outside
-  the composer tree — it does not get that transform unless you apply it
-  yourself.
+- **Transforms.** `KeyboardShiftProvider` owns the canonical keyboard shift
+  SharedValue, and `useKeyboardShiftStyle()` only adapts that value into
+  translate/padding styles. The composer and chat content must both read that
+  provider-owned value. A portal'd popover is outside the composer tree — it
+  does not get that transform unless you apply it yourself.
 - **Layering.** The default root host renders after app content, so it sits
   above compact sidebars. Content overlays that must sit below sidebars should
   use the current `FloatingPanelPortalHost`.
@@ -86,7 +85,8 @@ with Reanimated worklets the result is not always stable.
 
 If the panel cannot stay inside the transformed ancestor, do not try to track
 the keyboard by re-measuring on every frame. Instead,
-**slave the popover's transform to the same SharedValue the composer uses**:
+**slave the popover's transform to the same `KeyboardShiftProvider` SharedValue
+the composer uses**:
 
 1. Snapshot `openShift = shift.value` at the moment you measure the anchor.
 2. Apply `useAnimatedStyle(() => ({ transform: [{ translateY: openShift.value - shift.value }] }))`
@@ -95,7 +95,10 @@ the keyboard by re-measuring on every frame. Instead,
 When `shift` equals `openShift`, the translate is 0 and the popover sits at
 the measured position. When the keyboard moves afterward, the delta translates
 the popover by exactly the amount the composer translates. They move in
-lockstep, no re-measurement needed.
+lockstep, no re-measurement needed. Do not call
+`useReanimatedKeyboardAnimation()` directly for app UI offset policy; Android
+can briefly report a stale nonzero height with closed progress, and the shared
+provider is where that is normalized.
 
 Re-measure on `Keyboard.addListener('keyboardDidShow'|'keyboardDidHide')` only
 to refresh the snapshot if the keyboard was mid-transition when the popover

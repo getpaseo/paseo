@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { ScriptRouteStore } from "./script-proxy.js";
+import { ScriptRouteStore, ServiceProxyRouteCollisionError } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 
 function createWorkspaceRepo(options?: {
@@ -338,7 +338,7 @@ describe("script-route-branch-handler", () => {
     });
 
     expect(() => handleBranchChange("workspace-a", "feature/auth", "feature/billing")).toThrow(
-      "Service proxy hostname collision",
+      ServiceProxyRouteCollisionError,
     );
 
     expect(routeStore.listRoutesForWorkspace("workspace-a")).toEqual([
@@ -393,7 +393,7 @@ describe("script-route-branch-handler", () => {
     });
 
     expect(() => handleBranchChange("workspace-a", "feature/one", "feature/collide")).toThrow(
-      "Service proxy hostname collision",
+      ServiceProxyRouteCollisionError,
     );
     expect(routeStore.getRouteEntry("api--feature-one--repo.localhost")).toMatchObject({
       port: 3001,

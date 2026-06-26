@@ -20,7 +20,18 @@ export async function runCreateCommand(
   const cwd = options.cwd ?? process.cwd();
 
   try {
-    const payload = await client.createTerminal(cwd, options.name);
+    const opened = await client.openProject(cwd);
+    if (!opened.workspace) {
+      const error: CommandError = {
+        code: "WORKSPACE_OPEN_FAILED",
+        message: opened.error ?? "Failed to open workspace",
+      };
+      throw error;
+    }
+
+    const payload = await client.createTerminal(cwd, options.name, undefined, {
+      workspaceId: opened.workspace.id,
+    });
     if (!payload.terminal) {
       const error: CommandError = {
         code: "TERMINAL_CREATE_FAILED",

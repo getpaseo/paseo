@@ -149,6 +149,44 @@ function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestSta
   };
 }
 
+interface RequestedPullRequestTarget {
+  headRef: string;
+  headRepositoryOwner?: string;
+}
+
+interface RecordingPullRequestTargetsOptions {
+  requestedTargets: RequestedPullRequestTarget[];
+  statusOverrides?: Partial<GitHubCurrentPullRequestStatus>;
+}
+
+function createGitHubServiceRecordingPullRequestTargets(
+  options: RecordingPullRequestTargetsOptions,
+): GitHubService {
+  const github = createGitHubServiceForStatus(null);
+  github.getCurrentPullRequestStatus = async (request) => {
+    options.requestedTargets.push({
+      headRef: request.headRef,
+      ...(request.headRepositoryOwner ? { headRepositoryOwner: request.headRepositoryOwner } : {}),
+    });
+    return createPullRequestStatus({
+      ...options.statusOverrides,
+      headRefName: request.headRef,
+    });
+  };
+  return github;
+}
+
+async function readPullRequestLookupTargetFromFacts(
+  repoDir: string,
+  paseoHome: string,
+): Promise<RequestedPullRequestTarget | null> {
+  const facts = await getCheckoutSnapshotFacts(repoDir, { paseoHome });
+  if (!facts.isGit) {
+    throw new Error("Expected git checkout facts");
+  }
+  return facts.pullRequestLookupTarget;
+}
+
 function setupRemoteTrackingMain(
   repoDir: string,
   tempDir: string,
@@ -1121,6 +1159,75 @@ const x = 1;
     expect(diff.diff).not.toContain("x".repeat(10_000));
   });
 
+  it("keeps small tracked files displayable when another tracked file has a massive diff", async () => {
+    writeFileSync(join(repoDir, "generated.js"), `const data = "old";\n`);
+    writeFileSync(join(repoDir, "small.ts"), `export const value = "old";\n`);
+    execFileSync("git", ["add", "generated.js", "small.ts"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add tracked files"], {
+      cwd: repoDir,
+    });
+
+    writeFileSync(join(repoDir, "generated.js"), `const data = "${"x".repeat(2_100_000)}";\n`);
+    writeFileSync(join(repoDir, "small.ts"), `export const value = "new";\n`);
+
+    startGitCommandMetrics();
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+    const metrics = stopGitCommandMetrics();
+    const commands = metrics.commands.map((command) => command.args.join(" "));
+
+    expect(
+      diff.structured?.map((file) => ({
+        path: file.path,
+        status: file.status,
+        hunks: file.hunks.length,
+      })),
+    ).toEqual([
+      { path: "generated.js", status: "too_large", hunks: 0 },
+      { path: "small.ts", status: "ok", hunks: 1 },
+    ]);
+    expect(diff.diff).toContain("# generated.js: diff too large omitted");
+    expect(diff.diff).toContain(`-export const value = "old";`);
+    expect(diff.diff).toContain(`+export const value = "new";`);
+    expect(commands).toContain("diff --numstat HEAD");
+    expect(commands).toContain("diff HEAD -- generated.js");
+    expect(commands).toContain("diff HEAD -- small.ts");
+    expect(metrics.maxConcurrent).toBeLessThanOrEqual(8);
+  });
+
+  it("marks tracked files omitted by the total diff budget as too_large", async () => {
+    for (let i = 1; i <= 4; i += 1) {
+      writeFileSync(join(repoDir, `budget-${i}.txt`), "old\n");
+    }
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add budget files"], {
+      cwd: repoDir,
+    });
+
+    const largeLine = "x".repeat(700_000);
+    for (let i = 1; i <= 4; i += 1) {
+      writeFileSync(join(repoDir, `budget-${i}.txt`), `${largeLine}-${i}\n`);
+    }
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted", includeStructured: true });
+
+    expect(
+      diff.structured?.map((file) => ({
+        path: file.path,
+        status: file.status,
+        hunks: file.hunks.length,
+      })),
+    ).toEqual([
+      { path: "budget-1.txt", status: "ok", hunks: 1 },
+      { path: "budget-2.txt", status: "ok", hunks: 1 },
+      { path: "budget-3.txt", status: "too_large", hunks: 0 },
+      { path: "budget-4.txt", status: "too_large", hunks: 0 },
+    ]);
+    expect(diff.diff).toContain("budget-1.txt");
+    expect(diff.diff).toContain("budget-2.txt");
+    expect(diff.diff).toContain("# budget-3.txt: diff too large omitted");
+    expect(diff.diff).toContain("# budget-4.txt: diff too large omitted");
+  });
+
   it("short-circuits tracked binary files", async () => {
     const trackedBinaryPath = join(repoDir, "tracked-blob.bin");
     writeFileSync(trackedBinaryPath, Buffer.from([0x00, 0xff, 0x10, 0x80, 0x00]));
@@ -1931,6 +2038,118 @@ const x = 1;
     });
   });
 
+  it("uses an origin tracked head when the local branch name differs", async () => {
+    execFileSync("git", ["checkout", "-b", "tender-parrot"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.tender-parrot.remote", "origin"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["config", "branch.tender-parrot.merge", "refs/heads/refactor/workspace-scripts"],
+      { cwd: repoDir },
+    );
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toEqual({ headRef: "refactor/workspace-scripts" });
+  });
+
+  it("keeps the local branch lookup when origin tracking uses the same head name", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.feature.remote", "origin"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.feature.merge", "refs/heads/feature"], {
+      cwd: repoDir,
+    });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toEqual({ headRef: "feature" });
+  });
+
+  it("does not attach an owner when the tracked remote is the same GitHub repository", async () => {
+    execFileSync("git", ["checkout", "-b", "local-feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["remote", "add", "upstream", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.local-feature.remote", "upstream"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["config", "branch.local-feature.merge", "refs/heads/refactor/workspace-scripts"],
+      { cwd: repoDir },
+    );
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toEqual({ headRef: "refactor/workspace-scripts" });
+  });
+
+  it("keeps the fork owner when same-repo comparison is indeterminate", async () => {
+    execFileSync("git", ["checkout", "-b", "chethanuk/main"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "not-a-github-remote"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "paseo-pr-345", "git@github.com:chethanuk/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.chethanuk/main.remote", "paseo-pr-345"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.chethanuk/main.merge", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
+  });
+
+  it("keeps the local branch lookup when same-repo tracking points at the base branch", async () => {
+    execFileSync("git", ["checkout", "-b", "tender-parrot"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.tender-parrot.remote", "origin"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.tender-parrot.merge", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+
+    expect(lookupTarget).toEqual({ headRef: "tender-parrot" });
+  });
+
+  it("derives the same origin tracked head for on-demand PR status reads", async () => {
+    execFileSync("git", ["checkout", "-b", "tender-parrot"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.tender-parrot.remote", "origin"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["config", "branch.tender-parrot.merge", "refs/heads/refactor/workspace-scripts"],
+      { cwd: repoDir },
+    );
+    const factsTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const github = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    await getPullRequestStatus(
+      repoDir,
+      github,
+      { force: true, reason: "tracked-head-parity" },
+      { paseoHome },
+    );
+
+    expect(requestedTargets).toEqual([factsTarget]);
+  });
+
   it("uses the tracked fork branch for PR worktree status lookup", async () => {
     execFileSync("git", ["checkout", "-b", "chethanuk/main"], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
@@ -1946,30 +2165,14 @@ const x = 1;
       cwd: repoDir,
     });
 
-    const requestedTargets: Array<{ headRef: string; headRepositoryOwner?: string }> = [];
-    const github = createGitHubServiceForStatus(
-      createPullRequestStatus({
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const github = createGitHubServiceRecordingPullRequestTargets({
+      requestedTargets,
+      statusOverrides: {
         number: 345,
         url: "https://github.com/getpaseo/paseo/pull/345",
-        headRefName: "main",
-      }),
-      {
-        onStatus: () => {},
       },
-    );
-    github.getCurrentPullRequestStatus = async (options) => {
-      requestedTargets.push({
-        headRef: options.headRef,
-        ...(options.headRepositoryOwner
-          ? { headRepositoryOwner: options.headRepositoryOwner }
-          : {}),
-      });
-      return createPullRequestStatus({
-        number: 345,
-        url: "https://github.com/getpaseo/paseo/pull/345",
-        headRefName: options.headRef,
-      });
-    };
+    });
 
     const status = await getPullRequestStatus(repoDir, github);
 

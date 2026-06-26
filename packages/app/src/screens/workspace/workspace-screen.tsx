@@ -11,7 +11,7 @@ import {
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
 import { ActivityIndicator, BackHandler, Keyboard, Pressable, Text, View } from "react-native";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
@@ -34,7 +34,6 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react-native";
-import { GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -42,7 +41,7 @@ import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { BranchSwitcher } from "@/components/branch-switcher";
+import { ScreenTitle } from "@/components/headers/screen-title";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -66,12 +65,14 @@ import { WorkspaceGitActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
-import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import { useToast } from "@/contexts/toast-context";
-import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  useSessionStore,
+  useWorkspaceRestoreStatus,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
@@ -101,8 +102,6 @@ import { shouldShowWorkspaceSetup, useWorkspaceSetupStore } from "@/stores/works
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
-import { checkoutStatusQueryKey } from "@/git/query-keys";
-import { fetchCheckoutStatus } from "@/git/checkout-status-cache";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -174,7 +173,6 @@ import {
   buildSettingsHostRoute,
   buildSettingsHostSectionRoute,
 } from "@/utils/host-routes";
-import { canCreateWorkspaceTerminal } from "@/screens/workspace/terminals/state";
 import {
   useWorkspaceTerminals,
   type TerminalProfileInput,
@@ -192,6 +190,7 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { RenderProfile } from "@/utils/render-profiler";
+import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
@@ -199,7 +198,6 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
-const COMPACT_WEB_GESTURE_TOUCH_ACTION = isWeb ? "auto" : "pan-y";
 
 function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
@@ -864,29 +862,6 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
   );
 });
 
-interface MobileExplorerOpenGestureSurfaceProps {
-  children: ReactNode;
-  enabled: boolean;
-  onOpenExplorer: () => void;
-}
-
-function MobileExplorerOpenGestureSurface({
-  children,
-  enabled,
-  onOpenExplorer,
-}: MobileExplorerOpenGestureSurfaceProps) {
-  const explorerOpenGesture = useExplorerOpenGesture({
-    enabled,
-    onOpen: onOpenExplorer,
-  });
-
-  return (
-    <GestureDetector gesture={explorerOpenGesture} touchAction={COMPACT_WEB_GESTURE_TOUCH_ACTION}>
-      <View style={styles.content}>{children}</View>
-    </GestureDetector>
-  );
-}
-
 function useStableTabDescriptorMap(tabDescriptors: WorkspaceTabDescriptor[]) {
   const cacheRef = useRef(new Map<string, WorkspaceTabDescriptor>());
   const tabDescriptorMap = useMemo(() => {
@@ -919,16 +894,12 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   isRouteFocused,
 }: WorkspaceScreenProps) {
   const navigationFocused = useIsFocused();
-  const effectiveRouteFocused = isRouteFocused ?? navigationFocused;
-
   return (
-    <ExplorerSidebarAnimationProvider>
-      <WorkspaceScreenContent
-        serverId={serverId}
-        workspaceId={workspaceId}
-        isRouteFocused={effectiveRouteFocused}
-      />
-    </ExplorerSidebarAnimationProvider>
+    <WorkspaceScreenContent
+      serverId={serverId}
+      workspaceId={workspaceId}
+      isRouteFocused={isRouteFocused ?? navigationFocused}
+    />
   );
 });
 
@@ -1183,7 +1154,6 @@ interface WorkspaceHeaderTitleBarProps {
   subtitle: string;
   showSubtitle: boolean;
   currentBranchName: string | null;
-  isGitCheckout: boolean;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
@@ -1219,7 +1189,6 @@ function WorkspaceHeaderTitleBar({
   subtitle,
   showSubtitle,
   currentBranchName,
-  isGitCheckout,
   normalizedServerId,
   normalizedWorkspaceId,
   workspaceScripts,
@@ -1256,13 +1225,7 @@ function WorkspaceHeaderTitleBar({
         </View>
       ) : (
         <View style={styles.headerTitleTextGroup}>
-          <BranchSwitcher
-            currentBranchName={currentBranchName}
-            title={title}
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
-            isGitCheckout={isGitCheckout}
-          />
+          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
           {showSubtitle ? (
             <Text
               testID="workspace-header-subtitle"
@@ -1495,6 +1458,7 @@ function useWorkspaceRouteActions(normalizedServerId: string): {
 
 function useResolvedWorkspaceRouteState(input: {
   serverId: string;
+  workspaceId: string;
   workspace: WorkspaceDescriptor | null;
   hasHydratedWorkspaces: boolean;
 }): WorkspaceRouteState {
@@ -1505,6 +1469,7 @@ function useResolvedWorkspaceRouteState(input: {
   );
   const hostSnapshot = useHostRuntimeSnapshot(input.serverId);
   const hostName = useMemo(() => getHostDisplayName(host, input.serverId), [host, input.serverId]);
+  const restoreStatus = useWorkspaceRestoreStatus(input.serverId, input.workspaceId);
 
   return useMemo(
     () =>
@@ -1514,6 +1479,7 @@ function useResolvedWorkspaceRouteState(input: {
         lastError: hostSnapshot?.lastError ?? null,
         workspace: input.workspace,
         hasHydratedWorkspaces: input.hasHydratedWorkspaces,
+        restoreStatus,
       }),
     [
       hostName,
@@ -1521,6 +1487,7 @@ function useResolvedWorkspaceRouteState(input: {
       hostSnapshot?.lastError,
       input.workspace,
       input.hasHydratedWorkspaces,
+      restoreStatus,
     ],
   );
 }
@@ -1594,7 +1561,7 @@ function shouldShowWorkspaceExplorerSidebar(input: {
   isFocusModeEnabled: boolean;
   isMobile: boolean;
 }): boolean {
-  return input.isRouteFocused && shouldShowWorkspaceScreenHeader(input);
+  return !input.isMobile && input.isRouteFocused && shouldShowWorkspaceScreenHeader(input);
 }
 
 function buildWorkspaceTerminalScopeKey(serverId: string, workspaceId: string): string | null {
@@ -1676,56 +1643,6 @@ function useWorkspaceTerminalTabActions({
   };
 }
 
-function useWorkspaceCheckoutStatus(input: {
-  client: ReturnType<typeof useHostRuntimeClient>;
-  isConnected: boolean;
-  isRouteFocused: boolean;
-  normalizedServerId: string;
-  normalizedWorkspaceId: string;
-  workspaceDirectory: string | null;
-}) {
-  const { t } = useTranslation();
-  const isCheckoutQueryEnabled = useMemo(
-    () =>
-      canCreateWorkspaceTerminal({
-        isRouteFocused: input.isRouteFocused,
-        client: input.client,
-        isConnected: input.isConnected,
-        workspaceDirectory: input.workspaceDirectory,
-      }),
-    [input.isRouteFocused, input.client, input.isConnected, input.workspaceDirectory],
-  );
-  const checkoutQuery = useQuery({
-    queryKey: checkoutStatusQueryKey(
-      input.normalizedServerId,
-      input.workspaceDirectory ?? `missing-workspace-directory:${input.normalizedWorkspaceId}`,
-    ),
-    enabled: isCheckoutQueryEnabled,
-    queryFn: async () => {
-      if (!input.client || !input.workspaceDirectory) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
-      return await fetchCheckoutStatus({
-        client: input.client,
-        serverId: input.normalizedServerId,
-        cwd: input.workspaceDirectory,
-      });
-    },
-    staleTime: Infinity,
-    // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
-    // useCheckoutStatusQuery for the rationale.
-    refetchOnMount: true,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
-  });
-  const isCheckoutStatusLoading = useMemo(
-    () => isCheckoutQueryEnabled && checkoutQuery.data === undefined && !checkoutQuery.isError,
-    [isCheckoutQueryEnabled, checkoutQuery.data, checkoutQuery.isError],
-  );
-
-  return { checkoutQuery, isCheckoutStatusLoading };
-}
-
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1798,7 +1715,7 @@ function WorkspaceScreenContent({
       deriveWorkspaceAgentVisibility({
         sessionAgents: state.sessions[normalizedServerId]?.agents,
         agentDetails: state.sessions[normalizedServerId]?.agentDetails,
-        workspaceDirectory,
+        workspaceId: normalizedWorkspaceId,
       }),
     workspaceAgentVisibilityEqual,
   );
@@ -1866,6 +1783,7 @@ function WorkspaceScreenContent({
   );
   const workspaceRouteState = useResolvedWorkspaceRouteState({
     serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
     workspace: workspaceDescriptor,
     hasHydratedWorkspaces,
   });
@@ -1889,7 +1807,6 @@ function WorkspaceScreenContent({
   const isExplorerOpen = usePanelStore((state) =>
     selectIsFileExplorerOpen(state, { isCompact: isMobile }),
   );
-  const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const toggleFileExplorerForCheckout = usePanelStore(
     (state) => state.toggleFileExplorerForCheckout,
   );
@@ -1905,16 +1822,6 @@ function WorkspaceScreenContent({
       isGit: isGitCheckout,
     };
   }, [isGitCheckout, normalizedServerId, workspaceDirectory]);
-
-  const openExplorerForWorkspace = useCallback(() => {
-    if (!activeExplorerCheckout) {
-      return;
-    }
-    openFileExplorerForCheckout({
-      isCompact: isMobile,
-      checkout: activeExplorerCheckout,
-    });
-  }, [activeExplorerCheckout, isMobile, openFileExplorerForCheckout]);
 
   const handleToggleExplorer = useCallback(() => {
     if (!activeExplorerCheckout) {
@@ -1963,7 +1870,7 @@ function WorkspaceScreenContent({
   const workspaceSetupSnapshot = useWorkspaceSetupStore((state) =>
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
   );
-  const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
+  const ensureWorkspaceSetupStatus = useWorkspaceSetupStore((state) => state.ensureSetupStatus);
   const showWorkspaceSetup = shouldShowWorkspaceSetup(workspaceSetupSnapshot);
   const uiTabs = useMemo(
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
@@ -2175,54 +2082,22 @@ function WorkspaceScreenContent({
 
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
   const autoOpenedSetupTabWorkspaceRef = useRef<string | null>(null);
-  const requestedWorkspaceSetupStatusKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isRouteFocused) {
+    if (!isRouteFocused || !client || !normalizedServerId || !normalizedWorkspaceId) {
       return;
     }
-    if (!client || !normalizedServerId || !normalizedWorkspaceId || !persistenceKey) {
-      return;
-    }
-    if (workspaceSetupSnapshot) {
-      return;
-    }
-    if (requestedWorkspaceSetupStatusKeyRef.current === persistenceKey) {
-      return;
-    }
-
-    requestedWorkspaceSetupStatusKeyRef.current = persistenceKey;
-    let isCancelled = false;
-
-    client
-      .fetchWorkspaceSetupStatus(normalizedWorkspaceId)
-      .then((response) => {
-        if (isCancelled || response.workspaceId !== normalizedWorkspaceId || !response.snapshot) {
-          return;
-        }
-        upsertWorkspaceSetupProgress({
-          serverId: normalizedServerId,
-          payload: { workspaceId: response.workspaceId, ...response.snapshot },
-        });
-        return;
-      })
-      .catch(() => {
-        if (requestedWorkspaceSetupStatusKeyRef.current === persistenceKey) {
-          requestedWorkspaceSetupStatusKeyRef.current = null;
-        }
-      });
-
-    return () => {
-      isCancelled = true;
-    };
+    ensureWorkspaceSetupStatus({
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+      client,
+    });
   }, [
     client,
+    ensureWorkspaceSetupStatus,
     isRouteFocused,
     normalizedServerId,
     normalizedWorkspaceId,
-    persistenceKey,
-    upsertWorkspaceSetupProgress,
-    workspaceSetupSnapshot,
   ]);
 
   useEffect(() => {
@@ -2318,9 +2193,6 @@ function WorkspaceScreenContent({
 
   const handleOpenFileFromExplorer = useCallback(
     function handleOpenFileFromExplorer(filePath: string) {
-      if (isMobile) {
-        showMobileAgent();
-      }
       if (!persistenceKey) {
         return;
       }
@@ -2333,7 +2205,7 @@ function WorkspaceScreenContent({
         navigateToTabId(tabId);
       }
     },
-    [isMobile, navigateToTabId, openWorkspaceTabFocused, persistenceKey, showMobileAgent],
+    [navigateToTabId, openWorkspaceTabFocused, persistenceKey],
   );
 
   const handleOpenFileFromChat = useCallback(
@@ -3389,7 +3261,7 @@ function WorkspaceScreenContent({
             onScriptTerminalStarted={handleScriptTerminalStarted}
             onViewTerminal={handleViewScriptTerminal}
             onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
-            hideLabels={showCompactButtonLabels}
+            hideLabels
           />
         ) : null}
         {!isMobile && workspaceDirectory ? (
@@ -3397,7 +3269,7 @@ function WorkspaceScreenContent({
             serverId={normalizedServerId}
             cwd={workspaceDirectory}
             activeFile={activeFileLocation}
-            hideLabels={showCompactButtonLabels}
+            hideLabels
           />
         ) : null}
         {!isMobile && isGitCheckout ? (
@@ -3637,7 +3509,6 @@ function WorkspaceScreenContent({
                 subtitle={workspaceHeaderSubtitle}
                 showSubtitle={shouldShowWorkspaceHeaderSubtitle}
                 currentBranchName={currentBranchName}
-                isGitCheckout={isGitCheckout}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
                 workspaceScripts={workspaceScripts}
@@ -3727,12 +3598,7 @@ function WorkspaceScreenContent({
 
       <View style={styles.centerContent}>
         {isMobile ? (
-          <MobileExplorerOpenGestureSurface
-            enabled={Boolean(activeExplorerCheckout)}
-            onOpenExplorer={openExplorerForWorkspace}
-          >
-            {content}
-          </MobileExplorerOpenGestureSurface>
+          <View style={styles.content}>{content}</View>
         ) : (
           <View style={styles.content}>{desktopContent}</View>
         )}

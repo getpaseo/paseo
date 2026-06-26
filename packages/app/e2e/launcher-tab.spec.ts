@@ -108,7 +108,14 @@ test.describe("Terminal title propagation", () => {
   test.skip("terminal tab title updates from OSC title escape sequence", async ({ page }) => {
     test.setTimeout(60_000);
 
-    const result = await workspace.client.createTerminal(workspace.repoPath, "title-test");
+    const result = await workspace.client.createTerminal(
+      workspace.repoPath,
+      "title-test",
+      undefined,
+      {
+        workspaceId: workspace.workspaceId,
+      },
+    );
     if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
     const terminalId = result.terminal.id;
 
@@ -138,7 +145,14 @@ test.describe("Terminal title propagation", () => {
   test.skip("title debouncing coalesces rapid changes", async ({ page }) => {
     test.setTimeout(60_000);
 
-    const result = await workspace.client.createTerminal(workspace.repoPath, "debounce-test");
+    const result = await workspace.client.createTerminal(
+      workspace.repoPath,
+      "debounce-test",
+      undefined,
+      {
+        workspaceId: workspace.workspaceId,
+      },
+    );
     if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
     const terminalId = result.terminal.id;
 

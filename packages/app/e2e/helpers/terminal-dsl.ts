@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import type { TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
+import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { createTempGitRepo } from "./workspace";
 import { navigateToTerminal, setupDeterministicPrompt } from "./terminal-perf";
 import { connectSeedClient, type SeedDaemonClient } from "./seed-client";
@@ -28,22 +28,27 @@ function sleep(ms: number): Promise<void> {
 export class TerminalE2EHarness {
   readonly client: SeedDaemonClient;
   readonly tempRepo: TempRepo;
+  readonly projectId: string;
   readonly workspaceId: string;
 
   private constructor(input: {
     client: SeedDaemonClient;
     tempRepo: TempRepo;
+    projectId: string;
     workspaceId: string;
   }) {
     this.client = input.client;
     this.tempRepo = input.tempRepo;
+    this.projectId = input.projectId;
     this.workspaceId = input.workspaceId;
   }
 
   static async create(input: { tempPrefix: string }): Promise<TerminalE2EHarness> {
     const tempRepo = await createTempGitRepo(input.tempPrefix);
     const client = await connectSeedClient();
-    const seedResult = await client.openProject(tempRepo.path);
+    const seedResult = await client.createWorkspace({
+      source: { kind: "directory", path: tempRepo.path },
+    });
     if (!seedResult.workspace) {
       await client.close().catch(() => {});
       await tempRepo.cleanup().catch(() => {});
@@ -52,11 +57,13 @@ export class TerminalE2EHarness {
     return new TerminalE2EHarness({
       client,
       tempRepo,
+      projectId: seedResult.workspace.projectId,
       workspaceId: seedResult.workspace.id,
     });
   }
 
   async cleanup(): Promise<void> {
+    await this.client.removeProject(this.projectId).catch(() => {});
     await this.client.close().catch(() => {});
     await this.tempRepo.cleanup().catch(() => {});
   }
@@ -67,8 +74,9 @@ export class TerminalE2EHarness {
         ? {
             command: input.command,
             args: input.args,
+            workspaceId: this.workspaceId,
           }
-        : undefined;
+        : { workspaceId: this.workspaceId };
     const result = await this.client.createTerminal(
       this.tempRepo.path,
       input.name,
@@ -84,20 +92,31 @@ export class TerminalE2EHarness {
   async waitForTerminalActivity(input: {
     terminalId: string;
     state: TerminalActivityState | null;
+    attentionReason?: TerminalActivity["attentionReason"] | null;
     timeoutMs?: number;
   }): Promise<void> {
     const timeoutMs = input.timeoutMs ?? 10_000;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const result = await this.client.listTerminals(this.tempRepo.path);
+      const result = await this.client.listTerminals(this.tempRepo.path, undefined, {
+        workspaceId: this.workspaceId,
+      });
       const terminal = result.terminals.find((entry) => entry.id === input.terminalId);
-      if ((terminal?.activity?.state ?? null) === input.state) {
+      const activity = terminal?.activity ?? null;
+      const attentionMatches =
+        input.attentionReason === undefined ||
+        (activity?.attentionReason ?? null) === input.attentionReason;
+      if ((activity?.state ?? null) === input.state && attentionMatches) {
         return;
       }
       await sleep(50);
     }
+    const attentionSuffix =
+      input.attentionReason === undefined
+        ? ""
+        : ` with attention ${input.attentionReason ?? "none"}`;
     throw new Error(
-      `Timed out waiting for terminal ${input.terminalId} activity state ${input.state ?? "unknown"}`,
+      `Timed out waiting for terminal ${input.terminalId} activity state ${input.state ?? "unknown"}${attentionSuffix}`,
     );
   }
 

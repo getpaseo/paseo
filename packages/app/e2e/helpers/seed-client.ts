@@ -4,6 +4,15 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { createTempDirectory, createTempGitRepo } from "./workspace";
 
+export interface SeedWorkspaceDescriptor {
+  id: string;
+  name: string;
+  projectId: string;
+  projectDisplayName: string;
+  projectRootPath: string;
+  workspaceDirectory: string;
+}
+
 /**
  * The general-purpose E2E daemon client used to seed and drive state out of
  * band (workspaces, agents, terminals) while the UI is exercised through the
@@ -13,27 +22,57 @@ import { createTempDirectory, createTempGitRepo } from "./workspace";
 export interface SeedDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
-  openProject(cwd: string): Promise<{
-    workspace: {
-      id: string;
-      name: string;
+  addProject(cwd: string): Promise<{
+    project: {
       projectId: string;
       projectDisplayName: string;
       projectRootPath: string;
-      workspaceDirectory: string;
     } | null;
     error: string | null;
   }>;
+  removeProject(projectId: string): Promise<{ removedWorkspaceIds: string[] }>;
+  fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{
+    entries: SeedWorkspaceDescriptor[];
+  }>;
+  createWorkspace(input: {
+    source:
+      | { kind: "directory"; path: string; projectId?: string }
+      | {
+          kind: "worktree";
+          cwd?: string;
+          projectId?: string;
+          action?: "branch-off" | "checkout";
+          refName?: string;
+          baseBranch?: string;
+          githubPrNumber?: number;
+          worktreeSlug?: string;
+        };
+    title?: string;
+  }): Promise<{
+    workspace: SeedWorkspaceDescriptor | null;
+    error: string | null;
+  }>;
+  /**
+   * Force the daemon to recompute its git snapshot and diff for a checkout,
+   * mirroring the UI's manual refresh. Tests use this to make an out-of-band
+   * working-tree write authoritative before asserting on it in the UI, instead
+   * of racing the filesystem watcher's debounce.
+   */
+  checkoutRefresh(cwd: string): Promise<{ success: boolean; error: unknown }>;
   createTerminal(
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[] },
+    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
   ): Promise<{
     terminal: { id: string; name: string; cwd: string; activity?: TerminalActivity | null } | null;
     error: string | null;
   }>;
-  listTerminals(cwd?: string): Promise<{
+  listTerminals(
+    cwd?: string,
+    requestId?: string,
+    options?: { workspaceId?: string },
+  ): Promise<{
     terminals: Array<{
       id: string;
       name: string;
@@ -46,15 +85,28 @@ export interface SeedDaemonClient {
   createAgent(options: {
     provider: string;
     cwd: string;
+    workspaceId?: string;
     title?: string;
     modeId?: string;
     model?: string;
     thinkingOptionId?: string;
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
+    labels?: Record<string, string>;
   }): Promise<{ id: string; status: string }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
-    entries: Array<{ agent: { id: string; cwd: string; title?: string | null } }>;
+    entries: Array<{
+      agent: {
+        id: string;
+        provider: string;
+        cwd: string;
+        workspaceId?: string;
+        model: string | null;
+        currentModeId: string | null;
+        status: string;
+        title?: string | null;
+      };
+    }>;
   }>;
   fetchRecentProviderSessions(options: {
     cwd: string;
@@ -80,6 +132,12 @@ export interface SeedDaemonClient {
     timeout?: number,
   ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
+  fetchAgent(
+    agentId: string,
+  ): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;
+  getLastServerInfoMessage(): {
+    features?: { projectAdd?: boolean; worktreeRestore?: boolean } | null;
+  } | null;
   fetchAgentHistory(options?: {
     page?: { limit: number };
   }): Promise<{ entries: Array<{ id: string }> }>;
@@ -136,19 +194,23 @@ export async function seedWorkspace(options: {
       : await createTempGitRepo(options.repoPrefix, options.repo);
   const client = await connectSeedClient();
   try {
-    const opened = await client.openProject(project.path);
-    if (!opened.workspace) {
-      throw new Error(opened.error ?? `Failed to open project ${project.path}`);
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: project.path },
+    });
+    if (!created.workspace) {
+      throw new Error(created.error ?? `Failed to create workspace ${project.path}`);
     }
+    const workspace = created.workspace;
     return {
       client,
       repoPath: project.path,
-      workspaceId: opened.workspace.id,
-      workspaceName: opened.workspace.name,
-      workspaceDirectory: opened.workspace.workspaceDirectory,
-      projectId: opened.workspace.projectId,
-      projectDisplayName: opened.workspace.projectDisplayName,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      workspaceDirectory: workspace.workspaceDirectory,
+      projectId: workspace.projectId,
+      projectDisplayName: workspace.projectDisplayName,
       cleanup: async () => {
+        await client.removeProject(workspace.projectId).catch(() => undefined);
         await client.close().catch(() => undefined);
         await project.cleanup().catch(() => undefined);
       },

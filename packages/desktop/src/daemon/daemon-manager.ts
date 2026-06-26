@@ -350,7 +350,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     detached: true,
     envMode: "internal",
     env: invocation.env,
-    envOverlay: { PASEO_DESKTOP_MANAGED: "1" },
+    envOverlay: { PASEO_DESKTOP_MANAGED: "1", PASEO_WEB_UI_ENABLED: "false" },
     stdio: ["ignore", "ignore", "ignore"],
   });
 

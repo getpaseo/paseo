@@ -5,6 +5,8 @@ import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
+import { ja } from "./resources/ja";
+import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
@@ -101,28 +103,35 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
-  it("keeps UN official language keys in sync with English", () => {
+  it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ja).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
   });
 
-  it("keeps non-English UN official languages translated beyond fallback labels", () => {
+  it("keeps non-English supported languages translated beyond fallback labels", () => {
     const totalStrings = Object.keys(flattenStrings(en)).length;
     const maxFallbackStrings = Math.floor(totalStrings * 0.25);
     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
+    expect(findInterpolationMismatches(ja)).toEqual([]);
+    expect(findInterpolationMismatches(ptBR)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
   });
@@ -137,11 +146,15 @@ describe("translation resources", () => {
     expect(ar.modelSelector.modelCountPlural).toBe("{{count}} نماذج");
     expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(fr.modelSelector.modelCountPlural).toBe("{{count}} modèles");
+    expect(ja.modelSelector.modelCountPlural).toBe("{{count}}つのモデル");
+    expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
     expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
     expect(ar.settings.providers.models.many).toBe("{{count}} نماذج");
     expect(es.settings.providers.models.many).toBe("{{count}} modelos");
     expect(fr.settings.providers.models.many).toBe("{{count}} modèles");
+    expect(ja.settings.providers.models.many).toBe("{{count}}つのモデル");
+    expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
@@ -183,6 +196,7 @@ describe("translation resources", () => {
     expect(en.composer.github.title).toBe("Attach issue or PR");
     expect(en.agentControls.provider.fallback).toBe("Provider");
     expect(en.agentControls.hints.model).toBe("Change model");
+    expect(en.agentControls.hints.mode).toBe("Change mode");
     expect(en.agentControls.features.title).toBe("Features");
     expect(en.agentControls.mode.title).toBe("Mode");
     expect(en.agentStream.permission.required).toBe("Permission Required");
@@ -224,7 +238,10 @@ describe("translation resources", () => {
     expect(en.importSession.status.connectHost).toBe("Connect to a host to import sessions");
     expect(en.importSession.actions.refresh).toBe("Refresh sessions");
     expect(en.workspace.fileExplorer.sort.name).toBe("Name");
+    expect(en.workspace.fileExplorer.actions.hideHiddenFiles).toBe("Hide hidden files");
+    expect(en.workspace.fileExplorer.actions.showHiddenFiles).toBe("Show hidden files");
     expect(en.workspace.fileExplorer.empty.noFiles).toBe("No files");
+    expect(en.workspace.fileExplorer.empty.noVisibleFiles).toBe("No visible files");
     expect(en.workspace.setup.status.running).toBe("Running");
     expect(en.workspace.setup.empty.noCommands).toBe("No setup commands ran for this workspace.");
     expect(en.workspace.browser.unavailable.title).toBe("Browser is desktop-only");
@@ -240,12 +257,16 @@ describe("translation resources", () => {
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
+    expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 
   it("includes sidebar and workspace creation keys for the Batch 4C migration", () => {
     expect(en.sidebar.workspace.actions.copyPath).toBe("Copy path");
     expect(en.sidebar.project.confirmations.removeTitle).toBe("Remove project?");
+    expect(en.sidebar.project.toasts.updateHostToRemove).toBe(
+      "Update the host to remove projects.",
+    );
     expect(en.newWorkspace.title).toBe("New workspace");
     expect(en.newWorkspace.refPicker.searchPlaceholder).toBe("Search branches and PRs");
     expect(en.openProject.tiles.addProject.title).toBe("Add a project");
@@ -281,13 +302,15 @@ describe("translation resources", () => {
     expect(en.settings.shortcuts.dialogTitle).toBe("Shortcuts");
     expect(en.settings.shortcuts.sections.tabsPanes).toBe("Tabs & Panes");
     expect(en.settings.shortcuts.help.toggleCommandCenter).toBe("Toggle command center");
+    expect(en.settings.shortcuts.help.newWorkspace).toBe("New workspace");
+    expect(en.settings.shortcuts.help.cycleAgentMode).toBe("Cycle agent mode");
     expect(en.settings.shortcuts.helpNotes.showKeyboardShortcuts).toBe(
       "Available when focus is not in a text field or terminal.",
     );
   });
 
   it("includes sessions and agent list keys for the Batch 4H migration", () => {
-    expect(en.sessions.title).toBe("Sessions");
+    expect(en.sessions.title).toBe("History");
     expect(en.sessions.empty).toBe("No sessions yet");
     expect(en.sessions.actions.loadMore).toBe("Load more");
     expect(en.agentList.fallbackTitle).toBe("New session");
@@ -350,7 +373,7 @@ describe("translation resources", () => {
     expect(en.sidebar.actions.home).toBe("Home");
     expect(en.sidebar.actions.settings).toBe("Settings");
     expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
-    expect(en.sidebar.sections.sessions).toBe("Sessions");
+    expect(en.sidebar.sections.sessions).toBe("History");
     expect(en.sidebar.workspace.actions.newWorkspace).toBe("New workspace");
     expect(en.sidebar.workspace.actions.createWorkspaceFor).toBe(
       "Create a new workspace for {{projectName}}",

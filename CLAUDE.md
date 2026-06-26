@@ -44,6 +44,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/mobile-testing.md](docs/mobile-testing.md)               | Maestro and mobile test workflows                                                                                              |
 | [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md) | Isolated in-process daemon test harness                                                                                        |
 | [docs/android.md](docs/android.md)                             | App variants, local/cloud builds, EAS workflows                                                                                |
+| [docs/docker.md](docs/docker.md)                               | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/release.md](docs/release.md)                             | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)         | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                     | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |

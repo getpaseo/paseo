@@ -1,6 +1,6 @@
 ---
 title: Metadata generation
-description: How Paseo uses providers to generate agent titles, branch names, commit messages, and pull request text, and how to configure them.
+description: How Paseo uses providers to generate branch names, commit messages, and pull request text, and how to configure them.
 nav: Metadata generation
 order: 42
 category: Configuration
@@ -10,12 +10,14 @@ category: Configuration
 
 Paseo asks a language model to write short pieces of text for you so you don't have to. This is separate from the agent you're talking to: it's a small, one-shot call made in the background.
 
-Paseo generates four kinds of metadata:
+Paseo generates these kinds of metadata:
 
-- **Agent titles** — a short title for a new agent, derived from your first prompt. Only generated when you didn't type one yourself.
+- **Workspace titles** — a short, task-shaped label for a workspace, shown in the sidebar.
 - **Worktree branch names** — a slug for the branch a new worktree agent runs on.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
+
+A workspace title and its branch name are produced together from the same prompt, but you configure their wording independently (see below).
 
 ## How a model is chosen
 
@@ -67,7 +69,7 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
 ```json
 {
   "metadataGeneration": {
-    "agentTitle": { "instructions": "Prefix titles with the area of the codebase." },
+    "title": { "instructions": "Keep titles to a few words, no leading verb." },
     "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
     "pullRequest": { "instructions": "Include a Testing section in the body." }
@@ -75,4 +77,4 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
 }
 ```
 
-Each key is optional; only the ones you set are affected. The instructions are added to the prompt for that metadata type, on top of the provider selection above.
+Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. The functional requirements (what to produce and the output format) always apply and cannot be overridden.

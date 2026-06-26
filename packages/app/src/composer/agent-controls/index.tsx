@@ -20,7 +20,9 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
-import { Brain, ChevronDown, ListTodo, Settings2, ShieldCheck, Zap } from "lucide-react-native";
+import { Brain, ListTodo, Settings2, ShieldCheck, Zap } from "lucide-react-native";
+import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
+import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
@@ -37,12 +39,7 @@ import {
   toggleFavoriteModel,
   useFormPreferences,
 } from "@/hooks/use-form-preferences";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { DraftAgentModeControl, AgentModeControl } from "@/composer/agent-controls/mode-control";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
@@ -64,6 +61,7 @@ import {
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
+import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 
 interface AgentControlOption {
   id: string;
@@ -764,7 +762,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     <>
       {providerOptions && providerOptions.length > 0 ? (
         <>
-          <Pressable
+          <ComboboxTrigger
             ref={providerAnchorRef}
             collapsable={false}
             disabled={disabled || !canSelectProvider}
@@ -775,8 +773,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             testID="agent-provider-selector"
           >
             <Text style={styles.modeBadgeText}>{displayProvider}</Text>
-            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </Pressable>
+          </ComboboxTrigger>
           <Combobox
             options={comboboxProviderOptions}
             value={selectedProviderId ?? ""}
@@ -821,7 +818,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
         <>
           <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
             <TooltipTrigger asChild triggerRefProp="ref">
-              <Pressable
+              <ComboboxTrigger
                 ref={thinkingAnchorRef}
                 collapsable={false}
                 disabled={disabled || !canSelectThinking}
@@ -835,8 +832,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
               >
                 <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                 <Text style={styles.modeBadgeText}>{displayThinking}</Text>
-                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </Pressable>
+              </ComboboxTrigger>
             </TooltipTrigger>
             <TooltipContent side="top" align="center" offset={8}>
               <Text style={styles.tooltipText}>{t(getAgentControlHintKey("thinking"))}</Text>
@@ -1173,7 +1169,7 @@ function DesktopFeatureItem({
       <DropdownMenu open={openSelector === featureSelector} onOpenChange={handleFeatureOpenChange}>
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="ref">
-            <DropdownMenuTrigger
+            <DropdownTrigger
               disabled={disabled}
               style={selectPressableStyle}
               accessibilityRole="button"
@@ -1182,8 +1178,7 @@ function DesktopFeatureItem({
             >
               <FeatureIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
               <Text style={styles.modeBadgeText}>{selectedOption?.label ?? feature.label}</Text>
-              <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
+            </DropdownTrigger>
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
             <Text style={styles.tooltipText}>{getFeatureTooltip(feature)}</Text>
@@ -1288,7 +1283,7 @@ function SheetFeatureItem({
           open={openSelector === featureSelector}
           onOpenChange={handleFeatureOpenChange}
         >
-          <DropdownMenuTrigger
+          <DropdownTrigger
             disabled={disabled}
             style={togglePressableStyle}
             accessibilityRole="button"
@@ -1296,8 +1291,7 @@ function SheetFeatureItem({
             testID={`agent-feature-${feature.id}`}
           >
             <Text style={styles.sheetSelectText}>{selectedOption?.label ?? feature.label}</Text>
-            <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-          </DropdownMenuTrigger>
+          </DropdownTrigger>
           <DropdownMenuContent side="top" align="start">
             {feature.options.map((option) => (
               <FeatureOptionMenuItem
@@ -1493,10 +1487,13 @@ export const AgentControls = memo(function AgentControls({
           console.warn("[AgentControls] persist thinking preference failed", error);
         });
       }
-      void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
-        console.warn("[AgentControls] setAgentThinkingOption failed", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.warn("[AgentControls] setAgentThinkingOption failed", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [activeModelId, agentId, agentProvider, client, toast, updatePreferences],
   );

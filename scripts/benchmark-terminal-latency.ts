@@ -51,6 +51,8 @@ interface DaemonClientLike {
   createTerminal(
     cwd: string,
     name?: string,
+    requestId?: string,
+    options?: { workspaceId?: string },
   ): Promise<{ terminal: { id: string } | null; error: string | null }>;
   subscribeTerminal(terminalId: string): Promise<{ error: string | null }>;
   killTerminal(terminalId: string): Promise<unknown>;
@@ -62,6 +64,7 @@ interface DaemonClientLike {
   createAgent(options: {
     provider: string;
     cwd: string;
+    workspaceId?: string;
     model?: string;
     title?: string;
   }): Promise<{ id: string }>;
@@ -483,6 +486,7 @@ if (process.env.BENCH_INCLUDE_L3 === "1") {
 async function startLoad(
   client: DaemonClientLike,
   cwd: string,
+  workspaceId: string,
   spec: LevelSpec,
 ): Promise<LoadController> {
   const agentIds: string[] = [];
@@ -490,6 +494,7 @@ async function startLoad(
     const agent = await client.createAgent({
       provider: "mock",
       cwd,
+      workspaceId,
       model: "five-minute-stream",
       title: `${spec.id}-load-${i}`,
     });
@@ -511,7 +516,9 @@ async function startLoad(
 
   let noisyTerminalId: string | null = null;
   if (spec.secondNoisyTerminal) {
-    const created = await client.createTerminal(cwd, `${spec.id}-noisy`);
+    const created = await client.createTerminal(cwd, `${spec.id}-noisy`, undefined, {
+      workspaceId,
+    });
     if (created.terminal) {
       noisyTerminalId = created.terminal.id;
       await client.subscribeTerminal(noisyTerminalId);
@@ -563,11 +570,12 @@ interface LevelResult {
 async function runLevel(
   client: DaemonClientLike,
   cwd: string,
+  workspaceId: string,
   spec: LevelSpec,
   measuredTerminalId: string,
 ): Promise<LevelResult> {
   console.log(`\n=== ${spec.id} (${spec.description}) ===`);
-  const load = await startLoad(client, cwd, spec);
+  const load = await startLoad(client, cwd, workspaceId, spec);
   try {
     // Ping sampling runs concurrently with the echo + burst measurements so it
     // observes the daemon under the same load the latency primitives see.
@@ -679,7 +687,11 @@ async function main(): Promise<void> {
       throw new Error(`Failed to open project: ${opened.error}`);
     }
 
-    const created = await client.createTerminal(workspaceDir, "measured");
+    const workspaceId = opened.workspace.id;
+
+    const created = await client.createTerminal(workspaceDir, "measured", undefined, {
+      workspaceId,
+    });
     if (!created.terminal) {
       throw new Error(`Failed to create terminal: ${created.error}`);
     }
@@ -691,7 +703,7 @@ async function main(): Promise<void> {
 
     const results: LevelResult[] = [];
     for (const spec of LEVELS) {
-      const result = await runLevel(client, workspaceDir, spec, measuredTerminalId);
+      const result = await runLevel(client, workspaceDir, workspaceId, spec, measuredTerminalId);
       results.push(result);
       // Settle between levels so a previous level's load fully drains.
       await sleep(2_000);

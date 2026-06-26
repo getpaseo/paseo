@@ -19,6 +19,7 @@ import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "./workspace-registry.js";
+import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 
 interface Harness {
   session: Session;
@@ -456,17 +457,17 @@ test("S11: re-opening an archived project by exact path unarchives project + wor
 // ─────────────────────────────────────────────────────────────────────────────
 // S12. Prefix-fallback resolver must not surface an archived ancestor: looking
 //      up a child cwd whose only matching record is an archived parent should
-//      return null (not the archived parent).
+//      return null (not the archived parent). The behavior lives in
+//      `resolveWorkspaceIdForPath` now; this invariant keeps archive-by-path
+//      from accidentally resolving into an archived workspace subtree.
 // ─────────────────────────────────────────────────────────────────────────────
-test("S12: findWorkspaceByDirectory does not return archived ancestor via prefix fallback", async () => {
+test("S12: resolveWorkspaceIdForPath does not return archived ancestor via prefix fallback", async () => {
   const archivedAt = "2026-04-22T13:08:05.400Z";
   const h = createHarness({
     workspaces: [dirWorkspace(PARENT, archivedAt)],
     projects: [dirProject(PARENT, archivedAt)],
   });
-  const found = await asInternals<{
-    findWorkspaceByDirectory(cwd: string): Promise<unknown>;
-  }>(h.session).findWorkspaceByDirectory(PARENT_CHILD);
+  const found = resolveWorkspaceIdForPath(PARENT_CHILD, Array.from(h.workspaces.values()));
   expect(found).toBeNull();
 });
 

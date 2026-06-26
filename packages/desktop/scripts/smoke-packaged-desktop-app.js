@@ -361,12 +361,26 @@ async function runCliShimJsonCommand({ appPath, env, args, label }) {
 
 async function smokeCliShim({ appPath, env }) {
   console.log("Packaged desktop smoke: running bundled CLI shim daemon status");
-  await runCliShimCommand({
+  const result = await runCliShimCommand({
     appPath,
     env,
     args: ["daemon", "status"],
     label: "Bundled CLI shim daemon status",
   });
+  assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
+}
+
+function assertCleanDaemonStatusOutput(output) {
+  const failureNeedles = [
+    "Get-CimInstance",
+    "Get-Process :",
+    "Cannot bind parameter",
+    "wmic failed",
+  ];
+  const failure = failureNeedles.find((needle) => output.includes(needle));
+  if (failure) {
+    throw new Error(`Bundled CLI shim daemon status included process lookup failure: ${failure}`);
+  }
 }
 
 async function smokeCliTerminal({ appPath, env }) {

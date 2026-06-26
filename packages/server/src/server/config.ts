@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolvePaseoNodeEnv } from "./paseo-env.js";
 import { z } from "zod";
 import { expandTilde } from "../utils/path.js";
@@ -24,6 +25,19 @@ import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostn
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+const DEFAULT_TRUSTED_PROXIES = ["loopback"];
+
+export function resolveBundledWebUiDistDir(moduleUrl: string | URL = import.meta.url): string {
+  const moduleDir = path.dirname(fileURLToPath(moduleUrl));
+
+  if (path.basename(moduleDir) === "server" && path.basename(path.dirname(moduleDir)) === "src") {
+    return path.resolve(moduleDir, "..", "..", "dist", "server", "web-ui");
+  }
+
+  return path.resolve(moduleDir, "web-ui");
+}
+
+const BUNDLED_WEB_UI_DIST_DIR = resolveBundledWebUiDistDir();
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
@@ -55,8 +69,11 @@ export type CliConfigOverrides = Partial<{
   relayUseTls: boolean;
   mcpEnabled: boolean;
   mcpInjectIntoAgents: boolean;
+  webUiEnabled: boolean;
   hostnames: HostnamesConfig;
 }>;
+
+type TrustedProxiesConfig = true | string[];
 
 function resolveLogConfigFromEnv(
   env: NodeJS.ProcessEnv,
@@ -238,6 +255,33 @@ function resolveServiceProxyConfig(
   return { publicBaseUrl, standaloneListen };
 }
 
+interface ResolvedWebUi {
+  enabled: boolean;
+  distDir: string | null;
+}
+
+function resolveWebUiConfig(
+  paseoHome: string,
+  env: NodeJS.ProcessEnv,
+  cli: CliConfigOverrides | undefined,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): ResolvedWebUi {
+  const enabled =
+    cli?.webUiEnabled ??
+    parseBooleanEnv(env.PASEO_WEB_UI_ENABLED) ??
+    persisted.features?.webUi?.enabled ??
+    false;
+  const rawDistDir = env.PASEO_WEB_UI_DIST_DIR ?? persisted.features?.webUi?.distDir;
+  const trimmedDistDir = rawDistDir?.trim();
+  const distDir = trimmedDistDir
+    ? path.resolve(path.isAbsolute(trimmedDistDir) ? trimmedDistDir : paseoHome, trimmedDistDir)
+    : BUNDLED_WEB_UI_DIST_DIR;
+  return {
+    enabled,
+    distDir,
+  };
+}
+
 function resolveVoiceLlmConfig(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
@@ -263,6 +307,37 @@ function resolveCorsAllowedOrigins(
   const persistedCorsOrigins = persisted.daemon?.cors?.allowedOrigins ?? [];
   return Array.from(
     new Set([...persistedCorsOrigins, ...envCorsOrigins].filter((s) => s.length > 0)),
+  );
+}
+
+function parseTrustedProxiesEnv(value: string | undefined): TrustedProxiesConfig | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return [];
+  }
+
+  return trimmed
+    .split(",")
+    .map((proxy) => proxy.trim())
+    .filter((proxy) => proxy.length > 0);
+}
+
+function resolveTrustedProxiesConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): TrustedProxiesConfig {
+  return (
+    parseTrustedProxiesEnv(env.PASEO_TRUSTED_PROXIES) ??
+    persisted.daemon?.trustedProxies ??
+    DEFAULT_TRUSTED_PROXIES
   );
 }
 
@@ -333,6 +408,7 @@ function resolveStaticLoadConfigSettings(
       parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
       cli?.hostnames,
     ]),
+    trustedProxies: resolveTrustedProxiesConfig(env, persisted),
     appBaseUrl: env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL,
   };
 }
@@ -355,6 +431,7 @@ export function loadConfig(
     appendSystemPrompt,
     terminalProfiles,
     hostnames,
+    trustedProxies,
     appBaseUrl,
   } = resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
@@ -365,6 +442,7 @@ export function loadConfig(
     cliRelayUseTls: options?.cli?.relayUseTls,
   });
   const serviceProxy = resolveServiceProxyConfig(env, persisted);
+  const webUi = resolveWebUiConfig(paseoHome, env, options?.cli, persisted);
 
   const { openai, speech } = resolveSpeechConfig({
     paseoHome,
@@ -383,6 +461,7 @@ export function loadConfig(
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
+    trustedProxies,
     mcpEnabled,
     mcpInjectIntoAgents,
     autoArchiveAfterMerge,
@@ -400,6 +479,7 @@ export function loadConfig(
     relayUseTls: relay.useTls,
     relayPublicUseTls: relay.publicUseTls,
     serviceProxy,
+    webUi,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

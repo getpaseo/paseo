@@ -1,6 +1,6 @@
-import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
+import type { SidebarStatusWorkspacePlacement } from "@/hooks/sidebar-workspaces-view-model";
 
-export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
+export type StatusBucket = SidebarStatusWorkspacePlacement["statusBucket"];
 
 export const STATUS_BUCKET_ORDER: readonly StatusBucket[] = [
   "needs_input",
@@ -21,14 +21,14 @@ export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
 export interface StatusGroup {
   bucket: StatusBucket;
   label: string;
-  rows: SidebarWorkspaceEntry[];
+  rows: SidebarStatusWorkspacePlacement[];
 }
 
 export function buildStatusGroups(
-  workspaces: SidebarWorkspaceEntry[],
+  workspaces: SidebarStatusWorkspacePlacement[],
   projectNamesByKey: Map<string, string>,
 ): StatusGroup[] {
-  const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
+  const bucketRows = new Map<StatusBucket, SidebarStatusWorkspacePlacement[]>();
 
   for (const ws of workspaces) {
     const bucket: StatusBucket = ws.statusBucket;
@@ -54,8 +54,8 @@ export function buildStatusGroups(
 }
 
 function compareStatusRows(
-  a: SidebarWorkspaceEntry,
-  b: SidebarWorkspaceEntry,
+  a: SidebarStatusWorkspacePlacement,
+  b: SidebarStatusWorkspacePlacement,
   projectNamesByKey: Map<string, string>,
 ): number {
   const aTime = a.statusEnteredAt?.getTime() ?? null;

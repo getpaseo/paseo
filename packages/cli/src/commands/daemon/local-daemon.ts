@@ -15,6 +15,7 @@ export interface DaemonStartOptions {
   relayUseTls?: boolean;
   mcp?: boolean;
   injectMcp?: boolean;
+  webUi?: boolean;
   hostnames?: string;
 }
 
@@ -138,6 +139,12 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   if (options.injectMcp === false) {
     args.push("--no-inject-mcp");
   }
+  if (options.webUi === true) {
+    args.push("--web-ui");
+  }
+  if (options.webUi === false) {
+    args.push("--no-web-ui");
+  }
 
   return args;
 }
@@ -157,6 +164,12 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   }
   if (options.relayUseTls === true) {
     childEnv.PASEO_RELAY_USE_TLS = "true";
+  }
+  if (options.webUi === true) {
+    childEnv.PASEO_WEB_UI_ENABLED = "true";
+  }
+  if (options.webUi === false) {
+    childEnv.PASEO_WEB_UI_ENABLED = "false";
   }
   return childEnv;
 }

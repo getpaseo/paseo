@@ -1,9 +1,9 @@
 import type {
   SidebarProjectEntry,
-  SidebarWorkspaceEntry,
+  SidebarStatusWorkspacePlacement,
+  SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
-import { isSidebarProjectFlattened } from "./sidebar-project-row-model";
 
 export interface SidebarShortcutWorkspaceTarget {
   serverId: string;
@@ -15,7 +15,9 @@ export interface SidebarShortcutModel {
   shortcutIndexByWorkspaceKey: Map<string, number>;
 }
 
-function createShortcutTarget(workspace: SidebarWorkspaceEntry): SidebarShortcutWorkspaceTarget {
+function createShortcutTarget(
+  workspace: SidebarWorkspacePlacement,
+): SidebarShortcutWorkspaceTarget {
   return {
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
@@ -32,7 +34,7 @@ export function buildSidebarShortcutModel(input: {
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
   for (const project of input.projects) {
-    if (!isSidebarProjectFlattened(project) && input.collapsedProjectKeys.has(project.projectKey)) {
+    if (input.collapsedProjectKeys.has(project.projectKey)) {
       continue;
     }
 
@@ -51,7 +53,7 @@ export function buildSidebarShortcutModel(input: {
 }
 
 export function buildStatusSidebarShortcutModel(input: {
-  workspaces: SidebarWorkspaceEntry[];
+  workspaces: SidebarStatusWorkspacePlacement[];
   projectNamesByKey: Map<string, string>;
   collapsedStatusGroupKeys?: ReadonlySet<string>;
   shortcutLimit?: number;

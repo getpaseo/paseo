@@ -4,7 +4,7 @@ import { test, expect, type Page } from "./fixtures";
 import { TerminalE2EHarness, type TerminalInstance } from "./helpers/terminal-dsl";
 
 type HookActivityState = "running" | "idle" | "needs-input";
-type TabStatusBucket = "running" | "needs_input" | "none";
+type TabStatusBucket = "running" | "needs_input" | "attention" | "none";
 
 const TERMINAL_ACTIVITY_REPORTER_SCRIPT = `
 const fs = require("node:fs");
@@ -52,16 +52,21 @@ async function reportActivity(state) {
 });
 `;
 
-function internalActivityState(state: HookActivityState): "working" | "idle" | "attention" {
+function internalActivityState(state: HookActivityState): "working" | "idle" {
   if (state === "running") return "working";
-  if (state === "needs-input") return "attention";
   return "idle";
 }
 
 function tabStatusBucket(state: HookActivityState): TabStatusBucket {
   if (state === "running") return "running";
   if (state === "needs-input") return "needs_input";
-  return "none";
+  return "attention";
+}
+
+function expectedAttentionReason(state: HookActivityState): "finished" | "needs_input" | null {
+  if (state === "idle") return "finished";
+  if (state === "needs-input") return "needs_input";
+  return null;
 }
 
 function terminalTab(page: Page, terminalId: string) {
@@ -96,6 +101,7 @@ class ControlledActivityTerminal {
     await this.harness.waitForTerminalActivity({
       terminalId: this.terminal.id,
       state: internalActivityState(state),
+      attentionReason: expectedAttentionReason(state),
       timeoutMs: 15_000,
     });
   }
@@ -166,6 +172,7 @@ test.describe("Terminal activity indicators", () => {
       await harness.waitForTerminalActivity({
         terminalId: activityTerminal.terminal.id,
         state: "idle",
+        attentionReason: null,
         timeoutMs: 15_000,
       });
       await expectTerminalTabStatus(page, activityTerminal.terminal.id, "none");
