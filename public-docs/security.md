@@ -75,6 +75,14 @@ To set this up:
 
 > **Warning:** Binding to `0.0.0.0` makes the daemon reachable on all network interfaces, including public Wi-Fi and local networks. This can expose your daemon to unauthorized access. If you must bind to all interfaces, ensure you have proper firewall rules and review your `hostnames` configuration.
 
+### HTTPS reverse proxies
+
+If you put Paseo behind a reverse proxy, keep `daemon.hostnames` restricted to the domains you serve and set password authentication unless the proxy already enforces access control.
+
+For the daemon-served web UI, the proxy must forward `X-Forwarded-Proto` so the page can connect back with `wss://` when it was loaded over HTTPS. Paseo trusts forwarded headers from loopback proxies by default. For Docker, LAN, or load-balancer setups where the proxy is not loopback, configure `daemon.trustedProxies` or `PASEO_TRUSTED_PROXIES` with the proxy's IP ranges.
+
+Do not set `trustedProxies: true` unless your final trusted proxy overwrites incoming `X-Forwarded-*` headers. Otherwise a client could spoof forwarded header values.
+
 ## DNS rebinding protection
 
 **CORS is not a complete security boundary.** It controls which browser origins can make requests, but does not prevent a malicious website from resolving its domain to your local machine (DNS rebinding).
