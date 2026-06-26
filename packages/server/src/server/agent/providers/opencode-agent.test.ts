@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -305,9 +305,12 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       ],
     };
     runtime.enqueueClient(openCodeClient);
+    const paseoHome = tmpCwd();
+    const opencodeHome = path.join(paseoHome, "opencode-home");
     const client = new OpenCodeAgentClient(logger, undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
+      resolveHomeDir: () => opencodeHome,
     });
     const cwd = os.homedir();
     const catalog = await client.fetchCatalog({ cwd, force: false });
@@ -340,12 +343,30 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       },
     });
     expect(openCodeClient.calls.providerList).toEqual([
-      // cwd === os.homedir() is rewritten to a neutral scratch path so OpenCode
-      // doesn't index the entire home tree during catalog refresh. See
-      // OPENCODE_GLOBAL_CATALOG_DIR in opencode-agent.ts.
-      { directory: path.join(cwd, ".paseo", "opencode-catalog-scratch") },
+      // cwd === os.homedir() is rewritten to the neutral OpenCode home so
+      // catalog refresh doesn't make OpenCode index the entire home tree.
+      { directory: opencodeHome },
     ]);
+    rmSync(paseoHome, { recursive: true, force: true });
   }, 60_000);
+
+  test("fetchCatalog releases the acquired server when opencode-home cannot be created", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const paseoHome = tmpCwd();
+    const opencodeHome = path.join(paseoHome, "opencode-home");
+    writeFileSync(opencodeHome, "not a directory");
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      resolveHomeDir: () => opencodeHome,
+    });
+
+    await expect(client.fetchCatalog({ cwd: os.homedir(), force: false })).rejects.toThrow();
+
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    expect(runtime.clientCreations).toEqual([]);
+    rmSync(paseoHome, { recursive: true, force: true });
+  });
 
   test("limits concurrent OpenCode metadata requests across clients", async () => {
     const runtime = new TestOpenCodeHarness();

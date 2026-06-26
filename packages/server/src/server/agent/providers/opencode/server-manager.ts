@@ -1,8 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import fs from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import net from "node:net";
-import os from "node:os";
-import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
@@ -14,6 +12,7 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
+import { resolveOpenCodeHomeDir } from "./paths.js";
 
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -57,6 +56,7 @@ export interface OpenCodeServerManagerOptions {
   terminateProcess?: ProcessTerminator;
   portAllocator?: OpenCodePortAllocator;
   resolveCommandPrefix?: OpenCodeCommandPrefixResolver;
+  resolveHomeDir?: () => string;
   spawnServerProcess?: OpenCodeServerProcessSpawner;
 }
 
@@ -74,6 +74,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly terminateProcess: ProcessTerminator;
   private readonly portAllocator: OpenCodePortAllocator;
   private readonly resolveCommandPrefix: OpenCodeCommandPrefixResolver;
+  private readonly resolveHomeDir: () => string;
   private readonly spawnServerProcess: OpenCodeServerProcessSpawner;
 
   constructor(options: OpenCodeServerManagerOptions) {
@@ -86,6 +87,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     this.resolveCommandPrefix =
       options.resolveCommandPrefix ??
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeBinary));
+    this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeHomeDir;
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
   }
 
@@ -251,11 +253,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
     const serverArgs = [...launchPrefix.args, "serve", "--port", String(port)];
-    // Use a neutral scratch directory as the server cwd. Launching from the
-    // user's home directory causes OpenCode to treat /Users/admin as the default
-    // workspace and index the entire home tree.
-    const serverCwd = path.join(os.homedir(), ".paseo", "opencode-server-root");
-    await fs.mkdir(serverCwd, { recursive: true });
+    // Use a neutral OpenCode home as the server cwd. Launching from the user's
+    // home directory causes OpenCode to treat it as the default workspace and
+    // index the entire home tree.
+    const serverCwd = this.resolveHomeDir();
+    mkdirSync(serverCwd, { recursive: true });
 
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
       cwd: serverCwd,

@@ -1,5 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -208,15 +211,39 @@ describe("OpenCodeServerManager managed process ledger", () => {
     expect(runtime.terminatedPorts).toEqual([4602]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
+
+  test("starts helper server from opencode-home", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-server-home-"));
+    const opencodeHomeDir = path.join(tempDir, "opencode-home");
+    try {
+      const { manager, runtime } = createTestManager([4603], { opencodeHomeDir });
+
+      const acquisition = await manager.acquireCurrent();
+
+      expect(runtime.spawnCalls).toEqual([
+        expect.objectContaining({
+          command: "opencode",
+          args: ["serve", "--port", "4603"],
+          options: expect.objectContaining({ cwd: opencodeHomeDir }),
+        }),
+      ]);
+
+      acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function createTestManager(
   ports: number[],
-  options: { autoAnnounce?: boolean } = {},
+  options: { autoAnnounce?: boolean; opencodeHomeDir?: string } = {},
 ): {
   manager: OpenCodeServerManager;
   runtime: FakeOpenCodeServerRuntime;
 } {
+  const { opencodeHomeDir } = options;
   const runtime = new FakeOpenCodeServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
   });
@@ -226,6 +253,7 @@ function createTestManager(
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,
+      ...(opencodeHomeDir ? { resolveHomeDir: () => opencodeHomeDir } : {}),
       spawnServerProcess: runtime.spawnServerProcess,
       terminateProcess: runtime.terminateProcess,
     }),
@@ -236,6 +264,11 @@ function createTestManager(
 class FakeOpenCodeServerRuntime {
   readonly managedProcesses = new FakeManagedProcesses();
   readonly terminatedPorts: number[] = [];
+  readonly spawnCalls: Array<{
+    command: string;
+    args: string[];
+    options: Parameters<OpenCodeServerProcessSpawner>[2];
+  }> = [];
   private readonly ports: number[];
   private readonly autoAnnounce: boolean;
   private readonly processesByChild = new Map<ChildProcess, FakeOpenCodeProcess>();
@@ -263,7 +296,8 @@ class FakeOpenCodeServerRuntime {
     args: [],
   });
 
-  readonly spawnServerProcess: OpenCodeServerProcessSpawner = (command, args) => {
+  readonly spawnServerProcess: OpenCodeServerProcessSpawner = (command, args, options) => {
+    this.spawnCalls.push({ command, args, options });
     const port = Number(args.at(-1));
     const process = new FakeOpenCodeProcess({ port, pid: 10_000 + port });
     this.processesByChild.set(process.child, process);

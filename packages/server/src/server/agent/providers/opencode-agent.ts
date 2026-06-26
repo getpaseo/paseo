@@ -13,7 +13,6 @@ import {
 } from "@opencode-ai/sdk/v2/client";
 import fs from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
 import {
   createPathEquivalenceMatcher,
   createRealpathAwarePathMatcher,
@@ -76,6 +75,7 @@ import {
   OpenCodeServerManager,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
+import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
 import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
@@ -110,12 +110,6 @@ const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
-
-// Neutral scratch directory used for global provider catalog refresh.
-// Passing the user's home directory to OpenCode causes it to index the entire
-// home tree (location services + bigram indexing), which is unnecessary when
-// we only need model/mode metadata.
-const OPENCODE_GLOBAL_CATALOG_DIR = path.join(os.homedir(), ".paseo", "opencode-catalog-scratch");
 
 // Realpath-aware matcher so we catch home-dir aliases like /private/var/... on macOS,
 // trailing separators, and Windows casing — consistent with the rest of the file.
@@ -1222,6 +1216,7 @@ export const __openCodeInternals = {
   resolveOpenCodeSelectedModelContextWindow,
   isSelectableOpenCodeAgent,
   mapOpenCodeAgentToMode,
+  resolveOpenCodeHomeDir,
   get OpenCodeAgentSession() {
     return OpenCodeAgentSession;
   },
@@ -1230,6 +1225,7 @@ export const __openCodeInternals = {
 interface OpenCodeAgentClientDeps {
   serverManager?: OpenCodeServerManagerLike;
   createClient?: OpenCodeClientFactory;
+  resolveHomeDir?: () => string;
   managedProcesses?: ManagedProcessRegistry;
 }
 
@@ -1247,6 +1243,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
   private readonly serverManager: OpenCodeServerManagerLike;
   private readonly createOpenCodeClient: OpenCodeClientFactory;
+  private readonly resolveHomeDir: () => string;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
@@ -1262,8 +1259,10 @@ export class OpenCodeAgentClient implements AgentClient {
       deps.serverManager ??
       OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
         managedProcesses: deps.managedProcesses,
+        resolveHomeDir: deps.resolveHomeDir,
       });
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
+    this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
 
   async createSession(
@@ -1368,21 +1367,20 @@ export class OpenCodeAgentClient implements AgentClient {
     // Refreshing the global provider snapshot with the user's home directory
     // causes OpenCode to boot location services and run a full bigram index of
     // the entire home tree. Catalog refresh only needs model/mode metadata, so
-    // use a neutral scratch directory for the global/home scope.
-    const isHomeDirectory = options.cwd !== undefined && isHomeDirectoryPath(options.cwd);
-    const directory = isHomeDirectory ? OPENCODE_GLOBAL_CATALOG_DIR : options.cwd;
-
-    if (directory === OPENCODE_GLOBAL_CATALOG_DIR) {
-      await fs.mkdir(directory, { recursive: true });
-      this.logger.debug(
-        { originalCwd: options.cwd, rewrittenCwd: directory },
-        "opencode catalog refresh: rewriting home directory to scratch path to avoid full-tree indexing",
-      );
-    }
-
-    const client = this.createOpenCodeClient({ baseUrl: url, directory });
+    // use the neutral OpenCode home for the global/home scope.
+    const isHomeDirectory = isHomeDirectoryPath(options.cwd);
+    const directory = isHomeDirectory ? this.resolveHomeDir() : options.cwd;
 
     try {
+      if (isHomeDirectory) {
+        await fs.mkdir(directory, { recursive: true });
+        this.logger.debug(
+          { originalCwd: options.cwd, rewrittenCwd: directory },
+          "opencode catalog refresh: rewriting home directory to opencode-home to avoid full-tree indexing",
+        );
+      }
+
+      const client = this.createOpenCodeClient({ baseUrl: url, directory });
       const [models, modes] = await Promise.all([
         this.fetchModelsFromClient(client, directory),
         this.fetchModesFromClient(client, directory),
