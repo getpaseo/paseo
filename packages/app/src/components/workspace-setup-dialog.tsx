@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -26,7 +26,7 @@ import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-disp
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
-import type { ImageAttachment, MessagePayload } from "@/composer/types";
+import type { MessagePayload } from "@/composer/types";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -363,14 +363,6 @@ export function WorkspaceSetupDialog() {
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
 
-  const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
-  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
-    addImagesRef.current?.(files);
-  }, []);
-  const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
-    addImagesRef.current = addImages;
-  }, []);
-
   const isCompact = useIsCompactFormFactor();
   const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
   const agentControlsWithDisabled = useMemo(
@@ -427,7 +419,6 @@ export function WorkspaceSetupDialog() {
       snapPoints={SNAP_POINTS}
       testID="workspace-setup-dialog"
       desktopMaxWidth={640}
-      onFilesDropped={handleFilesDropped}
     >
       <View style={styles.section}>
         <Composer
@@ -447,7 +438,6 @@ export function WorkspaceSetupDialog() {
           commandDraftConfig={composerState?.commandDraftConfig}
           agentControls={agentControlsWithDisabled}
           inputWrapperStyle={styles.composerInputWrapper}
-          onAddImages={handleAddImagesCallback}
           footer={composerFooter}
         />
       </View>

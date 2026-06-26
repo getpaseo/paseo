@@ -43,6 +43,8 @@ import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
+import { FileDropZone } from "@/components/file-drop-zone";
+import type { DroppedItem } from "@/hooks/use-file-drop-zone";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -99,7 +101,9 @@ import type {
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
+import type { PickedFile } from "@/attachments/picked-file";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
+import { droppedItemsToPickedFiles } from "@/composer/attachments/drop";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
@@ -762,10 +766,6 @@ interface ComposerProps {
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   /** When true, auto-focuses the text input on web. */
   autoFocus?: boolean;
-  /** Callback to expose the addImages function to parent components */
-  onAddImages?: (addImages: (images: ImageAttachment[]) => void) => void;
-  /** Callback to expose the addFiles function to parent components */
-  onAddFiles?: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   /** Callback to expose a focus function to parent components (desktop only). */
   onFocusInput?: (focus: () => void) => void;
   /** Optional draft context for listing commands before an agent exists. */
@@ -977,8 +977,6 @@ export function Composer({
   cwd,
   clearDraft,
   autoFocus = false,
-  onAddImages,
-  onAddFiles,
   onFocusInput,
   commandDraftConfig,
   onMessageSent,
@@ -1139,7 +1137,6 @@ export function Composer({
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
 
-  // Expose addImages function to parent for drag-and-drop support
   const addImages = useCallback(
     (images: ImageAttachment[]) => {
       setSelectedAttachments((prev) => [
@@ -1150,23 +1147,12 @@ export function Composer({
     [setSelectedAttachments],
   );
 
-  useEffect(() => {
-    onAddImages?.(addImages);
-  }, [addImages, onAddImages]);
-
-  // Expose addFiles function to parent for drag-and-drop support
   const addFiles = useCallback(
     (files: UserComposerAttachment[]) => {
       setSelectedAttachments((prev) => [...prev, ...files]);
     },
     [setSelectedAttachments],
   );
-
-  /* oxlint-disable react-hooks/exhaustive-deps */
-  useEffect(() => {
-    onAddFiles?.(addFiles);
-  }, [addFiles, onAddFiles]);
-  /* oxlint-enable react-hooks/exhaustive-deps */
 
   const focusInput = useCallback(() => {
     if (isNative) return;
@@ -1363,14 +1349,13 @@ export function Composer({
     addImages(newImages);
   }, [addImages, pickImages]);
 
-  const handlePickFile = useCallback(async () => {
-    if (!client) {
-      toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
-      return;
-    }
-    try {
-      const files = await pickFiles();
-      if (!files || files.length === 0) return;
+  const uploadPickedFiles = useCallback(
+    async (files: PickedFile[]) => {
+      if (files.length === 0) return;
+      if (!client) {
+        toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
+        return;
+      }
 
       const oversized = files.find((f) => f.bytes.byteLength > MAX_FILE_SIZE_BYTES);
       if (oversized) {
@@ -1381,17 +1366,57 @@ export function Composer({
       }
 
       setIsUploadingFile(true);
-      const uploaded = await uploadFileAttachments({ client, files });
-      addFiles(uploaded);
+      try {
+        const uploaded = await uploadFileAttachments({ client, files });
+        addFiles(uploaded);
+      } catch (error) {
+        console.error("[Composer] Failed to upload file:", error);
+        toastErrorRef.current(
+          error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
+        );
+      } finally {
+        setIsUploadingFile(false);
+      }
+    },
+    [addFiles, client, t],
+  );
+
+  const handlePickFile = useCallback(async () => {
+    if (!client) {
+      toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
+      return;
+    }
+    try {
+      const files = await pickFiles();
+      if (!files) return;
+      await uploadPickedFiles(files);
     } catch (error) {
       console.error("[Composer] Failed to upload file:", error);
       toastErrorRef.current(
         error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
       );
-    } finally {
-      setIsUploadingFile(false);
     }
-  }, [client, pickFiles, addFiles, t]);
+  }, [client, pickFiles, t, uploadPickedFiles]);
+
+  const handleGenericFilesDropped = useCallback(
+    async (items: DroppedItem[]) => {
+      try {
+        const files = await droppedItemsToPickedFiles(items);
+        if (files.length === 0) return;
+        if (!client || !isConnected) {
+          toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
+          return;
+        }
+        await uploadPickedFiles(files);
+      } catch (error) {
+        console.error("[Composer] Failed to upload dropped files:", error);
+        toastErrorRef.current(
+          error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
+        );
+      }
+    },
+    [client, isConnected, t, uploadPickedFiles],
+  );
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
@@ -1869,90 +1894,97 @@ export function Composer({
 
   return (
     <ComposerKeyboardScopeProvider isActiveComposer={isPaneFocused}>
-      <Animated.View style={composerContainerStyle}>
-        <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
-        {/* Input area */}
-        <View style={inputAreaContainerStyle}>
-          <View style={styles.inputAreaContent}>
-            {queueList}
-            {sendErrorNode}
+      <FileDropZone
+        onFilesDropped={addImages}
+        onGenericFilesDropped={handleGenericFilesDropped}
+        disabled={isSubmitBusy}
+        style={styles.dropZone}
+      >
+        <Animated.View style={composerContainerStyle}>
+          <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+          {/* Input area */}
+          <View style={inputAreaContainerStyle}>
+            <View style={styles.inputAreaContent}>
+              {queueList}
+              {sendErrorNode}
 
-            <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
-              <AutocompletePopover
-                visible={autocompleteVisible}
-                anchorRef={messageInputContainerRef}
-                options={autocomplete.options}
-                selectedIndex={autocomplete.selectedIndex}
-                onSelect={autocomplete.onSelectOption}
-                isLoading={autocomplete.isLoading}
-                errorMessage={autocomplete.errorMessage}
-                loadingText={autocomplete.loadingText}
-                emptyText={autocomplete.emptyText}
-              />
+              <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
+                <AutocompletePopover
+                  visible={autocompleteVisible}
+                  anchorRef={messageInputContainerRef}
+                  options={autocomplete.options}
+                  selectedIndex={autocomplete.selectedIndex}
+                  onSelect={autocomplete.onSelectOption}
+                  isLoading={autocomplete.isLoading}
+                  errorMessage={autocomplete.errorMessage}
+                  loadingText={autocomplete.loadingText}
+                  emptyText={autocomplete.emptyText}
+                />
 
-              {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
-              <StableMessageInput
-                ref={messageInputRef}
-                value={userInput}
-                onChangeText={setUserInput}
-                onSubmit={handleSubmit}
-                hasExternalContent={hasExternalContent}
-                allowEmptySubmit={allowEmptySubmit}
-                submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
-                submitButtonTestID={submitButtonTestID}
-                submitIcon={submitIcon}
-                isSubmitDisabled={isSubmitBusy}
-                isSubmitLoading={isSubmitBusy}
-                preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
-                attachments={selectedAttachments}
-                cwd={cwd}
-                attachmentMenuItems={attachmentMenuItems}
-                onAttachButtonRef={handleAttachButtonRef}
-                onAddImages={addImages}
-                client={client}
-                isReadyForDictation={isDictationReady}
-                placeholder={messagePlaceholder}
-                autoFocus={messageInputAutoFocus}
-                autoFocusKey={`${serverId}:${agentId}`}
-                disabled={isSubmitLoading}
-                isPaneFocused={isPaneFocused}
-                leftContent={leftContent}
-                beforeVoiceContent={beforeVoiceContent}
-                rightContent={rightContent}
-                voiceServerId={serverId}
-                voiceAgentId={agentId}
-                isAgentRunning={isAgentRunning}
-                defaultSendBehavior={appSettings.sendBehavior}
-                onQueue={handleQueue}
-                onSubmitLoadingPress={submitLoadingPressHandler}
-                onKeyPress={handleCommandKeyPress}
-                onSelectionChange={handleSelectionChange}
-                onFocusChange={handleFocusChange}
-                onHeightChange={onComposerHeightChange}
-                inputWrapperStyle={inputWrapperStyle}
-                attachmentSlot={attachmentTray}
-              />
-              <Combobox
-                options={githubSearchOptions}
-                value=""
-                onSelect={noop}
-                keepOpenOnSelect
-                searchable
-                searchPlaceholder={t("composer.github.searchPlaceholder")}
-                title={t("composer.github.title")}
-                open={isGithubPickerOpen}
-                onOpenChange={handleGithubPickerOpenChange}
-                onSearchQueryChange={setGithubSearchQuery}
-                desktopPlacement="top-start"
-                anchorRef={attachButtonRef}
-                emptyText={githubEmptyText}
-                renderOption={renderGithubPickerOption}
-              />
+                {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
+                <StableMessageInput
+                  ref={messageInputRef}
+                  value={userInput}
+                  onChangeText={setUserInput}
+                  onSubmit={handleSubmit}
+                  hasExternalContent={hasExternalContent}
+                  allowEmptySubmit={allowEmptySubmit}
+                  submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
+                  submitButtonTestID={submitButtonTestID}
+                  submitIcon={submitIcon}
+                  isSubmitDisabled={isSubmitBusy}
+                  isSubmitLoading={isSubmitBusy}
+                  preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
+                  attachments={selectedAttachments}
+                  cwd={cwd}
+                  attachmentMenuItems={attachmentMenuItems}
+                  onAttachButtonRef={handleAttachButtonRef}
+                  onAddImages={addImages}
+                  client={client}
+                  isReadyForDictation={isDictationReady}
+                  placeholder={messagePlaceholder}
+                  autoFocus={messageInputAutoFocus}
+                  autoFocusKey={`${serverId}:${agentId}`}
+                  disabled={isSubmitLoading}
+                  isPaneFocused={isPaneFocused}
+                  leftContent={leftContent}
+                  beforeVoiceContent={beforeVoiceContent}
+                  rightContent={rightContent}
+                  voiceServerId={serverId}
+                  voiceAgentId={agentId}
+                  isAgentRunning={isAgentRunning}
+                  defaultSendBehavior={appSettings.sendBehavior}
+                  onQueue={handleQueue}
+                  onSubmitLoadingPress={submitLoadingPressHandler}
+                  onKeyPress={handleCommandKeyPress}
+                  onSelectionChange={handleSelectionChange}
+                  onFocusChange={handleFocusChange}
+                  onHeightChange={onComposerHeightChange}
+                  inputWrapperStyle={inputWrapperStyle}
+                  attachmentSlot={attachmentTray}
+                />
+                <Combobox
+                  options={githubSearchOptions}
+                  value=""
+                  onSelect={noop}
+                  keepOpenOnSelect
+                  searchable
+                  searchPlaceholder={t("composer.github.searchPlaceholder")}
+                  title={t("composer.github.title")}
+                  open={isGithubPickerOpen}
+                  onOpenChange={handleGithubPickerOpenChange}
+                  onSearchQueryChange={setGithubSearchQuery}
+                  desktopPlacement="top-start"
+                  anchorRef={attachButtonRef}
+                  emptyText={githubEmptyText}
+                  renderOption={renderGithubPickerOption}
+                />
+              </View>
             </View>
           </View>
-        </View>
-        {renderComposerFooter(footer, footerInlineContent)}
-      </Animated.View>
+          {renderComposerFooter(footer, footerInlineContent)}
+        </Animated.View>
+      </FileDropZone>
     </ComposerKeyboardScopeProvider>
   );
 }
@@ -1961,6 +1993,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     flexDirection: "column",
     position: "relative",
+  },
+  dropZone: {
+    flex: 0,
+    width: "100%",
   },
   borderSeparator: {
     height: theme.borderWidth[1],
