@@ -75,6 +75,24 @@ describe("PersistedConfigSchema worktrees config", () => {
   });
 });
 
+describe("PersistedConfigSchema provider credentials", () => {
+  test("accepts OpenAI voice credentials", () => {
+    const parsed = PersistedConfigSchema.parse({
+      providers: {
+        openai: {
+          voice: {
+            apiKey: " voice-secret ",
+            baseUrl: " https://voice.example.com/v1 ",
+          },
+        },
+      },
+    });
+
+    expect(parsed.providers?.openai?.voice?.apiKey).toBe("voice-secret");
+    expect(parsed.providers?.openai?.voice?.baseUrl).toBe("https://voice.example.com/v1");
+  });
+});
+
 describe("PersistedConfigSchema daemon append system prompt", () => {
   test("accepts optional append system prompt", () => {
     const parsed = PersistedConfigSchema.parse({

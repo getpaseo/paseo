@@ -45,9 +45,18 @@ const LogConfigSchema = z
   })
   .strict();
 
-const ProviderCredentialsSchema = z
+const OpenAiVoiceProviderSchema = z
+  .object({
+    apiKey: z.string().trim().min(1).optional(),
+    baseUrl: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+const OpenAiProviderSchema = z
   .object({
     apiKey: z.string().min(1).optional(),
+    voice: OpenAiVoiceProviderSchema.optional(),
+    baseUrl: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -59,7 +68,7 @@ const LocalSpeechProviderSchema = z
 
 const ProvidersSchema = z
   .object({
-    openai: ProviderCredentialsSchema.optional(),
+    openai: OpenAiProviderSchema.optional(),
     local: LocalSpeechProviderSchema.optional(),
   })
   .strict();

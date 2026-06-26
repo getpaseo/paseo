@@ -220,6 +220,36 @@ describe("provider usage list message contract", () => {
   });
 });
 
+describe("diagnostics message contract", () => {
+  test("accepts the diagnostics request as a simple namespaced RPC", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "diagnostics.request",
+      requestId: "diag-1",
+    });
+
+    expect(parsed).toEqual({
+      type: "diagnostics.request",
+      requestId: "diag-1",
+    });
+  });
+
+  test("accepts a copyable diagnostics response", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "diagnostics.response",
+      payload: {
+        requestId: "diag-2",
+        diagnostic: "Paseo diagnostics\n  Status: ok",
+      },
+    });
+
+    expect(parsed.type).toBe("diagnostics.response");
+    if (parsed.type !== "diagnostics.response") {
+      throw new Error("Expected diagnostics.response");
+    }
+    expect(parsed.payload.diagnostic).toContain("Status: ok");
+  });
+});
+
 describe("agent detach RPC", () => {
   test("parses the namespaced detach request", () => {
     const parsed = SessionInboundMessageSchema.parse({

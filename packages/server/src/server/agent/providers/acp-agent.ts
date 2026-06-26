@@ -1,6 +1,7 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
@@ -102,6 +103,12 @@ import {
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import { platformShell, spawnProcess } from "../../../utils/spawn.js";
+import {
+  type DiagnosticEntry,
+  toDiagnosticErrorMessage,
+  truncateForDiagnostic,
+} from "./diagnostic-utils.js";
+import { withTimeout } from "../../../utils/promise-timeout.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -187,6 +194,21 @@ function resolveTerminalCommand(
   return { command: shell.command, args: [...shell.flag, command] };
 }
 
+function formatDurationMs(startedAt: number): string {
+  return `${Math.max(0, Date.now() - startedAt)}ms`;
+}
+
+function pushACPStderrRow(rows: DiagnosticEntry[], stderrChunks: string[]): void {
+  const stderr = stderrChunks.join("").trim();
+  if (!stderr) {
+    return;
+  }
+  rows.push({
+    label: "ACP stderr",
+    value: truncateForDiagnostic(stderr),
+  });
+}
+
 export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -215,6 +237,8 @@ const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
+const ACP_CATALOG_TIMEOUT_MS = 60_000;
+const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -371,6 +395,19 @@ export interface SpawnedACPProcess {
   child: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
   initialize: InitializeResponse;
+  stderrChunks?: string[];
+}
+
+type UninitializedACPProcess = Omit<SpawnedACPProcess, "initialize"> & {
+  initialize?: InitializeResponse;
+};
+
+interface ACPProcessTransport {
+  child: ChildProcessWithoutNullStreams;
+  connection: ClientSideConnection;
+  stderrChunks: string[];
+  spawnReady: Promise<void>;
+  spawnError: Promise<never>;
 }
 
 export interface ACPToolSnapshot {
@@ -763,31 +800,49 @@ export class ACPAgentClient implements AgentClient {
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     const { cwd } = options;
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
+    let probe: UninitializedACPProcess | null = null;
     try {
-      const response = await this.runACPRequest(() =>
-        probe.connection.newSession({
-          cwd,
-          mcpServers: [],
-        }),
+      const catalogProbe = (async () => {
+        const initializedProbe = await this.spawnProcess(PROBE_ENV, {
+          initializeTimeoutMs: timeoutMs,
+          onSpawned: (spawned) => {
+            probe = spawned;
+          },
+        });
+        probe = initializedProbe;
+        const response = await this.runACPRequest(() =>
+          initializedProbe.connection.newSession({
+            cwd,
+            mcpServers: [],
+          }),
+        );
+        const transformed = this.transformSessionResponse(response);
+        const models = deriveModelDefinitionsFromACP(
+          this.provider,
+          transformed.models,
+          transformed.configOptions,
+        );
+        const modeInfo = deriveModesFromACP(
+          this.defaultModes,
+          transformed.modes,
+          transformed.configOptions,
+        );
+        return {
+          models: this.modelTransformer ? this.modelTransformer(models) : models,
+          modes: modeInfo.modes,
+        };
+      })();
+
+      return await withTimeout(
+        catalogProbe,
+        timeoutMs,
+        `ACP catalog probe timed out after ${timeoutMs}ms`,
       );
-      const transformed = this.transformSessionResponse(response);
-      const models = deriveModelDefinitionsFromACP(
-        this.provider,
-        transformed.models,
-        transformed.configOptions,
-      );
-      const modeInfo = deriveModesFromACP(
-        this.defaultModes,
-        transformed.modes,
-        transformed.configOptions,
-      );
-      return {
-        models: this.modelTransformer ? this.modelTransformer(models) : models,
-        modes: modeInfo.modes,
-      };
     } finally {
-      await this.closeProbe(probe);
+      if (probe) {
+        await this.closeProbe(probe);
+      }
     }
   }
 
@@ -874,8 +929,33 @@ export class ACPAgentClient implements AgentClient {
 
   protected async spawnProcess(
     launchEnv?: Record<string, string>,
-    options?: { initializeTimeoutMs?: number },
+    options?: {
+      initializeTimeoutMs?: number;
+      onSpawned?: (probe: UninitializedACPProcess) => void;
+    },
   ): Promise<SpawnedACPProcess> {
+    const transport = await this.spawnTransport(launchEnv);
+    const probe: UninitializedACPProcess = {
+      child: transport.child,
+      connection: transport.connection,
+      stderrChunks: transport.stderrChunks,
+    };
+    options?.onSpawned?.(probe);
+    try {
+      const initialize = await this.initializeTransport(transport, options?.initializeTimeoutMs);
+      const initializedProbe: SpawnedACPProcess = {
+        ...probe,
+        initialize,
+      };
+      probe.initialize = initialize;
+      return initializedProbe;
+    } catch (error) {
+      await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      throw error;
+    }
+  }
+
+  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
@@ -898,6 +978,11 @@ export class ACPAgentClient implements AgentClient {
         reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
       });
     });
+    const spawnReadyPromise = new Promise<void>((resolve) => {
+      child.once("spawn", () => {
+        resolve();
+      });
+    });
 
     const stream = createLoggedNdJsonStream(
       Writable.toWeb(child.stdin),
@@ -906,38 +991,45 @@ export class ACPAgentClient implements AgentClient {
     );
     const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
 
+    return {
+      child,
+      connection,
+      stderrChunks,
+      spawnReady: spawnReadyPromise,
+      spawnError: spawnErrorPromise,
+    };
+  }
+
+  protected async initializeTransport(
+    transport: ACPProcessTransport,
+    initializeTimeoutMs?: number,
+  ): Promise<InitializeResponse> {
     let timeout: ReturnType<typeof setTimeout> | null = null;
-    const initializeTimeoutPromise = options?.initializeTimeoutMs
+    const initializeTimeoutPromise = initializeTimeoutMs
       ? new Promise<never>((_, reject) => {
           timeout = setTimeout(() => {
-            reject(new Error(`ACP initialize timed out after ${options.initializeTimeoutMs}ms`));
-          }, options.initializeTimeoutMs);
+            reject(new Error(`ACP initialize timed out after ${initializeTimeoutMs}ms`));
+          }, initializeTimeoutMs);
         })
       : null;
 
-    let initialize: InitializeResponse;
     try {
-      initialize = await this.runACPRequest(() =>
+      return await this.runACPRequest(() =>
         Promise.race([
-          connection.initialize({
+          transport.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: ACP_CLIENT_CAPABILITIES,
             clientInfo: { name: "Paseo", version: "dev" },
           }),
-          spawnErrorPromise,
+          transport.spawnError,
           ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
         ]),
       );
-    } catch (error) {
-      await terminateChildProcess(child, 2_000, this.terminateProcess);
-      throw error;
     } finally {
       if (timeout) {
         clearTimeout(timeout);
       }
     }
-
-    return { child, connection, initialize };
   }
 
   protected buildProbeClient(): ACPClient {
@@ -961,9 +1053,9 @@ export class ACPAgentClient implements AgentClient {
     };
   }
 
-  protected async closeProbe(probe: SpawnedACPProcess): Promise<void> {
+  protected async closeProbe(probe: UninitializedACPProcess): Promise<void> {
     try {
-      if (probe.initialize.agentCapabilities?.sessionCapabilities?.close) {
+      if (probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
         // No active session to close here; ignore capability.
       }
     } finally {
@@ -976,6 +1068,114 @@ export class ACPAgentClient implements AgentClient {
       return await request();
     } catch (error) {
       throw toACPRequestError(error);
+    }
+  }
+
+  protected async buildACPProbeDiagnosticRows(
+    options: {
+      cwd?: string;
+      phaseTimeoutMs?: number;
+    } = {},
+  ): Promise<DiagnosticEntry[]> {
+    const rows: DiagnosticEntry[] = [];
+    const phaseTimeoutMs = options.phaseTimeoutMs ?? ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS;
+    const cwd = options.cwd ?? homedir();
+    let transport: ACPProcessTransport | null = null;
+
+    try {
+      const spawnStartedAt = Date.now();
+      try {
+        transport = await this.spawnTransport(PROBE_ENV);
+        await withTimeout(
+          Promise.race([transport.spawnReady, transport.spawnError]),
+          phaseTimeoutMs,
+          `ACP spawn timed out after ${phaseTimeoutMs}ms`,
+        );
+        rows.push({
+          label: "ACP spawn",
+          value: `ok (${formatDurationMs(spawnStartedAt)})`,
+        });
+      } catch (error) {
+        rows.push({
+          label: "ACP spawn",
+          value: `error: ${toDiagnosticErrorMessage(error)}`,
+        });
+        return rows;
+      }
+      const activeTransport = transport;
+
+      const initializeStartedAt = Date.now();
+      try {
+        await this.initializeTransport(activeTransport, phaseTimeoutMs);
+        rows.push({
+          label: "ACP initialize",
+          value: `ok (${formatDurationMs(initializeStartedAt)})`,
+        });
+      } catch (error) {
+        rows.push({
+          label: "ACP initialize",
+          value: `error: ${toDiagnosticErrorMessage(error)}`,
+        });
+        pushACPStderrRow(rows, activeTransport.stderrChunks);
+        return rows;
+      }
+
+      const sessionStartedAt = Date.now();
+      try {
+        const response = await withTimeout(
+          this.runACPRequest(() =>
+            activeTransport.connection.newSession({
+              cwd,
+              mcpServers: [],
+            }),
+          ),
+          phaseTimeoutMs,
+          `ACP session/new timed out after ${phaseTimeoutMs}ms`,
+        );
+        const transformed = this.transformSessionResponse(response);
+        const models = deriveModelDefinitionsFromACP(
+          this.provider,
+          transformed.models,
+          transformed.configOptions,
+        );
+        const modeInfo = deriveModesFromACP(
+          this.defaultModes,
+          transformed.modes,
+          transformed.configOptions,
+        );
+        rows.push({
+          label: "ACP session/new",
+          value: `ok (${formatDurationMs(sessionStartedAt)}; models=${models.length}; modes=${
+            modeInfo.modes.length
+          })`,
+        });
+      } catch (error) {
+        rows.push({
+          label: "ACP session/new",
+          value: `error: ${toDiagnosticErrorMessage(error)}`,
+        });
+        pushACPStderrRow(rows, activeTransport.stderrChunks);
+        return rows;
+      }
+
+      pushACPStderrRow(rows, activeTransport.stderrChunks);
+      return rows;
+    } finally {
+      if (transport) {
+        const cleanupStartedAt = Date.now();
+        try {
+          await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+          rows.push({
+            label: "ACP cleanup",
+            value: `ok (${formatDurationMs(cleanupStartedAt)})`,
+          });
+        } catch (error) {
+          rows.push({
+            label: "ACP cleanup",
+            value: `error: ${toDiagnosticErrorMessage(error)}`,
+          });
+        }
+      }
     }
   }
 

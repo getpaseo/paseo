@@ -3,6 +3,12 @@ import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import { getPidLockInfo } from "../../pid-lock.js";
 import { generateLocalPairingOffer } from "../../pairing-offer.js";
+import {
+  collectDaemonDiagnostics,
+  type DaemonWebSocketRuntimeDiagnosticSnapshot,
+} from "./diagnostics.js";
+import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 export interface DaemonRuntimeConfig {
   listen: string | null;
@@ -26,7 +32,11 @@ export interface DaemonSessionOptions {
   serverId: string | undefined;
   daemonVersion: string | undefined;
   daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
+  listAgents: () => ManagedAgent[];
+  listProjects: () => Promise<PersistedProjectRecord[]>;
+  listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
+  getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   logger: pino.Logger;
 }
 
@@ -43,7 +53,11 @@ export class DaemonSession {
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
   private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
+  private readonly listAgents: () => ManagedAgent[];
+  private readonly listProjects: () => Promise<PersistedProjectRecord[]>;
+  private readonly listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   private readonly listProviderAvailability: () => Promise<ProviderAvailability[]>;
+  private readonly getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   private readonly logger: pino.Logger;
 
   constructor(options: DaemonSessionOptions) {
@@ -52,7 +66,11 @@ export class DaemonSession {
     this.serverId = options.serverId;
     this.daemonVersion = options.daemonVersion;
     this.daemonRuntimeConfig = options.daemonRuntimeConfig;
+    this.listAgents = options.listAgents;
+    this.listProjects = options.listProjects;
+    this.listWorkspaces = options.listWorkspaces;
     this.listProviderAvailability = options.listProviderAvailability;
+    this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.logger = options.logger;
   }
 
@@ -132,6 +150,43 @@ export class DaemonSession {
           requestId: msg.requestId,
           requestType: "daemon.get_pairing_offer.request",
           error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  async handleDiagnosticsRequest(
+    msg: Extract<SessionInboundMessage, { type: "diagnostics.request" }>,
+  ): Promise<void> {
+    try {
+      const diagnostic = await collectDaemonDiagnostics({
+        paseoHome: this.paseoHome,
+        serverId: this.serverId,
+        daemonVersion: this.daemonVersion,
+        daemonRuntimeConfig: this.daemonRuntimeConfig,
+        listAgents: this.listAgents,
+        listProjects: this.listProjects,
+        listWorkspaces: this.listWorkspaces,
+        listProviderAvailability: this.listProviderAvailability,
+        getWebSocketRuntimeMetrics: this.getWebSocketRuntimeMetrics,
+        logger: this.logger,
+      });
+      this.host.emit({
+        type: "diagnostics.response",
+        payload: {
+          requestId: msg.requestId,
+          diagnostic,
+        },
+      });
+    } catch (error) {
+      this.logger.error({ err: error }, "Failed to handle diagnostics request");
+      this.host.emit({
+        type: "diagnostics.response",
+        payload: {
+          requestId: msg.requestId,
+          diagnostic: `Paseo diagnostics\n  Error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         },
       });
     }

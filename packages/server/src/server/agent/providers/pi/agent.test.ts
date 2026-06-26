@@ -885,6 +885,17 @@ describe("PiRpcAgentClient", () => {
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
   });
 
+  test("lists no draft features without starting a Pi session", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await expect(
+      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
+    ).resolves.toEqual([]);
+
+    expect(pi.recordedLaunches).toHaveLength(0);
+  });
+
   test("maps extension, prompt, and skill commands to Paseo slash commands", async () => {
     const { pi, session } = await createSession();
     pi.latestSession().commands = [

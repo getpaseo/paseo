@@ -1,13 +1,12 @@
 {
   "name": "paseo",
-  "version": "0.1.100",
+  "version": "0.1.101",
   "private": true,
-  "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
+  "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
     "development",
     "mcp",
     "openai",
-    "realtime",
     "voice",
     "voice-assistant"
   ],

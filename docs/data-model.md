@@ -163,7 +163,7 @@ Single file, validated with `PersistedConfigSchema`.
     root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
   },
   providers: {
-    openai: { apiKey: string },
+    openai: { voice: { apiKey: string, baseUrl: string } },
     local: { modelsDir: string }
   },
   agents: {
@@ -192,6 +192,37 @@ All fields are optional with sensible defaults.
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
+
+Set these to select OpenAI instead of local speech:
+
+| Env var                        | Applies to                      |
+| ------------------------------ | ------------------------------- |
+| `PASEO_VOICE_STT_PROVIDER`     | Voice mode STT provider         |
+| `PASEO_DICTATION_STT_PROVIDER` | Composer dictation STT provider |
+| `PASEO_VOICE_TTS_PROVIDER`     | Voice mode TTS provider         |
+
+OpenAI voice can be configured under `providers.openai`:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "voice": {
+        "apiKey": "sk-...",
+        "baseUrl": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+`providers.openai.voice.apiKey` and `providers.openai.voice.baseUrl` apply only to Paseo OpenAI voice features.
+
+Paseo uses these paths under the configured OpenAI base URL:
+
+- dictation STT: `/v1/audio/transcriptions`
+- voice mode STT: `/v1/audio/transcriptions`
+- voice mode TTS: `/v1/audio/speech`
 
 ---
 

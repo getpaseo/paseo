@@ -29,10 +29,12 @@ import type {
   AgentRunResult,
   AgentSession,
   AgentSessionConfig,
+  AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
   ImportProviderSessionInput,
 } from "./agent-sdk-types.js";
+import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
 interface Deferred<T> {
@@ -524,6 +526,205 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto");
+});
+
+test("listDraftCommands returns no commands without guessing a missing model", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-commands-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  class DraftCommandClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+    createSessionCalls = 0;
+    availabilityCalls = 0;
+
+    override async isAvailable(): Promise<boolean> {
+      this.availabilityCalls += 1;
+      return true;
+    }
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return await super.fetchCatalog();
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+  }
+  const client = new DraftCommandClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  await expect(manager.listDraftCommands({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+
+  expect(client.fetchCatalogCalls).toBe(0);
+  expect(client.createSessionCalls).toBe(0);
+  expect(client.availabilityCalls).toBe(0);
+});
+
+test("listDraftCommands uses explicit model config without default model fetching", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-commands-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const draftCommand: AgentSlashCommand = {
+    name: "review",
+    description: "Review changes",
+    argumentHint: "",
+    kind: "command",
+  };
+  class DraftCommandSession extends TestAgentSession {
+    override async listCommands(): Promise<AgentSlashCommand[]> {
+      return [draftCommand];
+    }
+  }
+  class DraftCommandClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+    createSessionCalls = 0;
+    readonly commandConfigs: AgentSessionConfig[] = [];
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return await super.fetchCatalog();
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      this.commandConfigs.push(config);
+      return new DraftCommandSession(config);
+    }
+  }
+  const client = new DraftCommandClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  const commands = await manager.listDraftCommands({
+    provider: "codex",
+    cwd: workdir,
+    model: "gpt-5.4",
+  });
+
+  expect(commands).toEqual([draftCommand]);
+  expect(client.fetchCatalogCalls).toBe(0);
+  expect(client.createSessionCalls).toBe(1);
+  expect(client.commandConfigs).toEqual([
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "gpt-5.4",
+      modeId: "auto",
+    },
+  ]);
+});
+
+test("listDraftFeatures returns no features without guessing a missing model", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  class DraftFeatureClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+    createSessionCalls = 0;
+    availabilityCalls = 0;
+    readonly featureConfigs: AgentSessionConfig[] = [];
+
+    override async isAvailable(): Promise<boolean> {
+      this.availabilityCalls += 1;
+      return true;
+    }
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return await super.fetchCatalog();
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+
+    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+      this.featureConfigs.push(config);
+      return [createFeature({ id: "fast_mode", label: "Fast mode", value: false })];
+    }
+  }
+  const client = new DraftFeatureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+
+  expect(client.fetchCatalogCalls).toBe(0);
+  expect(client.createSessionCalls).toBe(0);
+  expect(client.availabilityCalls).toBe(0);
+  expect(client.featureConfigs).toEqual([]);
+});
+
+test("listDraftFeatures uses explicit model config without default model fetching", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const draftFeature = createFeature({ id: "fast_mode", label: "Fast mode", value: false });
+  class DraftFeatureClient extends TestAgentClient {
+    fetchCatalogCalls = 0;
+    createSessionCalls = 0;
+    readonly featureConfigs: AgentSessionConfig[] = [];
+
+    override async fetchCatalog() {
+      this.fetchCatalogCalls += 1;
+      return await super.fetchCatalog();
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+
+    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+      this.featureConfigs.push(config);
+      return [draftFeature];
+    }
+  }
+  const client = new DraftFeatureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  const features = await manager.listDraftFeatures({
+    provider: "codex",
+    cwd: workdir,
+    model: "gpt-5.4",
+  });
+
+  expect(features).toEqual([draftFeature]);
+  expect(client.fetchCatalogCalls).toBe(0);
+  expect(client.createSessionCalls).toBe(0);
+  expect(client.featureConfigs).toEqual([
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "gpt-5.4",
+      modeId: "auto",
+    },
+  ]);
 });
 
 test("createAgent injects daemon append system prompt at runtime only", async () => {
@@ -1039,6 +1240,84 @@ test("createAgent injects paseo MCP server only into provider launch config", as
       type: "http",
       url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
     },
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+
+  const stored = await storage.get(snapshot.id);
+  expect(stored?.config?.mcpServers).toEqual({
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+});
+
+test("createAgent passes native Paseo tools through launch context without internal MCP", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  const paseoTools: PaseoToolCatalog = {
+    tools: new Map(),
+    getTool: () => undefined,
+    executeTool: async () => {
+      throw new Error("No tools registered in test catalog");
+    },
+  };
+
+  class NativeToolsClient extends TestAgentClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+      supportsNativePaseoTools: true,
+    };
+    lastConfig: AgentSessionConfig | null = null;
+    lastLaunchContext: AgentLaunchContext | undefined;
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastConfig = config;
+      this.lastLaunchContext = launchContext;
+      return new TestAgentSession(config);
+    }
+  }
+
+  const client = new NativeToolsClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    paseoToolCatalogFactory: () => paseoTools,
+    idFactory: () => "00000000-0000-4000-8000-000000000106",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    mcpServers: {
+      custom: {
+        type: "stdio",
+        command: "custom-mcp",
+      },
+    },
+  });
+
+  expect(client.lastLaunchContext?.paseoTools).toBe(paseoTools);
+  expect(client.lastConfig?.mcpServers).toEqual({
+    custom: {
+      type: "stdio",
+      command: "custom-mcp",
+    },
+  });
+  expect(snapshot.config.mcpServers).toEqual({
     custom: {
       type: "stdio",
       command: "custom-mcp",

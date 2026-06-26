@@ -22,6 +22,7 @@ const TEST_CAPABILITIES = {
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 } as const;
+const TEST_REFRESH_TIMEOUT_MS = 120_000;
 
 // Builds an AgentClient that can be injected via the public extraClients option.
 // extraClients is the only injection surface the manager exposes for tests.
@@ -46,6 +47,20 @@ function createExtraClient(
     },
     ...overrides,
   } satisfies AgentClient;
+}
+
+async function withEnv(key: string, value: string, run: () => Promise<void>): Promise<void> {
+  const previous = process.env[key];
+  process.env[key] = value;
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
 }
 
 describe("ProviderSnapshotManager public surface", () => {
@@ -453,7 +468,7 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("getProviderDiagnostic force-refreshes the snapshot via a single fetchCatalog call", async () => {
+  test("getProviderDiagnostic force-refreshes the snapshot and appends models/status", async () => {
     const catalogModels: AgentModelDefinition[] = [
       { provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
     ];
@@ -512,12 +527,185 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("getProviderDiagnostic throws for an unknown provider", async () => {
+  test("getProviderDiagnostic turns provider diagnostic failures into diagnostic text", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({
+            models: [{ provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" }],
+            modes: [] as AgentMode[],
+          }),
+          getDiagnostic: async () => {
+            throw new Error("diagnostic probe exploded");
+          },
+        }),
+      },
+    });
+    try {
+      const result = await manager.getProviderDiagnostic("codex");
+      expect(result.diagnostic).toContain("Error: diagnostic probe exploded");
+      expect(result.diagnostic).toContain("Models: 1");
+      expect(result.diagnostic).toContain("Status: Ready");
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("getProviderDiagnostic starts provider diagnostics before waiting for snapshot refresh", async () => {
+    vi.useFakeTimers();
+    let diagnosticStarted = false;
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => new Promise(() => {}),
+          getDiagnostic: async () => {
+            diagnosticStarted = true;
+            return { diagnostic: "codex diagnostics available" };
+          },
+        }),
+      },
+    });
+    try {
+      const diagnosticRequest = manager.getProviderDiagnostic("codex");
+      expect(diagnosticStarted).toBe(true);
+
+      const diagnosticOrBlocked = Promise.race([
+        diagnosticRequest.then(() => ({ type: "diagnostic" as const })),
+        new Promise<{ type: "blocked" }>((finish) => {
+          setTimeout(() => finish({ type: "blocked" }), 1);
+        }),
+      ]);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(diagnosticOrBlocked).resolves.toEqual({ type: "blocked" });
+
+      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS - 1);
+      const result = await diagnosticRequest;
+      expect(result.diagnostic).toContain("codex diagnostics available");
+      expect(result.diagnostic).toContain(
+        `Status: Error: Timed out refreshing Codex after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+      );
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("getProviderDiagnostic starts snapshot refresh even when provider diagnostics hang", async () => {
+    vi.useFakeTimers();
+    let diagnosticStarted = false;
+    let snapshotStarted = false;
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => {
+            snapshotStarted = true;
+            return new Promise(() => {});
+          },
+          getDiagnostic: async () => {
+            diagnosticStarted = true;
+            return new Promise(() => {});
+          },
+        }),
+      },
+    });
+    try {
+      const diagnosticRequest = manager.getProviderDiagnostic("codex");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(diagnosticStarted).toBe(true);
+      expect(snapshotStarted).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
+      const result = await diagnosticRequest;
+      expect(result.diagnostic).toContain(
+        `Error: Timed out collecting Codex diagnostic after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+      );
+      expect(result.diagnostic).toContain(
+        `Status: Error: Timed out refreshing Codex after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+      );
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("getProviderDiagnostic reports provider diagnostic timeout while preserving snapshot details", async () => {
+    vi.useFakeTimers();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({
+            models: [{ provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" }],
+            modes: [] as AgentMode[],
+          }),
+          getDiagnostic: async () => new Promise(() => {}),
+        }),
+      },
+    });
+    try {
+      const diagnosticRequest = manager.getProviderDiagnostic("codex");
+      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
+
+      const result = await diagnosticRequest;
+      expect(result.diagnostic).toContain(
+        `Error: Timed out collecting Codex diagnostic after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+      );
+      expect(result.diagnostic).toContain("Models: 1");
+      expect(result.diagnostic).toContain("Status: Ready");
+    } finally {
+      manager.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  test("getProviderDiagnostic reports a stuck catalog refresh inside the diagnostic", async () => {
+    await withEnv("PASEO_ENABLE_MOCK_SLOW", "true", async () => {
+      vi.useFakeTimers();
+      const manager = new ProviderSnapshotManager({
+        logger: createTestLogger(),
+        isDev: true,
+        refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      });
+      try {
+        const diagnosticRequest = manager.getProviderDiagnostic("mock-slow");
+        await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
+
+        const result = await diagnosticRequest;
+        expect(result.provider).toBe("mock-slow");
+        expect(result.diagnostic).toContain("Mock slow provider");
+        expect(result.diagnostic).toContain("Models: —");
+        expect(result.diagnostic).toContain(
+          `Status: Error: Timed out refreshing Mock Slow Provider after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+        );
+      } finally {
+        manager.destroy();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  test("getProviderDiagnostic returns an error diagnostic for an unknown provider", async () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     try {
-      await expect(
-        manager.getProviderDiagnostic("unknown-provider" as AgentProvider),
-      ).rejects.toThrow(/not configured/);
+      await expect(manager.getProviderDiagnostic("unknown-provider" as AgentProvider)).resolves
+        .toMatchInlineSnapshot(`
+          {
+            "diagnostic": "unknown-provider
+            Error: Provider unknown-provider is not configured",
+            "provider": "unknown-provider",
+          }
+        `);
     } finally {
       manager.destroy();
     }

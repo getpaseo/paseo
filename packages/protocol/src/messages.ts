@@ -1060,6 +1060,11 @@ export const DaemonGetPairingOfferRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const DiagnosticsRequestSchema = z.object({
+  type: z.literal("diagnostics.request"),
+  requestId: z.string(),
+});
+
 export const GetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("get_daemon_config_request"),
   requestId: z.string(),
@@ -2024,6 +2029,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
+  DiagnosticsRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -2319,6 +2325,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
+        // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
+        daemonDiagnostics: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3029,6 +3037,16 @@ export const DaemonGetPairingOfferResponseSchema = z.object({
       url: z.string(),
       qr: z.string().nullable().optional(),
       relayEnabled: z.boolean(),
+    })
+    .passthrough(),
+});
+
+export const DiagnosticsResponseSchema = z.object({
+  type: z.literal("diagnostics.response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      diagnostic: z.string(),
     })
     .passthrough(),
 });
@@ -4117,6 +4135,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
+  DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
@@ -4304,6 +4323,7 @@ export type ListProviderFeaturesResponseMessage = z.infer<
 export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvidersResponseSchema>;
 export type DaemonGetStatusResponse = z.infer<typeof DaemonGetStatusResponseSchema>;
 export type DaemonGetPairingOfferResponse = z.infer<typeof DaemonGetPairingOfferResponseSchema>;
+export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>;
 export type GetProvidersSnapshotResponseMessage = z.infer<
   typeof GetProvidersSnapshotResponseMessageSchema
 >;

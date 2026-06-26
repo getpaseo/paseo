@@ -27,10 +27,14 @@ import {
   type ProviderDefinition,
 } from "./provider-registry.js";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
-import { formatProviderDiagnostic } from "./providers/diagnostic-utils.js";
+import {
+  formatProviderDiagnostic,
+  formatProviderDiagnosticError,
+} from "./providers/diagnostic-utils.js";
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
 
-const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
+const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
+const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 
 // Provider refresh probes can be slow on cold starts (e.g. Copilot's first
@@ -51,6 +55,13 @@ function resolveRefreshTimeoutMs(option: number | undefined): number {
   return DEFAULT_REFRESH_TIMEOUT_MS;
 }
 
+function resolveDiagnosticTimeoutMs(option: number | undefined, refreshTimeoutMs: number): number {
+  if (typeof option === "number" && Number.isFinite(option) && option > 0) {
+    return option;
+  }
+  return Math.max(refreshTimeoutMs, DEFAULT_DIAGNOSTIC_TIMEOUT_MS);
+}
+
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
 export interface ProviderSnapshotManagerOptions {
@@ -62,6 +73,7 @@ export interface ProviderSnapshotManagerOptions {
   isDev?: boolean;
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
+  diagnosticTimeoutMs?: number;
 }
 
 interface ProviderSnapshotRefreshOptions {
@@ -128,6 +140,7 @@ export class ProviderSnapshotManager {
   private readonly events = new EventEmitter();
   private destroyed = false;
   private readonly refreshTimeoutMs: number;
+  private readonly diagnosticTimeoutMs: number;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -149,6 +162,10 @@ export class ProviderSnapshotManager {
     this.providerOverrides = options.providerOverrides;
     this.baseProviderOverrides = options.providerOverrides;
     this.refreshTimeoutMs = resolveRefreshTimeoutMs(options.refreshTimeoutMs);
+    this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(
+      options.diagnosticTimeoutMs,
+      this.refreshTimeoutMs,
+    );
     this.providerRegistry = this.buildRegistry();
     this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
   }
@@ -313,22 +330,25 @@ export class ProviderSnapshotManager {
   }
 
   async getProviderDiagnostic(provider: AgentProvider): Promise<ProviderDiagnosticResult> {
-    const definition = this.requireProvider(provider);
-    const client = this.ensureClient(provider, definition);
+    const definition = this.providerRegistry[provider];
+    if (!definition) {
+      return {
+        provider,
+        diagnostic: formatProviderDiagnostic(provider, [
+          { label: "Error", value: `Provider ${provider} is not configured` },
+        ]),
+      };
+    }
 
-    // Force-refresh the snapshot so Models/Status come from the single catalog authority.
-    await this.refreshSnapshotForCwd({ cwd: homedir(), providers: [provider] });
-    const entry = await this.getProvider({ cwd: homedir(), provider, wait: true });
+    const baseDiagnosticPromise = this.getBaseProviderDiagnostic(provider, definition);
+    const snapshotEntryPromise = this.refreshDiagnosticSnapshotEntry(provider, definition);
+    const [baseDiagnostic, entry] = await Promise.all([
+      baseDiagnosticPromise,
+      snapshotEntryPromise,
+    ]);
 
     const modelCount = entry.status === "ready" ? String(entry.models?.length ?? 0) : "—";
     const status = formatProviderStatus(entry);
-
-    const baseDiagnostic = client.getDiagnostic
-      ? (await client.getDiagnostic()).diagnostic
-      : formatProviderDiagnostic(definition.label ?? provider, [
-          { label: "Diagnostic", value: "No diagnostic available" },
-        ]);
-
     const diagnostic = `${baseDiagnostic}\n  Models: ${modelCount}\n  Status: ${status}`;
     return { provider, diagnostic };
   }
@@ -444,6 +464,52 @@ export class ProviderSnapshotManager {
       throw new Error(`Provider ${provider} is not configured`);
     }
     return definition;
+  }
+
+  private async refreshDiagnosticSnapshotEntry(
+    provider: AgentProvider,
+    definition: ProviderDefinition,
+  ): Promise<ProviderSnapshotEntry> {
+    try {
+      const cwd = resolveSnapshotCwd();
+      await this.refreshSnapshotForCwd({ cwd, providers: [provider] });
+      return await this.getProvider({ cwd, provider, wait: false });
+    } catch (error) {
+      return {
+        provider,
+        status: "error",
+        enabled: definition.enabled,
+        label: definition.label,
+        description: definition.description,
+        defaultModeId: definition.defaultModeId,
+        error: toErrorMessage(error),
+      };
+    }
+  }
+
+  private async getBaseProviderDiagnostic(
+    provider: AgentProvider,
+    definition: ProviderDefinition,
+  ): Promise<string> {
+    try {
+      const client = this.ensureClient(provider, definition);
+      if (client.getDiagnostic) {
+        return (
+          await withTimeout(
+            client.getDiagnostic(),
+            this.diagnosticTimeoutMs,
+            `Timed out collecting ${definition.label ?? provider} diagnostic after ${
+              this.diagnosticTimeoutMs
+            }ms`,
+          )
+        ).diagnostic;
+      }
+      return formatProviderDiagnostic(definition.label ?? provider, [
+        { label: "Diagnostic", value: "No diagnostic available" },
+      ]);
+    } catch (error) {
+      return formatProviderDiagnosticError(definition.label ?? provider, error);
+    }
   }
 
   private createLoadingEntries(): Map<AgentProvider, ProviderSnapshotEntry> {
@@ -655,7 +721,7 @@ export class ProviderSnapshotManager {
       }
 
       const catalog = await withTimeout(
-        definition.fetchCatalog({ cwd, force }, client),
+        definition.fetchCatalog({ cwd, force, timeoutMs: this.refreshTimeoutMs }, client),
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );

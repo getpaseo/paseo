@@ -1,6 +1,7 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type { AgentProviderNotice };
 
@@ -169,6 +170,7 @@ export interface AgentCapabilityFlags {
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
+  supportsNativePaseoTools?: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
   supportsRewindConversation?: boolean;
@@ -577,6 +579,11 @@ export interface AgentSessionConfig {
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
+  /**
+   * Runtime-only internal Paseo tools. This must never be persisted into
+   * AgentSessionConfig; providers may adapt it to their native tool surface.
+   */
+  paseoTools?: PaseoToolCatalog;
 }
 
 export interface AgentCreateSessionOptions {
@@ -639,6 +646,7 @@ export interface AgentSession {
 export interface FetchCatalogOptions {
   cwd: string;
   force: boolean;
+  timeoutMs?: number;
 }
 
 export interface ProviderCatalog {

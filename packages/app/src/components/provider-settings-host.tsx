@@ -18,6 +18,7 @@ export function ProviderSettingsHost() {
 
   return (
     <ProviderDiagnosticSheet
+      key={`${serverId}:${provider}`}
       provider={provider}
       serverId={serverId}
       visible={visible}

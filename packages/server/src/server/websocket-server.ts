@@ -3,7 +3,7 @@ import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -60,6 +60,7 @@ import {
 import {
   WebSocketRuntimeMetricsWindow,
   type WebSocketRuntimeCounters,
+  type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 
@@ -81,6 +82,11 @@ interface WebSocketServerConfig {
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
+type WebSocketRuntimeDiagnosticPayload = WebSocketRuntimeDiagnosticSnapshot<
+  WebSocketRuntimeMetrics,
+  AgentMetricsSnapshot
+>;
+type WebSocketRuntimeMetricsLogPayload = Omit<WebSocketRuntimeDiagnosticPayload, "collectedAt">;
 
 type TerminalAttentionReason = "finished" | "needs_input";
 
@@ -350,7 +356,6 @@ export class VoiceAssistantWebSocketServer {
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
-  private readonly socketMessageQueues: Map<WebSocketLike, Promise<void>> = new Map();
   private readonly serverId: string;
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig:
@@ -404,6 +409,7 @@ export class VoiceAssistantWebSocketServer {
     | null;
   private serverCapabilities: ServerCapabilities | undefined;
   private readonly runtimeMetrics = new WebSocketRuntimeMetricsWindow();
+  private lastRuntimeMetricsSnapshot: WebSocketRuntimeDiagnosticPayload | null = null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
@@ -1021,6 +1027,7 @@ export class VoiceAssistantWebSocketServer {
       serverId: this.serverId,
       daemonVersion: this.daemonVersion,
       daemonRuntimeConfig: this.daemonRuntimeConfig,
+      getWebSocketRuntimeMetrics: () => this.lastRuntimeMetricsSnapshot,
     });
 
     connection = {
@@ -1174,6 +1181,8 @@ export class VoiceAssistantWebSocketServer {
         providerUsageList: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: true,
+        // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
+        daemonDiagnostics: true,
       },
     };
   }
@@ -1209,7 +1218,7 @@ export class VoiceAssistantWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      this.enqueueRawMessage(ws, data);
+      this.handleRawMessage(ws, data);
     });
 
     ws.on("close", async (...args: unknown[]) => {
@@ -1230,25 +1239,6 @@ export class VoiceAssistantWebSocketServer {
       log.error({ err }, "Client error");
       await this.detachSocket(ws, { error: err });
     });
-  }
-
-  private enqueueRawMessage(
-    ws: WebSocketLike,
-    data: Buffer | ArrayBuffer | Buffer[] | string,
-  ): void {
-    const previous = this.socketMessageQueues.get(ws) ?? Promise.resolve();
-    const next = previous.then(
-      () => this.handleRawMessage(ws, data),
-      () => this.handleRawMessage(ws, data),
-    );
-    this.socketMessageQueues.set(ws, next);
-    void next
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.socketMessageQueues.get(ws) === next) {
-          this.socketMessageQueues.delete(ws);
-        }
-      });
   }
 
   public resolveVoiceSpeakHandler(callerAgentId: string): VoiceSpeakHandler | null {
@@ -1430,12 +1420,12 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  private async maybeHandleBinaryFrame(params: {
+  private maybeHandleBinaryFrame(params: {
     ws: WebSocketLike;
     buffer: Buffer;
     activeConnection: SessionConnection | undefined;
     log: pino.Logger;
-  }): Promise<boolean> {
+  }): boolean {
     const { ws, buffer, activeConnection, log } = params;
     const asBytes = asUint8Array(buffer);
     if (!asBytes) {
@@ -1456,7 +1446,16 @@ export class VoiceAssistantWebSocketServer {
       }
       return true;
     }
-    await activeConnection.session.handleBinaryFrame(decodedFrame);
+    void Promise.resolve(activeConnection.session.handleBinaryFrame(decodedFrame)).catch(
+      (error: unknown) => {
+        this.handleRawMessageError({
+          ws,
+          data: buffer,
+          error,
+          log: activeConnection.connectionLogger,
+        });
+      },
+    );
     return true;
   }
 
@@ -1490,10 +1489,10 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private async handleRawMessage(
+  private handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
-  ): Promise<void> {
+  ): void {
     const activeConnection = this.sessions.get(ws);
     const pendingConnection = this.pendingConnections.get(ws);
     const log =
@@ -1501,7 +1500,7 @@ export class VoiceAssistantWebSocketServer {
 
     try {
       const buffer = bufferFromWsData(data);
-      const binaryHandled = await this.maybeHandleBinaryFrame({
+      const binaryHandled = this.maybeHandleBinaryFrame({
         ws,
         buffer,
         activeConnection,
@@ -1564,7 +1563,9 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
-        await this.dispatchSessionMessage(activeConnection, message);
+        void this.dispatchSessionMessage(activeConnection, message).catch((error: unknown) => {
+          this.handleRawMessageError({ ws, data, error, log: activeConnection.connectionLogger });
+        });
       }
     } catch (error) {
       this.handleRawMessageError({ ws, data, error, log });
@@ -1728,36 +1729,38 @@ export class VoiceAssistantWebSocketServer {
     ).length;
     const sessionMetrics = this.collectSessionRuntimeMetrics();
     const agentSnapshot = this.agentManager.getMetricsSnapshot();
-
-    this.logger.info(
-      {
-        windowMs: runtimeMetrics.windowMs,
-        final: Boolean(options?.final),
-        sessions: {
-          activeConnections,
-          externalSessionKeys: this.externalSessionsByKey.size,
-          reconnectGraceSessions,
-        },
-        sockets: {
-          activeSockets,
-          pendingConnections,
-        },
-        counters: runtimeMetrics.counters,
-        inboundMessageTypesTop: runtimeMetrics.inboundMessageTypesTop,
-        inboundSessionRequestTypesTop: runtimeMetrics.inboundSessionRequestTypesTop,
-        outboundMessageTypesTop: runtimeMetrics.outboundMessageTypesTop,
-        outboundSessionMessageTypesTop: runtimeMetrics.outboundSessionMessageTypesTop,
-        outboundAgentStreamTypesTop: runtimeMetrics.outboundAgentStreamTypesTop,
-        outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
-        outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
-        bufferedAmount: runtimeMetrics.bufferedAmount,
-        eventLoopDelay: this.snapshotEventLoopDelay(),
-        runtime: sessionMetrics,
-        latency: runtimeMetrics.latency,
-        agents: agentSnapshot,
+    const loggedMetrics = {
+      windowMs: runtimeMetrics.windowMs,
+      final: Boolean(options?.final),
+      sessions: {
+        activeConnections,
+        externalSessionKeys: this.externalSessionsByKey.size,
+        reconnectGraceSessions,
       },
-      "ws_runtime_metrics",
-    );
+      sockets: {
+        activeSockets,
+        pendingConnections,
+      },
+      counters: runtimeMetrics.counters,
+      inboundMessageTypesTop: runtimeMetrics.inboundMessageTypesTop,
+      inboundSessionRequestTypesTop: runtimeMetrics.inboundSessionRequestTypesTop,
+      outboundMessageTypesTop: runtimeMetrics.outboundMessageTypesTop,
+      outboundSessionMessageTypesTop: runtimeMetrics.outboundSessionMessageTypesTop,
+      outboundAgentStreamTypesTop: runtimeMetrics.outboundAgentStreamTypesTop,
+      outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
+      outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
+      bufferedAmount: runtimeMetrics.bufferedAmount,
+      eventLoopDelay: this.snapshotEventLoopDelay(),
+      runtime: sessionMetrics,
+      latency: runtimeMetrics.latency,
+      agents: agentSnapshot,
+    } satisfies WebSocketRuntimeMetricsLogPayload;
+
+    this.lastRuntimeMetricsSnapshot = {
+      collectedAt: new Date().toISOString(),
+      ...loggedMetrics,
+    };
+    this.logger.info(loggedMetrics, "ws_runtime_metrics");
   }
 
   private getClientActivityState(session: Session): ClientPresenceState {

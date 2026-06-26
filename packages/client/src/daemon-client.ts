@@ -67,6 +67,7 @@ import type {
   ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
+  DiagnosticsResponse,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -351,6 +352,7 @@ type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
+type DiagnosticsPayload = DiagnosticsResponse["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3656,8 +3658,8 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_models_response",
-      // Provider SDK cold starts (especially model discovery) can exceed 30s.
-      timeout: 45000,
+      // Provider SDK cold starts (especially model discovery) can exceed 60s.
+      timeout: 90000,
     });
   }
 
@@ -3673,7 +3675,7 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_modes_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3688,7 +3690,7 @@ export class DaemonClient {
         draftConfig,
       },
       responseType: "list_provider_features_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3701,7 +3703,7 @@ export class DaemonClient {
         type: "list_available_providers_request",
       },
       responseType: "list_available_providers_response",
-      timeout: 30000,
+      timeout: 60000,
     });
   }
 
@@ -3752,6 +3754,16 @@ export class DaemonClient {
       },
       responseType: "daemon.get_pairing_offer.response",
       timeout: 10000,
+    });
+  }
+
+  async collectDiagnostics(requestId?: string): Promise<DiagnosticsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "diagnostics.request",
+      },
+      timeout: 30000,
     });
   }
 
@@ -3809,7 +3821,7 @@ export class DaemonClient {
         providers: options?.providers,
       },
       responseType: "refresh_providers_snapshot_response",
-      timeout: 60000,
+      timeout: 120000,
     });
   }
 
@@ -3824,7 +3836,7 @@ export class DaemonClient {
         provider,
       },
       responseType: "provider_diagnostic_response",
-      timeout: 30000,
+      timeout: 180000,
     });
   }
 
