@@ -55,7 +55,11 @@ import {
 } from "@/hooks/use-settings";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
+import {
+  orderHostsLocalFirst,
+  resolveActiveHostServerId,
+  type HostProfile,
+} from "@/types/host-connection";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { WindowChromeRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -1143,15 +1147,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   const [selectedSettingsHostServerId, setSelectedSettingsHostServerId] = useState<string | null>(
     view.kind === "host" ? view.serverId : null,
   );
-  const knownSelectedSettingsHostServerId = useMemo(() => {
-    if (!selectedSettingsHostServerId) {
-      return null;
-    }
-    return hosts.some((host) => host.serverId === selectedSettingsHostServerId)
-      ? selectedSettingsHostServerId
-      : null;
-  }, [hosts, selectedSettingsHostServerId]);
-
   useEffect(() => {
     if (view.kind === "host") {
       setSelectedSettingsHostServerId(view.serverId);
@@ -1159,11 +1154,16 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   }, [view]);
 
   // The host the four sections scope to: the host on the active view, otherwise
-  // the picker choice, otherwise the local daemon, otherwise the first host.
+  // the picker choice, otherwise the connected local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
     if (view.kind === "host") return view.serverId;
-    return knownSelectedSettingsHostServerId ?? localServerId ?? sortedHosts[0]?.serverId ?? null;
-  }, [view, knownSelectedSettingsHostServerId, localServerId, sortedHosts]);
+    return resolveActiveHostServerId({
+      selectedServerId: selectedSettingsHostServerId,
+      localServerId,
+      hosts,
+      orderedHosts: sortedHosts,
+    });
+  }, [view, selectedSettingsHostServerId, localServerId, hosts, sortedHosts]);
 
   const handleSendBehaviorChange = useCallback(
     (behavior: SendBehavior) => {
