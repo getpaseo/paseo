@@ -4,7 +4,7 @@ import {
   deriveTurnWorkTraceLayout,
   shouldHideCompletedTurnTraceFromMainList,
   shouldShowTurnWorkTracesHeader,
-  shouldSuppressCompletedTurnFooter,
+  completedTurnFooterShowsTimestampOnly,
 } from "./turn-work-traces";
 
 function ts(seed: number): Date {
@@ -99,14 +99,14 @@ describe("shouldHideCompletedTurnTraceFromMainList", () => {
   });
 });
 
-describe("shouldSuppressCompletedTurnFooter", () => {
-  it("suppresses assistant footer when work traces header owns duration", () => {
+describe("completedTurnFooterShowsTimestampOnly", () => {
+  it("is true when work traces header owns turn duration", () => {
     const layout = deriveTurnWorkTraceLayout({
       agentStatus: "idle",
       items: [user("u1", 1), tool("t1", 2), assistant("a1", 3)],
     });
     expect(
-      shouldSuppressCompletedTurnFooter({
+      completedTurnFooterShowsTimestampOnly({
         assistantMessageId: "a1",
         bundlesByTurnKey: layout.bundlesByTurnKey,
       }),

@@ -65,7 +65,7 @@ import {
   deriveTurnWorkTraceLayout,
   shouldHideCompletedTurnTraceFromMainList,
   shouldShowTurnWorkTracesHeader,
-  shouldSuppressCompletedTurnFooter,
+  completedTurnFooterShowsTimestampOnly,
 } from "./turn-work-traces";
 import { TurnWorkTracesPanel } from "./turn-work-traces-panel";
 import {
@@ -702,7 +702,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         const content = renderStreamItemContent(layoutItem);
         const completedFooterShowsTimestampOnly =
           layoutItem.item.kind === "assistant_message" &&
-          shouldSuppressCompletedTurnFooter({
+          completedTurnFooterShowsTimestampOnly({
             assistantMessageId: layoutItem.item.id,
             bundlesByTurnKey: turnWorkTraceLayout.bundlesByTurnKey,
           });
@@ -789,7 +789,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       if (!bottomTurnFooterHost) {
         return false;
       }
-      return shouldSuppressCompletedTurnFooter({
+      return completedTurnFooterShowsTimestampOnly({
         assistantMessageId: bottomTurnFooterHost.itemId,
         bundlesByTurnKey: turnWorkTraceLayout.bundlesByTurnKey,
       });

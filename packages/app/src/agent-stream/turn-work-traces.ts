@@ -144,7 +144,8 @@ export function shouldShowTurnWorkTracesHeader(input: {
   return !bundle.isInFlight;
 }
 
-export function shouldSuppressCompletedTurnFooter(input: {
+/** True when the work-traces header shows duration; assistant footer should show end timestamp only. */
+export function completedTurnFooterShowsTimestampOnly(input: {
   assistantMessageId: string;
   bundlesByTurnKey: Map<string, TurnWorkTraceBundle>;
 }): boolean {
