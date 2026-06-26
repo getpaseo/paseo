@@ -300,13 +300,13 @@ export const ja: TranslationResources = {
   },
   markdown: {
     mermaid: {
-      diagram: "Diagram",
-      source: "Source",
-      viewDiagram: "View diagram",
-      viewSource: "View source",
-      renderFailed: "Diagram failed to render",
-      openFullscreen: "Open fullscreen",
-      closeFullscreen: "Close fullscreen",
+      diagram: "図",
+      source: "ソース",
+      viewDiagram: "図を表示",
+      viewSource: "ソースを表示",
+      renderFailed: "図の描画に失敗しました",
+      openFullscreen: "全画面表示",
+      closeFullscreen: "全画面を閉じる",
     },
   },
   importSession: {

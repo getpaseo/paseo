@@ -300,13 +300,13 @@ export const ptBR: TranslationResources = {
   },
   markdown: {
     mermaid: {
-      diagram: "Diagram",
-      source: "Source",
-      viewDiagram: "View diagram",
-      viewSource: "View source",
-      renderFailed: "Diagram failed to render",
-      openFullscreen: "Open fullscreen",
-      closeFullscreen: "Close fullscreen",
+      diagram: "Diagrama",
+      source: "Código",
+      viewDiagram: "Ver diagrama",
+      viewSource: "Ver código-fonte",
+      renderFailed: "Falha ao renderizar o diagrama",
+      openFullscreen: "Tela cheia",
+      closeFullscreen: "Fechar tela cheia",
     },
   },
   importSession: {

@@ -299,13 +299,13 @@ export const ru: TranslationResources = {
   },
   markdown: {
     mermaid: {
-      diagram: "Diagram",
-      source: "Source",
-      viewDiagram: "View diagram",
-      viewSource: "View source",
-      renderFailed: "Diagram failed to render",
-      openFullscreen: "Open fullscreen",
-      closeFullscreen: "Close fullscreen",
+      diagram: "Диаграмма",
+      source: "Исходник",
+      viewDiagram: "Показать диаграмму",
+      viewSource: "Показать исходный код",
+      renderFailed: "Не удалось отрисовать диаграмму",
+      openFullscreen: "На весь экран",
+      closeFullscreen: "Закрыть полноэкранный режим",
     },
   },
   importSession: {

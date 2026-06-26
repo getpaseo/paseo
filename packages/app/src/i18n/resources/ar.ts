@@ -297,13 +297,13 @@ export const ar: TranslationResources = {
   },
   markdown: {
     mermaid: {
-      diagram: "Diagram",
-      source: "Source",
-      viewDiagram: "View diagram",
-      viewSource: "View source",
-      renderFailed: "Diagram failed to render",
-      openFullscreen: "Open fullscreen",
-      closeFullscreen: "Close fullscreen",
+      diagram: "مخطط",
+      source: "المصدر",
+      viewDiagram: "عرض المخطط",
+      viewSource: "عرض المصدر",
+      renderFailed: "تعذّر عرض المخطط",
+      openFullscreen: "ملء الشاشة",
+      closeFullscreen: "إغلاق ملء الشاشة",
     },
   },
   importSession: {

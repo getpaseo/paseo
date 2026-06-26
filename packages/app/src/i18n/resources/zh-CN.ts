@@ -297,13 +297,13 @@ export const zhCN: TranslationResources = {
   },
   markdown: {
     mermaid: {
-      diagram: "Diagram",
-      source: "Source",
-      viewDiagram: "View diagram",
-      viewSource: "View source",
-      renderFailed: "Diagram failed to render",
-      openFullscreen: "Open fullscreen",
-      closeFullscreen: "Close fullscreen",
+      diagram: "图表",
+      source: "源码",
+      viewDiagram: "查看图表",
+      viewSource: "查看源码",
+      renderFailed: "图表渲染失败",
+      openFullscreen: "全屏打开",
+      closeFullscreen: "退出全屏",
     },
   },
   importSession: {
