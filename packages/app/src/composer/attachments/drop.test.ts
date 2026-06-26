@@ -21,4 +21,47 @@ describe("composer dropped attachments", () => {
       },
     ]);
   });
+
+  it("turns non-image desktop paths into picked files and leaves raster images for image handling", async () => {
+    const windowsPath = "C:\\Users\\alice\\config.json";
+    const posixPath = "/Users/alice/notes/readme.txt";
+    const imagePath = "C:\\Users\\alice\\screen.png";
+    const bytesByPath = new Map([
+      [windowsPath, new Uint8Array([1, 2, 3])],
+      [posixPath, new Uint8Array([4, 5])],
+    ]);
+    const readPaths: string[] = [];
+
+    const files = await droppedItemsToPickedFiles(
+      [
+        { kind: "desktop-path", path: windowsPath },
+        { kind: "desktop-path", path: imagePath },
+        { kind: "desktop-path", path: posixPath },
+      ],
+      {
+        readDesktopFileBytes: async (path) => {
+          readPaths.push(path);
+          const bytes = bytesByPath.get(path);
+          if (!bytes) {
+            throw new Error(`Unexpected desktop read: ${path}`);
+          }
+          return bytes;
+        },
+      },
+    );
+
+    expect(readPaths).toEqual([windowsPath, posixPath]);
+    expect(files).toEqual([
+      {
+        fileName: "config.json",
+        mimeType: "application/octet-stream",
+        bytes: new Uint8Array([1, 2, 3]),
+      },
+      {
+        fileName: "readme.txt",
+        mimeType: "application/octet-stream",
+        bytes: new Uint8Array([4, 5]),
+      },
+    ]);
+  });
 });

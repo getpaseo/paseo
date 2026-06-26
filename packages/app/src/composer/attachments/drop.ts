@@ -6,11 +6,29 @@ import {
 import { readDesktopFileBytes, type PickedFile } from "@/attachments/picked-file";
 import type { DroppedItem } from "@/hooks/use-file-drop-zone";
 
-function fileNameFromPath(path: string): string {
-  return path.split("/").pop() ?? path.split("\\").pop() ?? path;
+interface DroppedAttachmentsRuntime {
+  readDesktopFileBytes(path: string): Promise<Uint8Array>;
 }
 
-export async function droppedItemsToPickedFiles(items: DroppedItem[]): Promise<PickedFile[]> {
+const defaultRuntime: DroppedAttachmentsRuntime = {
+  readDesktopFileBytes,
+};
+
+function fileNameFromPath(path: string): string {
+  const segments = path.split(/[/\\]/);
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment) {
+      return segment;
+    }
+  }
+  return path;
+}
+
+export async function droppedItemsToPickedFiles(
+  items: DroppedItem[],
+  runtime: DroppedAttachmentsRuntime = defaultRuntime,
+): Promise<PickedFile[]> {
   const files: PickedFile[] = [];
 
   for (const item of items) {
@@ -32,7 +50,7 @@ export async function droppedItemsToPickedFiles(items: DroppedItem[]): Promise<P
     files.push({
       fileName: fileNameFromPath(item.path),
       mimeType: getMimeTypeFromPath(item.path),
-      bytes: await readDesktopFileBytes(item.path),
+      bytes: await runtime.readDesktopFileBytes(item.path),
     });
   }
 
