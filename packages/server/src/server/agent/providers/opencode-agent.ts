@@ -40,6 +40,8 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type FetchCatalogOptions,
+  type ImportedProviderSession,
+  type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
   type ImportProviderSessionInput,
@@ -51,7 +53,6 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
-import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -69,6 +70,7 @@ import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
   type OpenCodeServerManagerLike,
+  type OpenCodeServerScope,
 } from "./opencode/server-manager.js";
 import {
   formatProviderDiagnostic,
@@ -1223,6 +1225,54 @@ function createSdkOpenCodeClient(options: { baseUrl: string; directory: string }
   return createOpencodeClient(options satisfies OpencodeClientConfig & { directory: string });
 }
 
+function buildOpenCodeServerScope(cwd: string): OpenCodeServerScope {
+  return { cwd };
+}
+
+function buildOpenCodeDedicatedServerScope(
+  cwd: string,
+  launchContext?: AgentLaunchContext,
+  sessionId?: string,
+): OpenCodeServerScope {
+  return {
+    cwd,
+    ...(launchContext?.agentId ? { agentId: launchContext.agentId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+  };
+}
+
+function buildOpenCodeImportPersistenceHandle(
+  input: ImportProviderSessionInput,
+  config: AgentSessionConfig,
+): AgentPersistenceHandle {
+  return {
+    provider: "opencode",
+    sessionId: input.providerHandleId,
+    nativeHandle: input.providerHandleId,
+    metadata: {
+      ...config,
+      provider: "opencode",
+      cwd: input.cwd,
+    },
+  };
+}
+
+async function collectOpenCodeImportedTimeline(
+  session: AgentSession,
+): Promise<ImportedTimelineEntry[]> {
+  const timeline: ImportedTimelineEntry[] = [];
+  for await (const event of session.streamHistory()) {
+    if (event.type !== "timeline") {
+      continue;
+    }
+    timeline.push({
+      item: event.item,
+      ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+    });
+  }
+  return timeline;
+}
+
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
@@ -1257,8 +1307,11 @@ export class OpenCodeAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
     const acquisition = launchContext?.env
-      ? await this.serverManager.acquireDedicated(launchContext.env)
-      : await this.serverManager.acquireCurrent();
+      ? await this.serverManager.acquireDedicated(
+          launchContext.env,
+          buildOpenCodeDedicatedServerScope(openCodeConfig.cwd, launchContext),
+        )
+      : await this.serverManager.acquireCurrent(buildOpenCodeServerScope(openCodeConfig.cwd));
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1317,7 +1370,12 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.serverManager.acquireCurrent();
+    const acquisition = launchContext?.env
+      ? await this.serverManager.acquireDedicated(
+          launchContext.env,
+          buildOpenCodeDedicatedServerScope(openCodeConfig.cwd, launchContext, handle.sessionId),
+        )
+      : await this.serverManager.acquireCurrent(buildOpenCodeServerScope(openCodeConfig.cwd));
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1344,9 +1402,10 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const serverScope = buildOpenCodeServerScope(options.cwd);
     const acquisition = options.force
-      ? await this.serverManager.acquireNew()
-      : await this.serverManager.acquireCurrent();
+      ? await this.serverManager.acquireNew(serverScope)
+      : await this.serverManager.acquireCurrent(serverScope);
     const { url } = acquisition.server;
     const directory = options.cwd;
     const client = this.createOpenCodeClient({ baseUrl: url, directory });
@@ -1364,7 +1423,9 @@ export class OpenCodeAgentClient implements AgentClient {
 
   async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.serverManager.acquireCurrent();
+    const acquisition = await this.serverManager.acquireCurrent(
+      buildOpenCodeServerScope(openCodeConfig.cwd),
+    );
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1385,11 +1446,14 @@ export class OpenCodeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const acquisition = await this.serverManager.acquireCurrent();
+    const directory = options?.cwd ?? "";
+    const acquisition = await this.serverManager.acquireCurrent(
+      buildOpenCodeServerScope(directory),
+    );
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
-      directory: options?.cwd ?? "",
+      directory,
     });
 
     try {
@@ -1399,13 +1463,26 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const acquisition = await this.serverManager.acquireCurrent();
+  async importSession(
+    input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession> {
+    const acquisition = context.launchContext?.env
+      ? await this.serverManager.acquireDedicated(
+          context.launchContext.env,
+          buildOpenCodeDedicatedServerScope(
+            input.cwd,
+            context.launchContext,
+            input.providerHandleId,
+          ),
+        )
+      : await this.serverManager.acquireCurrent(buildOpenCodeServerScope(input.cwd));
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
       directory: input.cwd,
     });
+    let importedSession: AgentSession | null = null;
 
     try {
       const sessionResponse = await client.session.get({
@@ -1419,19 +1496,49 @@ export class OpenCodeAgentClient implements AgentClient {
       const messages = await readOpenCodeSessionMessagesFromSdk(client, session);
       const modeId = resolveOpenCodePersistedSessionModeId(session, messages);
       const model = resolveOpenCodePersistedSessionModel(session, messages);
-      return await importSessionFromPersistence({
+      const config: AgentSessionConfig = {
+        ...context.config,
         provider: "opencode",
-        request: input,
-        context,
-        resumeSession: this.resumeSession.bind(this),
-        config: {
-          title: normalizeOpenCodeSessionTitle(session.title) ?? undefined,
-          ...(modeId ? { modeId } : {}),
-          ...(model ? { model } : {}),
-        },
-      });
-    } finally {
-      acquisition.release();
+        cwd: input.cwd,
+        title: normalizeOpenCodeSessionTitle(session.title) ?? undefined,
+        ...(modeId ? { modeId } : {}),
+        ...(model ? { model } : {}),
+      };
+      const storedConfig: AgentSessionConfig = {
+        ...context.storedConfig,
+        provider: "opencode",
+        cwd: input.cwd,
+        title: config.title,
+        ...(modeId ? { modeId } : {}),
+        ...(model ? { model } : {}),
+      };
+      const persistence = buildOpenCodeImportPersistenceHandle(input, storedConfig);
+      const openCodeConfig = this.assertConfig(config);
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      importedSession = new OpenCodeAgentSession(
+        openCodeConfig,
+        client,
+        input.providerHandleId,
+        this.logger,
+        new Map(this.modelContextWindows),
+        acquisition.release,
+        undefined,
+        context.launchContext?.agentId,
+      );
+      const timeline = await collectOpenCodeImportedTimeline(importedSession);
+      return {
+        session: importedSession,
+        config: storedConfig,
+        persistence,
+        timeline,
+      };
+    } catch (error) {
+      if (importedSession) {
+        await importedSession.close();
+      } else {
+        acquisition.release();
+      }
+      throw error;
     }
   }
 
