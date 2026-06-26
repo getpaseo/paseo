@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -18,12 +18,8 @@ export function MermaidDiagramViewInner({
   onSvgChange,
 }: MermaidDiagramViewInnerProps) {
   const { t } = useTranslation();
-  const { svg, error, isRendering } = useMermaidRender(source, mermaidTheme);
+  const { svg, error, isRendering } = useMermaidRender(source, mermaidTheme, onSvgChange);
   const showSpinner = useMemo(() => isRendering && !svg && !error, [error, isRendering, svg]);
-
-  useEffect(() => {
-    onSvgChange?.(svg);
-  }, [onSvgChange, svg]);
 
   if (error) {
     return (

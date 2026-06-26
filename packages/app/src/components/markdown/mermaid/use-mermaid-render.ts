@@ -4,6 +4,7 @@ import type { MermaidRenderState } from "@/components/markdown/mermaid/use-merma
 export function useMermaidRender(
   _source: string,
   _mermaidTheme: MermaidThemeConfig,
+  _onSvgChange?: (svg: string | null) => void,
 ): MermaidRenderState {
   return { svg: null, error: null, isRendering: false };
 }

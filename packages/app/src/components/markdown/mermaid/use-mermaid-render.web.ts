@@ -9,6 +9,7 @@ const MERMAID_RENDER_DEBOUNCE_MS = 250;
 export function useMermaidRender(
   source: string,
   mermaidTheme: MermaidThemeConfig,
+  onSvgChange?: (svg: string | null) => void,
 ): MermaidRenderState {
   const { themeKey, themeVariablesRef } = useMermaidThemeVariablesRef(mermaidTheme);
   const [state, setState] = useState<MermaidRenderState>({
@@ -22,6 +23,7 @@ export function useMermaidRender(
     const trimmed = source.trim();
     if (trimmed.length === 0) {
       setState({ svg: null, error: null, isRendering: false });
+      onSvgChange?.(null);
       return;
     }
 
@@ -36,6 +38,7 @@ export function useMermaidRender(
             return undefined;
           }
           setState({ svg, error: null, isRendering: false });
+          onSvgChange?.(svg);
           return undefined;
         })
         .catch((error: unknown) => {
@@ -44,13 +47,14 @@ export function useMermaidRender(
           }
           const message = error instanceof Error ? error.message : String(error);
           setState({ svg: null, error: message, isRendering: false });
+          onSvgChange?.(null);
         });
     }, MERMAID_RENDER_DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timeout);
     };
-  }, [source, themeKey, themeVariablesRef]);
+  }, [onSvgChange, source, themeKey, themeVariablesRef]);
 
   return state;
 }
