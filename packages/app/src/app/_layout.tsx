@@ -34,6 +34,7 @@ import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
+import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -79,6 +80,7 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
+  useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,
   useHosts,
@@ -88,11 +90,10 @@ import { applyAppearance } from "@/screens/settings/appearance/apply-appearance"
 import { usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
-import { resolveActiveHost } from "@/utils/active-host";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import { canOpenLeftSidebarGesture } from "@/utils/sidebar-animation-state";
 import {
-  buildHostRootRoute,
+  buildOpenProjectRoute,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
   parseWorkspaceOpenIntent,
@@ -427,12 +428,8 @@ function AppContainer({
 
   const isCompactLayout = useIsCompactFormFactor();
   useCompactWebViewportZoomLock(isCompactLayout);
-  const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const pathname = usePathname();
-  const activeServerId = useMemo(
-    () => resolveActiveHost({ hosts: daemons, pathname })?.serverId ?? null,
-    [daemons, pathname],
-  );
+  const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const toggleAgentList = isCompactLayout ? toggleMobileAgentList : toggleDesktopAgentList;
   const toggleDesktopSidebars = useCallback(() => {
     const { desktop } = usePanelStore.getState();
@@ -494,12 +491,10 @@ function AppContainer({
       <UpdateCalloutSource />
       <WorktreeSetupCalloutSource />
       <CommandCenter />
+      <HostChooserModal />
       <ProjectPickerModal />
       <ProviderSettingsHost />
-      <WorkspaceShortcutTargetsSubscriber
-        enabled={keyboardShortcutsEnabled}
-        serverId={activeServerId}
-      />
+      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
       <QuittingOverlay />
@@ -731,7 +726,7 @@ function OfferLinkListener({
           if (cancelled) return;
           const serverId = (profile as { serverId?: unknown } | null)?.serverId;
           if (typeof serverId !== "string" || !serverId) return;
-          router.replace(buildHostRootRoute(serverId));
+          router.replace(buildOpenProjectRoute());
           return;
         })
         .catch((error) => {
@@ -761,48 +756,87 @@ interface OpenProjectEventPayload {
   path?: unknown;
 }
 
-function OpenProjectListener() {
-  const hosts = useHosts();
-  const serverId = hosts[0]?.serverId ?? null;
-  const client = useHostRuntimeClient(serverId ?? "");
-  const openProject = useOpenProject(serverId);
-  const pendingPathRef = useRef<string | null>(null);
+interface PendingOpenProjectRequest {
+  id: number;
+  serverId: string;
+  path: string;
+}
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    const maybeOpenProject = (inputPath: string) => {
-      const nextPath = inputPath.trim();
+let nextOpenProjectRequestId = 1;
+
+function OpenProjectListener() {
+  const chooseHost = useHostChooser();
+  const hostRegistryLoaded = useHostRegistryLoaded();
+  const [request, setRequest] = useState<PendingOpenProjectRequest | null>(null);
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const openProject = useOpenProject(request?.serverId ?? null);
+
+  const openPathOnChosenHost = useCallback(
+    (path: string) => {
+      const nextPath = path.trim();
       if (!nextPath) {
         return;
       }
 
-      pendingPathRef.current = nextPath;
-
-      if (!serverId || !client) {
+      if (!hostRegistryLoaded) {
+        setPendingPath(nextPath);
         return;
       }
 
-      const pathToOpen = pendingPathRef.current;
-      pendingPathRef.current = null;
-      if (!pathToOpen) {
-        return;
+      chooseHost({
+        title: "Choose host",
+        onChooseHost: (serverId) => {
+          setRequest({
+            id: nextOpenProjectRequestId++,
+            serverId,
+            path: nextPath,
+          });
+        },
+      });
+    },
+    [chooseHost, hostRegistryLoaded],
+  );
+
+  useEffect(() => {
+    if (!hostRegistryLoaded || !pendingPath) {
+      return;
+    }
+    const nextPath = pendingPath;
+    setPendingPath(null);
+    openPathOnChosenHost(nextPath);
+  }, [hostRegistryLoaded, openPathOnChosenHost, pendingPath]);
+
+  useEffect(() => {
+    if (!request) {
+      return;
+    }
+    let cancelled = false;
+    void openProject(request.path).then((result) => {
+      if (cancelled) {
+        return null;
       }
 
-      void openProject(pathToOpen).catch(() => undefined);
+      if (!result.ok) {
+        setRequest((current) => (current?.id === request.id ? null : current));
+        return null;
+      }
+
+      setRequest((current) => (current?.id === request.id ? null : current));
+      return null;
+    });
+    return () => {
+      cancelled = true;
     };
+  }, [openProject, request]);
 
-    // Pull any path that was passed on cold start (before the listener existed).
-    // Store in the ref even if this effect instance is disposed — the next
-    // effect run picks it up via maybeOpenProject(pendingPathRef.current).
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
     void getDesktopHost()
       ?.getPendingOpenProject?.()
       ?.then((pending) => {
-        if (pending) {
-          pendingPathRef.current = pending;
-        }
         if (!disposed && pending) {
-          maybeOpenProject(pending);
+          openPathOnChosenHost(pending);
         }
         return;
       })
@@ -814,7 +848,7 @@ function OpenProjectListener() {
         return;
       }
       const nextPath = typeof payload?.path === "string" ? payload.path.trim() : "";
-      maybeOpenProject(nextPath);
+      openPathOnChosenHost(nextPath);
     })
       .then((dispose) => {
         if (disposed) {
@@ -826,13 +860,11 @@ function OpenProjectListener() {
       })
       .catch(() => undefined);
 
-    maybeOpenProject(pendingPathRef.current ?? "");
-
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [client, openProject, serverId]);
+  }, [openPathOnChosenHost]);
 
   return null;
 }
@@ -842,9 +874,15 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   const params = useGlobalSearchParams<{ open?: string | string[] }>();
   const hosts = useHosts();
   const storeReady = useStoreReady();
-  const activeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
+  const routeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
+  const routeHasKnownHost =
+    routeServerId !== null && hosts.some((host) => host.serverId === routeServerId);
   const shouldShowAppChrome =
-    storeReady && activeServerId !== null && hosts.some((host) => host.serverId === activeServerId);
+    storeReady &&
+    (pathname === "/open-project" ||
+      pathname === "/new" ||
+      pathname === "/sessions" ||
+      routeHasKnownHost);
 
   // Parse selectedAgentKey directly from pathname
   // useLocalSearchParams doesn't update when navigating between same-pattern routes
@@ -899,6 +937,9 @@ function RootStack() {
         <Stack.Screen name="settings/[section]" />
         <Stack.Screen name="settings/projects/index" />
         <Stack.Screen name="settings/projects/[projectKey]" />
+        <Stack.Screen name="new" />
+        <Stack.Screen name="open-project" />
+        <Stack.Screen name="sessions" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />

@@ -78,7 +78,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual([
       ...getClaudeModels(),
@@ -127,7 +131,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -137,7 +145,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -153,7 +165,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -169,7 +185,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models.map((model) => model.id)).toEqual([
       ...getClaudeModels().map((model) => model.id),

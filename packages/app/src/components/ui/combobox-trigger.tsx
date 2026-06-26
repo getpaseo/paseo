@@ -61,11 +61,15 @@ export const ComboboxTrigger = forwardRef<View, ComboboxTriggerProps>(function C
 
 const styles = StyleSheet.create((theme) => ({
   row: {
+    minWidth: 0,
+    maxWidth: "100%",
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
   },
   chevronContainer: {
+    flexShrink: 0,
     transform: [{ translateY: 1 }],
   },
 }));

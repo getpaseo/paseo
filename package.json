@@ -55,6 +55,7 @@
     "build:server-deps:clean": "npm run build:highlight:clean && npm run build:relay:clean && npm run build:client:clean",
     "build:server": "npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli",
     "build:server:clean": "npm run build:server-deps:clean && npm run build:clean --workspace=@getpaseo/server && npm run build:clean --workspace=@getpaseo/cli",
+    "build:daemon-web-ui": "node scripts/build-daemon-web-ui.mjs",
     "build:app-deps": "npm run build:highlight && npm run build:client && npm run build --workspace=@getpaseo/expo-two-way-audio",
     "build:app-deps:clean": "npm run build:highlight:clean && npm run build:client:clean && npm run build --workspace=@getpaseo/expo-two-way-audio",
     "watch:protocol": "tsc -p packages/protocol/tsconfig.json --watch --preserveWatchOutput",

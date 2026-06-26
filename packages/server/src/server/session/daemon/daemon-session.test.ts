@@ -42,10 +42,15 @@ function makeSubsystem(overrides: {
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
 }) {
   const emitted: SessionOutboundMessage[] = [];
-  const host: DaemonSessionHost = { emit: (msg) => emitted.push(msg) };
+  const restartIntents: Parameters<DaemonSessionHost["emitLifecycleIntent"]>[0][] = [];
+  const host: DaemonSessionHost = {
+    emit: (msg) => emitted.push(msg),
+    emitLifecycleIntent: (intent) => restartIntents.push(intent),
+  };
   const paseoHome = makeHome();
   const subsystem = new DaemonSession({
     host,
+    clientId: "client-1",
     paseoHome,
     serverId: overrides.serverId,
     daemonVersion: overrides.daemonVersion,
@@ -57,7 +62,7 @@ function makeSubsystem(overrides: {
     getWebSocketRuntimeMetrics: overrides.getWebSocketRuntimeMetrics,
     logger: pino({ level: "silent" }),
   });
-  return { subsystem, emitted, paseoHome };
+  return { subsystem, emitted, paseoHome, restartIntents };
 }
 
 describe("DaemonSession", () => {

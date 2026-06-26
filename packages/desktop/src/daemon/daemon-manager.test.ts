@@ -369,6 +369,7 @@ describe("daemon-manager commands", () => {
       expect.objectContaining({
         detached: true,
         stdio: ["ignore", "ignore", "ignore"],
+        envOverlay: expect.objectContaining({ PASEO_WEB_UI_ENABLED: "false" }),
       }),
     );
   });

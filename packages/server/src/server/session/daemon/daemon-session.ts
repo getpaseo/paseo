@@ -7,6 +7,7 @@ import {
   collectDaemonDiagnostics,
   type DaemonWebSocketRuntimeDiagnosticSnapshot,
 } from "./diagnostics.js";
+import { DaemonSelfUpdateSessionController } from "./daemon-self-update-session-controller.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
@@ -24,10 +25,17 @@ export interface DaemonRuntimeConfig {
 
 export interface DaemonSessionHost {
   emit(msg: SessionOutboundMessage): void;
+  emitLifecycleIntent(intent: {
+    type: "restart";
+    clientId: string;
+    requestId: string;
+    reason?: string;
+  }): void;
 }
 
 export interface DaemonSessionOptions {
   host: DaemonSessionHost;
+  clientId: string;
   paseoHome: string;
   serverId: string | undefined;
   daemonVersion: string | undefined;
@@ -49,6 +57,7 @@ export interface DaemonSessionOptions {
  */
 export class DaemonSession {
   private readonly host: DaemonSessionHost;
+  private readonly clientId: string;
   private readonly paseoHome: string;
   private readonly serverId: string | undefined;
   private readonly daemonVersion: string | undefined;
@@ -59,9 +68,11 @@ export class DaemonSession {
   private readonly listProviderAvailability: () => Promise<ProviderAvailability[]>;
   private readonly getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   private readonly logger: pino.Logger;
+  private readonly selfUpdate: DaemonSelfUpdateSessionController;
 
   constructor(options: DaemonSessionOptions) {
     this.host = options.host;
+    this.clientId = options.clientId;
     this.paseoHome = options.paseoHome;
     this.serverId = options.serverId;
     this.daemonVersion = options.daemonVersion;
@@ -72,6 +83,13 @@ export class DaemonSession {
     this.listProviderAvailability = options.listProviderAvailability;
     this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.logger = options.logger;
+    this.selfUpdate = new DaemonSelfUpdateSessionController({
+      clientId: this.clientId,
+      daemonVersion: this.daemonVersion ?? null,
+      emit: (msg) => this.host.emit(msg),
+      emitLifecycleIntent: (intent) => this.host.emitLifecycleIntent(intent),
+      sessionLogger: this.logger,
+    });
   }
 
   async handleGetStatusRequest(
@@ -190,5 +208,11 @@ export class DaemonSession {
         },
       });
     }
+  }
+
+  async handleUpdateRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.update.request" }>,
+  ): Promise<void> {
+    await this.selfUpdate.dispatch(msg);
   }
 }

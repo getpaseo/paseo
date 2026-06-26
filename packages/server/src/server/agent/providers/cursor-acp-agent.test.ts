@@ -45,7 +45,9 @@ describe("CursorACPAgentClient model discovery", () => {
       configOptions: [],
     });
 
-    await expect(client.fetchCatalog({ cwd: "/tmp/cursor", force: false })).resolves.toEqual({
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/cursor", force: false }),
+    ).resolves.toEqual({
       models: [
         {
           provider: "acp",
@@ -68,7 +70,9 @@ describe("CursorACPAgentClient model discovery", () => {
       configOptions: [],
     });
 
-    await expect(client.fetchCatalog({ cwd: "/tmp/cursor", force: false })).resolves.toEqual({
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/cursor", force: false }),
+    ).resolves.toEqual({
       models: [],
       modes: [],
     });

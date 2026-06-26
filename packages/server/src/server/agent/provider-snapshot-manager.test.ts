@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
@@ -11,7 +12,11 @@ import type {
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
-import { ProviderSnapshotManager, resolveSnapshotCwd } from "./provider-snapshot-manager.js";
+import {
+  GLOBAL_PROVIDER_SNAPSHOT_KEY,
+  ProviderSnapshotManager,
+  resolveSnapshotCwd,
+} from "./provider-snapshot-manager.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 
 const TEST_CAPABILITIES = {
@@ -488,6 +493,7 @@ describe("ProviderSnapshotManager public surface", () => {
     try {
       const result = await manager.getProviderDiagnostic("codex");
       expect(fetchCatalog).toHaveBeenCalledTimes(1);
+      expect(fetchCatalog.mock.calls[0]?.[0]).toMatchObject({ scope: "global", force: true });
       expect(result.diagnostic).toContain("Models: 1");
       expect(result.diagnostic).toContain("Status: Ready");
     } finally {
@@ -1063,6 +1069,60 @@ describe("ProviderSnapshotManager lifecycle", () => {
 });
 
 describe("ProviderSnapshotManager cwd routing", () => {
+  test("settings refresh passes the semantic global scope to providers", async () => {
+    const fetchCatalog = vi.fn(async () => ({
+      models: [] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+
+      expect(fetchCatalog.mock.calls[0]?.[0]).toMatchObject({ scope: "global", force: true });
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("global snapshot does not satisfy an explicit home workspace read", async () => {
+    const fetchCatalog = vi.fn(async () => ({
+      models: [] as AgentModelDefinition[],
+      modes: [] as AgentMode[],
+    }));
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: vi.fn(async () => true),
+          fetchCatalog,
+        }),
+      },
+    });
+    try {
+      await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+      await manager.listProviders({ cwd: homedir(), providers: ["codex"], wait: true });
+
+      expect(fetchCatalog.mock.calls.map((call) => call[0])).toEqual([
+        expect.objectContaining({ scope: "global", force: true }),
+        expect.objectContaining({
+          scope: "workspace",
+          cwd: resolveSnapshotCwd(homedir()),
+          force: false,
+        }),
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("different cwd keys produce independent snapshots", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1086,7 +1146,7 @@ describe("ProviderSnapshotManager cwd routing", () => {
     }
   });
 
-  test("getSnapshot called with no cwd resolves to the home snapshot key", () => {
+  test("getSnapshot called with no cwd resolves to the global snapshot key", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1103,13 +1163,7 @@ describe("ProviderSnapshotManager cwd routing", () => {
       manager.getSnapshot();
       manager.applyMutableProviderConfig({});
       const cwds = listener.mock.calls.map((call) => call[1]);
-      // applyMutableProviderConfig emits change for each primed cwd; the home
-      // snapshot must be present.
-      expect(cwds.length).toBeGreaterThanOrEqual(1);
-      for (const cwd of cwds) {
-        expect(typeof cwd).toBe("string");
-        expect(cwd.length).toBeGreaterThan(0);
-      }
+      expect(cwds).toContain(GLOBAL_PROVIDER_SNAPSHOT_KEY);
     } finally {
       manager.destroy();
     }

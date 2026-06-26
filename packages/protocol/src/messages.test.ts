@@ -402,3 +402,23 @@ describe("paseo worktree archive request compatibility", () => {
     expect(parsed.scope).toBe("workspace");
   });
 });
+
+describe("daemon update messages", () => {
+  test("daemon update progress is a scoped outbound message", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "daemon.update.progress",
+      payload: {
+        requestId: "update-1",
+        phase: "installing",
+      },
+    });
+
+    expect(parsed).toEqual({
+      type: "daemon.update.progress",
+      payload: {
+        requestId: "update-1",
+        phase: "installing",
+      },
+    });
+  });
+});

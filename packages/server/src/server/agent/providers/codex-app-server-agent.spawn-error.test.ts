@@ -22,7 +22,7 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
 
     try {
       await expect(
-        client.fetchCatalog({ cwd: "/tmp/codex-models", force: false }),
+        client.fetchCatalog({ scope: "workspace", cwd: "/tmp/codex-models", force: false }),
       ).rejects.toThrow();
       // Drain microtask queue to ensure no deferred uncaught errors
       await new Promise((resolve) => setTimeout(resolve, 100));

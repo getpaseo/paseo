@@ -777,7 +777,9 @@ export class Session {
     this.daemonSession = new DaemonSession({
       host: {
         emit: (msg) => this.emit(msg),
+        emitLifecycleIntent: (intent) => this.emitLifecycleIntent(intent),
       },
+      clientId: this.clientId,
       paseoHome: this.paseoHome,
       serverId,
       daemonVersion,
@@ -1510,6 +1512,8 @@ export class Session {
         return this.daemonSession.handleGetPairingOfferRequest(msg);
       case "diagnostics.request":
         return this.daemonSession.handleDiagnosticsRequest(msg);
+      case "daemon.update.request":
+        return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",

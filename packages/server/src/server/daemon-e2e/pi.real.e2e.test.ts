@@ -656,7 +656,7 @@ test(
     const client = createPiClient();
     const cwd = tmpCwd("pi-list-models-");
     try {
-      const { models } = await client.fetchCatalog({ cwd, force: false });
+      const { models } = await client.fetchCatalog({ scope: "workspace", cwd, force: false });
 
       expect(models.length).toBeGreaterThan(0);
       for (const model of models) {

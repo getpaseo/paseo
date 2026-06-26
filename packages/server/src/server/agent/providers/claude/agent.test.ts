@@ -406,7 +406,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         resolveBinary: async () => "/test/claude/bin",
         configDir: emptyConfigDir,
       });
-      const { models } = await client.fetchCatalog({ cwd: "/tmp/claude-models", force: false });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
 
       expect(models.map((m) => m.id)).toEqual([
         "claude-fable-5",
@@ -441,7 +445,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         resolveBinary: async () => "/test/claude/bin",
         configDir: emptyConfigDir,
       });
-      const { models } = await client.fetchCatalog({ cwd: "/tmp/claude-models", force: false });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
       const getThinkingIds = (modelId: string) => {
         return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
       };

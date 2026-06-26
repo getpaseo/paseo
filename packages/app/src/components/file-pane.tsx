@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useContext, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -29,6 +29,9 @@ import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/ut
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
+import { MountedTabActiveContext } from "@/components/split-container";
+import { useAppVisible } from "@/hooks/use-app-visible";
+import { isFileQueryEnabled } from "@/components/file-pane-enabled";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -408,9 +411,19 @@ export function FilePane({
     [normalizedFilePath, normalizedWorkspaceRoot],
   );
 
+  // Re-read the file when this pane becomes visible again (#445). `isActive`
+  // covers tab switches, `isAppVisible` the whole-app background/foreground; the
+  // gate itself lives in isFileQueryEnabled.
+  const isActive = useContext(MountedTabActiveContext);
+  const isAppVisible = useAppVisible();
+
   const query = useQuery({
     queryKey: ["workspaceFile", serverId, readTarget?.cwd ?? null, readTarget?.path ?? null],
-    enabled: Boolean(client && readTarget),
+    enabled: isFileQueryEnabled({
+      hasReadTarget: Boolean(client && readTarget),
+      isTabActive: isActive,
+      isAppVisible,
+    }),
     queryFn: async () => {
       if (!client || !readTarget) {
         return {

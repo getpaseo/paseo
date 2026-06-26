@@ -3,11 +3,12 @@ import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { getE2EDaemonPort } from "./daemon-port";
 import { getServerId } from "./server-id";
+import { expectAppRoute } from "./route-assertions";
 import { waitForWorkspaceTabsVisible } from "./workspace-tabs";
 import {
   buildHostAgentDetailRoute,
-  buildHostSessionsRoute,
   buildHostWorkspaceRoute,
+  buildSessionsRoute,
 } from "@/utils/host-routes";
 
 export interface ArchiveTabAgent {
@@ -219,9 +220,7 @@ export async function openSessions(page: Page): Promise<void> {
   const sessionsButton = page.getByTestId("sidebar-sessions");
   await expect(sessionsButton).toBeVisible({ timeout: 30_000 });
   await sessionsButton.click();
-  await expect(page).toHaveURL(new RegExp(`${buildHostSessionsRoute(getServerId())}$`), {
-    timeout: 30_000,
-  });
+  await expectAppRoute(page, buildSessionsRoute(), { timeout: 30_000 });
   await expect(page.getByText("History", { exact: true }).last()).toBeVisible({
     timeout: 30_000,
   });

@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpToLine,
   ChevronRight,
   Globe,
   Monitor,
@@ -53,6 +54,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { isVersionMismatch } from "@/desktop/updates/desktop-updates";
+import { resolveAppVersion } from "@/utils/app-version";
 import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 import { formatLatency } from "@/utils/latency";
 import { ICON_SIZE } from "@/styles/theme";
@@ -352,6 +355,8 @@ export function HostSettingsPage({
       <HostStatusBadges serverId={serverId} />
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
+
+      {!isLocalDaemon ? <UpdateDaemonCard host={host} /> : null}
 
       <RemoveHostSection host={host} isLocalDaemon={isLocalDaemon} onRemoved={onHostRemoved} />
     </View>
@@ -703,6 +708,214 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
           {isRestarting
             ? t("settings.host.daemon.restart.restarting")
             : t("settings.host.daemon.restart.confirm")}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+function UpdateDaemonCard({ host }: { host: HostProfile }) {
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
+  const daemonClient = useHostRuntimeClient(host.serverId);
+  const isConnected = useHostRuntimeIsConnected(host.serverId);
+  const runtime = getHostRuntimeStore();
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [progressPhase, setProgressPhase] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  const daemonVersion = useSessionStore(
+    (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
+  );
+  const supportsSelfUpdate = useSessionStore(
+    (state) => state.sessions[host.serverId]?.serverInfo?.features?.daemonSelfUpdate === true,
+  );
+
+  const appVersion = resolveAppVersion();
+  const hasVersionMismatch = isVersionMismatch(appVersion, daemonVersion);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      unsubscribeRef.current?.();
+    };
+  }, []);
+
+  const isHostConnected = useCallback(
+    () => isHostRuntimeConnected(runtime.getSnapshot(host.serverId)),
+    [host.serverId, runtime],
+  );
+  const hasReconnectedAfter = useCallback(
+    (startGeneration: number | null) => {
+      const snapshot = runtime.getSnapshot(host.serverId);
+      if (!snapshot || !isHostRuntimeConnected(snapshot)) return false;
+      return startGeneration === null || snapshot.clientGeneration !== startGeneration;
+    },
+    [host.serverId, runtime],
+  );
+
+  const waitForCondition = useCallback(
+    async (predicate: () => boolean, timeoutMs: number, intervalMs = 250) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (!isMountedRef.current) return false;
+        if (predicate()) return true;
+        await delay(intervalMs);
+      }
+      return predicate();
+    },
+    [],
+  );
+
+  const waitForDaemonRestart = useCallback(
+    async (startGeneration: number | null) => {
+      const disconnectTimeoutMs = 15000;
+      const reconnectTimeoutMs = 120000; // 2 minutes — npm update + restart can take a while
+      if (!hasReconnectedAfter(startGeneration) && isHostConnected()) {
+        await waitForCondition(
+          () => !isHostConnected() || hasReconnectedAfter(startGeneration),
+          disconnectTimeoutMs,
+        );
+      }
+      const reconnected =
+        hasReconnectedAfter(startGeneration) ||
+        (await waitForCondition(() => hasReconnectedAfter(startGeneration), reconnectTimeoutMs));
+      if (isMountedRef.current) {
+        setIsUpdating(false);
+        setProgressPhase(null);
+        if (!reconnected) {
+          Alert.alert(
+            t("settings.host.daemon.update.unableToReconnectTitle"),
+            t("settings.host.daemon.update.unableToReconnectMessage", { name: host.label }),
+          );
+        }
+      }
+    },
+    [hasReconnectedAfter, host.label, isHostConnected, t, waitForCondition],
+  );
+
+  const handleUpdate = useCallback(() => {
+    if (!daemonClient) {
+      Alert.alert(
+        t("settings.host.daemon.update.unavailableTitle"),
+        t("settings.host.daemon.update.unavailableMessage"),
+      );
+      return;
+    }
+    if (!isHostConnected()) {
+      Alert.alert(
+        t("settings.host.daemon.update.offlineTitle"),
+        t("settings.host.daemon.update.offlineMessage"),
+      );
+      return;
+    }
+
+    void confirmDialog({
+      title: t("settings.host.daemon.update.confirmTitle", { name: host.label }),
+      message: t("settings.host.daemon.update.confirmMessage"),
+      confirmLabel: t("settings.host.daemon.update.confirm"),
+      cancelLabel: t("common.actions.cancel"),
+      destructive: false,
+    })
+      .then((confirmed) => {
+        if (!confirmed) return;
+        const startGeneration = runtime.getSnapshot(host.serverId)?.clientGeneration ?? null;
+        setIsUpdating(true);
+        setProgressPhase(t("settings.host.daemon.update.phaseStarting"));
+        const requestId = `settings_daemon_update_${host.serverId}`;
+
+        const unsubscribe = daemonClient.on("daemon.update.progress", (message) => {
+          if (message.payload.requestId !== requestId) return;
+          if (!isMountedRef.current) return;
+          const { phase } = message.payload;
+          if (phase === "starting")
+            setProgressPhase(t("settings.host.daemon.update.phaseStarting"));
+          else if (phase === "downloading")
+            setProgressPhase(t("settings.host.daemon.update.phaseDownloading"));
+          else if (phase === "installing")
+            setProgressPhase(t("settings.host.daemon.update.phaseInstalling"));
+          else if (phase === "complete")
+            setProgressPhase(t("settings.host.daemon.update.phaseComplete"));
+        });
+        unsubscribeRef.current = unsubscribe;
+
+        void daemonClient
+          .updateDaemon(requestId)
+          .then((response) => {
+            unsubscribeRef.current = null;
+            unsubscribe();
+            if (!response.success) {
+              if (!isMountedRef.current) return undefined;
+              setIsUpdating(false);
+              setProgressPhase(null);
+              Alert.alert(
+                t("settings.host.daemon.update.requestFailedTitle"),
+                t("settings.host.daemon.update.requestFailedMessage", {
+                  error: response.error ?? "Unknown error",
+                }),
+              );
+              return undefined;
+            }
+            // Update succeeded — wait for daemon to restart and reconnect
+            void waitForDaemonRestart(startGeneration);
+            return undefined;
+          })
+          .catch((error) => {
+            unsubscribeRef.current = null;
+            unsubscribe();
+            console.error(`[HostPage] Failed to update daemon ${host.label}`, error);
+            if (!isMountedRef.current) return;
+            setIsUpdating(false);
+            setProgressPhase(null);
+            Alert.alert(
+              t("settings.host.daemon.update.requestFailedTitle"),
+              t("settings.host.daemon.update.requestFailedMessage", {
+                error: error instanceof Error ? error.message : "Unknown error",
+              }),
+            );
+          });
+        return;
+      })
+      .catch((error) => {
+        console.error(`[HostPage] Failed to open update confirmation for ${host.label}`, error);
+        Alert.alert(
+          t("settings.host.daemon.update.requestFailedTitle"),
+          t("settings.host.daemon.update.dialogFailedMessage"),
+        );
+      });
+  }, [daemonClient, host.label, host.serverId, isHostConnected, runtime, t, waitForDaemonRestart]);
+
+  const updateIcon = useMemo(
+    () => <ArrowUpToLine size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+
+  // Don't show if the daemon doesn't support self-update or versions match
+  if (!supportsSelfUpdate || !hasVersionMismatch) {
+    return null;
+  }
+
+  const buttonLabel = isUpdating
+    ? (progressPhase ?? t("settings.host.daemon.update.updating"))
+    : t("settings.host.daemon.update.confirm");
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-update-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("settings.host.daemon.update.title")}</Text>
+          <Text style={settingsStyles.rowHint}>{t("settings.host.daemon.update.hint")}</Text>
+        </View>
+        <Button
+          variant="outline"
+          size="sm"
+          leftIcon={updateIcon}
+          onPress={handleUpdate}
+          disabled={isUpdating || !daemonClient || !isConnected}
+          testID="host-page-update-button"
+        >
+          {buttonLabel}
         </Button>
       </View>
     </View>

@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -1212,7 +1212,7 @@ describe("session provider refresh cwd routing", () => {
     expect(getSnapshot).toHaveBeenCalledWith(workspaceCwd);
   });
 
-  test("normalizes legacy model and mode list requests without cwd to home", async () => {
+  test("preserves legacy model and mode list requests without cwd as global", async () => {
     const messages: unknown[] = [];
     const {
       manager: providerSnapshotManager,
@@ -1239,9 +1239,9 @@ describe("session provider refresh cwd routing", () => {
       requestId: "modes-home",
     });
 
-    expect(getSnapshot).toHaveBeenCalledWith(homedir());
+    expect(getSnapshot).toHaveBeenCalledWith(undefined);
     expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
-      cwd: homedir(),
+      cwd: undefined,
       providers: ["codex"],
     });
   });
@@ -1343,7 +1343,7 @@ describe("session provider refresh cwd routing", () => {
     });
 
     expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
-      cwd: homedir(),
+      cwd: undefined,
       providers: ["codex"],
     });
     warmupDeferred.resolve();

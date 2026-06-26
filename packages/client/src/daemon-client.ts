@@ -10,6 +10,7 @@ import {
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
+  DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
   WSOutboundMessageSchema,
@@ -468,6 +469,7 @@ export interface FetchAgentTimelineOptions {
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
+type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_agents_response" }
@@ -1884,7 +1886,9 @@ export class DaemonClient {
         cwd,
       },
       responseType: "open_project_response",
-      timeout: 10000,
+      // Large local repos (e.g. a big monorepo/brain checkout) need >10s for the
+      // daemon to resolve the path, detect git, and materialize the workspace.
+      timeout: 60000,
     });
   }
 
@@ -2632,6 +2636,30 @@ export class DaemonClient {
           return null;
         }
         return shutdown.data;
+      },
+    });
+  }
+
+  async updateDaemon(requestId?: string): Promise<DaemonUpdateResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "daemon.update.request",
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 300_000, // 5 minutes — npm update can be slow on remote machines
+      options: { skipQueue: true },
+      select: (msg) => {
+        const parsed = DaemonUpdateResponseSchema.safeParse(msg);
+        if (!parsed.success) {
+          return null;
+        }
+        if (parsed.data.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return parsed.data.payload;
       },
     });
   }
@@ -3486,7 +3514,9 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "directory_suggestions_response",
-      timeout: 10000,
+      // Home-tree scans on large home dirs can take several seconds; don't cut
+      // the suggestion request off early (it would surface as an empty list).
+      timeout: 30000,
     });
   }
 

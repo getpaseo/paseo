@@ -236,6 +236,56 @@ Service proxy hostnames use the double-dash shape: `web--feature-auth--project.l
 }
 ```
 
+## Bundled daemon web UI
+
+> The user-facing guide for this feature (enabling it, reverse proxy, TLS, tunnels, security) lives at [public-docs/web-ui.md](../public-docs/web-ui.md). This section is the contributor/build reference: how the artifact is produced, bundled, and excluded from desktop packaging.
+
+The daemon can optionally serve the browser web client from the same HTTP server. This is disabled by default.
+
+Enable it for a running daemon with:
+
+```bash
+paseo daemon start --web-ui
+```
+
+Or set the environment variable:
+
+```bash
+PASEO_WEB_UI_ENABLED=true paseo daemon start
+```
+
+Or persist it in `config.json`:
+
+```json
+{
+  "features": {
+    "webUi": {
+      "enabled": true
+    }
+  }
+}
+```
+
+When enabled, opening the daemon HTTP origin (for example `http://localhost:6767/`) serves the web app. The same HTTP server continues to serve `/api/*`, `/mcp/*`, `/public/*`, the WebSocket upgrade, and service-proxy routes. Static files load without daemon bearer auth; API and WebSocket calls still enforce auth.
+
+The served app auto-bootstraps a connection to the same origin, so opening `http://localhost:6767/` directly usually skips the Add Host step.
+
+Build the artifact for packaging or measurement with:
+
+```bash
+npm run build:daemon-web-ui
+```
+
+This exports the normal browser web app (not the Electron-flavored desktop renderer) and copies it into `packages/server/dist/server/web-ui`, precompressing `.html`, `.js`, `.css`, and JSON assets as `.br` and `.gz`.
+
+Measured bundle size for a standard Expo web export:
+
+- raw: 10.77 MiB
+- gzip: 2.55 MiB
+- brotli: 1.93 MiB
+
+The desktop-managed daemon disables the bundled web UI by default (`PASEO_WEB_UI_ENABLED=false`) because the desktop app already ships the renderer as `app-dist`. Shipping the same assets again inside `@getpaseo/server` would duplicate the ~10.8 MiB install. Desktop packaging also excludes `node_modules/@getpaseo/server/dist/server/web-ui/**` from the packaged app.
+
 ## Built workspace packages
 
 Package imports resolve through package exports to compiled `dist/` output, not sibling `src/` files. This is true in local dev and in published packages: the app, daemon, CLI, and SDK consumers should all exercise the same runtime paths.

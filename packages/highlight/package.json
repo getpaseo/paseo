@@ -44,6 +44,7 @@
     "@lezer/rust": "^1.0.2",
     "@lezer/xml": "^1.0.6",
     "@lezer/yaml": "^1.0.4",
+    "@replit/codemirror-lang-csharp": "^6.2.0",
     "lezer-elixir": "^1.1.2"
   },
   "devDependencies": {
