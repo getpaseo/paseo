@@ -30,7 +30,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
-import { useHostChooser } from "@/hosts/host-chooser";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
 import {
@@ -52,7 +51,7 @@ import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { canCloseLeftSidebarGesture } from "@/utils/sidebar-animation-state";
 import {
   buildOpenProjectRoute,
-  buildHostNewWorkspaceRoute,
+  buildNewWorkspaceRoute,
   buildSessionsRoute,
   buildSettingsAddHostRoute,
   buildSettingsHostSectionRoute,
@@ -166,7 +165,6 @@ export const LeftSidebar = memo(function LeftSidebar({
   }, [isRevalidating, isManualRefresh]);
 
   const openProjectPicker = useOpenProjectPicker();
-  const chooseHost = useHostChooser();
 
   const handleOpenProjectMobile = useCallback(() => {
     showMobileAgent();
@@ -178,13 +176,8 @@ export const LeftSidebar = memo(function LeftSidebar({
   }, [openProjectPicker]);
 
   const handleNewWorkspaceNavigate = useCallback(() => {
-    chooseHost({
-      title: "Choose host",
-      onChooseHost: (serverId) => {
-        router.push(buildHostNewWorkspaceRoute(serverId));
-      },
-    });
-  }, [chooseHost]);
+    router.push(buildNewWorkspaceRoute());
+  }, []);
 
   const handleSettingsMobile = useCallback(() => {
     showMobileAgent();

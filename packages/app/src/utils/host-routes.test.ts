@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildHostAgentDetailRoute,
-  buildHostNewWorkspaceRoute,
   buildHostRootRoute,
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
+  buildNewWorkspaceRoute,
   buildOpenProjectRoute,
   resolveKnownHostRoute,
   buildSessionsRoute,
@@ -149,19 +149,6 @@ describe("workspace route parsing", () => {
     ).toBe("/h/local/workspace/b64_L3RtcC9yZXBv");
   });
 
-  it("builds a global new workspace route without a source directory", () => {
-    expect(buildHostNewWorkspaceRoute("local")).toBe("/h/local/new");
-  });
-
-  it("builds a project shortcut new workspace route with initial project context", () => {
-    expect(
-      buildHostNewWorkspaceRoute("local", "/repo/project", {
-        displayName: "Project",
-        projectId: "project-1",
-      }),
-    ).toBe("/h/local/new?dir=%2Frepo%2Fproject&name=Project&projectId=project-1");
-  });
-
   it("round-trips URL-safe IDs through encode/decode", () => {
     const ids = ["1", "40", "164", "9999", "workspace-1", "opaque_id.v2~test"];
     for (const id of ids) {
@@ -215,6 +202,25 @@ describe("projects settings routes", () => {
 describe("global routes", () => {
   it("buildSessionsRoute returns the all-host Sessions route", () => {
     expect(buildSessionsRoute()).toBe("/sessions");
+  });
+
+  it("buildNewWorkspaceRoute returns the all-host New Workspace route", () => {
+    expect(buildNewWorkspaceRoute()).toBe("/new");
+  });
+
+  it("buildNewWorkspaceRoute accepts an initial host", () => {
+    expect(buildNewWorkspaceRoute({ serverId: "local" })).toBe("/new?serverId=local");
+  });
+
+  it("buildNewWorkspaceRoute accepts initial project context", () => {
+    expect(
+      buildNewWorkspaceRoute({
+        serverId: "local",
+        sourceDirectory: "/repo/project",
+        displayName: "Project",
+        projectId: "project-1",
+      }),
+    ).toBe("/new?serverId=local&dir=%2Frepo%2Fproject&name=Project&projectId=project-1");
   });
 });
 

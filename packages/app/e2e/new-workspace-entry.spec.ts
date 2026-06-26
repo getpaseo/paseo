@@ -6,7 +6,9 @@ import {
   openGlobalNewWorkspaceComposer,
   openNewWorkspaceComposer,
 } from "./helpers/new-workspace";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
+import { seedSavedSettingsHosts } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
@@ -38,6 +40,19 @@ test.describe("New workspace entry points", () => {
     const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-global-button-" });
 
     try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId: getServerId(),
+          label: "localhost",
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+        {
+          serverId: "secondary-new-workspace-host",
+          label: "Secondary host",
+          endpoint: "127.0.0.1:9",
+        },
+      ]);
+
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await expect(
@@ -47,12 +62,14 @@ test.describe("New workspace entry points", () => {
       const globalButton = page.getByTestId("sidebar-global-new-workspace");
       await expect(globalButton).toBeVisible({ timeout: 30_000 });
 
-      await openGlobalNewWorkspaceComposer(page);
+      await globalButton.click();
+      await expect(page.getByTestId("host-chooser")).toHaveCount(0);
+      await expect(page).toHaveURL(/\/new(?:\?.*)?$/, { timeout: 30_000 });
 
-      // The screen is up: its project picker trigger is the canonical landmark.
       await expect(page.getByTestId("new-workspace-project-picker-trigger")).toBeVisible({
         timeout: 30_000,
       });
+      await expect(page.getByTestId("host-picker-trigger")).toBeVisible({ timeout: 30_000 });
     } finally {
       await seeded.cleanup();
     }

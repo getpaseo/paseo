@@ -414,6 +414,39 @@ export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }
 
+interface NewWorkspaceRouteOptions {
+  serverId?: string;
+  sourceDirectory?: string;
+  displayName?: string;
+  projectId?: string;
+}
+
+function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
+  const params = new URLSearchParams();
+  const serverId = trimNonEmpty(options.serverId);
+  if (serverId) {
+    params.set("serverId", serverId);
+  }
+  if (options.sourceDirectory) {
+    params.set("dir", options.sourceDirectory);
+  }
+  if (options.displayName) {
+    params.set("name", options.displayName);
+  }
+  if (options.projectId) {
+    params.set("projectId", options.projectId);
+  }
+  return params.toString();
+}
+
+export function buildNewWorkspaceRoute(options: NewWorkspaceRouteOptions = {}) {
+  const query = buildNewWorkspaceSearch(options);
+  if (!query) {
+    return "/new" as const;
+  }
+  return `/new?${query}` as const;
+}
+
 export type KnownHostRouteResolution =
   | { kind: "render" }
   | { kind: "redirect"; href: ReturnType<typeof buildOpenProjectRoute> | "/welcome" };
@@ -432,32 +465,6 @@ export function resolveKnownHostRoute(input: {
   }
 
   return { kind: "redirect", href: "/welcome" };
-}
-
-export function buildHostNewWorkspaceRoute(
-  serverId: string,
-  sourceDirectory?: string,
-  options?: { displayName?: string; projectId?: string },
-) {
-  const base = buildHostRootRoute(serverId);
-  if (base === "/") {
-    return "/" as const;
-  }
-  const params = new URLSearchParams();
-  if (sourceDirectory) {
-    params.set("dir", sourceDirectory);
-  }
-  if (options?.displayName) {
-    params.set("name", options.displayName);
-  }
-  if (options?.projectId) {
-    params.set("projectId", options.projectId);
-  }
-  const query = params.toString();
-  if (!query) {
-    return `${base}/new` as const;
-  }
-  return `${base}/new?${query}` as const;
 }
 
 export const SETTINGS_SECTION_SLUGS = [

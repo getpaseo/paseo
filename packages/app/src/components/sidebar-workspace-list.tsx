@@ -59,7 +59,7 @@ import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import {
-  buildHostNewWorkspaceRoute,
+  buildNewWorkspaceRoute,
   buildProjectSettingsRoute,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
@@ -992,7 +992,9 @@ function NewWorkspaceGhostRow({
   const handlePress = useCallback(() => {
     onWorkspacePress?.();
     router.navigate(
-      buildHostNewWorkspaceRoute(worktreeTarget.serverId, worktreeTarget.iconWorkingDir, {
+      buildNewWorkspaceRoute({
+        serverId: worktreeTarget.serverId,
+        sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
         projectId: project.projectKey,
       }) as Href,
@@ -1287,7 +1289,9 @@ function ProjectHeaderRow({
     }
     onWorkspacePress?.();
     router.navigate(
-      buildHostNewWorkspaceRoute(worktreeTarget.serverId, worktreeTarget.iconWorkingDir, {
+      buildNewWorkspaceRoute({
+        serverId: worktreeTarget.serverId,
+        sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
         projectId: project.projectKey,
       }) as Href,

@@ -976,8 +976,33 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
 function useNewWorkspaceHostSelector(initialServerId: string) {
   const allHosts = useHosts();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
-  const [selectedServerId, setSelectedServerId] = useState(initialServerId);
+  const lastWorkspaceSelection = useLastWorkspaceSelection();
+  const normalizedInitialServerId = initialServerId.trim();
+  const routeInitialServerId = allServerIds.includes(normalizedInitialServerId)
+    ? normalizedInitialServerId
+    : null;
+  const fallbackServerId =
+    lastWorkspaceSelection && allServerIds.includes(lastWorkspaceSelection.serverId)
+      ? lastWorkspaceSelection.serverId
+      : (allServerIds[0] ?? "");
+  const [selectedServerId, setSelectedServerId] = useState(
+    routeInitialServerId ?? fallbackServerId,
+  );
+  const lastRouteInitialServerIdRef = useRef<string | null>(null);
   const [hostPickerOpen, setHostPickerOpen] = useState(false);
+
+  useEffect(() => {
+    setSelectedServerId((current) => {
+      if (routeInitialServerId && lastRouteInitialServerIdRef.current !== routeInitialServerId) {
+        return routeInitialServerId;
+      }
+      if (current && allServerIds.includes(current)) {
+        return current;
+      }
+      return routeInitialServerId ?? fallbackServerId;
+    });
+    lastRouteInitialServerIdRef.current = routeInitialServerId;
+  }, [allServerIds, fallbackServerId, routeInitialServerId]);
 
   const handleSelectHost = useCallback((id: string) => {
     setSelectedServerId(id);
@@ -996,9 +1021,7 @@ function useNewWorkspaceHostSelector(initialServerId: string) {
     allHosts,
     allServerIds,
     selectedServerId,
-    setSelectedServerId,
     hostPickerOpen,
-    setHostPickerOpen,
     handleSelectHost,
     handleHostPickerOpenChange,
     openHostPicker,
