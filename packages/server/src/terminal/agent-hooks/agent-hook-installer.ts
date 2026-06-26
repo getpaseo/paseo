@@ -138,7 +138,7 @@ export function buildAgentHookShellCommand<TConfig>(
   event: AgentHookEventDefinition,
 ): string {
   const hookCommand = `"\${PASEO_HOOK_CLI:-paseo}" hooks ${shellToken(provider.id)} ${shellToken(event.event)}`;
-  return `[ -n "$PASEO_TERMINAL_ID" ] && ${hookCommand}`;
+  return `[ -z "$PASEO_TERMINAL_ID" ] || ${hookCommand}`;
 }
 
 export function buildAgentHookWindowsCommand<TConfig>(

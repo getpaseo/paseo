@@ -81,7 +81,7 @@ describe("Claude terminal agent hooks", () => {
       );
       expect(paseoCommands).toHaveLength(1);
       expect(paseoCommands[0]).toBe(
-        `[ -n "$PASEO_TERMINAL_ID" ] && "\${PASEO_HOOK_CLI:-paseo}" hooks ${provider.id} ${event.event}`,
+        `[ -z "$PASEO_TERMINAL_ID" ] || "\${PASEO_HOOK_CLI:-paseo}" hooks ${provider.id} ${event.event}`,
       );
     }
     expect(registeredAgentHooksAreInstalled({ configDir })).toBe(true);
@@ -146,7 +146,7 @@ describe("Claude terminal agent hooks", () => {
     const command = buildAgentHookShellCommand(provider, provider.events[0]);
 
     expect(command).toBe(
-      '[ -n "$PASEO_TERMINAL_ID" ] && "${PASEO_HOOK_CLI:-paseo}" hooks claude UserPromptSubmit',
+      '[ -z "$PASEO_TERMINAL_ID" ] || "${PASEO_HOOK_CLI:-paseo}" hooks claude UserPromptSubmit',
     );
   });
 
