@@ -18,8 +18,9 @@ test.describe("Mermaid markdown", () => {
 
       const fence = page.getByTestId("mermaid-fence").first();
       await expect(fence).toBeVisible({ timeout: 30_000 });
-      await expect(fence.getByTestId("mermaid-diagram-host")).toBeVisible({ timeout: 30_000 });
-      await expect(fence.locator("svg")).toBeVisible({ timeout: 30_000 });
+      const diagramHost = fence.getByTestId("mermaid-diagram-host");
+      await expect(diagramHost).toBeVisible({ timeout: 30_000 });
+      await expect(diagramHost.locator("svg")).toBeVisible({ timeout: 30_000 });
 
       await fence.hover();
       await fence.getByTestId("mermaid-source-toggle").click();
