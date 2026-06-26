@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View, type TextStyle } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Check, Copy, Expand, FileCode2, GitGraph } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
@@ -8,6 +8,7 @@ import { HighlightedCodeBlock, splitFenceStyle } from "@/components/highlighted-
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import type { Theme } from "@/styles/theme";
 import { MermaidDiagramView } from "@/components/markdown/mermaid/mermaid-diagram-view";
 import { MermaidLightbox } from "@/components/markdown/mermaid/mermaid-lightbox";
 
@@ -19,15 +20,34 @@ export interface MermaidFenceBlockProps {
   textStyle: TextStyle;
 }
 
+const COPIED_RESET_MS = 1500;
+
+const ThemedGitGraph = withUnistyles(GitGraph);
+const ThemedFileCode2 = withUnistyles(FileCode2);
+const ThemedExpand = withUnistyles(Expand);
+const ThemedCopy = withUnistyles(Copy);
+const ThemedCheck = withUnistyles(Check);
+
+const mutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
 export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidFenceBlockProps) {
   const { t } = useTranslation();
-  const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const [view, setView] = useState<MermaidFenceView>("diagram");
   const [fullscreenSvg, setFullscreenSvg] = useState<string | null>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copiedResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copiedResetRef.current) {
+        clearTimeout(copiedResetRef.current);
+      }
+    },
+    [],
+  );
 
   const { containerStyle } = useMemo(
     () => splitFenceStyle(inheritedStyles, textStyle),
@@ -49,7 +69,13 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
     }
     await Clipboard.setStringAsync(code);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (copiedResetRef.current) {
+      clearTimeout(copiedResetRef.current);
+    }
+    copiedResetRef.current = setTimeout(() => {
+      setCopied(false);
+      copiedResetRef.current = null;
+    }, COPIED_RESET_MS);
   }, [code]);
 
   const handleExpand = useCallback(() => {
@@ -62,7 +88,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
   const handleCloseLightbox = useCallback(() => setLightboxOpen(false), []);
 
   const handleSvgChange = useCallback((svg: string | null) => {
-    setFullscreenSvg(svg);
+    setFullscreenSvg((previous) => (previous === svg ? previous : svg));
   }, []);
 
   const toolbarOpacity = controlsVisible ? 1 : 0;
@@ -94,7 +120,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
             onPress={handleShowDiagram}
             style={diagramSegmentStyle}
           >
-            <GitGraph size={14} color={theme.colors.foregroundMuted} />
+            <ThemedGitGraph size={14} uniProps={mutedIconColorMapping} />
             <Text style={fenceStyles.segmentLabel}>{t("markdown.mermaid.diagram")}</Text>
           </Pressable>
           <Pressable
@@ -103,7 +129,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
             onPress={handleShowSource}
             style={sourceSegmentStyle}
           >
-            <FileCode2 size={14} color={theme.colors.foregroundMuted} />
+            <ThemedFileCode2 size={14} uniProps={mutedIconColorMapping} />
             <Text style={fenceStyles.segmentLabel}>{t("markdown.mermaid.source")}</Text>
           </Pressable>
           <View style={fenceStyles.toolbarSpacer} />
@@ -115,7 +141,7 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
               hitSlop={8}
               style={fenceStyles.iconButton}
             >
-              <Expand size={14} color={theme.colors.foregroundMuted} />
+              <ThemedExpand size={14} uniProps={mutedIconColorMapping} />
             </Pressable>
           ) : null}
           <Pressable
@@ -128,9 +154,9 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
             style={fenceStyles.iconButton}
           >
             {copied ? (
-              <Check size={14} color={theme.colors.foregroundMuted} />
+              <ThemedCheck size={14} uniProps={mutedIconColorMapping} />
             ) : (
-              <Copy size={14} color={theme.colors.foregroundMuted} />
+              <ThemedCopy size={14} uniProps={mutedIconColorMapping} />
             )}
           </Pressable>
         </View>
@@ -141,12 +167,15 @@ export function MermaidFenceBlock({ code, inheritedStyles, textStyle }: MermaidF
           <MermaidDiagramView source={code} onSvgChange={handleSvgChange} />
         </View>
       ) : (
-        <HighlightedCodeBlock
-          code={code}
-          language="mermaid"
-          inheritedStyles={inheritedStyles}
-          textStyle={textStyle}
-        />
+        <View style={fenceStyles.sourceBody}>
+          <HighlightedCodeBlock
+            code={code}
+            language="mermaid"
+            inheritedStyles={inheritedStyles}
+            textStyle={textStyle}
+            bodyOnly
+          />
+        </View>
       )}
 
       {lightboxOpen ? <MermaidLightbox svg={fullscreenSvg} onClose={handleCloseLightbox} /> : null}
@@ -195,6 +224,11 @@ const fenceStyles = StyleSheet.create((theme) => ({
     padding: theme.spacing[1],
   },
   diagramBody: {
+    paddingTop: theme.spacing[8],
+    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+  },
+  sourceBody: {
     paddingTop: theme.spacing[8],
     paddingHorizontal: theme.spacing[2],
     paddingBottom: theme.spacing[2],

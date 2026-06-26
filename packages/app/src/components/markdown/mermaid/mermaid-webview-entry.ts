@@ -2,6 +2,7 @@ import mermaid from "mermaid";
 
 interface RenderMessage {
   type: "render";
+  requestId: number;
   source: string;
   themeKey: string;
   themeVariables: Record<string, string | boolean>;
@@ -11,12 +12,14 @@ type InboundMessage = RenderMessage;
 
 interface RenderedOutbound {
   type: "rendered";
+  requestId: number;
   svg: string;
   height: number;
 }
 
 interface ErrorOutbound {
   type: "error";
+  requestId: number;
   message: string;
 }
 
@@ -47,9 +50,10 @@ function applyTheme(themeKey: string, themeVariables: Record<string, string | bo
 }
 
 async function renderDiagram(message: RenderMessage): Promise<void> {
+  const requestId = message.requestId;
   const trimmed = message.source.trim();
   if (trimmed.length === 0) {
-    postMessage({ type: "error", message: "Empty diagram" });
+    postMessage({ type: "error", requestId, message: "Empty diagram" });
     return;
   }
 
@@ -87,10 +91,10 @@ async function renderDiagram(message: RenderMessage): Promise<void> {
       }
     }
 
-    postMessage({ type: "rendered", svg, height });
+    postMessage({ type: "rendered", requestId, svg, height });
   } catch (error: unknown) {
     const messageText = error instanceof Error ? error.message : String(error);
-    postMessage({ type: "error", message: messageText });
+    postMessage({ type: "error", requestId, message: messageText });
   }
 }
 

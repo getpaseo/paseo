@@ -3,16 +3,22 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { MermaidDiagramHost } from "@/components/markdown/mermaid/mermaid-diagram-host";
+import type { MermaidThemeConfig } from "@/components/markdown/mermaid/mermaid-theme-config";
 import { useMermaidRender } from "@/components/markdown/mermaid/use-mermaid-render";
 
-interface MermaidDiagramViewProps {
+export interface MermaidDiagramViewInnerProps {
   source: string;
+  mermaidTheme: MermaidThemeConfig;
   onSvgChange?: (svg: string | null) => void;
 }
 
-export function MermaidDiagramView({ source, onSvgChange }: MermaidDiagramViewProps) {
+export function MermaidDiagramViewInner({
+  source,
+  mermaidTheme,
+  onSvgChange,
+}: MermaidDiagramViewInnerProps) {
   const { t } = useTranslation();
-  const { svg, error, isRendering } = useMermaidRender(source);
+  const { svg, error, isRendering } = useMermaidRender(source, mermaidTheme);
   const showSpinner = useMemo(() => isRendering && !svg && !error, [error, isRendering, svg]);
 
   useEffect(() => {

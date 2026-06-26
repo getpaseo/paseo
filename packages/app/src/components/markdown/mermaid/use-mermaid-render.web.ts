@@ -1,18 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { useUnistyles } from "react-native-unistyles";
-import {
-  buildMermaidThemeKey,
-  buildMermaidThemeVariables,
-} from "@/components/markdown/mermaid/mermaid-theme";
+import type { MermaidThemeConfig } from "@/components/markdown/mermaid/mermaid-theme-config";
+import { useMermaidThemeVariablesRef } from "@/components/markdown/mermaid/use-mermaid-theme-variables-ref";
 import { renderMermaidSvg } from "@/components/markdown/mermaid/mermaid-runtime.web";
 import type { MermaidRenderState } from "@/components/markdown/mermaid/use-mermaid-render-types";
 
 const MERMAID_RENDER_DEBOUNCE_MS = 250;
 
-export function useMermaidRender(source: string): MermaidRenderState {
-  const { theme } = useUnistyles();
-  const themeVariables = buildMermaidThemeVariables(theme);
-  const themeKey = buildMermaidThemeKey(themeVariables);
+export function useMermaidRender(
+  source: string,
+  mermaidTheme: MermaidThemeConfig,
+): MermaidRenderState {
+  const { themeKey, themeVariablesRef } = useMermaidThemeVariablesRef(mermaidTheme);
   const [state, setState] = useState<MermaidRenderState>({
     svg: null,
     error: null,
@@ -32,7 +30,7 @@ export function useMermaidRender(source: string): MermaidRenderState {
     setState((current) => ({ ...current, isRendering: true, error: null }));
 
     const timeout = setTimeout(() => {
-      void renderMermaidSvg(trimmed, themeVariables, themeKey)
+      void renderMermaidSvg(trimmed, themeVariablesRef.current, themeKey)
         .then((svg) => {
           if (requestIdRef.current !== requestId) {
             return undefined;
@@ -52,7 +50,7 @@ export function useMermaidRender(source: string): MermaidRenderState {
     return () => {
       clearTimeout(timeout);
     };
-  }, [source, themeKey, themeVariables]);
+  }, [source, themeKey, themeVariablesRef]);
 
   return state;
 }
