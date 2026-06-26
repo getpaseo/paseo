@@ -133,6 +133,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
   "workspace-pane-split-down": "settings.shortcuts.help.splitPaneDown",
+  "workspace-file-refresh": "settings.shortcuts.help.refreshFile",
   "workspace-pane-focus-left": "settings.shortcuts.help.focusPaneLeft",
   "workspace-pane-focus-right": "settings.shortcuts.help.focusPaneRight",
   "workspace-pane-focus-up": "settings.shortcuts.help.focusPaneUp",
@@ -545,6 +546,18 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "tabs-panes",
       label: "Split pane down",
       keys: ["mod", "shift", "\\"],
+    },
+  },
+  {
+    id: "workspace-file-refresh-cmd-shift-r",
+    action: "workspace.file.refresh",
+    combo: "Cmd+Shift+R",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-file-refresh",
+      section: "tabs-panes",
+      label: "Refresh file",
+      keys: ["mod", "shift", "R"],
     },
   },
   {

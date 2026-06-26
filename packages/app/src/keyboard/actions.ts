@@ -24,6 +24,7 @@ export type KeyboardActionId =
   | "workspace.tab.navigate.relative"
   | "workspace.pane.split.right"
   | "workspace.pane.split.down"
+  | "workspace.file.refresh"
   | "workspace.pane.focus.left"
   | "workspace.pane.focus.right"
   | "workspace.pane.focus.up"

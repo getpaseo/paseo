@@ -94,6 +94,7 @@ interface SplitContainerProps {
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onRefreshFile: (path: string) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
@@ -375,6 +376,7 @@ export function SplitContainer({
   onCopyAgentId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshFile,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -592,6 +594,7 @@ export function SplitContainer({
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
+          onRefreshFile={onRefreshFile}
           onRenameTab={onRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
@@ -735,6 +738,7 @@ function SplitNodeView({
   onCopyAgentId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshFile,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -788,6 +792,7 @@ function SplitNodeView({
         onCopyAgentId={onCopyAgentId}
         onCopyFilePath={onCopyFilePath}
         onReloadAgent={onReloadAgent}
+        onRefreshFile={onRefreshFile}
         onRenameTab={onRenameTab}
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
@@ -834,6 +839,7 @@ function SplitNodeView({
               onCopyAgentId={onCopyAgentId}
               onCopyFilePath={onCopyFilePath}
               onReloadAgent={onReloadAgent}
+              onRefreshFile={onRefreshFile}
               onRenameTab={onRenameTab}
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
@@ -886,6 +892,7 @@ function SplitPaneView({
   onCopyAgentId,
   onCopyFilePath,
   onReloadAgent,
+  onRefreshFile,
   onRenameTab,
   onCloseTabsToLeft,
   onCloseTabsToRight,
@@ -1028,6 +1035,7 @@ function SplitPaneView({
             onCopyAgentId={onCopyAgentId}
             onCopyFilePath={onCopyFilePath}
             onReloadAgent={onReloadAgent}
+            onRefreshFile={onRefreshFile}
             onRenameTab={onRenameTab}
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
