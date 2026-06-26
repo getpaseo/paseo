@@ -2,12 +2,13 @@ import { useState, useRef, useEffect } from "react";
 import type { ImageAttachment } from "@/composer/types";
 import { getDesktopHost } from "@/desktop/host";
 import { persistAttachmentFromBlob, persistAttachmentFromFileUri } from "@/attachments/service";
-import {
-  getRasterImageMimeTypeFromPath,
-  isRasterImageFile,
-  isRasterImagePath,
-} from "@/attachments/file-types";
+import { isRasterImageFile } from "@/attachments/file-types";
 import { isWeb } from "@/constants/platform";
+import {
+  extractDroppedFilePaths,
+  getDroppedImageMimeType,
+  resolveDroppedFilePaths,
+} from "@/file-drops/file-drop-paths";
 
 export interface DroppedFileItem {
   kind: "web-file";
@@ -22,6 +23,7 @@ export type DroppedItem = DroppedFileItem | DroppedPathItem;
 interface UseFileDropZoneOptions {
   onFilesDropped: (files: ImageAttachment[]) => void;
   onGenericFilesDropped?: (items: DroppedItem[]) => void;
+  onTextDropped?: (text: string) => void;
   disabled?: boolean;
 }
 
@@ -53,7 +55,7 @@ interface DesktopDragDropEvent {
 }
 
 async function filePathToImageAttachment(path: string): Promise<ImageAttachment> {
-  const mimeType = getRasterImageMimeTypeFromPath(path) ?? "image/jpeg";
+  const mimeType = getDroppedImageMimeType(path);
   return await persistAttachmentFromFileUri({ uri: path, mimeType });
 }
 
@@ -68,6 +70,7 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
 export function useFileDropZone({
   onFilesDropped,
   onGenericFilesDropped,
+  onTextDropped,
   disabled = false,
 }: UseFileDropZoneOptions): UseFileDropZoneReturn {
   const [isDragging, setIsDragging] = useState(false);
@@ -75,8 +78,8 @@ export function useFileDropZone({
   const dragCounterRef = useRef(0);
   const onFilesDroppedRef = useRef(onFilesDropped);
   const onGenericFilesDroppedRef = useRef(onGenericFilesDropped);
+  const onTextDroppedRef = useRef(onTextDropped);
 
-  // Keep callback refs up to date
   useEffect(() => {
     onFilesDroppedRef.current = onFilesDropped;
   }, [onFilesDropped]);
@@ -85,7 +88,10 @@ export function useFileDropZone({
     onGenericFilesDroppedRef.current = onGenericFilesDropped;
   }, [onGenericFilesDropped]);
 
-  // Reset drag state when disabled changes
+  useEffect(() => {
+    onTextDroppedRef.current = onTextDropped;
+  }, [onTextDropped]);
+
   useEffect(() => {
     if (disabled) {
       setIsDragging(false);
@@ -93,7 +99,7 @@ export function useFileDropZone({
     }
   }, [disabled]);
 
-  // Set up event listeners on web
+  // Set up event listeners on web.
   useEffect(() => {
     if (!IS_WEB) return;
 
@@ -146,16 +152,20 @@ export function useFileDropZone({
 
           if (disabled) return;
 
-          const items: DroppedPathItem[] = payload.paths.map((path) => ({
-            kind: "desktop-path",
-            path,
-          }));
-
-          if (onGenericFilesDroppedRef.current && items.length > 0) {
-            onGenericFilesDroppedRef.current(items);
+          const droppedPaths = resolveDroppedFilePaths(payload.paths);
+          if (droppedPaths.text) {
+            onTextDroppedRef.current?.(droppedPaths.text);
+          } else if (!onTextDroppedRef.current && onGenericFilesDroppedRef.current) {
+            const items: DroppedPathItem[] = payload.paths.map((path) => ({
+              kind: "desktop-path",
+              path,
+            }));
+            if (items.length > 0) {
+              onGenericFilesDroppedRef.current(items);
+            }
           }
 
-          const imagePaths = payload.paths.filter(isRasterImagePath);
+          const imagePaths = droppedPaths.imagePaths;
           if (imagePaths.length === 0) {
             return;
           }
@@ -241,8 +251,12 @@ export function useFileDropZone({
           kind: "web-file",
           file,
         }));
-
-        if (onGenericFilesDroppedRef.current && genericItems.length > 0) {
+        const droppedPaths = resolveDroppedFilePaths(
+          extractDroppedFilePaths(e.dataTransfer ?? null, getDesktopHost()),
+        );
+        if (droppedPaths.text) {
+          onTextDroppedRef.current?.(droppedPaths.text);
+        } else if (onGenericFilesDroppedRef.current && genericItems.length > 0) {
           onGenericFilesDroppedRef.current(genericItems);
         }
 
