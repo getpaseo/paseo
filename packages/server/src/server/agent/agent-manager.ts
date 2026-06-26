@@ -418,6 +418,10 @@ function createAbortError(signal: AbortSignal | undefined, fallbackMessage: stri
   return Object.assign(new Error(message), { name: "AbortError" });
 }
 
+function isNoPendingPermissionError(error: unknown): boolean {
+  return error instanceof Error && /No pending permission request/i.test(error.message);
+}
+
 function validateAgentId(agentId: string, source: string): string {
   const result = AgentIdSchema.safeParse(agentId);
   if (!result.success) {
@@ -1993,10 +1997,24 @@ export class AgentManager {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
+    if (!agent.pendingPermissions.has(requestId)) {
+      await this.resolveStalePermissionResponse(agent, requestId, response);
+      return undefined;
+    }
+
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
-      const result = await agent.session.respondToPermission(requestId, response);
+      let result: AgentPermissionResult | void;
+      try {
+        result = await agent.session.respondToPermission(requestId, response);
+      } catch (error) {
+        if (isNoPendingPermissionError(error)) {
+          await this.resolveStalePermissionResponse(agent, requestId, response);
+          return undefined;
+        }
+        throw error;
+      }
       agent.pendingPermissions.delete(requestId);
 
       try {
@@ -2020,6 +2038,32 @@ export class AgentManager {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
     }
+  }
+
+  private async resolveStalePermissionResponse(
+    agent: ActiveManagedAgent,
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<void> {
+    const hadPending = agent.pendingPermissions.delete(requestId);
+    agent.bufferedPermissionResolutions.delete(requestId);
+
+    if (hadPending) {
+      this.touchUpdatedAt(agent);
+      await this.persistSnapshot(agent);
+      this.emitState(agent);
+    }
+
+    this.dispatchStream(
+      agent.id,
+      {
+        type: "permission_resolved",
+        provider: agent.provider,
+        requestId,
+        resolution: response,
+      },
+      { timestamp: new Date().toISOString() },
+    );
   }
 
   async cancelAgentRun(agentId: string): Promise<boolean> {

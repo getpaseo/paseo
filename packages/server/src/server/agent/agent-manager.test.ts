@@ -5714,6 +5714,76 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   expect(resolvedIndex).toBeGreaterThan(refreshedStateIndex);
 });
 
+test("respondToPermission resolves stale permission cards when provider request is already gone", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-permission-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class StalePermissionSession extends TestAgentSession {
+    override async respondToPermission(requestId: string): Promise<void> {
+      throw new Error(`No pending permission request with id '${requestId}'`);
+    }
+  }
+
+  class StalePermissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StalePermissionSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new StalePermissionClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const agent = manager.getAgent(snapshot.id);
+  if (!agent) {
+    throw new Error("Expected managed agent");
+  }
+  agent.pendingPermissions.set("stale-question-1", {
+    id: "stale-question-1",
+    provider: "codex",
+    name: "request_user_input",
+    kind: "question",
+    title: "Question",
+    input: {
+      questions: [{ id: "q1", header: "Q1", question: "Pick one?", options: [] }],
+    },
+  });
+
+  const seen: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        seen.push(`state:${event.agent.id}`);
+        return;
+      }
+      if (event.type === "agent_stream" && event.event.type === "permission_resolved") {
+        seen.push(`resolved:${event.event.requestId}:${event.event.resolution.behavior}`);
+      }
+    },
+    { agentId: snapshot.id, replayState: false },
+  );
+
+  await expect(
+    manager.respondToPermission(snapshot.id, "stale-question-1", {
+      behavior: "deny",
+      message: "Dismissed by user",
+    }),
+  ).resolves.toBeUndefined();
+
+  expect(manager.getAgent(snapshot.id)?.pendingPermissions.size).toBe(0);
+  expect(seen).toEqual([`state:${snapshot.id}`, "resolved:stale-question-1:deny"]);
+});
+
 test("close during in-flight stream does not clear persistence sessionId", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
