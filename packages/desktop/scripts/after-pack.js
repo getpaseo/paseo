@@ -4,6 +4,9 @@ const path = require("path");
 const { smokePackagedDesktopApp } = require("./smoke-packaged-desktop-app.js");
 
 const EXECUTABLE_NAME = "Paseo";
+const WINDOWS_CLI_EXECUTABLE_NAME = "PaseoCli";
+const IMAGE_SUBSYSTEM_WINDOWS_CUI = 3;
+const PE_SUBSYSTEM_OFFSET_FROM_PE_HEADER = 0x5c;
 
 // electron-builder arch enum → Node.js arch string
 const ARCH_MAP = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
@@ -109,11 +112,49 @@ function fmtMB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function setWindowsExecutableSubsystem(filePath, subsystem) {
+  const fd = fs.openSync(filePath, "r+");
+  try {
+    const dosHeader = Buffer.alloc(64);
+    fs.readSync(fd, dosHeader, 0, dosHeader.length, 0);
+    if (dosHeader.toString("ascii", 0, 2) !== "MZ") {
+      throw new Error(`Invalid Windows executable DOS header: ${filePath}`);
+    }
+
+    const peHeaderOffset = dosHeader.readUInt32LE(0x3c);
+    const peSignature = Buffer.alloc(4);
+    fs.readSync(fd, peSignature, 0, peSignature.length, peHeaderOffset);
+    if (peSignature.toString("ascii") !== "PE\u0000\u0000") {
+      throw new Error(`Invalid Windows executable PE header: ${filePath}`);
+    }
+
+    const subsystemOffset = peHeaderOffset + PE_SUBSYSTEM_OFFSET_FROM_PE_HEADER;
+    const subsystemBuffer = Buffer.alloc(2);
+    subsystemBuffer.writeUInt16LE(subsystem);
+    fs.writeSync(fd, subsystemBuffer, 0, subsystemBuffer.length, subsystemOffset);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function createWindowsCliExecutable(appOutDir) {
+  const appExecutable = path.join(appOutDir, `${EXECUTABLE_NAME}.exe`);
+  const cliExecutable = path.join(appOutDir, `${WINDOWS_CLI_EXECUTABLE_NAME}.exe`);
+
+  fs.copyFileSync(appExecutable, cliExecutable);
+  setWindowsExecutableSubsystem(cliExecutable, IMAGE_SUBSYSTEM_WINDOWS_CUI);
+  console.log(`Created Windows CLI executable: ${cliExecutable}`);
+}
+
 exports.default = async function afterPack(context) {
   const platform = context.electronPlatformName;
   const arch = ARCH_MAP[context.arch] || process.arch;
 
   pruneNativeModules(context.appOutDir, platform, arch);
+
+  if (platform === "win32") {
+    createWindowsCliExecutable(context.appOutDir);
+  }
 
   if (platform === "linux" || platform === "win32") {
     if (arch !== process.arch) {
@@ -135,3 +176,6 @@ async function smokeUnpackedAppIfRequested(appOutDir) {
     appPath: appOutDir,
   });
 }
+
+exports.createWindowsCliExecutable = createWindowsCliExecutable;
+exports.setWindowsExecutableSubsystem = setWindowsExecutableSubsystem;
