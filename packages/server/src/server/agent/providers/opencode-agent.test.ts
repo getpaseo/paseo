@@ -312,8 +312,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       createClient: runtime.createClient,
       resolveHomeDir: () => opencodeHome,
     });
-    const cwd = os.homedir();
-    const catalog = await client.fetchCatalog({ cwd, force: false });
+    const catalog = await client.fetchCatalog({ scope: "global", force: false });
 
     expect(Array.isArray(catalog.models)).toBe(true);
     expect(catalog.models).toHaveLength(1);
@@ -342,11 +341,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
         contextWindowMaxTokens: 200_000,
       },
     });
-    expect(openCodeClient.calls.providerList).toEqual([
-      // cwd === os.homedir() is rewritten to the neutral OpenCode home so
-      // catalog refresh doesn't make OpenCode index the entire home tree.
-      { directory: opencodeHome },
-    ]);
+    expect(openCodeClient.calls.providerList).toEqual([{ directory: opencodeHome }]);
     rmSync(paseoHome, { recursive: true, force: true });
   }, 60_000);
 
@@ -361,7 +356,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       resolveHomeDir: () => opencodeHome,
     });
 
-    await expect(client.fetchCatalog({ cwd: os.homedir(), force: false })).rejects.toThrow();
+    await expect(client.fetchCatalog({ scope: "global", force: false })).rejects.toThrow();
 
     expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
     expect(runtime.clientCreations).toEqual([]);
@@ -408,7 +403,11 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     });
     await Promise.all(
       Array.from({ length: 12 }, (_, index) =>
-        client.fetchCatalog({ cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`), force: false }),
+        client.fetchCatalog({
+          scope: "workspace",
+          cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`),
+          force: false,
+        }),
       ),
     );
 

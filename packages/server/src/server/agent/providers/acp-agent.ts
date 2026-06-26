@@ -1,6 +1,7 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
@@ -762,7 +763,7 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const { cwd } = options;
+    const cwd = options.scope === "global" ? homedir() : options.cwd;
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
       const response = await this.runACPRequest(() =>

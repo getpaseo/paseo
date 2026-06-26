@@ -861,7 +861,11 @@ describe("PiRpcAgentClient", () => {
   test("discovers models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
-    const catalogPromise = client.fetchCatalog({ cwd: "/workspace/with-extension", force: false });
+    const catalogPromise = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+    });
     pi.latestSession().models = [
       {
         provider: "openrouter",

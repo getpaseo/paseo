@@ -81,7 +81,11 @@ describe("OpenCode auto_accept feature", () => {
       serverManager: runtime,
       createClient: runtime.createClient,
     });
-    const { modes } = await client.fetchCatalog({ cwd: "/tmp/project", force: false });
+    const { modes } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/project",
+      force: false,
+    });
 
     expect(modes.map((mode) => mode.id)).toEqual(["build", "paseo-custom"]);
   });
@@ -93,7 +97,11 @@ describe("OpenCode auto_accept feature", () => {
       serverManager: runtime,
       createClient: runtime.createClient,
     });
-    const { modes } = await client.fetchCatalog({ cwd: "/tmp/project", force: false });
+    const { modes } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/project",
+      force: false,
+    });
 
     expect(modes.map((mode) => mode.id)).toEqual(["build", "plan"]);
   });

@@ -44,7 +44,11 @@ test("allows a slow provider.list call to succeed instead of failing after 10 se
     serverManager: runtime,
     createClient: runtime.createClient,
   });
-  const modelsPromise = client.fetchCatalog({ cwd: "/tmp/opencode-models", force: false });
+  const modelsPromise = client.fetchCatalog({
+    scope: "workspace",
+    cwd: "/tmp/opencode-models",
+    force: false,
+  });
 
   await vi.advanceTimersByTimeAsync(15_000);
 
@@ -76,7 +80,7 @@ test("uses a new server for explicit catalog refresh", async () => {
     createClient: runtime.createClient,
   });
 
-  await client.fetchCatalog({ cwd: "/tmp/opencode-models", force: true });
+  await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: true });
 
   expect(runtime.acquisitions).toEqual([{ kind: "new", releaseCount: 1 }]);
 });
@@ -110,7 +114,11 @@ test("includes models from api-source providers not in connected", async () => {
     serverManager: runtime,
     createClient: runtime.createClient,
   });
-  const { models } = await client.fetchCatalog({ cwd: "/tmp/opencode-models", force: false });
+  const { models } = await client.fetchCatalog({
+    scope: "workspace",
+    cwd: "/tmp/opencode-models",
+    force: false,
+  });
 
   expect(models).toMatchObject([
     {
@@ -146,9 +154,9 @@ test("throws when no providers are accessible (neither connected nor api-source)
     createClient: runtime.createClient,
   });
 
-  await expect(client.fetchCatalog({ cwd: "/tmp/opencode-models", force: false })).rejects.toThrow(
-    "OpenCode has no connected providers",
-  );
+  await expect(
+    client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: false }),
+  ).rejects.toThrow("OpenCode has no connected providers");
 });
 
 test("does not throw when only api-source providers are present with no connected providers", async () => {
@@ -177,7 +185,7 @@ test("does not throw when only api-source providers are present with no connecte
   });
 
   await expect(
-    client.fetchCatalog({ cwd: "/tmp/opencode-models", force: false }),
+    client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: false }),
   ).resolves.toMatchObject({
     models: [
       {

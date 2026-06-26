@@ -12,11 +12,7 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import fs from "node:fs/promises";
-import os from "node:os";
-import {
-  createPathEquivalenceMatcher,
-  createRealpathAwarePathMatcher,
-} from "../../../utils/path.js";
+import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import pLimit from "p-limit";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -110,10 +106,6 @@ const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
-
-// Realpath-aware matcher so we catch home-dir aliases like /private/var/... on macOS,
-// trailing separators, and Windows casing — consistent with the rest of the file.
-const isHomeDirectoryPath = createRealpathAwarePathMatcher(os.homedir());
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -1363,20 +1355,17 @@ export class OpenCodeAgentClient implements AgentClient {
       ? await this.serverManager.acquireNew()
       : await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
-
-    // Refreshing the global provider snapshot with the user's home directory
-    // causes OpenCode to boot location services and run a full bigram index of
-    // the entire home tree. Catalog refresh only needs model/mode metadata, so
-    // use the neutral OpenCode home for the global/home scope.
-    const isHomeDirectory = isHomeDirectoryPath(options.cwd);
-    const directory = isHomeDirectory ? this.resolveHomeDir() : options.cwd;
+    const isGlobalCatalog = options.scope === "global";
+    // OpenCode treats the catalog directory as a workspace. The global catalog
+    // is not a project, so use the neutral OpenCode home instead of user home.
+    const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
 
     try {
-      if (isHomeDirectory) {
+      if (isGlobalCatalog) {
         await fs.mkdir(directory, { recursive: true });
         this.logger.debug(
-          { originalCwd: options.cwd, rewrittenCwd: directory },
-          "opencode catalog refresh: rewriting home directory to opencode-home to avoid full-tree indexing",
+          { directory },
+          "opencode catalog refresh: using opencode-home for global provider catalog",
         );
       }
 

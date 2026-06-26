@@ -3667,7 +3667,11 @@ export class AgentManager {
       const client = this.clients.get(normalized.provider);
       if (client) {
         try {
-          const catalog = await client.fetchCatalog({ cwd: normalized.cwd, force: false });
+          const catalog = await client.fetchCatalog({
+            scope: "workspace",
+            cwd: normalized.cwd,
+            force: false,
+          });
           const defaultModel = catalog.models.find((model) => model.isDefault) ?? catalog.models[0];
           if (defaultModel) {
             normalized.model = defaultModel.id;

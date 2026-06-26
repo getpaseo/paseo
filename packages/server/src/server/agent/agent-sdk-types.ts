@@ -643,10 +643,16 @@ export interface AgentSession {
   } | null;
 }
 
-export interface FetchCatalogOptions {
-  cwd: string;
-  force: boolean;
-}
+export type FetchCatalogOptions =
+  | {
+      scope: "global";
+      force: boolean;
+    }
+  | {
+      scope: "workspace";
+      cwd: string;
+      force: boolean;
+    };
 
 export interface ProviderCatalog {
   models: AgentModelDefinition[];
