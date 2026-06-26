@@ -59,7 +59,9 @@ export function MermaidLightbox({ svg, onClose }: MermaidLightboxProps) {
           style={styles.backdrop}
         />
         <View style={styles.contentLayer}>
-          <MermaidZoomableView svg={svg} style={styles.diagramArea} />
+          <View style={styles.diagramArea}>
+            <MermaidZoomableView svg={svg} mode="fullscreen" />
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t("markdown.mermaid.closeFullscreen")}
@@ -84,22 +86,21 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: "rgba(0, 0, 0, 0.72)",
   },
   contentLayer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: theme.spacing[4],
+    ...StyleSheet.absoluteFillObject,
+    pointerEvents: "box-none",
   },
   diagramArea: {
-    width: "100%",
-    maxWidth: 960,
-    maxHeight: "85%",
-    justifyContent: "center",
+    flex: 1,
     alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[4],
+    pointerEvents: "box-none",
   },
   closeButton: {
     position: "absolute",
     padding: theme.spacing[2],
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface2,
+    zIndex: 1,
   },
 }));

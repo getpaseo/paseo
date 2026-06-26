@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { MermaidDiagramHost } from "@/components/markdown/mermaid/mermaid-diagram-host";
@@ -7,12 +7,53 @@ import { MermaidDiagramHost } from "@/components/markdown/mermaid/mermaid-diagra
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 
+type MermaidZoomableMode = "inline" | "fullscreen";
+
 interface MermaidZoomableViewProps {
   svg: string;
   style?: StyleProp<ViewStyle>;
+  mode?: MermaidZoomableMode;
 }
 
-export function MermaidZoomableView({ svg, style }: MermaidZoomableViewProps) {
+const zoomStyles = StyleSheet.create({
+  fullscreenViewport: {
+    width: "100%",
+    maxWidth: 960,
+    height: "85%",
+    maxHeight: "85%",
+    minHeight: 120,
+    alignSelf: "center",
+  },
+  viewport: {
+    flex: 1,
+    width: "100%",
+    minHeight: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  animatedLayer: {
+    flex: 1,
+    width: "100%",
+    minHeight: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  hostFill: {
+    flex: 1,
+    width: "100%",
+    minHeight: 0,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  hostIntrinsic: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});
+
+export function MermaidZoomableView({ svg, style, mode = "inline" }: MermaidZoomableViewProps) {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -58,6 +99,13 @@ export function MermaidZoomableView({ svg, style }: MermaidZoomableViewProps) {
 
   const gesture = useMemo(() => Gesture.Simultaneous(pinch, pan), [pan, pinch]);
 
+  const isFullscreen = mode === "fullscreen";
+
+  const viewportStyle = useMemo(
+    () => [isFullscreen ? zoomStyles.fullscreenViewport : null, style, zoomStyles.viewport],
+    [isFullscreen, style],
+  );
+
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: translateX.value },
@@ -66,11 +114,25 @@ export function MermaidZoomableView({ svg, style }: MermaidZoomableViewProps) {
     ],
   }));
 
+  const animatedLayerStyle = useMemo(
+    () => [animatedStyle, zoomStyles.animatedLayer],
+    [animatedStyle],
+  );
+
+  const hostStyle = useMemo(
+    () => (isFullscreen ? zoomStyles.hostFill : zoomStyles.hostIntrinsic),
+    [isFullscreen],
+  );
+
   return (
     <GestureDetector gesture={gesture}>
-      <View style={style}>
-        <Animated.View style={animatedStyle}>
-          <MermaidDiagramHost svg={svg} />
+      <View style={viewportStyle}>
+        <Animated.View style={animatedLayerStyle}>
+          <MermaidDiagramHost
+            svg={svg}
+            layout={isFullscreen ? "fill" : "intrinsic"}
+            style={hostStyle}
+          />
         </Animated.View>
       </View>
     </GestureDetector>
