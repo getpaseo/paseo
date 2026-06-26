@@ -49,58 +49,6 @@ Minimal example that configures listening address, hostnames, and MCP:
 
 `daemon.hostnames` is the primary field. The old `daemon.allowedHosts` name still works as a deprecated alias for backward compatibility.
 
-## Daemon web UI
-
-The daemon can serve the bundled browser web UI from the same HTTP server:
-
-```bash
-paseo daemon start --web-ui
-```
-
-Or enable it in config:
-
-```json
-{
-  "features": {
-    "webUi": {
-      "enabled": true
-    }
-  }
-}
-```
-
-Use `PASEO_WEB_UI_ENABLED=true` as an environment override. `features.webUi.distDir` or `PASEO_WEB_UI_DIST_DIR` can point at a custom web build.
-
-### HTTPS reverse proxies
-
-If you serve the daemon web UI through an HTTPS reverse proxy, forward both the original `Host` header and the edge scheme:
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:6767;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
-
-Paseo trusts forwarded headers from loopback proxies by default. If your proxy reaches the daemon from another address, configure the trusted proxy ranges:
-
-```json
-{
-  "daemon": {
-    "trustedProxies": ["loopback", "172.16.0.0/12"]
-  }
-}
-```
-
-`PASEO_TRUSTED_PROXIES` accepts the same comma-separated values, for example:
-
-```bash
-PASEO_TRUSTED_PROXIES=loopback,172.16.0.0/12 paseo daemon start --web-ui
-```
-
-Only use `trustedProxies: true` when your final trusted proxy overwrites client-supplied `X-Forwarded-*` headers.
-
 ## Agent providers
 
 Agent providers, both the first-class ones Paseo ships with and custom entries you add under `agents.providers`, are documented on their own page.

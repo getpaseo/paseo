@@ -164,9 +164,27 @@ That's the whole config. Caddy provisions a certificate automatically and preser
 
 Terminate TLS at the proxy (or tunnel) and forward to the daemon over plain HTTP on localhost, that's what the configs above do. When the page is served over HTTPS and the proxy passes `X-Forwarded-Proto: https`, the app automatically connects back over `wss://`. You don't configure the scheme anywhere; it follows the edge.
 
-The daemon honors the forwarded scheme only from a proxy on the **same host** (a loopback connection), which is what all the setups above do, the proxy or tunnel forwards to `127.0.0.1:6767`. Keep the proxy co-located with the daemon. If you must run the proxy on a different machine, the daemon won't trust its forwarded scheme; in that case add the daemon as a host manually in the UI with TLS enabled.
+The daemon trusts forwarded headers from loopback proxies by default, which is what all the setups above do, the proxy or tunnel forwards to `127.0.0.1:6767`.
 
-If you serve the UI over HTTPS but the app tries to connect over `ws://` (and the browser blocks it as mixed content), your proxy isn't on the daemon's host or isn't forwarding `X-Forwarded-Proto`. Fix whichever applies.
+If your proxy reaches the daemon from another address, as in some Docker, LAN, or load-balancer setups, configure the trusted proxy ranges:
+
+```json
+{
+  "daemon": {
+    "trustedProxies": ["loopback", "172.16.0.0/12"]
+  }
+}
+```
+
+`PASEO_TRUSTED_PROXIES` accepts the same comma-separated values:
+
+```bash
+PASEO_TRUSTED_PROXIES=loopback,172.16.0.0/12 paseo daemon start --web-ui
+```
+
+Only use `trustedProxies: true` when your final trusted proxy overwrites client-supplied `X-Forwarded-*` headers. Otherwise a client could spoof forwarded header values.
+
+If you serve the UI over HTTPS but the app tries to connect over `ws://` (and the browser blocks it as mixed content), your proxy isn't forwarding `X-Forwarded-Proto` or the daemon doesn't trust the proxy address. Fix whichever applies.
 
 For the remote/relay path (driving a daemon through the Paseo relay rather than a reverse proxy), the relay has its own public-vs-internal TLS settings, see [Security](/docs/security).
 
@@ -206,7 +224,7 @@ For the full threat model, relay encryption, and DNS-rebinding details, see [Sec
 - **Blank page or 404 at `/`.** The web UI isn't enabled. Start the daemon with `--web-ui` and confirm with `paseo daemon status` that it's the daemon you're hitting.
 - **Page loads but never connects.** The proxy isn't forwarding the WebSocket upgrade, or it's stripping the `Host` header. Check the upgrade headers in your proxy config.
 - **Connects, then output freezes.** Response buffering is on, or read timeouts are too short. Disable buffering and raise the timeouts.
-- **"Mixed content" / connection blocked over HTTPS.** The app fell back to `ws://`. Either the proxy isn't sending `X-Forwarded-Proto: https`, or it isn't running on the daemon's host (the daemon only trusts the forwarded scheme from a loopback proxy). Co-locate the proxy with the daemon and forward the header.
+- **"Mixed content" / connection blocked over HTTPS.** The app fell back to `ws://`. Either the proxy isn't sending `X-Forwarded-Proto: https`, or the daemon doesn't trust the proxy address. Forward the header and configure `daemon.trustedProxies` if the proxy is not loopback.
 - **`403 Invalid Host header`.** Your domain isn't in the allowlist. Add it with `--hostnames` or `daemon.hostnames`, see [DNS rebinding protection](/docs/security#dns-rebinding-protection).
 - **Large prompts or uploads fail.** Raise the proxy's max body size (`client_max_body_size` in Nginx).
 
