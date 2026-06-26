@@ -985,27 +985,15 @@ function useNewWorkspaceHostSelector(initialServerId: string) {
     lastWorkspaceSelection && allServerIds.includes(lastWorkspaceSelection.serverId)
       ? lastWorkspaceSelection.serverId
       : (allServerIds[0] ?? "");
-  const [selectedServerId, setSelectedServerId] = useState(
-    routeInitialServerId ?? fallbackServerId,
-  );
-  const lastRouteInitialServerIdRef = useRef<string | null>(null);
+  const [manualServerId, setManualServerId] = useState<string | null>(null);
   const [hostPickerOpen, setHostPickerOpen] = useState(false);
-
-  useEffect(() => {
-    setSelectedServerId((current) => {
-      if (routeInitialServerId && lastRouteInitialServerIdRef.current !== routeInitialServerId) {
-        return routeInitialServerId;
-      }
-      if (current && allServerIds.includes(current)) {
-        return current;
-      }
-      return routeInitialServerId ?? fallbackServerId;
-    });
-    lastRouteInitialServerIdRef.current = routeInitialServerId;
-  }, [allServerIds, fallbackServerId, routeInitialServerId]);
+  const selectedServerId =
+    manualServerId && allServerIds.includes(manualServerId)
+      ? manualServerId
+      : (routeInitialServerId ?? fallbackServerId);
 
   const handleSelectHost = useCallback((id: string) => {
-    setSelectedServerId(id);
+    setManualServerId(id);
     setHostPickerOpen(false);
   }, []);
 

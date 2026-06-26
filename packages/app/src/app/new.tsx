@@ -13,10 +13,17 @@ export default function NewWorkspaceRoute() {
   const sourceDirectory = typeof params.dir === "string" ? params.dir : undefined;
   const displayName = typeof params.name === "string" ? params.name : undefined;
   const projectId = typeof params.projectId === "string" ? params.projectId : undefined;
+  const screenKey = JSON.stringify([
+    serverId,
+    sourceDirectory ?? null,
+    displayName ?? null,
+    projectId ?? null,
+  ]);
 
   return (
     <HostRouteBootstrapBoundary>
       <NewWorkspaceScreen
+        key={screenKey}
         serverId={serverId}
         sourceDirectory={sourceDirectory}
         displayName={displayName}

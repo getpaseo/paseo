@@ -62,9 +62,8 @@ test.describe("New workspace entry points", () => {
       const globalButton = page.getByTestId("sidebar-global-new-workspace");
       await expect(globalButton).toBeVisible({ timeout: 30_000 });
 
-      await globalButton.click();
+      await openGlobalNewWorkspaceComposer(page);
       await expect(page.getByTestId("host-chooser")).toHaveCount(0);
-      await expect(page).toHaveURL(/\/new(?:\?.*)?$/, { timeout: 30_000 });
 
       await expect(page.getByTestId("new-workspace-project-picker-trigger")).toBeVisible({
         timeout: 30_000,
