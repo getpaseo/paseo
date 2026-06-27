@@ -24,6 +24,9 @@ interface ComputeNotificationPlanInput {
   // Whether a push notification is allowed when no client is present.
   pushEligible: boolean;
   nowMs: number;
+  // When true, skip the presence window check. Clients are treated as absent
+  // regardless of recent activity. The focus check still applies.
+  skipPresence?: boolean;
 }
 
 function isFocusedOnTarget(
@@ -44,9 +47,21 @@ export function computeNotificationPlan({
   focusTarget,
   pushEligible,
   nowMs,
+  skipPresence = false,
 }: ComputeNotificationPlanInput): NotificationPlan {
   let mostRecentPresentIndex: number | null = null;
   let mostRecentPresentAtMs = Number.NEGATIVE_INFINITY;
+
+  if (skipPresence) {
+    // Focus check only: suppress push if any client is viewing the target.
+    // Presence is irrelevant — the user needs to know the agent is waiting.
+    for (const state of allStates) {
+      if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
+        return { inAppRecipientIndex: null, shouldPush: false };
+      }
+    }
+    return { inAppRecipientIndex: null, shouldPush: pushEligible };
+  }
 
   for (const [clientIndex, state] of allStates.entries()) {
     const clampedActivityAtMs =

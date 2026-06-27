@@ -1818,6 +1818,7 @@ export class VoiceAssistantWebSocketServer {
       focusTarget: { kind: "agent", id: params.agentId },
       pushEligible: isPushEligibleAttentionReason(params.reason),
       nowMs,
+      skipPresence: params.reason === "permission",
     });
 
     if (plan.shouldPush) {
