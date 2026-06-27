@@ -6,6 +6,8 @@ import {
   type ActiveWorkspaceSelection,
   type LastWorkspaceSelectionStorage,
 } from "@/stores/last-workspace-selection";
+import { createLastActiveHostStore, type LastActiveHostStorage } from "@/stores/last-active-host";
+import { parseServerIdFromPathname } from "@/utils/host-routes";
 import {
   navigateToLastWorkspace as navigateToLastWorkspacePure,
   navigateToWorkspace as navigateToWorkspacePure,
@@ -23,6 +25,7 @@ interface NavigateToWorkspaceOptions {
 }
 
 const LAST_WORKSPACE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
+const LAST_ACTIVE_HOST_STORAGE_KEY = "paseo:last-active-host";
 
 const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
   read: () => AsyncStorage.getItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY),
@@ -32,6 +35,13 @@ const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
 const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
   lastWorkspaceSelectionStorage,
 );
+
+const lastActiveHostStorage: LastActiveHostStorage = {
+  read: () => AsyncStorage.getItem(LAST_ACTIVE_HOST_STORAGE_KEY),
+  write: (value) => AsyncStorage.setItem(LAST_ACTIVE_HOST_STORAGE_KEY, value),
+};
+
+const lastActiveHostStore = createLastActiveHostStore(lastActiveHostStorage);
 
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
@@ -50,7 +60,13 @@ function navigateDeps(): NavigateToWorkspaceDeps {
 }
 
 export function hydrateLastWorkspaceSelection(): Promise<void> {
-  return lastWorkspaceSelectionStore.hydrate();
+  return Promise.all([lastWorkspaceSelectionStore.hydrate(), lastActiveHostStore.hydrate()]).then(
+    () => undefined,
+  );
+}
+
+export function getLastActiveHostServerId(): string | null {
+  return lastActiveHostStore.getServerId();
 }
 
 export function getLastWorkspaceSelection(): ActiveWorkspaceSelection | null {
@@ -81,9 +97,20 @@ export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
     serverId?: string | string[];
     workspaceId?: string | string[];
   }>();
-  const selection = parseActiveWorkspaceSelection({ pathname: usePathname(), params });
+  const pathname = usePathname();
+  const selection = parseActiveWorkspaceSelection({ pathname, params });
   const serverId = selection?.serverId ?? null;
   const workspaceId = selection?.workspaceId ?? null;
+  // Remember the host even when no workspace is open (e.g. the host's
+  // open-project screen), so exit paths can return to the same host instead of
+  // falling back to the default one. parseServerIdFromPathname covers host
+  // routes that carry no workspace; the parsed selection covers the rest.
+  const routeServerId = serverId ?? parseServerIdFromPathname(pathname);
+  useEffect(() => {
+    if (routeServerId) {
+      lastActiveHostStore.remember(routeServerId);
+    }
+  }, [routeServerId]);
   useEffect(() => {
     if (!serverId || !workspaceId) {
       return;
