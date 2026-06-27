@@ -250,7 +250,7 @@ describe("ScheduleService", () => {
     const inspected = await service.inspect(created.id);
     const agentId = inspected.runs[0]?.agentId;
     const storedAgent = await agentStorage.get(agentId!);
-    expect(storedAgent?.archivedAt).toBeTruthy();
+    expect(storedAgent?.archivedAt).toEqual(expect.any(String));
   });
 
   test("keeps the scheduled new agent alive when keepAlive is set", async () => {
