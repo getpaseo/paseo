@@ -1010,6 +1010,101 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       expect(existsSync(join(result.worktreePath, "paseo.json"))).toBe(false);
     });
+
+    it("copies .worktreeinclude files and folders before setup runs", async () => {
+      writeFileSync(
+        join(repoDir, ".worktreeinclude"),
+        [
+          "# local worktree seed files",
+          ".credentials.local.json",
+          "**/.runtime.env",
+          ".cache-dev/**",
+          ".tool-state/**",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(join(repoDir, ".credentials.local.json"), '{"secret":true}\n');
+      writeFileSync(join(repoDir, ".runtime.env"), "ROOT_RUNTIME=local\n");
+      mkdirSync(join(repoDir, "packages", "api"), { recursive: true });
+      writeFileSync(join(repoDir, "packages", "api", ".runtime.env"), "API_RUNTIME=local\n");
+      mkdirSync(join(repoDir, ".cache-dev", "state"), { recursive: true });
+      writeFileSync(join(repoDir, ".cache-dev", "state", "snapshot.txt"), "cache-state\n");
+      mkdirSync(join(repoDir, ".tool-state", "runtime"), { recursive: true });
+      writeFileSync(join(repoDir, ".tool-state", "runtime", "config.json"), '{"local":true}\n');
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "cat packages/api/.runtime.env > setup-env.log" } }),
+      );
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "include-local-files",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/include" },
+        runSetup: true,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, ".credentials.local.json"), "utf8")).toBe(
+        '{"secret":true}\n',
+      );
+      expect(readFileSync(join(result.worktreePath, ".runtime.env"), "utf8")).toBe(
+        "ROOT_RUNTIME=local\n",
+      );
+      expect(
+        readFileSync(join(result.worktreePath, "packages", "api", ".runtime.env"), "utf8"),
+      ).toBe("API_RUNTIME=local\n");
+      expect(readFileSync(join(result.worktreePath, "setup-env.log"), "utf8")).toBe(
+        "API_RUNTIME=local\n",
+      );
+      expect(
+        readFileSync(join(result.worktreePath, ".cache-dev", "state", "snapshot.txt"), "utf8"),
+      ).toBe("cache-state\n");
+      expect(
+        readFileSync(join(result.worktreePath, ".tool-state", "runtime", "config.json"), "utf8"),
+      ).toBe('{"local":true}\n');
+    });
+
+    it("rejects unsafe .worktreeinclude entries", async () => {
+      writeFileSync(join(repoDir, ".worktreeinclude"), "../outside.txt\n");
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "unsafe-include",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "feature/unsafe" },
+          runSetup: false,
+          paseoHome,
+        }),
+      ).rejects.toThrow("Invalid .worktreeinclude entry '../outside.txt'");
+    });
+
+    it("reports unmatched recursive .worktreeinclude folders clearly", async () => {
+      const projectHash = await deriveWorktreeProjectHash(repoDir);
+      const expectedWorktreePath = join(
+        paseoHome,
+        "worktrees",
+        projectHash,
+        "missing-include-folder",
+      );
+      writeFileSync(join(repoDir, ".worktreeinclude"), ".missing-cache/**\n");
+
+      await expect(
+        createLegacyWorktreeForTest({
+          cwd: repoDir,
+          worktreeSlug: "missing-include-folder",
+          source: { kind: "branch-off", baseBranch: "main", branchName: "feature/missing-include" },
+          runSetup: false,
+          paseoHome,
+        }),
+      ).rejects.toThrow("No paths matched .worktreeinclude entry '.missing-cache/**'");
+
+      const worktreeList = execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      });
+      expect(existsSync(expectedWorktreePath)).toBe(false);
+      expect(worktreeList).not.toContain(expectedWorktreePath);
+    });
   });
 
   describe("paseo worktree manager", () => {
