@@ -2,6 +2,32 @@ const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
 const appVariant = process.env.APP_VARIANT ?? "production";
+const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const nativeBuildVersionFloor = 1_000_000;
+
+function getNativeBuildVersionCode(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (!match) {
+    throw new Error(`Cannot derive Android versionCode from non-semver version: ${version}`);
+  }
+
+  const [, majorText, minorText, patchText] = match;
+  const major = Number(majorText);
+  const minor = Number(minorText);
+  const patch = Number(patchText);
+
+  if (minor > 999 || patch > 999) {
+    throw new Error(`Cannot derive collision-free Android versionCode from version: ${version}`);
+  }
+
+  const versionCode = nativeBuildVersionFloor + major * 1_000_000 + minor * 1_000 + patch;
+
+  if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || versionCode > 2_100_000_000) {
+    throw new Error(`Derived Android versionCode is out of range: ${versionCode}`);
+  }
+
+  return versionCode;
+}
 
 function resolveSecretFile(params) {
   const fromEnv = process.env[params.envKey];
@@ -45,6 +71,7 @@ const variants = {
 };
 
 const variant = variants[appVariant] ?? variants.production;
+const nativeBuildVersionCode = getNativeBuildVersionCode(pkg.version);
 
 export default {
   expo: {
@@ -72,6 +99,7 @@ export default {
       ...(variant.googleServiceInfoPlist
         ? { googleServicesFile: variant.googleServiceInfoPlist }
         : {}),
+      buildNumber: String(nativeBuildVersionCode),
     },
     android: {
       adaptiveIcon: {
@@ -91,6 +119,7 @@ export default {
         "android.permission.CAMERA",
       ],
       package: variant.packageId,
+      versionCode: nativeBuildVersionCode,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
     },
     web: {
@@ -99,6 +128,13 @@ export default {
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],
+      ...(isFdroidBuild
+        ? {
+            android: {
+              buildFromSource: [".*"],
+            },
+          }
+        : {}),
     },
     plugins: [
       "expo-router",
@@ -139,6 +175,17 @@ export default {
           },
         },
       ],
+      ...(isFdroidBuild
+        ? [
+            [
+              "expo-gradle-jvmargs",
+              {
+                xmx: "4096m",
+                maxMetaspace: "1024m",
+              },
+            ],
+          ]
+        : []),
     ],
     experiments: {
       typedRoutes: true,

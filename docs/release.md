@@ -188,6 +188,8 @@ iOS and Android store builds are not in `.github/workflows`. They are triggered 
 - **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads to TestFlight, and a Fastlane lane submits the build for App Store review.
 - **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
 
+EAS uses the local app version source. `packages/app/app.config.js` derives Android `versionCode` and iOS `buildNumber` from the package version as `1_000_000 + major * 1_000_000 + minor * 1_000 + patch`, ignoring prerelease metadata. Rebuilding the same tag produces the same native build number; if a store has already accepted a binary and you need a different binary, cut a new patch instead of relying on EAS remote auto-increment.
+
 There is no `release-mobile.yml` in this repo. Earlier versions of these docs referenced one — that workflow was removed and the EAS GitHub app handles tag triggering directly.
 
 ### Watching mobile builds from the terminal

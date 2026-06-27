@@ -128,6 +128,7 @@
     "eas-cli": "^16.24.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "expo-gradle-jvmargs": "^1.1.2",
     "jsdom": "^20.0.3",
     "material-icon-theme": "^5.32.0",
     "playwright": "^1.56.1",

@@ -13,6 +13,18 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 `development` uses Android `debug`.
 
+## Version codes
+
+`packages/app/app.config.js` derives Android `versionCode` from the package version with:
+
+```text
+1_000_000 + major * 1_000_000 + minor * 1_000 + patch
+```
+
+Prerelease metadata is ignored, so `0.1.102-beta.1` and `0.1.102` both produce `1001102`. The same value is used as the iOS `buildNumber` because `packages/app/eas.json` uses EAS's local app version source. The `1_000_000` floor keeps the local formula above prior EAS remote counters during the transition. Do not re-enable EAS remote version counters or Android `autoIncrement`; F-Droid and other source-based builders need the native build number to be visible in the repo.
+
+The formula reserves three digits each for minor and patch. If either reaches `1000`, change the formula before cutting that release.
+
 ## Local build + install
 
 From repo root:
@@ -37,6 +49,19 @@ npx cross-env APP_VARIANT=production expo run:android --variant=release
 # Clear generated Android project
 rm -rf android
 ```
+
+## F-Droid / source-only Android builds
+
+F-Droid builds should set `PASEO_FDROID_BUILD=1` when running Expo prebuild:
+
+```bash
+cd packages/app
+PASEO_FDROID_BUILD=1 APP_VARIANT=production npx expo prebuild --platform android --clean --non-interactive
+cd android
+./gradlew assembleRelease
+```
+
+That env var is intentionally narrow. It enables `expo.autolinking.android.buildFromSource: [".*"]` so Expo modules are built from source instead of linked from precompiled AARs, and it applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` for the larger source build. Normal local and EAS builds leave those settings off.
 
 ### React version lockstep
 
