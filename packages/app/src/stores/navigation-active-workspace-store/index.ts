@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, useLocalSearchParams, usePathname, type Href } from "expo-router";
+import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
 import {
   createLastWorkspaceSelectionStore,
@@ -15,6 +15,7 @@ import {
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
+import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
@@ -43,7 +44,7 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     },
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {
-      router.dismissTo(route as Href);
+      navigateToHostWorkspaceRoute(route);
       stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit();
     },
   };

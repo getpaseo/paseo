@@ -4,7 +4,13 @@ import { PortalProvider } from "@gorhom/portal";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
-import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import {
+  Stack,
+  useGlobalSearchParams,
+  useNavigationContainerRef,
+  usePathname,
+  useRouter,
+} from "expo-router";
 import {
   createContext,
   type ReactNode,
@@ -58,6 +64,7 @@ import {
   startHostRuntimeBootstrap,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
+import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
@@ -949,12 +956,23 @@ function RootStack() {
   );
 }
 
+function WorkspaceRouteNavigationBridge() {
+  const navigationRef = useNavigationContainerRef();
+
+  useEffect(() => {
+    return registerWorkspaceRouteNavigationRef(navigationRef);
+  }, [navigationRef]);
+
+  return null;
+}
+
 function AppShell() {
   return (
     <SidebarAnimationProvider>
       <HorizontalScrollProvider>
         <OpenProjectListener />
         <AppWithSidebar>
+          <WorkspaceRouteNavigationBridge />
           <RootStack />
         </AppWithSidebar>
       </HorizontalScrollProvider>
