@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import type { Logger } from "pino";
@@ -512,7 +512,7 @@ async function resolveOpenCodeBinary(): Promise<string> {
       "bin",
       "opencode.exe",
     );
-    if (existsSync(globalCandidate)) return globalCandidate;
+    if (await pathExists(globalCandidate)) return globalCandidate;
 
     // Local/pnpm: <project>/node_modules/.bin/opencode.cmd → <project>/node_modules/opencode-ai/bin/opencode.exe
     const localCandidate = path.join(
@@ -522,10 +522,25 @@ async function resolveOpenCodeBinary(): Promise<string> {
       "bin",
       "opencode.exe",
     );
-    if (existsSync(localCandidate)) return localCandidate;
+    if (await pathExists(localCandidate)) return localCandidate;
+
+    console.warn(
+      "[opencode-server] Found opencode.cmd but could not resolve the real opencode.exe. " +
+        "The process may not be properly terminated on exit. Path: %s",
+      found,
+    );
   }
 
   return found;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function findAvailablePort(): Promise<number> {
