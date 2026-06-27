@@ -1089,7 +1089,7 @@ export const fr: TranslationResources = {
   projectPicker: {
     placeholder: "Tapez un chemin de répertoire...",
     opening: "Projet d'ouverture...",
-    searching: "Recherche...",
+    searching: "Recherche en cours...",
     empty: "Commencez à taper un chemin",
     errors: {
       directory_not_found: "Répertoire introuvable.",

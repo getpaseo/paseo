@@ -94,6 +94,7 @@ function ProjectPickerResults({
   onSelect,
 }: ProjectPickerResultsProps) {
   const { t } = useTranslation();
+  const canShowResultState = !isSubmitting && !openErrorMessage;
 
   return (
     <ScrollView
@@ -106,16 +107,16 @@ function ProjectPickerResults({
       {!isSubmitting && openErrorMessage ? (
         <Text style={errorTextStyle}>{openErrorMessage}</Text>
       ) : null}
-      {!isSubmitting && options.length === 0 && !hasQuery ? (
+      {canShowResultState && options.length === 0 && !hasQuery ? (
         <Text style={emptyTextStyle}>{t("projectPicker.empty")}</Text>
       ) : null}
-      {!isSubmitting && isSearching ? (
+      {canShowResultState && isSearching ? (
         <Text style={emptyTextStyle}>{t("projectPicker.searching")}</Text>
       ) : null}
-      {!isSubmitting && !isSearching && options.length === 0 && hasQuery ? (
+      {canShowResultState && !isSearching && options.length === 0 && hasQuery ? (
         <Text style={emptyTextStyle}>{t("common.empty.noOptionsMatchSearch")}</Text>
       ) : null}
-      {!isSubmitting && options.length > 0 ? (
+      {canShowResultState && options.length > 0 ? (
         <>
           {options.map((option, index) => (
             <PathRow
