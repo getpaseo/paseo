@@ -155,7 +155,7 @@ async function openAppWideNewWorkspace(page: Page): Promise<void> {
 
 async function expectSingleCurrentWorkspaceDeckEntry(
   page: Page,
-  input: { serverId: string; workspaceId: string },
+  input: { expectedDeckEntryCount: number; serverId: string; workspaceId: string },
 ): Promise<void> {
   const summary = await page
     .locator('[data-testid^="workspace-deck-entry-"]')
@@ -177,8 +177,8 @@ async function expectSingleCurrentWorkspaceDeckEntry(
       };
     }, input);
 
-  expect.soft(summary).toEqual({
-    totalDeckEntryCount: 3,
+  expect(summary).toEqual({
+    totalDeckEntryCount: input.expectedDeckEntryCount,
     currentWorkspaceEntryCount: 1,
     visibleCurrentWorkspaceEntryCount: 1,
     hiddenCurrentWorkspaceEntryCount: 0,
@@ -393,6 +393,7 @@ test.describe("Composer autocomplete", () => {
       await switchWorkspaceViaSidebar({ page, serverId, workspaceId: first.workspaceId });
       await expectComposerVisible(page, { timeout: 30_000 });
       await expectSingleCurrentWorkspaceDeckEntry(page, {
+        expectedDeckEntryCount: sessions.length,
         serverId,
         workspaceId: first.workspaceId,
       });

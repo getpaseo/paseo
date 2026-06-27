@@ -82,6 +82,8 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
           serverId: selection.serverId,
           workspaceId: encodeWorkspaceIdForPathSegment(selection.workspaceId),
         },
+        // Expo Router consumes this nested hint when resolving the host child screen.
+        // Removing it lets repeated /new -> workspace hops append hidden deck entries.
         pop: true,
       },
     },
