@@ -45,6 +45,11 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
         .optional(),
       systemPrompt: z.string().optional(),
       mcpServers: z.record(z.string(), z.unknown()).optional(),
+      // When true, the scheduler leaves the spawned agent in place after a
+      // successful run instead of archiving it, so agents whose work outlives a
+      // single run turn (self-scheduled follow-ups, polling, multi-phase jobs)
+      // can keep going. Defaults to false (archive after each run).
+      keepAlive: z.boolean().optional(),
     }),
   }),
 ]);

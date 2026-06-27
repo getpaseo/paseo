@@ -136,6 +136,7 @@ export function parseScheduleCreateInput(options: {
   provider?: string;
   mode?: string;
   cwd?: string;
+  keepAlive?: boolean;
   host?: string;
   maxRuns?: string;
   expiresIn?: string;
@@ -182,6 +183,7 @@ export function parseScheduleCreateInput(options: {
         cwd: cwdInput ?? process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
+        ...(options.keepAlive ? { keepAlive: true } : {}),
       },
     };
   };

@@ -33,6 +33,10 @@ export function createScheduleCommand(): Command {
         "Provider-specific mode (e.g. claude bypassPermissions, opencode build)",
       )
       .option("--cwd <path>", "Working directory (default: current; required with --host)")
+      .option(
+        "--keep-alive",
+        "Keep the spawned agent after each run instead of archiving it (new-agent target)",
+      )
       .option("--run-now", "Fire one immediate run on creation (only with --cron)")
       .option("--no-run-now", "Wait the full interval before the first run (only with --every)")
       .option("--max-runs <n>", "Maximum number of runs")
