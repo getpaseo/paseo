@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { access } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import type { Logger } from "pino";
