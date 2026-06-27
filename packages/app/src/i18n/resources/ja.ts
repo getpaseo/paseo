@@ -1067,6 +1067,7 @@ export const ja: TranslationResources = {
   projectPicker: {
     placeholder: "ディレクトリパスを入力...",
     opening: "プロジェクトを開いています...",
+    searching: "検索中...",
     empty: "パスを入力してください",
     errors: {
       directory_not_found: "ディレクトリが見つかりません。",

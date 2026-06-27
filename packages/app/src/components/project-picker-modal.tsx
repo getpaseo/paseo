@@ -7,6 +7,8 @@ import {
   TextInput,
   View,
   type PressableStateCallbackType,
+  type StyleProp,
+  type TextStyle,
 } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -68,6 +70,67 @@ function PathRow({ option, active, onSelect }: PathRowProps) {
   );
 }
 
+interface ProjectPickerResultsProps {
+  options: ProjectPickerOption[];
+  activeIndex: number;
+  isSubmitting: boolean;
+  openErrorMessage: string | null;
+  hasQuery: boolean;
+  isSearching: boolean;
+  emptyTextStyle: StyleProp<TextStyle>;
+  errorTextStyle: StyleProp<TextStyle>;
+  onSelect: (path: string) => void;
+}
+
+function ProjectPickerResults({
+  options,
+  activeIndex,
+  isSubmitting,
+  openErrorMessage,
+  hasQuery,
+  isSearching,
+  emptyTextStyle,
+  errorTextStyle,
+  onSelect,
+}: ProjectPickerResultsProps) {
+  const { t } = useTranslation();
+
+  return (
+    <ScrollView
+      style={styles.results}
+      contentContainerStyle={styles.resultsContent}
+      keyboardShouldPersistTaps="always"
+      showsVerticalScrollIndicator={false}
+    >
+      {isSubmitting ? <Text style={emptyTextStyle}>{t("projectPicker.opening")}</Text> : null}
+      {!isSubmitting && openErrorMessage ? (
+        <Text style={errorTextStyle}>{openErrorMessage}</Text>
+      ) : null}
+      {!isSubmitting && options.length === 0 && !hasQuery ? (
+        <Text style={emptyTextStyle}>{t("projectPicker.empty")}</Text>
+      ) : null}
+      {!isSubmitting && isSearching ? (
+        <Text style={emptyTextStyle}>{t("projectPicker.searching")}</Text>
+      ) : null}
+      {!isSubmitting && !isSearching && options.length === 0 && hasQuery ? (
+        <Text style={emptyTextStyle}>{t("common.empty.noOptionsMatchSearch")}</Text>
+      ) : null}
+      {!isSubmitting && options.length > 0 ? (
+        <>
+          {options.map((option, index) => (
+            <PathRow
+              key={`${option.kind}:${option.path}`}
+              option={option}
+              active={index === activeIndex}
+              onSelect={onSelect}
+            />
+          ))}
+        </>
+      ) : null}
+    </ScrollView>
+  );
+}
+
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -116,6 +179,11 @@ export function ProjectPickerModal() {
       }),
     [directorySuggestionsQuery.data, query, recommendedPaths],
   );
+  const hasQuery = query.trim().length > 0;
+  const isSearching =
+    hasQuery &&
+    options.length === 0 &&
+    (query !== debouncedQuery || directorySuggestionsQuery.isFetching);
 
   const openErrorMessage = useMemo(() => {
     if (!openErrorReason) {
@@ -276,32 +344,17 @@ export function ProjectPickerModal() {
             />
           </View>
 
-          <ScrollView
-            style={styles.results}
-            contentContainerStyle={styles.resultsContent}
-            keyboardShouldPersistTaps="always"
-            showsVerticalScrollIndicator={false}
-          >
-            {isSubmitting ? <Text style={emptyTextStyle}>{t("projectPicker.opening")}</Text> : null}
-            {!isSubmitting && openErrorMessage ? (
-              <Text style={errorTextStyle}>{openErrorMessage}</Text>
-            ) : null}
-            {!isSubmitting && options.length === 0 && !query.trim() ? (
-              <Text style={emptyTextStyle}>{t("projectPicker.empty")}</Text>
-            ) : null}
-            {!isSubmitting && !(options.length === 0 && !query.trim()) ? (
-              <>
-                {options.map((option, index) => (
-                  <PathRow
-                    key={`${option.kind}:${option.path}`}
-                    option={option}
-                    active={index === activeIndex}
-                    onSelect={handleSelectPath}
-                  />
-                ))}
-              </>
-            ) : null}
-          </ScrollView>
+          <ProjectPickerResults
+            options={options}
+            activeIndex={activeIndex}
+            isSubmitting={isSubmitting}
+            openErrorMessage={openErrorMessage}
+            hasQuery={hasQuery}
+            isSearching={isSearching}
+            emptyTextStyle={emptyTextStyle}
+            errorTextStyle={errorTextStyle}
+            onSelect={handleSelectPath}
+          />
         </View>
       </View>
     </Modal>

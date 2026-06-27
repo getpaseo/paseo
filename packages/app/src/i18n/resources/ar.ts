@@ -1054,6 +1054,7 @@ export const ar: TranslationResources = {
   projectPicker: {
     placeholder: "اكتب مسار الدليل...",
     opening: "افتتاح المشروع...",
+    searching: "جارٍ البحث...",
     empty: "ابدأ بكتابة المسار",
     errors: {
       directory_not_found: "لم يتم العثور على الدليل.",

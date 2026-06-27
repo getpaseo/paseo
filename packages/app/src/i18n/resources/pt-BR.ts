@@ -1073,6 +1073,7 @@ export const ptBR: TranslationResources = {
   projectPicker: {
     placeholder: "Digite um caminho de diretório...",
     opening: "Abrindo projeto...",
+    searching: "Buscando...",
     empty: "Comece digitando um caminho",
     errors: {
       directory_not_found: "Diretório não encontrado.",

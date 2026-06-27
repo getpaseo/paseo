@@ -1087,6 +1087,7 @@ export const es: TranslationResources = {
   projectPicker: {
     placeholder: "Escriba una ruta de directorio...",
     opening: "Proyecto de apertura...",
+    searching: "Búsqueda...",
     empty: "Comience a escribir una ruta",
     errors: {
       directory_not_found: "No se encontró el directorio.",

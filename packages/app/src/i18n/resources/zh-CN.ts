@@ -1039,6 +1039,7 @@ export const zhCN: TranslationResources = {
   projectPicker: {
     placeholder: "输入目录路径...",
     opening: "正在打开 project...",
+    searching: "正在搜索...",
     empty: "开始输入路径",
     errors: {
       directory_not_found: "找不到目录。",
