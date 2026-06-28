@@ -2796,9 +2796,9 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectTitleGroup: {
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
     flex: 1,
     minWidth: 0,
   },
