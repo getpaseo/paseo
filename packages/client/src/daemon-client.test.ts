@@ -522,7 +522,7 @@ test("keeps the transport connected when a session RPC ping times out", async ()
   expect(client.getConnectionState().status).toBe("connected");
 });
 
-test("keeps session RPC waiters open for at least sixty seconds", async () => {
+test("defaults session RPC waiters to sixty seconds", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();
   const mock = createMockTransport();
