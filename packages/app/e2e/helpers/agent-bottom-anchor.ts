@@ -1,6 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 72;
+const DEFAULT_SCROLL_TOLERANCE_PX = 24;
 
 export interface ScrollMetrics {
   offsetY: number;
@@ -65,4 +66,66 @@ export async function waitForContentGrowth(
     })
     .toBeGreaterThan(previousContentHeight);
   return readScrollMetrics(page);
+}
+
+export async function waitForScrollableChat(
+  page: Page,
+  input: { minScrollableDistance: number; timeout?: number },
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const metrics = await readScrollMetrics(page);
+        return metrics.contentHeight - metrics.viewportHeight;
+      },
+      { timeout: input.timeout },
+    )
+    .toBeGreaterThan(input.minScrollableDistance);
+}
+
+export async function scrollChatAwayFromBottom(
+  page: Page,
+  input: { deltaY: number; minDistanceFromBottom: number },
+): Promise<ScrollMetrics> {
+  const scroll = getVisibleChatScroll(page);
+  const box = await scroll.boundingBox();
+  if (!box) {
+    throw new Error("Agent chat scroll container is not visible");
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, input.deltaY);
+
+  await expect
+    .poll(async () => {
+      const metrics = await readScrollMetrics(page);
+      return metrics.distanceFromBottom;
+    })
+    .toBeGreaterThan(input.minDistanceFromBottom);
+
+  return readScrollMetrics(page);
+}
+
+export async function expectScrollStaysFixed(
+  page: Page,
+  baseline: ScrollMetrics,
+  input?: { durationMs?: number; sampleIntervalMs?: number; tolerancePx?: number },
+): Promise<void> {
+  const durationMs = input?.durationMs ?? 2_000;
+  const sampleIntervalMs = input?.sampleIntervalMs ?? 250;
+  const tolerancePx = input?.tolerancePx ?? DEFAULT_SCROLL_TOLERANCE_PX;
+  const samples: Array<{ elapsedMs: number; offsetY: number; contentHeight: number }> = [];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < durationMs) {
+    await page.waitForTimeout(sampleIntervalMs);
+    const metrics = await readScrollMetrics(page);
+    samples.push({
+      elapsedMs: Date.now() - startedAt,
+      offsetY: metrics.offsetY,
+      contentHeight: metrics.contentHeight,
+    });
+    expect(
+      metrics.offsetY,
+      JSON.stringify({ baseline, samples: samples.slice(-12) }),
+    ).toBeLessThanOrEqual(baseline.offsetY + tolerancePx);
+  }
 }

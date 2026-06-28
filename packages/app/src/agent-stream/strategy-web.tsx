@@ -145,8 +145,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   followOutputRef.current = followOutput;
 
+  const hasRouteBottomAnchorRequest = routeBottomAnchorRequest !== null;
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
-  const isActivationReady = routeBottomAnchorRequest === null || isAuthoritativeHistoryReady;
+  const isActivationReady = !hasRouteBottomAnchorRequest || isAuthoritativeHistoryReady;
 
   const rowVirtualizer = useVirtualizer({
     count: segments.historyVirtualized.length,
@@ -318,6 +319,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!isActivationReady) {
       return;
     }
+    if (hasRouteBottomAnchorRequest && !followOutputRef.current) {
+      return;
+    }
     setFollowOutput(true);
     forceStickToBottom();
     const timeout = window.setTimeout(() => {
@@ -336,7 +340,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activationKey, forceStickToBottom, isActivationReady, scheduleStickToBottom]);
+  }, [
+    activationKey,
+    forceStickToBottom,
+    hasRouteBottomAnchorRequest,
+    isActivationReady,
+    scheduleStickToBottom,
+  ]);
 
   useEffect(() => {
     if (!followOutputRef.current) {

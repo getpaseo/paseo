@@ -370,21 +370,26 @@ describe("createWebStreamStrategy", () => {
     });
 
     const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
-    expect(scrollContainer).toBeInstanceOf(HTMLElement);
+    if (!(scrollContainer instanceof HTMLElement)) {
+      throw new Error("Expected agent chat scroll container");
+    }
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1400 });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 1000 });
     await act(async () => {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     });
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("scroll"));
+    });
     scrollTo.mockClear();
 
     act(() => {
-      scrollContainer?.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
+      scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -240 }));
     });
     Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 520 });
     act(() => {
-      scrollContainer?.dispatchEvent(new Event("scroll"));
+      scrollContainer.dispatchEvent(new Event("scroll"));
     });
     expect(scrollTo).not.toHaveBeenCalled();
 
