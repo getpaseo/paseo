@@ -211,20 +211,31 @@ export class WorkspaceDirectory {
   }
 
   async resolveWorkspaceActivityAt(workspaceId: string): Promise<string | null> {
-    const storedMap = await this.loadStoredActivityAt();
+    return this.resolveWorkspaceActivityAtWithStored(workspaceId, null);
+  }
+
+  private async resolveWorkspaceActivityAtWithStored(
+    workspaceId: string,
+    storedMap: Map<string, string> | null,
+  ): Promise<string | null> {
+    const storedActivityAt = storedMap
+      ? (storedMap.get(workspaceId) ?? null)
+      : ((await this.loadStoredActivityAt()).get(workspaceId) ?? null);
     const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
-    const storedActivityAt = storedMap.get(workspaceId) ?? null;
     const candidates = [clientActivityAt, storedActivityAt].filter(
       (value): value is string => typeof value === "string" && value.length > 0,
     );
     return candidates.sort().at(-1) ?? null;
   }
 
-  private resolveActivityAt(
+  private async resolveActivityAt(
     descriptor: WorkspaceDescriptorPayload,
     workspaceId: string,
-    storedActivityAt: string | null,
-  ): string | null {
+    storedActivityAtByWorkspaceId: Map<string, string> | null,
+  ): Promise<string | null> {
+    const storedActivityAt = storedActivityAtByWorkspaceId
+      ? (storedActivityAtByWorkspaceId.get(workspaceId) ?? null)
+      : ((await this.loadStoredActivityAt()).get(workspaceId) ?? null);
     const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
     const candidates = [descriptor.activityAt, clientActivityAt, storedActivityAt].filter(
       (value): value is string => typeof value === "string" && value.length > 0,
@@ -280,11 +291,7 @@ export class WorkspaceDirectory {
       const descriptor = workspaceDescriptors[i];
       descriptorsByWorkspaceId.set(workspaceId, {
         ...descriptor,
-        activityAt: this.resolveActivityAt(
-          descriptor,
-          workspaceId,
-          activityAtByWorkspaceId.get(workspaceId) ?? null,
-        ),
+        activityAt: await this.resolveActivityAt(descriptor, workspaceId, activityAtByWorkspaceId),
         archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
       });
     }
