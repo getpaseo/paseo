@@ -174,6 +174,20 @@ export function resolveWorkspaceSelectionStatus(input: {
   return input.hasHydratedWorkspaces ? "missing" : "unknown";
 }
 
+export function resolveHostIndexRoute(input: {
+  serverId: string;
+  workspaceSelection: ActiveWorkspaceSelection | null;
+  workspaceSelectionStatus: WorkspaceSelectionStatus;
+}): Href {
+  if (
+    input.workspaceSelection?.serverId === input.serverId &&
+    shouldRestoreWorkspaceSelection(input)
+  ) {
+    return buildHostWorkspaceRoute(input.serverId, input.workspaceSelection.workspaceId);
+  }
+  return buildOpenProjectRoute();
+}
+
 function isIndexPathname(pathname: string) {
   return pathname === "/" || pathname === "";
 }
@@ -198,12 +212,11 @@ function resolveReadyIndexStartupRoute(input: ResolveIndexStartupRouteInput): St
     shouldRestoreWorkspaceSelection(input) &&
     hostExists(input.hosts, input.workspaceSelection.serverId)
   ) {
+    // Native cold launch must enter the host boundary first. The host index
+    // owns workspace restore after its local dynamic params exist.
     return {
       kind: "redirect",
-      href: buildHostWorkspaceRoute(
-        input.workspaceSelection.serverId,
-        input.workspaceSelection.workspaceId,
-      ),
+      href: buildHostRootRoute(input.workspaceSelection.serverId),
     };
   }
 
