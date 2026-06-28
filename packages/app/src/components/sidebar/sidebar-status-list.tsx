@@ -95,6 +95,8 @@ interface StatusWorkspaceListProps {
   shortcutIndexByWorkspaceKey: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
+  hostLabelByServerId: ReadonlyMap<string, string>;
+  showHostLabels: boolean;
 }
 
 export function SidebarStatusWorkspaceList({
@@ -103,6 +105,8 @@ export function SidebarStatusWorkspaceList({
   shortcutIndexByWorkspaceKey: _projectShortcutIndex,
   showShortcutBadges,
   onWorkspacePress,
+  hostLabelByServerId,
+  showHostLabels,
 }: StatusWorkspaceListProps) {
   const groups = useMemo(
     () => buildStatusGroups(workspaces, projectNamesByKey),
@@ -138,6 +142,8 @@ export function SidebarStatusWorkspaceList({
             shortcutIndex={statusShortcutIndex}
             showShortcutBadges={showShortcutBadges}
             onWorkspacePress={onWorkspacePress}
+            hostLabelByServerId={hostLabelByServerId}
+            showHostLabels={showHostLabels}
           />
         </NestableScrollContainer>
       ) : (
@@ -154,6 +160,8 @@ export function SidebarStatusWorkspaceList({
             shortcutIndex={statusShortcutIndex}
             showShortcutBadges={showShortcutBadges}
             onWorkspacePress={onWorkspacePress}
+            hostLabelByServerId={hostLabelByServerId}
+            showHostLabels={showHostLabels}
           />
         </ScrollView>
       )}
@@ -168,6 +176,8 @@ function StatusGroupList({
   shortcutIndex,
   showShortcutBadges,
   onWorkspacePress,
+  hostLabelByServerId,
+  showHostLabels,
 }: {
   groups: StatusGroup[];
   collapsedStatusGroupKeys: ReadonlySet<string>;
@@ -175,6 +185,8 @@ function StatusGroupList({
   shortcutIndex: Map<string, number>;
   showShortcutBadges: boolean;
   onWorkspacePress?: () => void;
+  hostLabelByServerId: ReadonlyMap<string, string>;
+  showHostLabels: boolean;
 }) {
   return (
     <>
@@ -190,7 +202,12 @@ function StatusGroupList({
                 <StatusWorkspaceRow
                   key={workspace.workspaceKey}
                   workspace={workspace}
-                  projectName={projectNamesByKey.get(workspace.projectKey) ?? ""}
+                  subtitle={buildStatusRowSubtitle({
+                    projectName: projectNamesByKey.get(workspace.projectKey) ?? "",
+                    hostLabel: showHostLabels
+                      ? (hostLabelByServerId.get(workspace.serverId) ?? workspace.serverId)
+                      : null,
+                  })}
                   shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
                   showShortcutBadge={showShortcutBadges}
                   onWorkspacePress={onWorkspacePress}
@@ -202,6 +219,21 @@ function StatusGroupList({
       ))}
     </>
   );
+}
+
+// Status mode breaks the project grouping, so the row needs the project name to stay
+// legible; the host is appended after a middle dot once labels are active.
+function buildStatusRowSubtitle({
+  projectName,
+  hostLabel,
+}: {
+  projectName: string;
+  hostLabel: string | null;
+}): string {
+  if (!hostLabel) {
+    return projectName;
+  }
+  return projectName ? `${projectName} · ${hostLabel}` : hostLabel;
 }
 
 function StatusGroupHeader({ group, collapsed }: { group: StatusGroup; collapsed: boolean }) {
@@ -288,13 +320,13 @@ function StatusGroupIcon({ bucket }: { bucket: StatusGroup["bucket"] }) {
 
 const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   workspace,
-  projectName,
+  subtitle,
   shortcutNumber,
   showShortcutBadge,
   onWorkspacePress,
 }: {
   workspace: SidebarStatusWorkspacePlacement;
-  projectName: string;
+  subtitle: string;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   onWorkspacePress?: () => void;
@@ -316,7 +348,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   return (
     <StatusWorkspaceRowWithMenu
       workspace={workspaceEntry}
-      projectName={projectName}
+      subtitle={subtitle}
       selected={selected}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
@@ -327,14 +359,14 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
 
 function StatusWorkspaceRowWithMenu({
   workspace,
-  projectName,
+  subtitle,
   selected,
   shortcutNumber,
   showShortcutBadge,
   onPress,
 }: {
   workspace: SidebarWorkspaceEntry;
-  projectName: string;
+  subtitle: string;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -455,7 +487,7 @@ function StatusWorkspaceRowWithMenu({
     <>
       <StatusWorkspaceRowInner
         workspace={workspace}
-        projectName={projectName}
+        subtitle={subtitle}
         selected={selected}
         shortcutNumber={shortcutNumber}
         showShortcutBadge={showShortcutBadge}
@@ -487,7 +519,7 @@ function StatusWorkspaceRowWithMenu({
 
 function StatusWorkspaceRowInner({
   workspace,
-  projectName,
+  subtitle,
   selected,
   shortcutNumber,
   showShortcutBadge,
@@ -504,7 +536,7 @@ function StatusWorkspaceRowInner({
   archiveShortcutKeys,
 }: {
   workspace: SidebarWorkspaceEntry;
-  projectName: string;
+  subtitle: string;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -554,7 +586,7 @@ function StatusWorkspaceRowInner({
             >
               <SidebarWorkspaceRowContent
                 workspace={workspace}
-                subtitle={projectName}
+                subtitle={subtitle}
                 scriptIconKind={scriptIconKind}
                 isHovered={isHovered}
                 isLoading={isArchiving}

@@ -9,6 +9,7 @@ import {
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
+  shouldShowSidebarHostLabels,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
 
@@ -294,6 +295,63 @@ describe("shared sidebar workspace model", () => {
       ],
     );
     expect(model.projectNamesByKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
+  });
+});
+
+describe("shouldShowSidebarHostLabels", () => {
+  it("is false with no visible projects", () => {
+    expect(shouldShowSidebarHostLabels([])).toBe(false);
+  });
+
+  it("is false when every project lives on a single host", () => {
+    const projects = buildSidebarProjectsFromStructure({
+      projects: [
+        project({ projectKey: "project-a", workspaceKeys: ["ws-1"] }),
+        project({ projectKey: "project-b", workspaceKeys: ["ws-2"] }),
+      ],
+    });
+
+    expect(shouldShowSidebarHostLabels(projects)).toBe(false);
+  });
+
+  it("is true when projects span separate hosts", () => {
+    const projects = buildSidebarProjectsFromStructure({
+      projects: [
+        project({
+          projectKey: "project-a",
+          hosts: [
+            { serverId: "host-a", iconWorkingDir: "/repo/project-a", canCreateWorktree: true },
+          ],
+          workspaceKeys: ["host-a:ws-1"],
+        }),
+        project({
+          projectKey: "project-b",
+          hosts: [
+            { serverId: "host-b", iconWorkingDir: "/repo/project-b", canCreateWorktree: true },
+          ],
+          workspaceKeys: ["host-b:ws-2"],
+        }),
+      ],
+    });
+
+    expect(shouldShowSidebarHostLabels(projects)).toBe(true);
+  });
+
+  it("is true for a single project shared across hosts", () => {
+    const projects = buildSidebarProjectsFromStructure({
+      projects: [
+        project({
+          projectKey: "getpaseo/paseo",
+          hosts: [
+            { serverId: "host-a", iconWorkingDir: "/repo/paseo", canCreateWorktree: true },
+            { serverId: "host-b", iconWorkingDir: "/repo/paseo", canCreateWorktree: true },
+          ],
+          workspaceKeys: ["host-a:main", "host-b:feature"],
+        }),
+      ],
+    });
+
+    expect(shouldShowSidebarHostLabels(projects)).toBe(true);
   });
 });
 
