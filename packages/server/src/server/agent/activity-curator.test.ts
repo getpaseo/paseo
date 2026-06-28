@@ -285,6 +285,74 @@ second line'`,
     expect(result.attachment.text).not.toContain("Later answer.");
   });
 
+  it("does not cap fork context to the generic recent activity limit", () => {
+    const messageRows = Array.from({ length: 25 }, (_, index) =>
+      row(index + 1, {
+        type: "user_message",
+        text: `Message ${index + 1}`,
+        messageId: `user-${index + 1}`,
+      }),
+    );
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        ...messageRows,
+        row(26, {
+          type: "assistant_message",
+          text: "Done.",
+          messageId: "assistant-1",
+        }),
+      ],
+    });
+
+    expect(result.itemCount).toBe(26);
+    expect(result.attachment.text).toContain("[User] Message 1");
+    expect(result.attachment.text).toContain("[User] Message 25");
+    expect(result.attachment.text).toContain("[Assistant] Done.");
+  });
+
+  it("selects the fork boundary before collapsing later tool updates", () => {
+    const result = buildAgentForkContextAttachment({
+      boundaryMessageId: "assistant-1",
+      rows: [
+        row(1, { type: "user_message", text: "Run it", messageId: "user-1" }),
+        row(
+          2,
+          toolCallItem({
+            callId: "terminal-1",
+            name: "terminal",
+            status: "running",
+            detail: {
+              type: "plain_text",
+              label: "before boundary",
+            },
+          }),
+        ),
+        row(3, {
+          type: "assistant_message",
+          text: "Partial result.",
+          messageId: "assistant-1",
+        }),
+        row(
+          4,
+          toolCallItem({
+            callId: "terminal-1",
+            name: "terminal",
+            status: "completed",
+            detail: {
+              type: "plain_text",
+              label: "after boundary",
+            },
+          }),
+        ),
+      ],
+    });
+
+    expect(result.attachment.text).toContain("[Terminal] before boundary");
+    expect(result.attachment.text).toContain("[Assistant] Partial result.");
+    expect(result.attachment.text).not.toContain("after boundary");
+  });
+
   it("rejects missing assistant boundaries instead of silently using the wrong context", () => {
     expect(() =>
       buildAgentForkContextAttachment({

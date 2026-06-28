@@ -217,25 +217,26 @@ function selectForkContextRows(input: {
   rows: readonly AgentTimelineRow[];
   boundaryMessageId?: string | null;
 }): { items: AgentTimelineItem[]; boundaryMessageId: string | null } {
-  const projected = projectTimelineRows({ rows: input.rows, mode: "projected" });
   const boundaryMessageId = input.boundaryMessageId?.trim() || null;
   if (!boundaryMessageId) {
+    const projected = projectTimelineRows({ rows: input.rows, mode: "projected" });
     return {
       items: projected.map((entry) => entry.item),
       boundaryMessageId: null,
     };
   }
 
-  const boundaryIndex = projected.findIndex(
-    (entry) =>
-      entry.item.type === "assistant_message" && entry.item.messageId === boundaryMessageId,
+  const boundaryIndex = input.rows.findLastIndex(
+    (row) => row.item.type === "assistant_message" && row.item.messageId === boundaryMessageId,
   );
   if (boundaryIndex < 0) {
     throw new Error("Selected assistant message is no longer available.");
   }
+  const selectedRows = input.rows.slice(0, boundaryIndex + 1);
+  const projected = projectTimelineRows({ rows: selectedRows, mode: "projected" });
 
   return {
-    items: projected.slice(0, boundaryIndex + 1).map((entry) => entry.item),
+    items: projected.map((entry) => entry.item),
     boundaryMessageId,
   };
 }
@@ -273,6 +274,7 @@ export function buildAgentForkContextAttachment(input: {
     boundaryMessageId: input.boundaryMessageId,
   });
   const entries = curateProjectedActivityEntries(selected.items, {
+    maxItems: 0,
     labelAssistantMessages: true,
     includeKinds: ["user_message", "assistant_message", "tool_call"],
     includeExternalToolInput: false,

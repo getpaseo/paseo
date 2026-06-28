@@ -5364,7 +5364,10 @@ export class Session {
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const rows = await this.agentManager.getTimelineRows(msg.agentId);
+      const rows = this.agentManager.fetchTimeline(msg.agentId, {
+        direction: "tail",
+        limit: 0,
+      }).rows;
       const forkContext = buildAgentForkContextAttachment({
         rows,
         boundaryMessageId: msg.boundaryMessageId,
