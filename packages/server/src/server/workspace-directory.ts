@@ -146,7 +146,6 @@ export class WorkspaceDirectory {
    */
   private readonly bucketHistoryByWorkspaceId = new Map<string, WorkspaceBucketHistoryEntry>();
   private readonly clientActivityAtByWorkspaceId = new Map<string, string>();
-  private storedActivityAtByWorkspaceId: Map<string, string> | null = null;
 
   private readonly pager = new SortablePager<
     WorkspaceDescriptorPayload,
@@ -197,10 +196,7 @@ export class WorkspaceDirectory {
     this.clientActivityAtByWorkspaceId.delete(workspaceId);
   }
 
-  private async loadStoredActivityAtOnce(): Promise<Map<string, string>> {
-    if (this.storedActivityAtByWorkspaceId) {
-      return this.storedActivityAtByWorkspaceId;
-    }
+  private async loadStoredActivityAt(): Promise<Map<string, string>> {
     const storedAgentRecords = await this.deps.listStoredAgentRecords();
     const map = new Map<string, string>();
     for (const record of storedAgentRecords) {
@@ -211,12 +207,11 @@ export class WorkspaceDirectory {
         map.set(record.workspaceId, timestamp);
       }
     }
-    this.storedActivityAtByWorkspaceId = map;
     return map;
   }
 
   async resolveWorkspaceActivityAt(workspaceId: string): Promise<string | null> {
-    const storedMap = await this.loadStoredActivityAtOnce();
+    const storedMap = await this.loadStoredActivityAt();
     const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
     const storedActivityAt = storedMap.get(workspaceId) ?? null;
     const candidates = [clientActivityAt, storedActivityAt].filter(
@@ -249,7 +244,7 @@ export class WorkspaceDirectory {
         this.deps.listTerminalActivityContributions(),
       ]);
 
-    const activityAtByWorkspaceId = await this.loadStoredActivityAtOnce();
+    const activityAtByWorkspaceId = await this.loadStoredActivityAt();
 
     const activeProjects = new Map(
       persistedProjects
