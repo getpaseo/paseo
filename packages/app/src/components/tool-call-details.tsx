@@ -518,23 +518,16 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
 
 function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
   return (
-    <View style={styles.plainTextSection}>
+    <View style={styles.section}>
       <ScrollView
         style={ds.scrollAreaStyle}
         contentContainerStyle={styles.scrollContent}
         nestedScrollEnabled
         showsVerticalScrollIndicator
       >
-        <ScrollView
-          horizontal
-          nestedScrollEnabled
-          showsHorizontalScrollIndicator
-          style={ds.webScrollbarStyle}
-        >
-          <Text selectable style={styles.plainText}>
-            {text}
-          </Text>
-        </ScrollView>
+        <Text selectable style={styles.plainText}>
+          {text}
+        </Text>
       </ScrollView>
     </View>
   );
