@@ -248,6 +248,16 @@ function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): Diag
   return [
     { label: "Collected at", value: snapshot.collectedAt },
     { label: "Window", value: formatDurationMs(snapshot.windowMs) },
+    { label: "Process uptime", value: formatDurationMs(snapshot.uptimeSeconds * 1000) },
+    {
+      label: "Process memory",
+      value: [
+        `rss=${formatBytes(snapshot.memory.rss)}`,
+        `heap=${formatBytes(snapshot.memory.heapUsed)} / ${formatBytes(snapshot.memory.heapTotal)}`,
+        `external=${formatBytes(snapshot.memory.external)}`,
+        `arrayBuffers=${formatBytes(snapshot.memory.arrayBuffers)}`,
+      ].join(", "),
+    },
     { label: "Final", value: String(snapshot.final) },
     {
       label: "Sessions",

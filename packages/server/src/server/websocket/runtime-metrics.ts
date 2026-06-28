@@ -1,4 +1,5 @@
 import type { SessionOutboundMessage, WSOutboundMessage } from "../messages.js";
+import type { ProcessMemoryDiagnostics } from "../process-diagnostics.js";
 
 export interface WebSocketRuntimeCounters {
   connectedAwaitingHello: number;
@@ -62,6 +63,8 @@ export interface WebSocketRuntimeDiagnosticSnapshot<
     p99Ms: number;
     maxMs: number;
   } | null;
+  uptimeSeconds: number;
+  memory: ProcessMemoryDiagnostics;
   runtime: TRuntime;
   agents: TAgents;
 }

@@ -1244,7 +1244,7 @@ function RemoveHostSection({
           await updateSettings({ daemon: { manageBuiltInDaemon: false } });
           didDisableDaemonManagement = true;
           if (daemonStatus?.status === "running" && daemonStatus.desktopManaged) {
-            setStatus(await stopDesktopDaemon());
+            setStatus(await stopDesktopDaemon("host_remove"));
             didStopDaemon = true;
           }
           await removeHost(host.serverId);

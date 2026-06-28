@@ -29,7 +29,7 @@ export interface DaemonSessionHost {
     type: "restart";
     clientId: string;
     requestId: string;
-    reason?: string;
+    reason: string;
   }): void;
 }
 

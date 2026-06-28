@@ -169,6 +169,23 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain("raw stderr line\n");
   });
 
+  test("logs the worker shutdown reason before signaling the worker", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: `
+        process.send?.({ type: "paseo:shutdown", reason: "client_shutdown_rpc" });
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain('"msg":"Worker requested shutdown"');
+    expect(result.log).toContain('"reason":"client_shutdown_rpc"');
+    expect(result.log).toContain('"msg":"Supervisor sending signal to worker"');
+    expect(result.log).toContain('"signal":"SIGTERM"');
+    expect(result.log).toContain('"workerPid":');
+  });
+
   // POSIX-only: Windows reports the worker self-kill as an exit code, not SIGKILL.
   test.skipIf(isPlatform("win32"))(
     "logs worker signal exits even when the worker cannot log",

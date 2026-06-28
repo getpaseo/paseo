@@ -14,6 +14,7 @@ interface SupervisorLogFileOptions {
 type WorkerLifecycleMessage =
   | {
       type: "paseo:shutdown";
+      reason?: string;
     }
   | {
       type: "paseo:ready";
@@ -56,7 +57,11 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
   }
   const type = (msg as { type?: unknown }).type;
   if (type === "paseo:shutdown") {
-    return { type: "paseo:shutdown" };
+    const reason = (msg as { reason?: unknown }).reason;
+    return {
+      type: "paseo:shutdown",
+      ...(typeof reason === "string" && reason.trim().length > 0 ? { reason } : {}),
+    };
   }
   if (type === "paseo:ready") {
     const listen = (msg as { listen?: unknown }).listen;
@@ -236,16 +241,15 @@ export function runSupervisor(options: SupervisorOptions): void {
       }
 
       if (lifecycleMessage.type === "paseo:shutdown") {
-        writeLifecycleLog("Worker requested shutdown");
-        requestShutdown("Shutdown requested by worker");
+        const reason = lifecycleMessage.reason ?? "worker_requested_shutdown";
+        writeLifecycleLog("Worker requested shutdown", { reason });
+        requestShutdown(reason);
         return;
       }
 
-      writeLifecycleLog(
-        "Worker requested restart",
-        lifecycleMessage.reason ? { reason: lifecycleMessage.reason } : {},
-      );
-      requestRestart("Restart requested by worker");
+      const reason = lifecycleMessage.reason ?? "worker_requested_restart";
+      writeLifecycleLog("Worker requested restart", { reason });
+      requestRestart(reason);
     });
 
     child.on("close", (code, signal) => {
@@ -279,6 +283,19 @@ export function runSupervisor(options: SupervisorOptions): void {
     });
   };
 
+  const signalWorker = (signal: NodeJS.Signals, reason: string): void => {
+    if (!child) {
+      return;
+    }
+    writeLifecycleLog("Supervisor sending signal to worker", {
+      reason,
+      signal,
+      supervisorPid: process.pid,
+      workerPid: child.pid ?? null,
+    });
+    child.kill(signal);
+  };
+
   const requestRestart = (reason: string) => {
     if (!child || restarting || shuttingDown) {
       return;
@@ -286,7 +303,7 @@ export function runSupervisor(options: SupervisorOptions): void {
     restarting = true;
     writeLifecycleLog("Restart requested", { reason });
     log(`${reason}. Stopping worker for restart...`);
-    child.kill("SIGTERM");
+    signalWorker("SIGTERM", reason);
   };
 
   const requestShutdown = (reason: string) => {
@@ -301,11 +318,11 @@ export function runSupervisor(options: SupervisorOptions): void {
       exitSupervisor(0);
       return;
     }
-    child.kill("SIGTERM");
+    signalWorker("SIGTERM", reason);
   };
 
   const forwardSignal = (signal: NodeJS.Signals) => {
-    requestShutdown(`Received ${signal}`);
+    requestShutdown(`supervisor_received_${signal}`);
   };
 
   process.on("SIGINT", () => forwardSignal("SIGINT"));

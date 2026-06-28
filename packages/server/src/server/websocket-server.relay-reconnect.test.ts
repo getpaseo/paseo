@@ -52,6 +52,7 @@ const sessionMock = vi.hoisted(() => {
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     supports = vi.fn((capability: string) => this.args.clientCapabilities?.[capability] === true);
     getClientActivity = vi.fn(() => null);
+    getSessionId = vi.fn(() => "mock-session-id");
     resetPeakInflight = vi.fn(() => {});
     getRuntimeMetrics = vi.fn(() => ({
       checkoutDiffTargetCount: 0,
@@ -214,14 +215,18 @@ function createLogger() {
   return logger;
 }
 
-function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | null }) {
+function createServer(options?: {
+  speechReadiness?: SpeechReadinessSnapshot | null;
+  logger?: ReturnType<typeof createLogger>;
+}) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
     onChange: vi.fn(() => () => {}),
   };
+  const logger = options?.logger ?? createLogger();
   return new VoiceAssistantWebSocketServer(
     createStub<HTTPServer>({}),
-    createStub<pino.Logger>(createLogger()),
+    createStub<pino.Logger>(logger),
     "srv_test",
     createStub<AgentManager>({
       subscribe: vi.fn(() => () => {}),
@@ -592,6 +597,45 @@ describe("relay external socket reconnect behavior", () => {
     expect(closeCode).toBe(4002);
     expect(["Invalid hello", "Session message before hello"]).toContain(closeReason);
     expect(sessionMock.instances).toHaveLength(0);
+
+    await server.close();
+  });
+
+  test("logs control RPCs with the socket identity", async () => {
+    const logger = createLogger();
+    const server = createServer({ logger });
+    const socket = new MockSocket();
+
+    await server.attachExternalSocket(socket, {
+      transport: "relay",
+      relayConnectionId: "relay-conn-1",
+    });
+    socket.emit("message", JSON.stringify(createHelloMessage("cid-control-log")));
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "shutdown_server_request",
+          requestId: "shutdown-1",
+        },
+      }),
+    );
+    await Promise.resolve();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: expect.stringMatching(/^conn_/),
+        transport: "relay",
+        relayConnectionId: "relay-conn-1",
+        clientId: "cid-control-log",
+        sessionId: "mock-session-id",
+        requestType: "shutdown_server_request",
+        requestId: "shutdown-1",
+        reason: "client_shutdown_rpc",
+      }),
+      "ws_control_rpc_received",
+    );
 
     await server.close();
   });

@@ -59,6 +59,8 @@ export interface StopLocalDaemonResult {
   home: string;
   pid: number | null;
   forced: boolean;
+  usedLifecycleRpc: boolean;
+  reason: "not_running" | "lifecycle_shutdown_rpc" | "owner_pid_signal" | "owner_pid_sigkill";
   message: string;
 }
 
@@ -228,6 +230,15 @@ function resolveStopMessage(
   if (forced) return "Daemon owner process was force-stopped";
   if (lifecycleRequested) return "Daemon stopped gracefully";
   return fallbackMessage ?? "Daemon stopped via owner PID signal";
+}
+
+function resolveStopReason(
+  forced: boolean,
+  lifecycleRequested: boolean,
+): StopLocalDaemonResult["reason"] {
+  if (forced) return "owner_pid_sigkill";
+  if (lifecycleRequested) return "lifecycle_shutdown_rpc";
+  return "owner_pid_signal";
 }
 
 function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
@@ -421,6 +432,8 @@ function createNotRunningStopResult(
     home: state.home,
     pid,
     forced: false,
+    usedLifecycleRpc: false,
+    reason: "not_running",
     message,
   };
 }
@@ -737,6 +750,8 @@ export async function stopLocalDaemon(
     home: state.home,
     pid,
     forced,
+    usedLifecycleRpc: lifecycleRequested,
+    reason: resolveStopReason(forced, lifecycleRequested),
     message: resolveStopMessage(forced, lifecycleRequested, fallbackMessage),
   };
 }

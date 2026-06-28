@@ -5,12 +5,14 @@ import { loadConfig } from "./config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
+import { getProcessDiagnostics } from "./process-diagnostics.js";
 
 process.title = "Paseo Daemon";
 
 type SupervisorLifecycleMessage =
   | {
       type: "paseo:shutdown";
+      reason: string;
     }
   | {
       type: "paseo:ready";
@@ -123,15 +125,23 @@ async function main() {
   const beginShutdown = (
     signal: string,
     options?: {
+      reason?: string;
       successExitCode?: number;
     },
   ) => {
+    const reason = options?.reason ?? `worker_received_${signal}`;
     if (!shutdownPromise) {
-      logger.info(`${signal} received, shutting down gracefully...`);
+      logger.info(
+        { signal, reason, ...getProcessDiagnostics() },
+        `${signal} received, shutting down gracefully...`,
+      );
 
       shutdownPromise = (async () => {
         const forceExit = setTimeout(() => {
-          logger.warn("Forcing shutdown - HTTP server didn't close in time");
+          logger.warn(
+            { signal, reason, ...getProcessDiagnostics() },
+            "Forcing shutdown - HTTP server didn't close in time",
+          );
           process.exit(1);
         }, 10000);
 
@@ -152,7 +162,10 @@ async function main() {
         }
       })();
     } else {
-      logger.info(`${signal} received while shutdown is already in progress`);
+      logger.info(
+        { signal, reason, ...getProcessDiagnostics() },
+        `${signal} received while shutdown is already in progress`,
+      );
     }
 
     installExitHook();
@@ -174,13 +187,13 @@ async function main() {
   const handleLifecycleIntent = (intent: DaemonLifecycleIntent) => {
     if (intent.type === "shutdown") {
       logger.warn(
-        { clientId: intent.clientId, requestId: intent.requestId },
+        { clientId: intent.clientId, requestId: intent.requestId, reason: intent.reason },
         "Shutdown requested via websocket",
       );
-      if (sendSupervisorLifecycleMessage({ type: "paseo:shutdown" })) {
+      if (sendSupervisorLifecycleMessage({ type: "paseo:shutdown", reason: intent.reason })) {
         return;
       }
-      beginShutdown("shutdown lifecycle intent");
+      beginShutdown("shutdown lifecycle intent", { reason: intent.reason });
       return;
     }
 
@@ -196,7 +209,10 @@ async function main() {
     ) {
       return;
     }
-    beginShutdown("restart lifecycle intent", { successExitCode: 0 });
+    beginShutdown("restart lifecycle intent", {
+      reason: intent.reason,
+      successExitCode: 0,
+    });
   };
 
   const installSupervisorLivenessGuard = () => {
@@ -215,6 +231,7 @@ async function main() {
 
       writeWorkerLifecycleLog(paseoHome, "Supervisor liveness lost; worker exiting", {
         reason,
+        ...getProcessDiagnostics(),
         supervisorPid,
         currentParentPid: process.ppid,
         ipcConnected: typeof process.connected === "boolean" ? process.connected : null,
