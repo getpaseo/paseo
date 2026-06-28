@@ -82,7 +82,8 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
           serverId: selection.serverId,
           workspaceId: encodeWorkspaceIdForPathSegment(selection.workspaceId),
         },
-        // Expo Router consumes this nested hint when resolving the host child screen.
+        // React Navigation consumes this nested hint when resolving the host child screen.
+        // The browser-route canonicalizer strips the resulting ?pop=true URL artifact.
         // Removing it lets repeated /new -> workspace hops append hidden deck entries.
         pop: true,
       },
