@@ -11,6 +11,10 @@ const HOST_WORKSPACE_ROUTE_NAME = "workspace/[workspaceId]/index";
 let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
   null;
 
+interface NavigateToHostWorkspaceRouteOptions {
+  popToExistingHostRoute?: boolean;
+}
+
 export function registerWorkspaceRouteNavigationRef(
   ref: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>,
 ): () => void {
@@ -93,8 +97,11 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
   return true;
 }
 
-export function navigateToHostWorkspaceRoute(route: string): void {
-  if (dispatchHostWorkspacePopTo(route)) {
+export function navigateToHostWorkspaceRoute(
+  route: string,
+  options: NavigateToHostWorkspaceRouteOptions = {},
+): void {
+  if (options.popToExistingHostRoute && dispatchHostWorkspacePopTo(route)) {
     return;
   }
 

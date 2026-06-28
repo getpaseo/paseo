@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
+import { usePathname } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { View, Text, Pressable, ScrollView, type PressableStateCallbackType } from "react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
@@ -301,6 +302,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
 }) {
   const workspaceEntry = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const currentPathname = usePathname();
   const selected =
     activeWorkspaceSelection?.serverId === workspace.serverId &&
     activeWorkspaceSelection?.workspaceId === workspace.workspaceId;
@@ -308,8 +310,8 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   const handlePress = useCallback(() => {
     if (!workspace.serverId) return;
     onWorkspacePress?.();
-    navigateToWorkspace(workspace.serverId, workspace.workspaceId);
-  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
+    navigateToWorkspace(workspace.serverId, workspace.workspaceId, { currentPathname });
+  }, [currentPathname, onWorkspacePress, workspace.serverId, workspace.workspaceId]);
 
   if (!workspaceEntry) return null;
 
