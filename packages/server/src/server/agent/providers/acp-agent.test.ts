@@ -1902,6 +1902,84 @@ describe("ACPAgentSession", () => {
     );
   });
 
+  test("maps the Kiro _kiro.dev/commands/available notification into slash commands and skills", async () => {
+    const session = new ACPAgentSession(
+      {
+        provider: "kiro",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "kiro",
+        logger: createTestLogger(),
+        defaultCommand: ["kiro-cli", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        waitForInitialCommands: true,
+        initialCommandsWaitTimeoutMs: 1500,
+      },
+    );
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    const listCommandsPromise = session.listCommands();
+
+    await session.extNotification("_kiro.dev/commands/available", {
+      sessionId: "session-1",
+      commands: [
+        {
+          name: "/agent",
+          description: "Select or list available agents",
+          meta: { inputType: "selection", hint: "swap <name>" },
+        },
+      ],
+      prompts: [
+        {
+          name: "agent-sync-doctor",
+          description: "Hand off Claude or Codex state across Macs",
+          arguments: [],
+          serverName: "skill:config",
+        },
+      ],
+      // Tools are not slash commands and must be ignored.
+      tools: [{ name: "code", description: "Code intelligence", source: "built-in" }],
+    });
+
+    expect(await listCommandsPromise).toEqual([
+      {
+        name: "agent",
+        description: "Select or list available agents",
+        argumentHint: "swap <name>",
+        kind: "command",
+      },
+      {
+        name: "agent-sync-doctor",
+        description: "Hand off Claude or Codex state across Macs",
+        argumentHint: "",
+        kind: "skill",
+      },
+    ]);
+  });
+
+  test("ignores Kiro _kiro.dev/commands/available for a different session", async () => {
+    const logger = createTestLogger();
+    const session = createSessionWithConfig({ provider: "kiro" }, logger);
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    await session.extNotification("_kiro.dev/commands/available", {
+      sessionId: "other-session",
+      commands: [{ name: "/agent", description: "Select or list available agents" }],
+      prompts: [],
+    });
+
+    expect(await session.listCommands()).toEqual([]);
+  });
+
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
     const events: Array<{ type: string; item?: { type: string; text?: string } }> = [];

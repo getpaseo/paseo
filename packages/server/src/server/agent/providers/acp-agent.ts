@@ -80,6 +80,7 @@ import {
   type AgentSession,
   type AgentSessionConfig,
   type AgentSlashCommand,
+  type AgentSlashCommandKind,
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
@@ -120,6 +121,53 @@ function assertChildWithPipes(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+// ACP extension method (per the `_`-prefixed vendor namespace convention) that
+// Kiro CLI uses to publish its slash commands and skills after session/new.
+const KIRO_COMMANDS_AVAILABLE_METHOD = "_kiro.dev/commands/available";
+
+// Maps a `_kiro.dev/commands/available` payload onto Paseo slash commands.
+// Kiro reports built-in slash commands under `commands` (names arrive with a
+// leading "/", e.g. "/agent") and skills/prompts under `prompts` (names without
+// a slash, tagged with a `skill:` serverName). Paseo stores command names
+// without the leading slash — the composer prepends it on insertion.
+function mapKiroAvailableCommands(params: Record<string, unknown>): AgentSlashCommand[] {
+  const result: AgentSlashCommand[] = [];
+  const seen = new Set<string>();
+
+  const pushEntry = (entry: unknown): void => {
+    if (!isRecord(entry)) {
+      return;
+    }
+    const rawName = typeof entry.name === "string" ? entry.name.trim() : "";
+    const name = rawName.replace(/^\/+/, "");
+    if (!name || seen.has(name)) {
+      return;
+    }
+    seen.add(name);
+
+    const description = typeof entry.description === "string" ? entry.description : "";
+    const meta = isRecord(entry.meta) ? entry.meta : null;
+    const argumentHint = meta && typeof meta.hint === "string" ? meta.hint : "";
+    const serverName = typeof entry.serverName === "string" ? entry.serverName : "";
+    const kind: AgentSlashCommandKind = serverName.startsWith("skill:") ? "skill" : "command";
+
+    result.push({ name, description, argumentHint, kind });
+  };
+
+  if (Array.isArray(params.commands)) {
+    for (const entry of params.commands) {
+      pushEntry(entry);
+    }
+  }
+  if (Array.isArray(params.prompts)) {
+    for (const entry of params.prompts) {
+      pushEntry(entry);
+    }
+  }
+
+  return result;
 }
 
 function isACPError(value: unknown): value is ACPError {
@@ -2082,6 +2130,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.extension_notification",
     );
+
+    if (method === KIRO_COMMANDS_AVAILABLE_METHOD) {
+      this.applyKiroAvailableCommands(params);
+    }
+  }
+
+  // Kiro CLI advertises its slash commands and skills through the
+  // `_kiro.dev/commands/available` extension notification instead of the
+  // standard `available_commands_update` session update. Map both lists onto
+  // the shared slash-command cache so they surface in the composer like any
+  // other provider's commands.
+  private applyKiroAvailableCommands(params: Record<string, unknown>): void {
+    if (
+      typeof params.sessionId === "string" &&
+      this.sessionId !== null &&
+      params.sessionId !== this.sessionId
+    ) {
+      return;
+    }
+
+    const commands = mapKiroAvailableCommands(params);
+    if (commands.length === 0) {
+      return;
+    }
+
+    this.cachedCommands = commands;
+    this.settleCommandsReady();
   }
 
   async readTextFile(params: ReadTextFileRequest): Promise<{ content: string }> {

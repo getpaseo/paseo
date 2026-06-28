@@ -33,6 +33,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
+import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
@@ -644,24 +645,23 @@ function addDerivedProviders(
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         providerParams: override.params,
-        createBaseClient: (logger) =>
-          providerId === "cursor"
-            ? new CursorACPAgentClient({
-                logger,
-                command,
-                env: override.env,
-                providerId,
-                label: override.label ?? providerId,
-                providerParams: override.params,
-              })
-            : new GenericACPAgentClient({
-                logger,
-                command,
-                env: override.env,
-                providerId,
-                label: override.label ?? providerId,
-                providerParams: override.params,
-              }),
+        createBaseClient: (logger) => {
+          const acpOptions = {
+            logger,
+            command,
+            env: override.env,
+            providerId,
+            label: override.label ?? providerId,
+            providerParams: override.params,
+          };
+          if (providerId === "cursor") {
+            return new CursorACPAgentClient(acpOptions);
+          }
+          if (providerId === "kiro") {
+            return new KiroACPAgentClient(acpOptions);
+          }
+          return new GenericACPAgentClient(acpOptions);
+        },
       });
       continue;
     }
