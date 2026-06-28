@@ -5,10 +5,20 @@ import type { WorkspaceComposerAttachment } from "./types";
 const EMPTY_WORKSPACE_ATTACHMENTS: readonly WorkspaceComposerAttachment[] = [];
 
 export interface WorkspaceAttachmentScopeInput {
+  kind?: "workspace";
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
 }
+
+export interface DraftWorkspaceAttachmentScopeInput {
+  kind: "draft";
+  draftId: string;
+}
+
+export type WorkspaceAttachmentScope =
+  | WorkspaceAttachmentScopeInput
+  | DraftWorkspaceAttachmentScopeInput;
 
 interface WorkspaceAttachmentsStoreState {
   attachmentsByScope: Record<string, readonly WorkspaceComposerAttachment[]>;
@@ -52,6 +62,10 @@ export function buildWorkspaceAttachmentScopeKey(input: WorkspaceAttachmentScope
   );
 }
 
+export function buildDraftWorkspaceAttachmentScopeKey(draftId: string): string {
+  return ["workspace-attachments", `draft=${encodeScopePart(draftId)}`].join(":");
+}
+
 function areWorkspaceAttachmentsEqual(
   left: readonly WorkspaceComposerAttachment[],
   right: readonly WorkspaceComposerAttachment[],
@@ -66,11 +80,12 @@ function areWorkspaceAttachmentsEqual(
 }
 
 function getContextAttachmentKey(attachment: WorkspaceComposerAttachment): string | null {
-  if (
-    attachment.kind !== "github.pull_request_comment" &&
-    attachment.kind !== "github.pull_request_review" &&
-    attachment.kind !== "github.pull_request_check"
-  ) {
+  const isContextAttachment =
+    attachment.kind === "chat_history" ||
+    attachment.kind === "github.pull_request_comment" ||
+    attachment.kind === "github.pull_request_review" ||
+    attachment.kind === "github.pull_request_check";
+  if (!isContextAttachment) {
     return null;
   }
   return JSON.stringify({
@@ -145,17 +160,54 @@ export const useWorkspaceAttachmentsStore = create<WorkspaceAttachmentsStore>()(
   },
 }));
 
-export function useWorkspaceAttachmentScopeKey(input: WorkspaceAttachmentScopeInput): string {
-  const { serverId, workspaceId, cwd } = input;
+export function useWorkspaceAttachmentScopeKey(input: WorkspaceAttachmentScope): string {
+  const isDraftScope = input.kind === "draft";
+  const draftId = isDraftScope ? input.draftId : "";
+  const serverId = isDraftScope ? "" : input.serverId;
+  const workspaceId = isDraftScope ? undefined : input.workspaceId;
+  const cwd = isDraftScope ? "" : input.cwd;
+  return useMemo(() => {
+    if (isDraftScope) {
+      return buildDraftWorkspaceAttachmentScopeKey(draftId);
+    }
+    return buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd });
+  }, [cwd, draftId, isDraftScope, serverId, workspaceId]);
+}
+
+export function useDraftWorkspaceAttachmentScopeKey(draftId: string | null | undefined): string {
+  const normalizedDraftId = useMemo(() => draftId?.trim() ?? "", [draftId]);
   return useMemo(
-    () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd }),
-    [serverId, workspaceId, cwd],
+    () => (normalizedDraftId ? buildDraftWorkspaceAttachmentScopeKey(normalizedDraftId) : ""),
+    [normalizedDraftId],
   );
 }
 
 export function useWorkspaceAttachments(scopeKey: string): readonly WorkspaceComposerAttachment[] {
   return useWorkspaceAttachmentsStore(
     (state) => state.attachmentsByScope[scopeKey] ?? EMPTY_WORKSPACE_ATTACHMENTS,
+  );
+}
+
+export function useDraftWorkspaceAttachments(
+  draftId: string | null | undefined,
+): readonly WorkspaceComposerAttachment[] {
+  const scopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
+  return useWorkspaceAttachments(scopeKey);
+}
+
+export function useWorkspaceDraftAttachments(input: {
+  draftId: string;
+  workspaceScopeKey: string;
+}): readonly WorkspaceComposerAttachment[] {
+  const draftScopeKey = useDraftWorkspaceAttachmentScopeKey(input.draftId);
+  const draftAttachments = useWorkspaceAttachments(draftScopeKey);
+  const workspaceAttachments = useWorkspaceAttachments(input.workspaceScopeKey);
+  return useMemo(
+    () =>
+      draftAttachments.length > 0
+        ? [...draftAttachments, ...workspaceAttachments]
+        : workspaceAttachments,
+    [draftAttachments, workspaceAttachments],
   );
 }
 

@@ -11,6 +11,7 @@ import React, {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
   View,
@@ -59,7 +60,12 @@ import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
-import { CompletedTurnFooterRow, TurnFooter, type TurnContentStrategy } from "./turn-footer";
+import {
+  CompletedTurnFooterRow,
+  TurnFooter,
+  type AssistantTurnForkHandler,
+  type TurnContentStrategy,
+} from "./turn-footer";
 import { layoutStream, type StreamLayoutItem } from "./layout";
 import {
   type BottomAnchorLocalRequest,
@@ -76,11 +82,19 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { MountedTabActiveContext } from "@/components/split-container";
+import { generateDraftId } from "@/stores/draft-keys";
+import {
+  buildDraftWorkspaceAttachmentScopeKey,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
+import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import { toErrorMessage } from "@/utils/error-messages";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -121,6 +135,7 @@ function renderStreamItemWithTurnFooter(input: {
   content: ReactNode;
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }): ReactNode {
   if (!input.content) {
     return null;
@@ -133,6 +148,7 @@ function renderStreamItemWithTurnFooter(input: {
       items={footerHost.items}
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
+      onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
   const content = (
@@ -233,6 +249,28 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
 
+function buildChatHistoryAttachment(input: {
+  draftId: string;
+  serverId: string;
+  agentId: string;
+  payload: Awaited<ReturnType<DaemonClient["buildAgentForkContext"]>>;
+}): WorkspaceComposerAttachment {
+  if (!input.payload.attachment) {
+    throw new Error("No chat history was returned.");
+  }
+  return {
+    kind: "chat_history",
+    id: `chat_history:${input.draftId}`,
+    attachment: input.payload.attachment,
+    source: {
+      serverId: input.serverId,
+      agentId: input.agentId,
+      boundaryMessageId: input.payload.boundaryMessageId,
+      itemCount: input.payload.itemCount,
+    },
+  };
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -249,6 +287,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     ref,
   ) {
     const { t } = useTranslation();
+    const router = useRouter();
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
@@ -272,6 +311,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const streamHead = useSessionStore((state) =>
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
+    );
+    const supportsAgentForkContext = useSessionStore(
+      (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContext === true,
     );
 
     const workspaceRoot = agent.cwd?.trim() || "";
@@ -360,6 +402,61 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
       handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
+
+    const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
+      async ({ target, boundaryMessageId }) => {
+        try {
+          if (!supportsAgentForkContext) {
+            toast?.error(t("message.actions.forkUnavailable"));
+            return;
+          }
+          if (!client) {
+            throw new Error(t("workspace.terminal.hostDisconnected"));
+          }
+          const draftId = generateDraftId();
+          const payload = await client.buildAgentForkContext(
+            agentId,
+            boundaryMessageId ? { boundaryMessageId } : {},
+          );
+          const attachment = buildChatHistoryAttachment({
+            draftId,
+            serverId: resolvedServerId,
+            agentId,
+            payload,
+          });
+          useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+            scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+            attachments: [attachment],
+          });
+
+          if (target === "tab") {
+            if (!agent.workspaceId) {
+              throw new Error(t("message.actions.forkMissingWorkspace"));
+            }
+            navigateToPreparedWorkspaceTab({
+              serverId: resolvedServerId,
+              workspaceId: agent.workspaceId,
+              target: { kind: "draft", draftId },
+            });
+            return;
+          }
+
+          const sourceDirectory =
+            agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
+          router.push(
+            buildNewWorkspaceRoute({
+              serverId: resolvedServerId,
+              sourceDirectory,
+              displayName: agent.projectPlacement?.projectName,
+              projectId: agent.projectPlacement?.projectKey,
+              draftId,
+            }),
+          );
+        } catch (error) {
+          toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+        }
+      },
+    );
 
     // Freeze stream data while this tab slot is hidden to prevent offscreen FlatList
     // cell-window renders on every 48ms flush from background agents.
@@ -602,9 +699,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           content,
           layoutItem,
           strategy: streamRenderStrategy,
+          onForkAssistantTurn: handleForkAssistantTurn,
         });
       },
-      [renderStreamItemContent, streamRenderStrategy],
+      [handleForkAssistantTurn, renderStreamItemContent, streamRenderStrategy],
     );
 
     const pendingPermissionItems = useMemo(
@@ -629,9 +727,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
+            onForkAssistantTurn={handleForkAssistantTurn}
           />
         ) : null,
       [
+        handleForkAssistantTurn,
         showRunningTurnFooter,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,

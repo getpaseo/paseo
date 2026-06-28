@@ -10,6 +10,8 @@ export interface AgentScreenAgent {
   capabilities?: AgentCapabilityFlags;
   lastError?: string | null;
   projectPlacement?: {
+    projectKey?: string;
+    projectName?: string;
     checkout?: {
       cwd?: string;
       isGit?: boolean;

@@ -986,6 +986,7 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
       groupId: blockGroupId,
       blockIndex: firstBlockIndex + offset,
     }),
+    ...(activeItem.messageId ? { messageId: activeItem.messageId } : {}),
     blockGroupId,
     blockIndex: firstBlockIndex + offset,
     text: block,

@@ -238,6 +238,16 @@ describe("global routes", () => {
       }),
     ).toBe("/new?serverId=local&dir=%2Frepo%2Fproject&name=Project&projectId=project-1");
   });
+
+  it("buildNewWorkspaceRoute carries a draft context id", () => {
+    expect(
+      buildNewWorkspaceRoute({
+        serverId: "local",
+        sourceDirectory: "/repo/project",
+        draftId: "draft-1",
+      }),
+    ).toBe("/new?serverId=local&dir=%2Frepo%2Fproject&draftId=draft-1");
+  });
 });
 
 describe("host settings section slugs", () => {

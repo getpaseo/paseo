@@ -26,6 +26,7 @@ import type {
   FileUploadResponse,
   FileExplorerResponse,
   FetchAgentTimelineResponseMessage,
+  AgentForkContextResponseMessage,
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommitResponse,
@@ -454,6 +455,7 @@ type ScheduleUpdatePayload = Extract<
   { type: "schedule/update/response" }
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
+export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
@@ -463,6 +465,10 @@ export interface FetchAgentTimelineOptions {
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
+  requestId?: string;
+}
+export interface AgentForkContextOptions {
+  boundaryMessageId?: string;
   requestId?: string;
 }
 
@@ -2349,6 +2355,41 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_timeline_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+
+    return payload;
+  }
+
+  async buildAgentForkContext(
+    agentId: string,
+    options: AgentForkContextOptions = {},
+  ): Promise<AgentForkContextPayload> {
+    const resolvedRequestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.fork_context.request",
+      agentId,
+      requestId: resolvedRequestId,
+      ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
+    });
+
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.fork_context.response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

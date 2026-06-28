@@ -116,7 +116,9 @@ import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
+import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 export type { InlinePathTarget } from "@/assistant-file-links";
+export type { AssistantForkTarget };
 
 interface UserMessageProps {
   serverId?: string;
@@ -628,6 +630,11 @@ interface AssistantTurnFooterProps {
   getContent: () => string;
   completedAt?: Date;
   durationMs?: number;
+  forkBoundaryMessageId?: string;
+  onFork?: (input: {
+    target: AssistantForkTarget;
+    boundaryMessageId?: string;
+  }) => Promise<void> | void;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -672,6 +679,8 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
   completedAt,
   durationMs,
+  forkBoundaryMessageId,
+  onFork,
 }: AssistantTurnFooterProps) {
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
@@ -711,6 +720,12 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       revealTimerRef.current = null;
     }, TIMESTAMP_REVEAL_MS);
   }, [canSwap]);
+  const handleFork = useCallback(
+    (target: AssistantForkTarget) => {
+      return onFork?.({ target, boundaryMessageId: forkBoundaryMessageId });
+    },
+    [forkBoundaryMessageId, onFork],
+  );
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
@@ -718,6 +733,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
+      {onFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {durationLabel ? (
         <Pressable
           onPress={handlePress}

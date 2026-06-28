@@ -424,6 +424,7 @@ interface NewWorkspaceRouteOptions {
   sourceDirectory?: string;
   displayName?: string;
   projectId?: string;
+  draftId?: string;
 }
 
 function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
@@ -440,6 +441,9 @@ function buildNewWorkspaceSearch(options: NewWorkspaceRouteOptions): string {
   }
   if (options.projectId) {
     params.set("projectId", options.projectId);
+  }
+  if (options.draftId) {
+    params.set("draftId", options.draftId);
   }
   return params.toString();
 }

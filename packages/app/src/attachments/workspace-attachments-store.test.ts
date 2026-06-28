@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceComposerAttachment } from "./types";
 import {
   appendWorkspaceAttachment,
+  buildDraftWorkspaceAttachmentScopeKey,
   buildWorkspaceAttachmentScopeKey,
   resetWorkspaceAttachmentsStore,
   useWorkspaceAttachmentsStore,
@@ -57,6 +58,23 @@ function contextAttachment(id: string): WorkspaceComposerAttachment {
   };
 }
 
+function chatHistoryAttachment(id: string, text = "Previous chat."): WorkspaceComposerAttachment {
+  return {
+    kind: "chat_history",
+    id,
+    attachment: {
+      type: "text",
+      mimeType: "text/plain",
+      title: "Chat history",
+      text,
+    },
+    source: {
+      serverId: "local",
+      agentId: "agent-1",
+    },
+  };
+}
+
 describe("workspace attachments store", () => {
   it("scopes workspace attachments by server and workspace before cwd fallback", () => {
     expect(
@@ -74,6 +92,12 @@ describe("workspace attachments store", () => {
         cwd: "/repo/",
       }),
     ).toBe("workspace-attachments:server=local:cwd=%2Frepo");
+  });
+
+  it("scopes draft attachments by draft id", () => {
+    expect(buildDraftWorkspaceAttachmentScopeKey("draft-1")).toBe(
+      "workspace-attachments:draft=draft-1",
+    );
   });
 
   it("publishes and clears attachments for a workspace scope", () => {
@@ -112,6 +136,13 @@ describe("workspace attachments store", () => {
       title: "Comment · octocat updated",
       text: "Updated text",
     };
+
+    expect(appendWorkspaceAttachment([original], replacement)).toEqual([replacement]);
+  });
+
+  it("dedupes repeated chat history attachments by id", () => {
+    const original = chatHistoryAttachment("chat_history:draft-1", "Original chat.");
+    const replacement = chatHistoryAttachment("chat_history:draft-1", "Updated chat.");
 
     expect(appendWorkspaceAttachment([original], replacement)).toEqual([replacement]);
   });

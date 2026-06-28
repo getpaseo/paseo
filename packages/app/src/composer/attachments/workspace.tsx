@@ -67,6 +67,12 @@ function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
       id: attachment.id,
     });
   }
+  if (attachment.kind === "chat_history") {
+    return JSON.stringify({
+      kind: attachment.kind,
+      id: attachment.id,
+    });
+  }
   return JSON.stringify({
     type: "review",
     cwd: attachment.attachment.cwd,
@@ -95,7 +101,12 @@ function removeWorkspaceAttachmentsMatching(selectedKey: string): void {
 }
 
 function removeSentContextAttachments(attachments: readonly ComposerAttachment[]): void {
-  const sentContextKeys = attachments.filter(isPullRequestContextAttachment).map(getAttachmentKey);
+  const sentContextKeys = attachments
+    .filter(
+      (attachment): attachment is WorkspaceComposerAttachment =>
+        isPullRequestContextAttachment(attachment) || attachment.kind === "chat_history",
+    )
+    .map(getAttachmentKey);
   for (const key of sentContextKeys) {
     removeWorkspaceAttachmentsMatching(key);
   }
@@ -129,6 +140,12 @@ function getPillContent(attachment: WorkspaceComposerAttachment, t: TranslationF
       subtitle: getContextSourceLabel(attachment),
     };
   }
+  if (attachment.kind === "chat_history") {
+    return {
+      title: attachment.attachment.title ?? "Chat history",
+      subtitle: "Chat history",
+    };
+  }
   return {
     title: t("message.attachments.review"),
     subtitle:
@@ -148,6 +165,9 @@ function getOpenAccessibilityLabel(
   if (isPullRequestContextAttachment(attachment)) {
     return "Open context attachment";
   }
+  if (attachment.kind === "chat_history") {
+    return "Open chat history attachment";
+  }
   return t("composer.attachments.openReview");
 }
 
@@ -161,6 +181,9 @@ function getRemoveAccessibilityLabel(
   if (isPullRequestContextAttachment(attachment)) {
     return "Remove context attachment";
   }
+  if (attachment.kind === "chat_history") {
+    return "Remove chat history attachment";
+  }
   return t("composer.attachments.removeReview");
 }
 
@@ -171,7 +194,17 @@ function renderPillIcon(attachment: WorkspaceComposerAttachment): ReactElement {
   if (isPullRequestContextAttachment(attachment)) {
     return <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
   }
+  if (attachment.kind === "chat_history") {
+    return <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
+  }
   return <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
+}
+
+function getPillTestID(attachment: WorkspaceComposerAttachment): string {
+  if (attachment.kind === "chat_history") {
+    return "composer-chat-history-attachment-pill";
+  }
+  return "composer-review-attachment-pill";
 }
 
 function renderPill(args: RenderWorkspaceAttachmentPillArgs): ReactElement {
@@ -249,7 +282,11 @@ function useWorkspaceAttachmentBinding({
     ({ selectedAttachments: current, index }: RemoveWorkspaceAttachmentInput) => {
       const selected = current[index];
       if (isWorkspaceAttachment(selected)) {
-        if (selected.kind === "browser_element" || isPullRequestContextAttachment(selected)) {
+        if (
+          selected.kind === "browser_element" ||
+          selected.kind === "chat_history" ||
+          isPullRequestContextAttachment(selected)
+        ) {
           const selectedKey = getAttachmentKey(selected);
           removeWorkspaceAttachmentsMatching(selectedKey);
           return true;
@@ -332,7 +369,7 @@ function WorkspaceAttachmentPill({
   }, [onRemove, index]);
   return (
     <AttachmentPill
-      testID="composer-review-attachment-pill"
+      testID={getPillTestID(attachment)}
       onOpen={handleOpen}
       onRemove={handleRemove}
       openAccessibilityLabel={getOpenAccessibilityLabel(attachment, t)}

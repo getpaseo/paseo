@@ -56,6 +56,7 @@ import {
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
+import { useDraftWorkspaceAttachments } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
@@ -101,6 +102,7 @@ interface NewWorkspaceScreenProps {
   sourceDirectory?: string;
   projectId?: string;
   displayName?: string;
+  draftId?: string;
 }
 
 interface PickerOptionData {
@@ -732,6 +734,7 @@ function normalizeBranchDetails(
 interface SubmitDraftInput {
   serverId: string;
   draftKey: string;
+  draftId?: string;
   workspaceId: string;
   workspaceDirectory: string;
   text: string;
@@ -827,6 +830,7 @@ interface CreateChatAgentInput {
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
   draftKey: string;
+  draftId?: string;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -853,6 +857,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   submitWorkspaceDraft({
     serverId,
     draftKey,
+    draftId: input.draftId,
     workspaceId: ensuredWorkspace.id,
     workspaceDirectory: ensuredWorkspace.workspaceDirectory,
     text,
@@ -924,6 +929,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
   const {
     serverId,
     draftKey,
+    draftId: draftIdInput,
     workspaceId,
     workspaceDirectory,
     text,
@@ -931,7 +937,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     provider,
     composerState,
   } = input;
-  const draftId = generateDraftId();
+  const draftId = draftIdInput?.trim() || generateDraftId();
   const clientMessageId = generateMessageId();
   const timestamp = Date.now();
   const wirePayload = splitComposerAttachmentsForSubmit(attachments);
@@ -1359,6 +1365,7 @@ export function NewWorkspaceScreen({
   sourceDirectory: sourceDirectoryProp,
   projectId,
   displayName: displayNameProp,
+  draftId,
 }: NewWorkspaceScreenProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -1441,6 +1448,7 @@ export function NewWorkspaceScreen({
     projects: projectIconTargets,
   });
   const draftKey = `new-workspace:${selectedServerId}:${selectedSourceDirectory ?? "choose-project"}`;
+  const draftContextAttachments = useDraftWorkspaceAttachments(draftId);
   const chatDraft = useAgentInputDraft({
     draftKey,
     composer: buildComposerConfig({
@@ -1795,6 +1803,7 @@ export function NewWorkspaceScreen({
           ensureWorkspace,
           serverId: selectedServerId,
           draftKey,
+          draftId,
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
@@ -1807,7 +1816,7 @@ export function NewWorkspaceScreen({
         toast.error(message);
       }
     },
-    [composerState, draftKey, ensureWorkspace, selectedServerId, t, toast],
+    [composerState, draftId, draftKey, ensureWorkspace, selectedServerId, t, toast],
   );
 
   const renderPickerOption = useCallback(
@@ -1992,6 +2001,7 @@ export function NewWorkspaceScreen({
             value={chatDraft.text}
             onChangeText={chatDraft.setText}
             attachments={chatDraft.attachments}
+            workspaceAttachments={draftContextAttachments}
             onChangeAttachments={chatDraft.setAttachments}
             cwd={selectedSourceDirectory ?? ""}
             clearDraft={handleClearDraft}
