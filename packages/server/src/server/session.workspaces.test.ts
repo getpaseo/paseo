@@ -831,6 +831,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
 });
 
 test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
+  vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
   try {
     const cwd = path.join(workdir, "repo");
@@ -883,6 +884,7 @@ test("create_agent_request does not title an existing workspace from the agent p
       }),
     );
 
+    let generateCalls = 0;
     const session = asTestSession(
       new Session({
         clientId: "test-client",
@@ -922,6 +924,10 @@ test("create_agent_request does not title an existing workspace from the agent p
         mcpBaseUrl: null,
         stt: null,
         tts: null,
+        generateWorkspaceName: async () => {
+          generateCalls += 1;
+          return { title: "Generated title that must not be written", branch: null };
+        },
         providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         terminalManager: null,
       }),
@@ -935,14 +941,17 @@ test("create_agent_request does not title an existing workspace from the agent p
       initialPrompt: "Fix login bug\nwith better validation",
       attachments: [],
     });
+    await vi.runAllTimersAsync();
 
     const [createdAgent] = agentManager.listAgents();
     expect(createdAgent?.workspaceId).toBe("ws-existing");
+    expect(generateCalls).toBe(0);
     await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
       title: null,
       updatedAt: "2026-05-07T00:00:00.000Z",
     });
   } finally {
+    vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

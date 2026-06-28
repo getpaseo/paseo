@@ -445,7 +445,6 @@ test("create_agent_request with workspaceId does not retitle an existing workspa
     });
     expect(agent.workspaceId).toBe(workspaceId);
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(await workspaceName(client, workspaceId)).toBe(originalName);
   } finally {
     await client.close().catch(() => undefined);
