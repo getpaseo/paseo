@@ -252,14 +252,15 @@ export function useSidebarWorkspacesList(options?: {
       orderStore.setWorkspaceOrder(projectKey, order);
     }
 
+    const currentFlatOrder = orderStore.flatWorkspaceOrder;
     const nextFlatOrder = appendMissingOrderKeys({
-      currentOrder: flatWorkspaceOrder,
+      currentOrder: currentFlatOrder,
       visibleKeys: workspacePlacements.map((placement) => placement.workspaceKey),
     });
-    if (nextFlatOrder !== flatWorkspaceOrder) {
+    if (nextFlatOrder !== currentFlatOrder) {
       orderStore.setFlatWorkspaceOrder(nextFlatOrder);
     }
-  }, [persistedProjectOrder, projects, workspacePlacements, sortMode, flatWorkspaceOrder]);
+  }, [persistedProjectOrder, projects, workspacePlacements, sortMode]);
 
   const refreshAll = useCallback(() => {
     if (!isActive) return;
