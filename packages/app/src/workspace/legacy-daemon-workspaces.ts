@@ -307,6 +307,7 @@ function createLegacyWorkspace(
     title: null,
     status,
     statusEnteredAt,
+    activityAt: null,
     archivingAt: null,
     diffStat: null,
     scripts: [],

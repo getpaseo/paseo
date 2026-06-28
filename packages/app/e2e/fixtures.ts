@@ -77,6 +77,12 @@ const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>(
           localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
           localStorage.removeItem("@paseo:settings");
           localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+
+          // Reset sidebar layout/sort/order state so every test starts from the
+          // same default view (projects expanded, custom sort, no custom order).
+          localStorage.removeItem("sidebar-collapsed-sections");
+          localStorage.removeItem("sidebar-view");
+          localStorage.removeItem("sidebar-project-workspace-order");
         },
         { daemon: testDaemon, preferences: createAgentPreferences, seedNonce },
       );

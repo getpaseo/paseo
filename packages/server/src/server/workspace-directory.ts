@@ -75,6 +75,13 @@ export interface WorkspaceDirectoryDeps {
     projectRecord?: PersistedProjectRecord | null;
     includeGitData: boolean;
   }): Promise<WorkspaceDescriptorPayload>;
+  listStoredAgentRecords(): Promise<
+    Array<{
+      workspaceId?: string;
+      lastActivityAt?: string;
+      updatedAt: string;
+    }>
+  >;
 }
 
 export function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspacesResponseEntry>): {
@@ -138,6 +145,8 @@ export class WorkspaceDirectory {
    * Server-internal; never crosses the wire.
    */
   private readonly bucketHistoryByWorkspaceId = new Map<string, WorkspaceBucketHistoryEntry>();
+  private readonly clientActivityAtByWorkspaceId = new Map<string, string>();
+  private storedActivityAtByWorkspaceId: Map<string, string> | null = null;
 
   private readonly pager = new SortablePager<
     WorkspaceDescriptorPayload,
@@ -177,6 +186,57 @@ export class WorkspaceDirectory {
     }
   }
 
+  recordClientActivity(workspaceId: string, atIso: string): void {
+    const existing = this.clientActivityAtByWorkspaceId.get(workspaceId);
+    if (!existing || atIso > existing) {
+      this.clientActivityAtByWorkspaceId.set(workspaceId, atIso);
+    }
+  }
+
+  clearClientActivity(workspaceId: string): void {
+    this.clientActivityAtByWorkspaceId.delete(workspaceId);
+  }
+
+  private async loadStoredActivityAtOnce(): Promise<Map<string, string>> {
+    if (this.storedActivityAtByWorkspaceId) {
+      return this.storedActivityAtByWorkspaceId;
+    }
+    const storedAgentRecords = await this.deps.listStoredAgentRecords();
+    const map = new Map<string, string>();
+    for (const record of storedAgentRecords) {
+      if (!record.workspaceId) continue;
+      const timestamp = record.lastActivityAt?.trim() || record.updatedAt;
+      const existing = map.get(record.workspaceId);
+      if (!existing || timestamp > existing) {
+        map.set(record.workspaceId, timestamp);
+      }
+    }
+    this.storedActivityAtByWorkspaceId = map;
+    return map;
+  }
+
+  async resolveWorkspaceActivityAt(workspaceId: string): Promise<string | null> {
+    const storedMap = await this.loadStoredActivityAtOnce();
+    const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
+    const storedActivityAt = storedMap.get(workspaceId) ?? null;
+    const candidates = [clientActivityAt, storedActivityAt].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return candidates.sort().at(-1) ?? null;
+  }
+
+  private resolveActivityAt(
+    descriptor: WorkspaceDescriptorPayload,
+    workspaceId: string,
+    storedActivityAt: string | null,
+  ): string | null {
+    const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
+    const candidates = [descriptor.activityAt, clientActivityAt, storedActivityAt].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return candidates.sort().at(-1) ?? null;
+  }
+
   async buildDescriptorMap(options: {
     includeGitData: boolean;
     workspaceIds?: Iterable<string>;
@@ -188,6 +248,8 @@ export class WorkspaceDirectory {
         this.deps.projectRegistry.list(),
         this.deps.listTerminalActivityContributions(),
       ]);
+
+    const activityAtByWorkspaceId = await this.loadStoredActivityAtOnce();
 
     const activeProjects = new Map(
       persistedProjects
@@ -220,8 +282,14 @@ export class WorkspaceDirectory {
     );
     for (let i = 0; i < includedWorkspaces.length; i += 1) {
       const workspaceId = includedWorkspaces[i].workspaceId;
+      const descriptor = workspaceDescriptors[i];
       descriptorsByWorkspaceId.set(workspaceId, {
-        ...workspaceDescriptors[i],
+        ...descriptor,
+        activityAt: this.resolveActivityAt(
+          descriptor,
+          workspaceId,
+          activityAtByWorkspaceId.get(workspaceId) ?? null,
+        ),
         archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
       });
     }

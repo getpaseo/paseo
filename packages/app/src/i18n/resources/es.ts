@@ -798,6 +798,27 @@ export const es: TranslationResources = {
     sections: {
       sessions: "Historial",
     },
+    grouping: {
+      title: "Agrupar por",
+      project: "Proyecto",
+      status: "Estado",
+      flat: "Plano",
+    },
+    sort: {
+      title: "Ordenar por",
+      custom: "Personalizado",
+      activity: "Último uso",
+      alphabetical: "Alfabético",
+    },
+    filter: {
+      title: "Filtro",
+      allHosts: "Todos los hosts",
+    },
+    workspaceTitle: {
+      title: "Título del espacio de trabajo",
+      titleOption: "Título",
+      branchOption: "Nombre de la rama",
+    },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
       description:

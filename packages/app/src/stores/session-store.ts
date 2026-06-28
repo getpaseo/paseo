@@ -133,6 +133,7 @@ export interface WorkspaceDescriptor {
   title?: string | null;
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  activityAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -165,6 +166,7 @@ export function normalizeWorkspaceDescriptor(
     title: payload.title ?? null,
     status: payload.status,
     statusEnteredAt,
+    activityAt: parseWorkspaceActivityAt(payload.activityAt),
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
@@ -192,6 +194,16 @@ export function normalizeEmptyProjectDescriptor(
     projectRootPath: payload.projectRootPath,
     projectKind: payload.projectKind,
   };
+}
+
+function parseWorkspaceActivityAt(value: string | null | undefined): Date | null {
+  if (typeof value === "string" && value.length > 0) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+  return null;
 }
 
 function preserveWorkspaceDescriptorIdentity(
@@ -480,6 +492,7 @@ interface SessionStoreActions {
       | Map<string, WorkspaceDescriptor>
       | ((prev: Map<string, WorkspaceDescriptor>) => Map<string, WorkspaceDescriptor>),
   ) => void;
+  touchWorkspaceActivity: (serverId: string, workspaceId: string, timestamp: Date) => void;
   mergeWorkspaces: (serverId: string, workspaces: Iterable<WorkspaceDescriptor>) => void;
   removeWorkspace: (serverId: string, workspaceId: string) => void;
   setEmptyProjects: (serverId: string, emptyProjects: Iterable<EmptyProjectDescriptor>) => void;
@@ -1240,6 +1253,32 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, workspaces: preservedWorkspaces },
+            },
+          };
+        });
+      },
+
+      touchWorkspaceActivity: (serverId, workspaceId, timestamp) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const workspace = session.workspaces.get(workspaceId);
+          if (!workspace) {
+            return prev;
+          }
+          const existing = workspace.activityAt;
+          if (existing && existing.getTime() >= timestamp.getTime()) {
+            return prev;
+          }
+          const nextWorkspaces = new Map(session.workspaces);
+          nextWorkspaces.set(workspaceId, { ...workspace, activityAt: timestamp });
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, workspaces: nextWorkspaces },
             },
           };
         });

@@ -778,6 +778,27 @@ export const en = {
     sections: {
       sessions: "History",
     },
+    grouping: {
+      title: "Group by",
+      project: "Project",
+      status: "Status",
+      flat: "Flat",
+    },
+    sort: {
+      title: "Sort by",
+      custom: "Custom",
+      activity: "Last used",
+      alphabetical: "Alphabetical",
+    },
+    filter: {
+      title: "Filter",
+      allHosts: "All hosts",
+    },
+    workspaceTitle: {
+      title: "Workspace title",
+      titleOption: "Title",
+      branchOption: "Branch name",
+    },
     worktreeSetup: {
       title: "Set up worktree scripts",
       description:

@@ -765,6 +765,27 @@ export const zhCN: TranslationResources = {
     sections: {
       sessions: "历史",
     },
+    grouping: {
+      title: "分组",
+      project: "项目",
+      status: "状态",
+      flat: "平铺",
+    },
+    sort: {
+      title: "排序",
+      custom: "自定义",
+      activity: "最近使用",
+      alphabetical: "字母顺序",
+    },
+    filter: {
+      title: "筛选",
+      allHosts: "所有主机",
+    },
+    workspaceTitle: {
+      title: "工作区标题",
+      titleOption: "标题",
+      branchOption: "分支名称",
+    },
     worktreeSetup: {
       title: "设置 worktree scripts",
       description: "添加 setup 命令，让新的 worktree 自动安装依赖并完成准备。",

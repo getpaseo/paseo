@@ -797,6 +797,27 @@ export const fr: TranslationResources = {
     sections: {
       sessions: "Historique",
     },
+    grouping: {
+      title: "Grouper par",
+      project: "Projet",
+      status: "Statut",
+      flat: "Plat",
+    },
+    sort: {
+      title: "Trier par",
+      custom: "Personnalisé",
+      activity: "Dernière utilisation",
+      alphabetical: "Alphabétique",
+    },
+    filter: {
+      title: "Filtrer",
+      allHosts: "Tous les hôtes",
+    },
+    workspaceTitle: {
+      title: "Titre de l'espace de travail",
+      titleOption: "Titre",
+      branchOption: "Nom de la branche",
+    },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
       description:

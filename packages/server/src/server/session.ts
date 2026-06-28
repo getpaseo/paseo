@@ -563,6 +563,7 @@ export class Session {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     focusedTerminalId: string | null;
+    focusedWorkspaceId: string | null;
     lastActivityAt: Date;
     appVisible: boolean;
     appVisibilityChangedAt: Date;
@@ -877,6 +878,7 @@ export class Session {
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
+      listStoredAgentRecords: () => this.agentStorage.list(),
     });
 
     this.voiceSession = new VoiceSession({
@@ -971,6 +973,7 @@ export class Session {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     focusedTerminalId: string | null;
+    focusedWorkspaceId: string | null;
     lastActivityAt: Date;
     appVisible: boolean;
     appVisibilityChangedAt: Date;
@@ -3029,11 +3032,13 @@ export class Session {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
     focusedTerminalId?: string | null;
+    focusedWorkspaceId?: string | null;
     lastActivityAt: string;
     appVisible: boolean;
     appVisibilityChangedAt?: string;
   }): void {
     const focusedTerminalId = msg.focusedTerminalId?.trim() || null;
+    const focusedWorkspaceId = msg.focusedWorkspaceId?.trim() || null;
     const appVisibilityChangedAt = msg.appVisibilityChangedAt
       ? new Date(msg.appVisibilityChangedAt)
       : new Date(msg.lastActivityAt);
@@ -3041,10 +3046,20 @@ export class Session {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
       focusedTerminalId,
+      focusedWorkspaceId,
       lastActivityAt: new Date(msg.lastActivityAt),
       appVisible: msg.appVisible,
       appVisibilityChangedAt,
     };
+    if (focusedWorkspaceId && msg.lastActivityAt) {
+      const lastActivityAt = new Date(msg.lastActivityAt);
+      const now = new Date();
+      const clampedActivityAt =
+        Number.isNaN(lastActivityAt.getTime()) || lastActivityAt.getTime() > now.getTime()
+          ? now.toISOString()
+          : msg.lastActivityAt;
+      this.workspaceDirectory.recordClientActivity(focusedWorkspaceId, clampedActivityAt);
+    }
     if (msg.appVisible && focusedTerminalId) {
       void this.clearFocusedTerminalAttention(focusedTerminalId);
     }
@@ -3647,6 +3662,10 @@ export class Session {
       diffStat = snapshot.git.diffStat;
     }
 
+    const activityAt = await this.workspaceDirectory.resolveWorkspaceActivityAt(
+      workspace.workspaceId,
+    );
+
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
@@ -3663,7 +3682,7 @@ export class Session {
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
-      activityAt: null,
+      activityAt,
       diffStat,
       scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace.workspaceId, workspace.cwd),
       ...(resolvedProjectRecord
@@ -4024,6 +4043,7 @@ export class Session {
     });
     if (!existingWorkspace) {
       this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
+      this.workspaceDirectory.clearClientActivity(workspaceId);
       return;
     }
 
@@ -4047,6 +4067,7 @@ export class Session {
       workspaceId: existingWorkspace.workspaceId,
       cwd: existingWorkspace.cwd,
     });
+    this.workspaceDirectory.clearClientActivity(workspaceId);
   }
 
   // Git watch and subscription state is keyed by directory; the script runtime

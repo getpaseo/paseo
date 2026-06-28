@@ -169,6 +169,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
         status: "done",
         statusEnteredAt: null,
         archivingAt: null,
+        activityAt: null,
         diffStat: null,
         scripts: [],
       },

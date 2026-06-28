@@ -45,6 +45,7 @@ function workspace(input: {
     status: "done",
     archivingAt: null,
     statusEnteredAt: null,
+    activityAt: null,
     diffStat: null,
     scripts: [],
     gitRuntime: {

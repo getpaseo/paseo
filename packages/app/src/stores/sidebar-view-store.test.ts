@@ -39,6 +39,7 @@ describe("sidebar view store", () => {
   beforeEach(() => {
     useSidebarViewStore.setState({
       groupMode: "project",
+      sortMode: "custom",
       hostFilter: null,
     });
   });
@@ -69,6 +70,7 @@ describe("sidebar view store", () => {
       }),
     ).toEqual({
       groupMode: "status",
+      sortMode: "custom",
       hostFilter: null,
     });
   });
@@ -77,10 +79,12 @@ describe("sidebar view store", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "status",
+        sortMode: "activity",
         hostFilter: "host-a",
       }),
     ).toEqual({
       groupMode: "status",
+      sortMode: "activity",
       hostFilter: "host-a",
     });
   });

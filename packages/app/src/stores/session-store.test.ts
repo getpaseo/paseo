@@ -25,6 +25,7 @@ function createWorkspace(
     status: input.status ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: input.archivingAt ?? null,
+    activityAt: input.activityAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   };

@@ -12,10 +12,14 @@ import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { shouldSuppressWorkspaceForLocalArchive } from "@/contexts/session-workspace-upserts";
 import {
+  appendMissingOrderKeys,
+  applyFlatWorkspaceOrder,
+  applyStoredOrdering,
   buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
+  sortSidebarWorkspacePlacementModel,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
@@ -23,6 +27,7 @@ import {
 
 export {
   appendMissingOrderKeys,
+  applyFlatWorkspaceOrder,
   applyStoredOrdering,
   buildSidebarProjectsFromHostProjects,
   buildSidebarProjectsFromStructure,
@@ -32,6 +37,7 @@ export {
   createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  sortSidebarWorkspacePlacementModel,
   type SidebarLoadingState,
   type SidebarOrderUpdates,
   type SidebarStatusWorkspacePlacement,
@@ -76,6 +82,7 @@ export function useSidebarWorkspaceEntry(
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 const EMPTY_WORKSPACES: SidebarWorkspacePlacement[] = [];
+const EMPTY_WORKSPACE_BY_KEY = new Map<string, WorkspaceDescriptor>();
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
 
 export interface SidebarWorkspacesListResult {
@@ -86,6 +93,21 @@ export interface SidebarWorkspacesListResult {
   isInitialLoad: boolean;
   isRevalidating: boolean;
   refreshAll: () => void;
+}
+
+function areWorkspaceByKeyEqual(
+  a: Map<string, WorkspaceDescriptor>,
+  b: Map<string, WorkspaceDescriptor>,
+): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const [key, aValue] of a) {
+    const bValue = b.get(key);
+    if (!bValue || !equal(aValue, bValue)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function useSidebarWorkspacesList(options?: {
@@ -128,14 +150,84 @@ export function useSidebarWorkspacesList(options?: {
   );
 
   const hostProjects = useHostProjects(serverIds);
+  const sortMode = useSidebarViewStore((state) => state.sortMode);
+  const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const flatWorkspaceOrder = useSidebarOrderStore((state) => state.flatWorkspaceOrder);
+  const workspaceOrderByProject = useSidebarOrderStore((state) => state.workspaceOrderByProject);
 
-  const sidebarModel = useMemo(
-    () =>
-      buildSidebarWorkspacePlacementModel({
-        projects: hostProjects,
-      }),
-    [hostProjects],
+  const workspaceByKey = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      if (sortMode === "custom") {
+        return EMPTY_WORKSPACE_BY_KEY;
+      }
+      const map = new Map<string, WorkspaceDescriptor>();
+      for (const serverId of serverIds) {
+        const session = state.sessions[serverId];
+        if (!session) continue;
+        for (const [workspaceId, workspace] of session.workspaces) {
+          map.set(`${serverId}:${workspaceId}`, workspace);
+        }
+      }
+      return map;
+    },
+    areWorkspaceByKeyEqual,
   );
+
+  const sidebarModel = useMemo(() => {
+    const baseModel = buildSidebarWorkspacePlacementModel({ projects: hostProjects });
+
+    if (sortMode === "custom") {
+      const hasStoredProjectOrder = persistedProjectOrder.length > 0;
+      const hasStoredWorkspaceOrder = Object.keys(workspaceOrderByProject).length > 0;
+      const baselineModel =
+        !hasStoredProjectOrder && !hasStoredWorkspaceOrder
+          ? sortSidebarWorkspacePlacementModel({
+              model: baseModel,
+              workspaceByKey,
+              sortMode: "alphabetical",
+            })
+          : baseModel;
+
+      if (groupMode === "flat") {
+        return applyFlatWorkspaceOrder(baselineModel, flatWorkspaceOrder);
+      }
+
+      const orderedProjects = applyStoredOrdering({
+        items: baselineModel.projects,
+        storedOrder: persistedProjectOrder,
+        getKey: (project) => project.projectKey,
+      });
+      const nextProjects: SidebarProjectEntry[] = [];
+      for (const project of orderedProjects) {
+        const orderedWorkspaces = applyStoredOrdering({
+          items: project.workspaces,
+          storedOrder: workspaceOrderByProject[project.projectKey] ?? EMPTY_ORDER,
+          getKey: (workspace) => workspace.workspaceKey,
+        });
+        nextProjects.push({ ...project, workspaces: orderedWorkspaces });
+      }
+      return {
+        projects: nextProjects,
+        workspaces: nextProjects.flatMap((project) => project.workspaces),
+        projectNamesByKey: baselineModel.projectNamesByKey,
+      };
+    }
+
+    return sortSidebarWorkspacePlacementModel({
+      model: baseModel,
+      workspaceByKey,
+      sortMode,
+    });
+  }, [
+    hostProjects,
+    sortMode,
+    groupMode,
+    persistedProjectOrder,
+    flatWorkspaceOrder,
+    workspaceOrderByProject,
+    workspaceByKey,
+  ]);
 
   const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
   const workspacePlacements =
@@ -144,6 +236,7 @@ export function useSidebarWorkspacesList(options?: {
     sidebarModel.projectNamesByKey.size > 0 ? sidebarModel.projectNamesByKey : EMPTY_PROJECT_NAMES;
 
   useEffect(() => {
+    if (sortMode !== "custom") return;
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
       projects,
@@ -158,7 +251,15 @@ export function useSidebarWorkspacesList(options?: {
     for (const { projectKey, order } of updates.workspaceOrders) {
       orderStore.setWorkspaceOrder(projectKey, order);
     }
-  }, [persistedProjectOrder, projects]);
+
+    const nextFlatOrder = appendMissingOrderKeys({
+      currentOrder: flatWorkspaceOrder,
+      visibleKeys: workspacePlacements.map((placement) => placement.workspaceKey),
+    });
+    if (nextFlatOrder !== flatWorkspaceOrder) {
+      orderStore.setFlatWorkspaceOrder(nextFlatOrder);
+    }
+  }, [persistedProjectOrder, projects, workspacePlacements, sortMode, flatWorkspaceOrder]);
 
   const refreshAll = useCallback(() => {
     if (!isActive) return;
