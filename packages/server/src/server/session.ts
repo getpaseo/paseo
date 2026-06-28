@@ -4779,7 +4779,16 @@ export class Session {
       for (const project of await this.projectRegistry.list()) {
         projectsBefore.set(project.projectId, project);
       }
-      const project = await this.workspaceProvisioning.findOrCreateProjectForDirectory(cwd);
+      const { project, workspace } = await this.workspaceProvisioning.addProjectForDirectory(cwd);
+      // A worktree directory is a concrete workspace, not a bare project parent:
+      // its project root is the main repo, which usually already owns the main
+      // checkout's workspace, so a project-only add would never surface the
+      // worktree path. addProjectForDirectory materializes the workspace in that
+      // case while keeping project-only behavior for plain repos/directories.
+      if (workspace) {
+        await this.syncWorkspaceGitObserverForWorkspace(workspace);
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      }
       this.sessionLogger.info(
         {
           requestedCwd,
@@ -4789,6 +4798,9 @@ export class Session {
           projectTransition: describeRegistryTransition(
             projectsBefore.get(project.projectId) ?? null,
           ),
+          ...(workspace
+            ? { workspaceId: workspace.workspaceId, workspaceKind: workspace.kind }
+            : {}),
         },
         "Project added",
       );

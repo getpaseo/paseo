@@ -34,6 +34,18 @@ export interface ResolveOrCreateWorkspaceIdInput {
   initialTitle: string | null;
 }
 
+/**
+ * Result of adding a project for a directory. A bare project parent (a plain
+ * repo root or non-git directory) returns `workspace: null` — "add project
+ * without creating a workspace". A directory that is itself a concrete checkout
+ * (a worktree) also materializes its workspace, because it has no separate
+ * project-parent directory of its own to stand in for it in the sidebar.
+ */
+export interface AddProjectResult {
+  project: PersistedProjectRecord;
+  workspace: PersistedWorkspaceRecord | null;
+}
+
 export interface WorkspaceProvisioningService {
   findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord>;
   resolveOrCreateWorkspaceIdForCreateAgent(input: ResolveOrCreateWorkspaceIdInput): Promise<string>;
@@ -42,6 +54,7 @@ export interface WorkspaceProvisioningService {
     title?: string | null,
   ): Promise<PersistedWorkspaceRecord>;
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
+  addProjectForDirectory(cwd: string): Promise<AddProjectResult>;
   ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord>;
@@ -250,6 +263,29 @@ export function createWorkspaceProvisioningService(deps: {
     return projectRecord;
   }
 
+  async function addProjectForDirectory(cwd: string): Promise<AddProjectResult> {
+    const normalizedCwd = resolve(cwd);
+    const checkout = await workspaceGitService.getCheckout(normalizedCwd);
+    const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
+
+    // A worktree's project parent is the main repo root, a *different* directory
+    // that usually already owns the main checkout's workspace. Registering only
+    // the project would resolve to that non-empty parent, so the worktree path
+    // gets no workspace row and never surfaces in the sidebar. Materialize its
+    // workspace (as open_project does) so the worktree is visible. Plain repos
+    // and non-git directories keep the project-only behavior.
+    if (membership.workspaceKind === "worktree") {
+      const workspace = await findOrCreateWorkspaceForDirectory(normalizedCwd);
+      const project =
+        (await projectRegistry.get(workspace.projectId)) ??
+        (await findOrCreateProjectForDirectory(normalizedCwd));
+      return { project, workspace };
+    }
+
+    const project = await findOrCreateProjectForDirectory(normalizedCwd);
+    return { project, workspace: null };
+  }
+
   async function ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
@@ -279,6 +315,7 @@ export function createWorkspaceProvisioningService(deps: {
     resolveOrCreateWorkspaceIdForCreateAgent,
     createWorkspaceForDirectory,
     findOrCreateProjectForDirectory,
+    addProjectForDirectory,
     ensureWorkspaceRecordUnarchived,
   };
 }

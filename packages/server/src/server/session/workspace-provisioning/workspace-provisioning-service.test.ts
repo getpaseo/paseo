@@ -214,3 +214,58 @@ test("findOrCreateProjectForDirectory reuses the active project for the same roo
   expect(second.projectId).toBe(first.projectId);
   expect(await projectRegistry.list()).toHaveLength(1);
 });
+
+test("addProjectForDirectory keeps a plain repo project-only (no workspace)", async () => {
+  const repo = path.join(tmpDir, "repo");
+  gitRoots.add(repo);
+
+  const result = await provisioning.addProjectForDirectory(repo);
+
+  expect(result.workspace).toBeNull();
+  expect(result.project.rootPath).toBe(repo);
+  expect(await workspaceRegistry.list()).toHaveLength(0);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("addProjectForDirectory keeps a non-git directory project-only (no workspace)", async () => {
+  const dir = path.join(tmpDir, "plain");
+
+  const result = await provisioning.addProjectForDirectory(dir);
+
+  expect(result.workspace).toBeNull();
+  expect(await workspaceRegistry.list()).toHaveLength(0);
+});
+
+test("addProjectForDirectory materializes a workspace for a worktree directory", async () => {
+  // A worktree reports a mainRepoRoot that differs from its own root, so it
+  // classifies as workspaceKind "worktree". Adding it must surface a workspace
+  // at the worktree path, not just register the (main repo) project parent.
+  const mainRepo = path.join(tmpDir, "main-repo");
+  const worktreeDir = path.join(tmpDir, "feature-worktree");
+  const worktreeProvisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
+      getCheckout: async (cwd: string) => ({
+        cwd,
+        isGit: true,
+        currentBranch: "feature",
+        remoteUrl: null,
+        worktreeRoot: worktreeDir,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: mainRepo,
+      }),
+    }),
+  });
+
+  const result = await worktreeProvisioning.addProjectForDirectory(worktreeDir);
+
+  expect(result.workspace).not.toBeNull();
+  expect(result.workspace?.cwd).toBe(worktreeDir);
+  expect(result.workspace?.kind).toBe("worktree");
+  expect(result.workspace?.projectId).toBe(result.project.projectId);
+  const workspaces = await workspaceRegistry.list();
+  expect(workspaces).toHaveLength(1);
+  expect(workspaces[0]?.cwd).toBe(worktreeDir);
+});
