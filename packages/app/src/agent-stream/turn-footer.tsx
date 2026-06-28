@@ -26,6 +26,27 @@ const workingIndicatorColorMapping = (theme: Theme) => ({
       : theme.colors.palette.amber[500],
 });
 
+function resolveAssistantTurnBoundaryMessageId(input: {
+  strategy: TurnContentStrategy;
+  items: StreamItem[];
+  startIndex: number;
+}): string | undefined {
+  for (
+    let index = input.startIndex;
+    index >= 0 && index < input.items.length;
+    index = input.strategy.getNeighborIndex(index, "above")
+  ) {
+    const currentItem = input.items[index];
+    if (!currentItem || currentItem.kind === "user_message") {
+      break;
+    }
+    if (currentItem.kind === "assistant_message" && currentItem.messageId) {
+      return currentItem.messageId;
+    }
+  }
+  return undefined;
+}
+
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
   target: AssistantForkTarget;
@@ -143,9 +164,11 @@ function CompletedTurnFooter({
       }),
     [strategy, items, startIndex],
   );
-  const boundaryItem = items[startIndex];
-  const boundaryMessageId =
-    boundaryItem?.kind === "assistant_message" ? boundaryItem.messageId : undefined;
+  const boundaryMessageId = resolveAssistantTurnBoundaryMessageId({
+    strategy,
+    items,
+    startIndex,
+  });
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter

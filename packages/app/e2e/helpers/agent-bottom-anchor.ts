@@ -55,6 +55,25 @@ export async function expectNearBottom(page: Page): Promise<void> {
     .toBeLessThanOrEqual(NEAR_BOTTOM_THRESHOLD_PX);
 }
 
+export async function scrollAgentChatToBottom(page: Page): Promise<void> {
+  const chatScroll = getVisibleChatScroll(page);
+  await chatScroll.evaluate((root: Element) => {
+    const scrollElement = root as HTMLElement;
+    scrollElement.scrollTop = scrollElement.scrollHeight;
+  });
+  await expect
+    .poll(async () =>
+      chatScroll.evaluate((root: Element) => {
+        const scrollElement = root as HTMLElement;
+        return Math.max(
+          0,
+          scrollElement.scrollHeight - (scrollElement.scrollTop + scrollElement.clientHeight),
+        );
+      }),
+    )
+    .toBeLessThanOrEqual(NEAR_BOTTOM_THRESHOLD_PX);
+}
+
 export async function waitForContentGrowth(
   page: Page,
   previousContentHeight: number,

@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { FolderPlus, GitFork, MoreVertical } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { Theme } from "@/styles/theme";
 
 export type AssistantForkTarget = "tab" | "workspace";
 
@@ -18,12 +19,19 @@ interface AssistantForkMenuProps {
   testID?: string;
 }
 
-function getIcon(target: AssistantForkTarget, color: string) {
+const ThemedFolderPlus = withUnistyles(FolderPlus);
+const ThemedGitFork = withUnistyles(GitFork);
+const ThemedMoreVertical = withUnistyles(MoreVertical);
+
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function getIcon(target: AssistantForkTarget) {
   switch (target) {
     case "tab":
-      return <GitFork size={16} color={color} />;
+      return <ThemedGitFork size={16} uniProps={foregroundColorMapping} />;
     case "workspace":
-      return <FolderPlus size={16} color={color} />;
+      return <ThemedFolderPlus size={16} uniProps={foregroundColorMapping} />;
   }
 }
 
@@ -31,7 +39,6 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
   onFork,
   testID = "assistant-fork-menu",
 }: AssistantForkMenuProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [pendingTarget, setPendingTarget] = useState<AssistantForkTarget | null>(null);
@@ -86,9 +93,9 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
               testID={`${testID}-trigger`}
             >
               {({ hovered, open }) => (
-                <MoreVertical
+                <ThemedMoreVertical
                   size={16}
-                  color={hovered || open ? theme.colors.foreground : theme.colors.foregroundMuted}
+                  uniProps={hovered || open ? foregroundColorMapping : foregroundMutedColorMapping}
                 />
               )}
             </DropdownMenuTrigger>
@@ -100,7 +107,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
         <DropdownMenuItem
           closeOnSelect={false}
           disabled={isLocked && pendingTarget !== "tab"}
-          leading={getIcon("tab", theme.colors.foreground)}
+          leading={getIcon("tab")}
           onSelect={handleSelect("tab")}
           status={pendingTarget === "tab" ? "pending" : undefined}
           testID={`${testID}-new-tab`}
@@ -110,7 +117,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
         <DropdownMenuItem
           closeOnSelect={false}
           disabled={isLocked && pendingTarget !== "workspace"}
-          leading={getIcon("workspace", theme.colors.foreground)}
+          leading={getIcon("workspace")}
           onSelect={handleSelect("workspace")}
           status={pendingTarget === "workspace" ? "pending" : undefined}
           testID={`${testID}-new-workspace`}

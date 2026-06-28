@@ -726,6 +726,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     },
     [forkBoundaryMessageId, onFork],
   );
+  const canFork = Boolean(onFork && forkBoundaryMessageId);
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
@@ -733,7 +734,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
-      {onFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {durationLabel ? (
         <Pressable
           onPress={handlePress}

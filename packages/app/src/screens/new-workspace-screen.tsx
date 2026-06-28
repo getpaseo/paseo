@@ -56,11 +56,7 @@ import {
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
-import {
-  buildDraftWorkspaceAttachmentScopeKey,
-  useDraftWorkspaceAttachments,
-  useWorkspaceAttachmentsStore,
-} from "@/attachments/workspace-attachments-store";
+import { useDraftWorkspaceAttachments } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
@@ -719,6 +715,18 @@ function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
   return [styles.content, styles.contentCentered];
 }
 
+function buildNewWorkspaceDraftKey(input: {
+  selectedServerId: string;
+  selectedSourceDirectory: string | null;
+  draftId?: string;
+}): string {
+  const explicitDraftId = input.draftId?.trim();
+  if (explicitDraftId) {
+    return `new-workspace:draft:${explicitDraftId}`;
+  }
+  return `new-workspace:${input.selectedServerId}:${input.selectedSourceDirectory ?? "choose-project"}`;
+}
+
 function getSelectedPickerItem(selection: PickerSelection | null): PickerItem | null {
   if (!selection) return null;
   return selection.item;
@@ -979,9 +987,6 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     workspaceId,
     currentPathname: "/new",
     target: { kind: "draft", draftId },
-  });
-  useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({
-    scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
   });
   useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
 }
@@ -1454,7 +1459,11 @@ export function NewWorkspaceScreen({
   const projectIconDataByProjectKey = useProjectIconDataByProjectKey({
     projects: projectIconTargets,
   });
-  const draftKey = `new-workspace:${selectedServerId}:${selectedSourceDirectory ?? "choose-project"}`;
+  const draftKey = buildNewWorkspaceDraftKey({
+    selectedServerId,
+    selectedSourceDirectory,
+    draftId,
+  });
   const draftContextAttachments = useDraftWorkspaceAttachments(draftId);
   const chatDraft = useAgentInputDraft({
     draftKey,

@@ -1,4 +1,5 @@
 import { expect, test as base, type Page } from "./fixtures";
+import { scrollAgentChatToBottom } from "./helpers/agent-bottom-anchor";
 import { awaitAssistantMessage } from "./helpers/agent-stream";
 import { expectComposerVisible } from "./helpers/composer";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
@@ -26,6 +27,15 @@ const test = base.extend<{
 });
 
 async function openAssistantForkMenu(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await scrollAgentChatToBottom(page);
+        return page.getByTestId("assistant-fork-menu-trigger").count();
+      },
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
   const trigger = page.getByTestId("assistant-fork-menu-trigger").last();
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
@@ -50,14 +60,14 @@ test.describe("Assistant fork menu", () => {
     const session = await seedForkWorkspace({
       repoPrefix: "assistant-fork-tab-",
       title: "Assistant fork tab",
-      initialPrompt: "Prepare a deterministic assistant turn for fork tab.",
+      initialPrompt: "emit 1 coalesced agent stream updates for assistant fork tab.",
       model: "ten-second-stream",
     });
 
-    await session.client.waitForFinish(session.agentId, 45_000);
     await openAgentRoute(page, session);
     await expectComposerVisible(page);
-    await awaitAssistantMessage(page, "Cycle 1");
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
 
     await openAssistantForkMenu(page);
     await page.getByTestId("assistant-fork-menu-new-tab").click();
@@ -78,6 +88,8 @@ test.describe("Assistant fork menu", () => {
       {
         serverId: "secondary-assistant-fork-host",
         label: "Secondary host",
+        // The host does not need to be reachable; this pins that the draft-scoped
+        // attachment survives changing the selected target host.
         endpoint: "127.0.0.1:9",
       },
     ]);
@@ -85,14 +97,14 @@ test.describe("Assistant fork menu", () => {
     const session = await seedForkWorkspace({
       repoPrefix: "assistant-fork-workspace-",
       title: "Assistant fork workspace",
-      initialPrompt: "Prepare a deterministic assistant turn for new workspace fork.",
+      initialPrompt: "emit 1 coalesced agent stream updates for assistant fork new workspace.",
       model: "ten-second-stream",
     });
 
-    await session.client.waitForFinish(session.agentId, 45_000);
     await openAgentRoute(page, session);
     await expectComposerVisible(page);
-    await awaitAssistantMessage(page, "Cycle 1");
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
 
     await openAssistantForkMenu(page);
     await page.getByTestId("assistant-fork-menu-new-workspace").click();
