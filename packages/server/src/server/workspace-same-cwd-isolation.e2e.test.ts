@@ -410,7 +410,7 @@ test("local workspace auto-title does not broadcast provider snapshot warm-up to
   }
 }, 20_000);
 
-test("create_agent_request with initialPrompt generates a daemon-visible workspace title", async () => {
+test("create_agent_request with workspaceId does not retitle an existing workspace", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-agent-submit-title-"));
   const daemon = await createTestPaseoDaemon({
     agentClients: { mock: new MockLoadTestAgentClient() },
@@ -433,6 +433,8 @@ test("create_agent_request with initialPrompt generates a daemon-visible workspa
     if (!workspaceId) {
       throw new Error(created.error ?? "Expected workspace to be created");
     }
+    const originalName = await workspaceName(client, workspaceId);
+    expect(originalName).toBe(path.basename(cwd));
 
     const agent = await client.createAgent({
       provider: "mock",
@@ -443,9 +445,8 @@ test("create_agent_request with initialPrompt generates a daemon-visible workspa
     });
     expect(agent.workspaceId).toBe(workspaceId);
 
-    await expect
-      .poll(() => workspaceName(client, workspaceId), { timeout: 10_000 })
-      .toBe("Fix login bug");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await workspaceName(client, workspaceId)).toBe(originalName);
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

@@ -830,7 +830,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
   }
 });
 
-test("create_agent_request writes the first prompt title onto an untitled existing workspace", async () => {
+test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
   try {
     const cwd = path.join(workdir, "repo");
@@ -939,7 +939,8 @@ test("create_agent_request writes the first prompt title onto an untitled existi
     const [createdAgent] = agentManager.listAgents();
     expect(createdAgent?.workspaceId).toBe("ws-existing");
     await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
-      title: "Fix login bug",
+      title: null,
+      updatedAt: "2026-05-07T00:00:00.000Z",
     });
   } finally {
     rmSync(workdir, { recursive: true, force: true });

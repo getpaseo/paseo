@@ -2411,6 +2411,7 @@ export class Session {
           initialTitle: workspacePromptTitle,
         },
       );
+      const createdDirectoryWorkspaceForAgent = !createdWorktree && !msg.workspaceId;
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
@@ -2441,11 +2442,8 @@ export class Session {
         },
       );
       createdAgentId = snapshot.id;
-      if (!createdWorktree && msg.workspaceId) {
-        await this.writeInitialWorkspaceTitleIfUntitled(workspaceId, workspacePromptTitle);
-      }
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      if (!createdWorktree && trimmedPrompt) {
+      if (createdDirectoryWorkspaceForAgent && trimmedPrompt) {
         await this.scheduleAutoNameLocalWorkspaceTitleForFirstAgent({
           workspaceId,
           cwd: createAgentConfig.cwd,
@@ -2902,24 +2900,6 @@ export class Session {
       ...current,
       title,
       ...(input.branch ? { branch: input.branch } : {}),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  private async writeInitialWorkspaceTitleIfUntitled(
-    workspaceId: string,
-    title: string | null,
-  ): Promise<void> {
-    if (!title) {
-      return;
-    }
-    const current = await this.workspaceRegistry.get(workspaceId);
-    if (!current || current.title) {
-      return;
-    }
-    await this.workspaceRegistry.upsert({
-      ...current,
-      title,
       updatedAt: new Date().toISOString(),
     });
   }
