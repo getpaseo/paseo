@@ -56,7 +56,11 @@ import {
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
-import { useDraftWorkspaceAttachments } from "@/attachments/workspace-attachments-store";
+import {
+  buildDraftWorkspaceAttachmentScopeKey,
+  useDraftWorkspaceAttachments,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
@@ -975,6 +979,9 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     workspaceId,
     currentPathname: "/new",
     target: { kind: "draft", draftId },
+  });
+  useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({
+    scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
   });
   useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
 }

@@ -1,10 +1,29 @@
-import { expect, test, type Page } from "./fixtures";
+import { expect, test as base, type Page } from "./fixtures";
 import { awaitAssistantMessage } from "./helpers/agent-stream";
 import { expectComposerVisible } from "./helpers/composer";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
-import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import {
+  openAgentRoute,
+  seedMockAgentWorkspace,
+  type MockAgentOptions,
+  type MockAgentWorkspace,
+} from "./helpers/mock-agent";
 import { getServerId } from "./helpers/server-id";
 import { seedSavedSettingsHosts } from "./helpers/settings";
+
+const test = base.extend<{
+  seedForkWorkspace: (options: MockAgentOptions) => Promise<MockAgentWorkspace>;
+}>({
+  seedForkWorkspace: async ({ browserName: _browserName }, provide) => {
+    const sessions: MockAgentWorkspace[] = [];
+    await provide(async (options) => {
+      const session = await seedMockAgentWorkspace(options);
+      sessions.push(session);
+      return session;
+    });
+    await Promise.allSettled(sessions.map((session) => session.cleanup()));
+  },
+});
 
 async function openAssistantForkMenu(page: Page): Promise<void> {
   const trigger = page.getByTestId("assistant-fork-menu-trigger").last();
@@ -24,31 +43,31 @@ async function expectChatHistoryPill(page: Page): Promise<void> {
 test.describe("Assistant fork menu", () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test("forks an assistant turn into a new workspace draft tab", async ({ page }) => {
-    const session = await seedMockAgentWorkspace({
+  test("forks an assistant turn into a new workspace draft tab", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
       repoPrefix: "assistant-fork-tab-",
       title: "Assistant fork tab",
       initialPrompt: "Prepare a deterministic assistant turn for fork tab.",
       model: "ten-second-stream",
     });
 
-    try {
-      await session.client.waitForFinish(session.agentId, 45_000);
-      await openAgentRoute(page, session);
-      await expectComposerVisible(page);
-      await awaitAssistantMessage(page, "Cycle 1");
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page, "Cycle 1");
 
-      await openAssistantForkMenu(page);
-      await page.getByTestId("assistant-fork-menu-new-tab").click();
+    await openAssistantForkMenu(page);
+    await page.getByTestId("assistant-fork-menu-new-tab").click();
 
-      await expectChatHistoryPill(page);
-    } finally {
-      await session.cleanup();
-    }
+    await expectChatHistoryPill(page);
   });
 
   test("forks an assistant turn into New Workspace and keeps the attachment across host changes", async ({
     page,
+    seedForkWorkspace,
   }) => {
     await seedSavedSettingsHosts(page, [
       {
@@ -63,32 +82,28 @@ test.describe("Assistant fork menu", () => {
       },
     ]);
 
-    const session = await seedMockAgentWorkspace({
+    const session = await seedForkWorkspace({
       repoPrefix: "assistant-fork-workspace-",
       title: "Assistant fork workspace",
       initialPrompt: "Prepare a deterministic assistant turn for new workspace fork.",
       model: "ten-second-stream",
     });
 
-    try {
-      await session.client.waitForFinish(session.agentId, 45_000);
-      await openAgentRoute(page, session);
-      await expectComposerVisible(page);
-      await awaitAssistantMessage(page, "Cycle 1");
+    await session.client.waitForFinish(session.agentId, 45_000);
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page, "Cycle 1");
 
-      await openAssistantForkMenu(page);
-      await page.getByTestId("assistant-fork-menu-new-workspace").click();
+    await openAssistantForkMenu(page);
+    await page.getByTestId("assistant-fork-menu-new-workspace").click();
 
-      await expect(page).toHaveURL(/\/new\?.*draftId=/, { timeout: 30_000 });
-      await expectChatHistoryPill(page);
+    await expect(page).toHaveURL(/\/new\?.*draftId=/, { timeout: 30_000 });
+    await expectChatHistoryPill(page);
 
-      await page.getByTestId("host-picker-trigger").click();
-      await page
-        .getByTestId("new-workspace-host-picker-option-secondary-assistant-fork-host")
-        .click();
-      await expectChatHistoryPill(page);
-    } finally {
-      await session.cleanup();
-    }
+    await page.getByTestId("host-picker-trigger").click();
+    await page
+      .getByTestId("new-workspace-host-picker-option-secondary-assistant-fork-host")
+      .click();
+    await expectChatHistoryPill(page);
   });
 });

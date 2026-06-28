@@ -413,34 +413,40 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           if (!client) {
             throw new Error(t("workspace.terminal.hostDisconnected"));
           }
-          const draftId = generateDraftId();
-          const payload = await client.buildAgentForkContext(
-            agentId,
-            boundaryMessageId ? { boundaryMessageId } : {},
-          );
-          const attachment = buildChatHistoryAttachment({
-            draftId,
-            serverId: resolvedServerId,
-            agentId,
-            payload,
-          });
-          useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
-            scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
-            attachments: [attachment],
-          });
+          const prepareForkDraft = async () => {
+            const draftId = generateDraftId();
+            const payload = await client.buildAgentForkContext(
+              agentId,
+              boundaryMessageId ? { boundaryMessageId } : {},
+            );
+            const attachment = buildChatHistoryAttachment({
+              draftId,
+              serverId: resolvedServerId,
+              agentId,
+              payload,
+            });
+            useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+              scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+              attachments: [attachment],
+            });
+            return draftId;
+          };
 
           if (target === "tab") {
-            if (!agent.workspaceId) {
+            const workspaceId = agent.workspaceId;
+            if (!workspaceId) {
               throw new Error(t("message.actions.forkMissingWorkspace"));
             }
+            const draftId = await prepareForkDraft();
             navigateToPreparedWorkspaceTab({
               serverId: resolvedServerId,
-              workspaceId: agent.workspaceId,
+              workspaceId,
               target: { kind: "draft", draftId },
             });
             return;
           }
 
+          const draftId = await prepareForkDraft();
           const sourceDirectory =
             agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
           router.push(
