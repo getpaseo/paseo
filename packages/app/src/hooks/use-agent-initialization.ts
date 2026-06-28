@@ -12,7 +12,7 @@ import {
 import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
-export const INIT_TIMEOUT_MS = 30_000;
+export const INIT_TIMEOUT_MS = 60_000;
 
 export type SetAgentInitializing = (agentId: string, initializing: boolean) => void;
 

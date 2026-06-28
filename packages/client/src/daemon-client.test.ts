@@ -522,6 +522,50 @@ test("keeps the transport connected when a session RPC ping times out", async ()
   expect(client.getConnectionState().status).toBe("connected");
 });
 
+test("keeps session RPC waiters open for at least sixty seconds", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgent("agent-1", "req-agent-1");
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_request",
+    requestId: "req-agent-1",
+    agentId: "agent-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (60000ms)");
+});
+
 test("stays online through ten minutes of pongs that arrive five seconds late", async () => {
   useHeartbeatClock();
   const session = new DaemonClientSession();

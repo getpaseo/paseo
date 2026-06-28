@@ -762,17 +762,28 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
-const DEFAULT_CONNECT_TIMEOUT_MS = 15000;
+const MIN_SESSION_RPC_TIMEOUT_MS = 60_000;
+const DEFAULT_CONNECT_TIMEOUT_MS = MIN_SESSION_RPC_TIMEOUT_MS;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
-const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
-const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = 15000;
+const DEFAULT_SEND_QUEUE_TIMEOUT_MS = MIN_SESSION_RPC_TIMEOUT_MS;
+const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = MIN_SESSION_RPC_TIMEOUT_MS;
 const DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000;
+
+function resolveSessionRpcTimeoutMs(
+  timeoutMs: number,
+  minimumTimeoutMs = MIN_SESSION_RPC_TIMEOUT_MS,
+): number {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || minimumTimeoutMs <= 0) {
+    return timeoutMs;
+  }
+  return Math.max(timeoutMs, minimumTimeoutMs);
+}
 
 function isWaiterTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("Timeout waiting for message");
@@ -1422,8 +1433,10 @@ export class DaemonClient {
     message: SessionInboundMessage;
     timeout: number;
     select: (msg: SessionOutboundMessage) => T | null;
+    minimumTimeoutMs?: number;
     options?: { skipQueue?: boolean };
   }): Promise<T> {
+    const timeout = resolveSessionRpcTimeoutMs(params.timeout, params.minimumTimeoutMs);
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
       (msg) => {
         if (msg.type === "rpc_error" && msg.payload.requestId === params.requestId) {
@@ -1443,7 +1456,7 @@ export class DaemonClient {
         }
         return { kind: "ok", value };
       },
-      params.timeout,
+      timeout,
       params.options,
     );
 
@@ -1644,6 +1657,7 @@ export class DaemonClient {
       requestId,
       message: { type: "ping", requestId, clientSentAt },
       timeout: params?.timeoutMs ?? 5000,
+      minimumTimeoutMs: 0,
       select: (msg) => {
         if (msg.type !== "pong") return null;
         if (msg.payload.requestId !== requestId) return null;
