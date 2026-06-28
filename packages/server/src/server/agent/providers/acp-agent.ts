@@ -802,6 +802,7 @@ export class ACPAgentClient implements AgentClient {
     const cwd = options.scope === "global" ? homedir() : options.cwd;
     const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
     let probe: UninitializedACPProcess | null = null;
+    let probeSessionId: string | null = null;
     try {
       const catalogProbe = (async () => {
         const initializedProbe = await this.spawnProcess(PROBE_ENV, {
@@ -817,6 +818,7 @@ export class ACPAgentClient implements AgentClient {
             mcpServers: [],
           }),
         );
+        probeSessionId = response.sessionId ?? null;
         const transformed = this.transformSessionResponse(response);
         const models = deriveModelDefinitionsFromACP(
           this.provider,
@@ -841,7 +843,7 @@ export class ACPAgentClient implements AgentClient {
       );
     } finally {
       if (probe) {
-        await this.closeProbe(probe);
+        await this.closeProbe(probe, probeSessionId);
       }
     }
   }
@@ -853,6 +855,7 @@ export class ACPAgentClient implements AgentClient {
 
     this.assertProvider(config);
     const probe = await this.spawnProcess(PROBE_ENV);
+    let probeSessionId: string | null = null;
     try {
       const response = await this.runACPRequest(() =>
         probe.connection.newSession({
@@ -860,10 +863,11 @@ export class ACPAgentClient implements AgentClient {
           mcpServers: [],
         }),
       );
+      probeSessionId = response.sessionId ?? null;
       const transformed = this.transformSessionResponse(response);
       return deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions);
     } finally {
-      await this.closeProbe(probe);
+      await this.closeProbe(probe, probeSessionId);
     }
   }
 
@@ -1053,10 +1057,20 @@ export class ACPAgentClient implements AgentClient {
     };
   }
 
-  protected async closeProbe(probe: UninitializedACPProcess): Promise<void> {
+  protected async closeProbe(
+    probe: UninitializedACPProcess,
+    sessionId?: string | null,
+  ): Promise<void> {
     try {
-      if (probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
-        // No active session to close here; ignore capability.
+      if (sessionId && probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
+        try {
+          await this.runACPRequest(() => probe.connection.unstable_closeSession({ sessionId }));
+        } catch (error) {
+          this.logger.debug(
+            { err: error, provider: this.provider, sessionId },
+            "ACP closeSession failed during probe shutdown",
+          );
+        }
       }
     } finally {
       await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
