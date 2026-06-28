@@ -3,7 +3,6 @@ const path = require("node:path");
 const pkg = require("./package.json");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
-const nativeBuildVersionFloor = 1_000_000;
 
 function getNativeBuildVersionCode(version) {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
@@ -20,7 +19,7 @@ function getNativeBuildVersionCode(version) {
     throw new Error(`Cannot derive collision-free Android versionCode from version: ${version}`);
   }
 
-  const versionCode = nativeBuildVersionFloor + major * 1_000_000 + minor * 1_000 + patch;
+  const versionCode = major * 1_000_000 + minor * 1_000 + patch;
 
   if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || versionCode > 2_100_000_000) {
     throw new Error(`Derived Android versionCode is out of range: ${versionCode}`);
@@ -165,6 +164,13 @@ export default {
       ],
       "expo-audio",
       [
+        "expo-gradle-jvmargs",
+        {
+          xmx: "4096m",
+          maxMetaspace: "1024m",
+        },
+      ],
+      [
         "expo-build-properties",
         {
           android: {
@@ -175,17 +181,6 @@ export default {
           },
         },
       ],
-      ...(isFdroidBuild
-        ? [
-            [
-              "expo-gradle-jvmargs",
-              {
-                xmx: "4096m",
-                maxMetaspace: "1024m",
-              },
-            ],
-          ]
-        : []),
     ],
     experiments: {
       typedRoutes: true,

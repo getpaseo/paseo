@@ -18,10 +18,10 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 `packages/app/app.config.js` derives Android `versionCode` from the package version with:
 
 ```text
-1_000_000 + major * 1_000_000 + minor * 1_000 + patch
+major * 1_000_000 + minor * 1_000 + patch
 ```
 
-Prerelease metadata is ignored, so `0.1.102-beta.1` and `0.1.102` both produce `1001102`. The same value is used as the iOS `buildNumber` because `packages/app/eas.json` uses EAS's local app version source. The `1_000_000` floor keeps the local formula above prior EAS remote counters during the transition. Do not re-enable EAS remote version counters or Android `autoIncrement`; F-Droid and other source-based builders need the native build number to be visible in the repo.
+Prerelease metadata is ignored, so `0.1.102-beta.1` and `0.1.102` both produce `1102`. The same value is used as the iOS `buildNumber` because `packages/app/eas.json` uses EAS's local app version source. Do not re-enable EAS remote version counters or Android `autoIncrement`; F-Droid and other source-based builders need the native build number to be visible in the repo.
 
 The formula reserves three digits each for minor and patch. If either reaches `1000`, change the formula before cutting that release.
 
@@ -61,7 +61,7 @@ cd android
 ./gradlew assembleRelease
 ```
 
-That env var is intentionally narrow. It enables `expo.autolinking.android.buildFromSource: [".*"]` so Expo modules are built from source instead of linked from precompiled AARs, and it applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` for the larger source build. Normal local and EAS builds leave those settings off.
+That env var is intentionally narrow. It enables `expo.autolinking.android.buildFromSource: [".*"]` so Expo modules are built from source instead of linked from precompiled AARs. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
 ### React version lockstep
 
