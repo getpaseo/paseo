@@ -967,6 +967,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
   navigateToPreparedWorkspaceTab({
     serverId,
     workspaceId,
+    currentPathname: "/new",
     target: { kind: "draft", draftId },
   });
   useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
@@ -1781,7 +1782,8 @@ export function NewWorkspaceScreen({
             payload,
             ensureWorkspace,
             serverId: selectedServerId,
-            navigate: navigateToWorkspace,
+            navigate: (targetServerId, workspaceId) =>
+              navigateToWorkspace(targetServerId, workspaceId, { currentPathname: "/new" }),
           });
           return;
         }

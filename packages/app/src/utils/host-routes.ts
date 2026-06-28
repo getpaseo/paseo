@@ -326,6 +326,11 @@ export function stripHostWorkspaceRouteEchoSearch(route: string): string {
     didStrip = true;
   }
 
+  if (params.get("pop") === "true") {
+    params.delete("pop");
+    didStrip = true;
+  }
+
   if (!didStrip) {
     return route;
   }

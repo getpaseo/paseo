@@ -31,6 +31,7 @@ export {
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveSidebarLoadingState,
+  shouldShowSidebarHostLabels,
   type SidebarLoadingState,
   type SidebarOrderUpdates,
   type SidebarStatusWorkspacePlacement,

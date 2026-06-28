@@ -76,6 +76,15 @@ workspace for that host after the workspace-selection store hydrates unless the
 host's hydrated workspace list proves that workspace is gone; hosts without a
 remembered workspace go to `open-project`.
 
+When app-wide routes such as `/new` navigate back into a host workspace, use
+`navigateToHostWorkspaceRoute()` instead of calling `router.dismissTo()` with the
+leaf workspace URL. The root stack owns `h/[serverId]`; the host stack owns
+`workspace/[workspaceId]/index`. Repeated global-route hops must `POP_TO` the
+root host route and pass the nested workspace screen, or Expo Router can append
+extra hidden workspace deck entries. Those hidden entries are not harmless:
+composer floating panels can measure against the wrong deck and disappear
+offscreen.
+
 Keep workspace identity and retention outside native-stack `getId`/
 `dangerouslySingular`. Expo Router maps `dangerouslySingular` to React
 Navigation `getId`, and `getId` has broken Android native-stack/Fabric by

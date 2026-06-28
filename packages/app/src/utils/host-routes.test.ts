@@ -141,6 +141,22 @@ describe("workspace route parsing", () => {
     );
   });
 
+  it("strips the React Navigation nested pop hint from workspace route search params", () => {
+    expect(stripHostWorkspaceRouteEchoSearch("/h/local/workspace/164?pop=true")).toBe(
+      "/h/local/workspace/164",
+    );
+    expect(
+      stripHostWorkspaceRouteEchoSearch("/h/local/workspace/164?pop=true&open=agent%3Aagent-1"),
+    ).toBe("/h/local/workspace/164?open=agent%3Aagent-1");
+  });
+
+  it("keeps non-navigation pop search params", () => {
+    expect(stripHostWorkspaceRouteEchoSearch("/h/local/workspace/164?pop=false")).toBe(
+      "/h/local/workspace/164?pop=false",
+    );
+    expect(stripHostWorkspaceRouteEchoSearch("/new?pop=true")).toBe("/new?pop=true");
+  });
+
   it("strips encoded workspace route echoes", () => {
     expect(
       stripHostWorkspaceRouteEchoSearch(
