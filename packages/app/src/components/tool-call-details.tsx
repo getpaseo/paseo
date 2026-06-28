@@ -516,12 +516,26 @@ function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
   );
 }
 
-function PlainTextSection({ text }: { text: string }) {
+function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyles }) {
   return (
     <View style={styles.plainTextSection}>
-      <Text selectable style={styles.plainText}>
-        {text}
-      </Text>
+      <ScrollView
+        style={ds.scrollAreaStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <ScrollView
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator
+          style={ds.webScrollbarStyle}
+        >
+          <Text selectable style={styles.plainText}>
+            {text}
+          </Text>
+        </ScrollView>
+      </ScrollView>
     </View>
   );
 }
@@ -607,13 +621,7 @@ function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles, t: TFunct
     typeof detail.input === "string" && detail.output === null ? detail.input : null;
 
   if (plainInputText !== null) {
-    return [
-      <View key="unknown-plain-text" style={styles.plainTextSection}>
-        <Text selectable style={styles.plainText}>
-          {plainInputText}
-        </Text>
-      </View>,
-    ];
+    return [<ScrollablePlainTextSection key="unknown-plain-text" text={plainInputText} ds={ds} />];
   }
 
   const sectionsFromTopLevel = [
@@ -729,7 +737,7 @@ function buildDetailSections(
   }
   if (detail.type === "plain_text") {
     if (!detail.text) return [];
-    return [<PlainTextSection key="plain-text" text={detail.text} />];
+    return [<ScrollablePlainTextSection key="plain-text" text={detail.text} ds={ds} />];
   }
   if (detail.type === "unknown") {
     return buildUnknownSections(detail, ds, t);
