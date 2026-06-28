@@ -1,18 +1,24 @@
 import { test, expect } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { seedWorkspace } from "./helpers/seed-client";
+import { getServerId } from "./helpers/server-id";
+
+function sidebarProjectRowTestId(projectId: string) {
+  return `sidebar-project-row-${getServerId()}:${projectId}`;
+}
+
+function sidebarWorkspaceRowTestId(workspaceId: string) {
+  return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
+}
 
 async function waitForSidebarWorkspace(page: import("@playwright/test").Page, workspaceId: string) {
-  const row = page.getByTestId(`sidebar-workspace-row-${process.env.E2E_SERVER_ID}:${workspaceId}`);
+  const row = page.getByTestId(sidebarWorkspaceRowTestId(workspaceId));
   await expect(row).toBeVisible({ timeout: 30_000 });
   return row;
 }
 
-async function waitForSidebarProject(page: import("@playwright/test").Page, projectName: string) {
-  const row = page
-    .locator('[data-testid^="sidebar-project-row-"]')
-    .filter({ hasText: projectName })
-    .first();
+async function waitForSidebarProject(page: import("@playwright/test").Page, projectId: string) {
+  const row = page.getByTestId(sidebarProjectRowTestId(projectId));
   await expect(row).toBeVisible({ timeout: 30_000 });
   return row;
 }
@@ -23,6 +29,28 @@ async function openSortMenu(page: import("@playwright/test").Page) {
   await prefsTrigger.click();
 }
 
+async function dragReorder(
+  page: import("@playwright/test").Page,
+  source: import("@playwright/test").Locator,
+  target: import("@playwright/test").Locator,
+) {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("missing drag boxes");
+
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  // dnd-kit PointerSensor uses a hold-based activation when useDragHandle is
+  // enabled; wait until the source element shows the active dragging transform
+  // before moving, instead of a blind fixed sleep.
+  await expect(async () => {
+    const transform = await source.evaluate((el) => window.getComputedStyle(el).transform);
+    expect(transform).toContain("scale(1.02)");
+  }).toPass({ timeout: 1000 });
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height + 8);
+  await page.mouse.up();
+}
+
 test.describe("Sidebar drag reorder", () => {
   test("reordering projects persists", async ({ page }) => {
     const workspaceA = await seedWorkspace({ repoPrefix: "drag-a-" });
@@ -30,40 +58,35 @@ test.describe("Sidebar drag reorder", () => {
 
     try {
       await gotoAppShell(page);
-      await waitForSidebarProject(page, workspaceA.projectDisplayName);
-      await waitForSidebarProject(page, workspaceB.projectDisplayName);
+      const projectA = await waitForSidebarProject(page, workspaceA.projectId);
+      const projectB = await waitForSidebarProject(page, workspaceB.projectId);
 
       await openSortMenu(page);
       await page.getByTestId("sidebar-sort-custom").click();
 
-      const firstProject = page.locator('[data-testid^="sidebar-project-row-"]').first();
-      const secondProject = page.locator('[data-testid^="sidebar-project-row-"]').nth(1);
-      await expect(firstProject).toContainText(workspaceA.projectDisplayName);
-      await expect(secondProject).toContainText(workspaceB.projectDisplayName);
+      await expect(projectA).toBeVisible();
+      await expect(projectB).toBeVisible();
 
-      const firstBox = await firstProject.boundingBox();
-      const secondBox = await secondProject.boundingBox();
-      if (!firstBox || !secondBox) throw new Error("missing project boxes");
-      await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
-      await page.mouse.down();
-      await page.waitForTimeout(300);
-      await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y + secondBox.height + 8);
-      await page.waitForTimeout(50);
-      await page.mouse.up();
+      await dragReorder(page, projectA, projectB);
 
-      await expect(page.locator('[data-testid^="sidebar-project-row-"]').first()).toContainText(
-        workspaceB.projectDisplayName,
+      const projectRows = page.getByTestId(/^sidebar-project-row-/);
+      await expect(projectRows.first()).toHaveAttribute(
+        "data-testid",
+        sidebarProjectRowTestId(workspaceB.projectId),
         { timeout: 10_000 },
       );
-      await expect(page.locator('[data-testid^="sidebar-project-row-"]').nth(1)).toContainText(
-        workspaceA.projectDisplayName,
+      await expect(projectRows.nth(1)).toHaveAttribute(
+        "data-testid",
+        sidebarProjectRowTestId(workspaceA.projectId),
         { timeout: 10_000 },
       );
 
       await page.reload();
-      await waitForSidebarProject(page, workspaceA.projectDisplayName);
-      await expect(page.locator('[data-testid^="sidebar-project-row-"]').first()).toContainText(
-        workspaceB.projectDisplayName,
+      await waitForSidebarProject(page, workspaceA.projectId);
+      const reloadedRows = page.getByTestId(/^sidebar-project-row-/);
+      await expect(reloadedRows.first()).toHaveAttribute(
+        "data-testid",
+        sidebarProjectRowTestId(workspaceB.projectId),
         { timeout: 30_000 },
       );
     } finally {
@@ -85,7 +108,7 @@ test.describe("Sidebar drag reorder", () => {
 
     try {
       await gotoAppShell(page);
-      await waitForSidebarProject(page, workspaceA.projectDisplayName);
+      await waitForSidebarProject(page, workspaceA.projectId);
 
       await openSortMenu(page);
       await page.getByTestId("sidebar-sort-custom").click();
@@ -93,25 +116,14 @@ test.describe("Sidebar drag reorder", () => {
       const firstWs = await waitForSidebarWorkspace(page, workspaceA.workspaceId);
       const secondWs = await waitForSidebarWorkspace(page, workspaceB.workspaceId);
 
-      const firstBox = await firstWs.boundingBox();
-      const secondBox = await secondWs.boundingBox();
-      if (!firstBox || !secondBox) throw new Error("missing workspace boxes");
-      await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
-      await page.mouse.down();
-      await page.waitForTimeout(300);
-      await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y + secondBox.height + 8);
-      await page.waitForTimeout(50);
-      await page.mouse.up();
+      await dragReorder(page, firstWs, secondWs);
 
-      await expect(
-        page
-          .locator('[data-testid^="sidebar-workspace-row-"]')
-          .filter({ hasText: workspaceB.workspaceName })
-          .first(),
-      ).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByTestId(sidebarWorkspaceRowTestId(workspaceB.workspaceId))).toBeVisible(
+        { timeout: 10_000 },
+      );
 
       await page.reload();
-      await waitForSidebarProject(page, workspaceA.projectDisplayName);
+      await waitForSidebarProject(page, workspaceA.projectId);
       await waitForSidebarWorkspace(page, workspaceB.workspaceId);
     } finally {
       await workspaceA.cleanup();
