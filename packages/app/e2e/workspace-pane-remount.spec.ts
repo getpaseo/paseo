@@ -18,6 +18,7 @@ test.describe("Workspace pane mounting", () => {
     try {
       const agent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: `pane-remount-${Date.now()}`,
       });
 

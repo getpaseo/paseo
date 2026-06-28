@@ -10,6 +10,7 @@ import {
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
+  DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
   WSOutboundMessageSchema,
@@ -52,6 +53,7 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
+  ProjectAddResponse,
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
   WorkspaceSetupStatusResponseMessage,
@@ -63,8 +65,10 @@ import type {
   GetProvidersSnapshotResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
+  ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
+  DiagnosticsResponse,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -85,6 +89,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
+  AgentProviderNotice,
   AgentProvider,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
@@ -345,8 +350,10 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
+type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
+type DiagnosticsPayload = DiagnosticsResponse["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -462,6 +469,7 @@ export interface FetchAgentTimelineOptions {
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
+type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_agents_response" }
@@ -658,6 +666,7 @@ export interface RenameTerminalInput {
   requestId?: string;
 }
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
+type ProjectAddPayload = ProjectAddResponse["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
 
@@ -1877,6 +1886,20 @@ export class DaemonClient {
         cwd,
       },
       responseType: "open_project_response",
+      // Large local repos (e.g. a big monorepo/brain checkout) need >10s for the
+      // daemon to resolve the path, detect git, and materialize the workspace.
+      timeout: 60000,
+    });
+  }
+
+  async addProject(cwd: string, requestId?: string): Promise<ProjectAddPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "project.add.request",
+        cwd,
+      },
+      responseType: "project.add.response",
       timeout: 10000,
     });
   }
@@ -2098,6 +2121,19 @@ export class DaemonClient {
     return { archivedAt: result.archivedAt };
   }
 
+  async detachAgent(agentId: string): Promise<void> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"agent.detach.response">({
+      message: {
+        type: "agent.detach.request",
+        agentId,
+      },
+      timeout: 10000,
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "detachAgent rejected");
+    }
+  }
+
   async updateAgent(
     agentId: string,
     updates: { name?: string; labels?: Record<string, string> },
@@ -2151,6 +2187,24 @@ export class DaemonClient {
       throw new Error(payload.error ?? "renameProject rejected");
     }
     return { customName: payload.customName };
+  }
+
+  async removeProject(
+    projectId: string,
+    requestId?: string,
+  ): Promise<{ removedWorkspaceIds: string[] }> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"project.remove.response">({
+      requestId,
+      message: {
+        type: "project.remove.request",
+        projectId,
+      },
+      timeout: 10000,
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "removeProject rejected");
+    }
+    return { removedWorkspaceIds: payload.removedWorkspaceIds };
   }
 
   async setWorkspaceTitle(
@@ -2413,7 +2467,7 @@ export class DaemonClient {
     });
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_mode_request",
@@ -2439,6 +2493,7 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentMode rejected");
     }
+    return payload.notice ?? null;
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -2498,7 +2553,10 @@ export class DaemonClient {
     }
   }
 
-  async setAgentThinkingOption(agentId: string, thinkingOptionId: string | null): Promise<void> {
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null,
+  ): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_thinking_request",
@@ -2524,6 +2582,7 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentThinkingOption rejected");
     }
+    return payload.notice ?? null;
   }
 
   async restartServer(reason?: string, requestId?: string): Promise<RestartRequestedStatusPayload> {
@@ -2577,6 +2636,30 @@ export class DaemonClient {
           return null;
         }
         return shutdown.data;
+      },
+    });
+  }
+
+  async updateDaemon(requestId?: string): Promise<DaemonUpdateResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "daemon.update.request",
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 300_000, // 5 minutes — npm update can be slow on remote machines
+      options: { skipQueue: true },
+      select: (msg) => {
+        const parsed = DaemonUpdateResponseSchema.safeParse(msg);
+        if (!parsed.success) {
+          return null;
+        }
+        if (parsed.data.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return parsed.data.payload;
       },
     });
   }
@@ -3431,7 +3514,9 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "directory_suggestions_response",
-      timeout: 10000,
+      // Home-tree scans on large home dirs can take several seconds; don't cut
+      // the suggestion request off early (it would surface as an empty list).
+      timeout: 30000,
     });
   }
 
@@ -3603,8 +3688,8 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_models_response",
-      // Provider SDK cold starts (especially model discovery) can exceed 30s.
-      timeout: 45000,
+      // Provider SDK cold starts (especially model discovery) can exceed 60s.
+      timeout: 90000,
     });
   }
 
@@ -3620,7 +3705,7 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_modes_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3635,7 +3720,7 @@ export class DaemonClient {
         draftConfig,
       },
       responseType: "list_provider_features_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3648,7 +3733,7 @@ export class DaemonClient {
         type: "list_available_providers_request",
       },
       responseType: "list_available_providers_response",
-      timeout: 30000,
+      timeout: 60000,
     });
   }
 
@@ -3699,6 +3784,16 @@ export class DaemonClient {
       },
       responseType: "daemon.get_pairing_offer.response",
       timeout: 10000,
+    });
+  }
+
+  async collectDiagnostics(requestId?: string): Promise<DiagnosticsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "diagnostics.request",
+      },
+      timeout: 30000,
     });
   }
 
@@ -3756,7 +3851,7 @@ export class DaemonClient {
         providers: options?.providers,
       },
       responseType: "refresh_providers_snapshot_response",
-      timeout: 60000,
+      timeout: 120000,
     });
   }
 
@@ -3771,6 +3866,16 @@ export class DaemonClient {
         provider,
       },
       responseType: "provider_diagnostic_response",
+      timeout: 180000,
+    });
+  }
+
+  async listProviderUsage(options?: { requestId?: string }): Promise<ProviderUsageListPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "provider.usage.list.request",
+      },
       timeout: 30000,
     });
   }

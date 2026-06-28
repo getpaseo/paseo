@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { areEquivalentPaths, createPathEquivalenceMatcher } from "./path.js";
+import { areEquivalentPaths, createPathEquivalenceMatcher, isPathInsideRoot } from "./path.js";
 
 describe("path equivalence", () => {
   test.each([
@@ -18,5 +18,19 @@ describe("path equivalence", () => {
     expect(
       areEquivalentPaths("/Users/Administrator/GhostFactory", "/users/administrator/ghostfactory"),
     ).toBe(false);
+  });
+
+  test("checks POSIX root containment without prefix false positives", () => {
+    expect(isPathInsideRoot("/opt/paseo", "/opt/paseo/node_modules/@getpaseo/server")).toBe(true);
+    expect(isPathInsideRoot("/opt/paseo", "/opt/paseo-other")).toBe(false);
+  });
+
+  test("checks Windows root containment case-insensitively", () => {
+    expect(
+      isPathInsideRoot("C:\\Paseo\\node_modules", "c:/paseo/node_modules/@getpaseo/server"),
+    ).toBe(true);
+    expect(isPathInsideRoot("C:\\Paseo\\node_modules", "C:\\Paseo\\node_modules-other")).toBe(
+      false,
+    );
   });
 });

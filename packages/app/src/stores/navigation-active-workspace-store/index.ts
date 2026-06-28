@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, useLocalSearchParams, usePathname, type Href } from "expo-router";
+import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
 import {
   createLastWorkspaceSelectionStore,
@@ -14,6 +14,8 @@ import {
 } from "./navigation";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
+import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 
@@ -32,7 +34,13 @@ const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
   lastWorkspaceSelectionStorage,
 );
 
-function navigateDeps(): NavigateToWorkspaceDeps {
+function shouldPopToExistingHostRoute(options: NavigateToWorkspaceOptions): boolean {
+  // Only /new needs POP_TO to avoid hidden deck entries; regular workspace switches
+  // should use router navigation so route observers like the sidebar selection update.
+  return options.currentPathname === "/new";
+}
+
+function navigateDeps(options: NavigateToWorkspaceOptions): NavigateToWorkspaceDeps {
   return {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>
@@ -41,7 +49,12 @@ function navigateDeps(): NavigateToWorkspaceDeps {
       useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, { kind: "agent", agentId });
     },
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
-    navigateToRoute: (route) => router.dismissTo(route as Href),
+    navigateToRoute: (route) => {
+      navigateToHostWorkspaceRoute(route, {
+        popToExistingHostRoute: shouldPopToExistingHostRoute(options),
+      });
+      stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit();
+    },
   };
 }
 
@@ -60,14 +73,14 @@ export function getIsLastWorkspaceSelectionHydrated(): boolean {
 export function navigateToWorkspace(
   serverId: string,
   workspaceId: string,
-  _options: NavigateToWorkspaceOptions = {},
+  options: NavigateToWorkspaceOptions = {},
 ) {
-  navigateToWorkspacePure(serverId, workspaceId, navigateDeps());
+  navigateToWorkspacePure(serverId, workspaceId, navigateDeps(options));
 }
 
 export function navigateToLastWorkspace(): boolean {
   return navigateToLastWorkspacePure({
-    ...navigateDeps(),
+    ...navigateDeps({}),
     getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
   });
 }

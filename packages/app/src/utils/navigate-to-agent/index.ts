@@ -35,7 +35,7 @@ function restoreArchivedWorkspace(serverId: string, agentId: string, workspaceId
     return;
   }
 
-  // COMPAT(worktreeRestore): added in v0.1.98, drop the gate when floor >= v0.1.98
+  // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
   // Single capability read for restore. An old daemon recreates nothing on
   // refresh_agent, so a gone directory would spin then flash a misleading
   // "couldn't restore". Surface an explicit "update your host" state instead.

@@ -18,22 +18,27 @@ import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "../workspace-r
 // Picks the workspace that owned `cwd` for a legacy, unstamped agent record.
 // Prefers an exact-cwd workspace (oldest wins) and otherwise attributes to the
 // deepest enclosing workspace directory, never letting the home directory own
-// descendants. Used only by the one-time backfill below.
+// descendants. Live records only consider live workspaces; archived records can
+// resolve to archived workspaces so History/restore retains legacy ownership.
+// Used only by the one-time backfill below.
 function resolveLegacyWorkspaceOwner(
   cwd: string,
   workspaces: Iterable<PersistedWorkspaceRecord>,
+  options?: { includeArchived?: boolean },
 ): string | null {
   const normalizedCwd = resolve(cwd);
   const userHome = resolve(homedir());
-  const activeWorkspaces = Array.from(workspaces).filter((workspace) => !workspace.archivedAt);
-  const exactMatches = activeWorkspaces.filter(
+  const candidateWorkspaces = Array.from(workspaces).filter(
+    (workspace) => options?.includeArchived === true || !workspace.archivedAt,
+  );
+  const exactMatches = candidateWorkspaces.filter(
     (workspace) => resolve(workspace.cwd) === normalizedCwd,
   );
   if (exactMatches.length > 0) {
     return oldestWorkspace(exactMatches).workspaceId;
   }
 
-  const prefixMatches = activeWorkspaces.filter((workspace) => {
+  const prefixMatches = candidateWorkspaces.filter((workspace) => {
     const workspaceCwd = resolve(workspace.cwd);
     if (workspaceCwd === userHome) {
       return false;
@@ -72,7 +77,9 @@ export async function backfillWorkspaceIdForLegacyAgents(options: {
       continue;
     }
 
-    const workspaceId = resolveLegacyWorkspaceOwner(record.cwd, workspaceRecords);
+    const workspaceId = resolveLegacyWorkspaceOwner(record.cwd, workspaceRecords, {
+      includeArchived: record.archivedAt != null,
+    });
     if (!workspaceId) {
       continue;
     }

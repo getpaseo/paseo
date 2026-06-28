@@ -377,7 +377,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Merge",
+      label: "Merge PR (squash)",
     });
   });
 
@@ -398,7 +398,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Merge",
+      label: "Merge PR (squash)",
     });
   });
 
@@ -458,7 +458,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Merge",
+      label: "Merge PR (squash)",
     });
   });
 
@@ -512,7 +512,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-squash",
-      label: "Merge",
+      label: "Merge PR (squash)",
     });
     expect(actions.secondary.some((action) => action.id === "merge-branch")).toBe(true);
   });
@@ -583,7 +583,7 @@ describe("git-actions-policy", () => {
       },
       {
         id: "merge-pr-squash",
-        label: "Merge",
+        label: "Merge PR (squash)",
         pendingLabel: "Merging PR...",
         successLabel: "PR merged",
         disabled: false,
@@ -592,7 +592,7 @@ describe("git-actions-policy", () => {
       },
       {
         id: "merge-pr-merge",
-        label: "Merge",
+        label: "Merge PR (merge)",
         pendingLabel: "Merging PR...",
         successLabel: "PR merged",
         disabled: false,
@@ -601,7 +601,7 @@ describe("git-actions-policy", () => {
       },
       {
         id: "merge-pr-rebase",
-        label: "Merge",
+        label: "Merge PR (rebase)",
         pendingLabel: "Merging PR...",
         successLabel: "PR merged",
         disabled: false,
@@ -703,7 +703,10 @@ describe("git-actions-policy", () => {
     );
 
     expect(oldDaemonStatus.github).toBeUndefined();
-    expect(actions.primary).toMatchObject({ id: "merge-pr-squash", label: "Merge" });
+    expect(actions.primary).toMatchObject({
+      id: "merge-pr-squash",
+      label: "Merge PR (squash)",
+    });
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",
       "push",
@@ -744,7 +747,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "enable-pr-auto-merge-squash",
-      label: "Auto merge",
+      label: "Auto merge (squash)",
     });
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",
@@ -761,6 +764,41 @@ describe("git-actions-policy", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    ["SQUASH", "enable-pr-auto-merge-squash", "Auto merge (squash)"],
+    ["MERGE", "enable-pr-auto-merge-merge", "Auto merge (merge)"],
+    ["REBASE", "enable-pr-auto-merge-rebase", "Auto merge (rebase)"],
+  ] as const)(
+    "labels the %s auto-merge action with its method",
+    (viewerDefaultMergeMethod, id, label) => {
+      const actions = buildGitActions(
+        createInput({
+          hasRemote: true,
+          isOnBaseBranch: false,
+          aheadCount: 2,
+          hasPullRequest: true,
+          pullRequestUrl: "https://example.com/pr/993",
+          pullRequestState: "open",
+          pullRequestMergeable: "MERGEABLE",
+          pullRequestGithub: githubStatus({
+            mergeStateStatus: "BLOCKED",
+            viewerCanEnableAutoMerge: true,
+            repository: {
+              autoMergeAllowed: true,
+              mergeCommitAllowed: true,
+              squashMergeAllowed: true,
+              rebaseMergeAllowed: true,
+              viewerDefaultMergeMethod,
+            },
+          }),
+          shipDefault: "pr",
+        }),
+      );
+
+      expect(actions.primary).toMatchObject({ id, label });
+    },
+  );
 
   it("does not offer auto-merge when the daemon feature gate is missing", () => {
     const actions = buildGitActions(
@@ -851,7 +889,7 @@ describe("git-actions-policy", () => {
 
     expect(actions.primary).toMatchObject({
       id: "merge-pr-merge",
-      label: "Merge",
+      label: "Merge PR (merge)",
     });
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",

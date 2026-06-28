@@ -1,9 +1,8 @@
 import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { projectsQueryKey } from "@/hooks/use-projects";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
-import { generateDraftId } from "@/stores/draft-keys";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { openProjectDirectly, type OpenProjectResult } from "@/hooks/open-project";
 
 export function useOpenProject(
@@ -12,26 +11,43 @@ export function useOpenProject(
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const queryClient = useQueryClient();
+  const canAddProject = useSessionStore((state) =>
+    normalizedServerId
+      ? state.sessions[normalizedServerId]?.serverInfo?.features?.projectAdd === true
+      : false,
+  );
+  const addEmptyProject = useSessionStore((state) => state.addEmptyProject);
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
     async (path: string) => {
-      return openProjectDirectly({
+      const result = await openProjectDirectly({
         serverId: normalizedServerId,
         projectPath: path,
         isConnected,
+        canAddProject,
         client,
-        mergeWorkspaces,
+        addEmptyProject,
         setHasHydratedWorkspaces,
-        openDraftTab: (workspaceKey: string) =>
-          useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, {
-            kind: "draft",
-            draftId: generateDraftId(),
-          }),
-        navigateToWorkspace,
       });
+      // The aggregated projects query derives the project list from a fetch
+      // that now includes empty projects; refetch so a freshly-added project
+      // (no workspace yet) is immediately editable instead of only after a
+      // restart.
+      if (result.ok) {
+        void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+      }
+      return result;
     },
-    [client, isConnected, mergeWorkspaces, normalizedServerId, setHasHydratedWorkspaces],
+    [
+      addEmptyProject,
+      canAddProject,
+      client,
+      isConnected,
+      normalizedServerId,
+      queryClient,
+      setHasHydratedWorkspaces,
+    ],
   );
 }

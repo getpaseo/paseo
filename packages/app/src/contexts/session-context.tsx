@@ -71,6 +71,7 @@ import {
 import { isNative } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
+import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import {
   applyLegacyDaemonWorkspaceOwnership,
@@ -152,7 +153,7 @@ async function fetchWorkspaceHydrationSnapshot(input: {
       workspaces.set(workspace.id, workspace);
     }
 
-    // Empty project parents only ride on the first page.
+    // Project parents with no active workspaces only ride on the first page.
     for (const project of payload.emptyProjects ?? []) {
       const descriptor = normalizeEmptyProjectDescriptor(project);
       emptyProjects.set(descriptor.projectId, descriptor);
@@ -531,6 +532,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
   const setEmptyProjects = useSessionStore((state) => state.setEmptyProjects);
   const addEmptyProject = useSessionStore((state) => state.addEmptyProject);
+  const removeEmptyProject = useSessionStore((state) => state.removeEmptyProject);
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const removeWorkspace = useSessionStore((state) => state.removeWorkspace);
   const setAgentLastActivity = useSessionStore((state) => state.setAgentLastActivity);
@@ -1348,6 +1350,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         if (message.payload.emptyProject) {
           addEmptyProject(serverId, normalizeEmptyProjectDescriptor(message.payload.emptyProject));
         }
+        if (message.payload.removedProjectId) {
+          removeEmptyProject(serverId, message.payload.removedProjectId);
+        }
         return;
       }
       const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
@@ -1771,6 +1776,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     removeWorkspace,
     removeWorkspaceSetup,
     addEmptyProject,
+    removeEmptyProject,
     setAgentLastActivity,
     setPendingPermissions,
     setHasHydratedAgents,
@@ -1946,10 +1952,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         console.warn("[Session] setAgentMode skipped: daemon unavailable");
         return;
       }
-      void client.setAgentMode(agentId, modeId).catch((error) => {
-        console.error("[Session] Failed to set agent mode:", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentMode(agentId, modeId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.error("[Session] Failed to set agent mode:", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [client, toast],
   );
@@ -1974,10 +1983,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         console.warn("[Session] setAgentThinkingOption skipped: daemon unavailable");
         return;
       }
-      void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
-        console.error("[Session] Failed to set agent thinking option:", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .then((notice) => showProviderNoticeToast(toast, notice))
+        .catch((error) => {
+          console.error("[Session] Failed to set agent thinking option:", error);
+          toast.error(toErrorMessage(error));
+        });
     },
     [client, toast],
   );

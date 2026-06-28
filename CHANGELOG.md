@@ -1,5 +1,121 @@
 # Changelog
 
+## 0.1.102-beta.1 - 2026-06-27
+
+### Added
+
+- Use Paseo from a browser served directly by your daemon ([#1635](https://github.com/getpaseo/paseo/pull/1635))
+- Run Paseo from an official Docker image ([#1740](https://github.com/getpaseo/paseo/pull/1740) by [@Herbrant](https://github.com/Herbrant))
+- Update a remote host from the app when a newer daemon is available ([#1513](https://github.com/getpaseo/paseo/pull/1513) by [@thedavidweng](https://github.com/thedavidweng))
+- Dropped files can be attached from every composer ([#1750](https://github.com/getpaseo/paseo/pull/1750))
+- MiniMax usage is available in provider quota views ([#1662](https://github.com/getpaseo/paseo/pull/1662) by [@ilteoood](https://github.com/ilteoood))
+- C# code blocks now have syntax highlighting ([#1651](https://github.com/getpaseo/paseo/pull/1651) by [@dev693](https://github.com/dev693))
+
+### Improved
+
+- The sidebar can show workspaces across all connected hosts ([#1538](https://github.com/getpaseo/paseo/pull/1538))
+- Creating a new workspace is available from an app-wide screen ([#1746](https://github.com/getpaseo/paseo/pull/1746))
+- Project search shows loading progress while results are fetched ([#1762](https://github.com/getpaseo/paseo/pull/1762))
+- Pi waits longer for extension results before timing out ([#1732](https://github.com/getpaseo/paseo/pull/1732) by [@theslava](https://github.com/theslava))
+- Open file tabs refresh when you revisit them ([#1699](https://github.com/getpaseo/paseo/pull/1699) by [@cleiter](https://github.com/cleiter))
+- Web terminals stay smoother while scrolling ([#1622](https://github.com/getpaseo/paseo/pull/1622) by [@TommyLike](https://github.com/TommyLike))
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Freshly added projects can be edited without restarting ([#1761](https://github.com/getpaseo/paseo/pull/1761) by [@huiliaoning](https://github.com/huiliaoning))
+- Opening projects and directory suggestions work better in large repos ([#1620](https://github.com/getpaseo/paseo/pull/1620) by [@jms830](https://github.com/jms830))
+- Desktop file uploads keep their file extensions ([#1741](https://github.com/getpaseo/paseo/pull/1741))
+- Closing Claude Code sessions no longer leaves child processes running ([#1540](https://github.com/getpaseo/paseo/pull/1540) by [@TommyLike](https://github.com/TommyLike))
+- OpenCode no longer indexes your home directory by mistake ([#1704](https://github.com/getpaseo/paseo/pull/1704) by [@rex-chang](https://github.com/rex-chang))
+- ACP sessions load with the correct project folder and MCP server settings ([#1624](https://github.com/getpaseo/paseo/pull/1624) by [@theslava](https://github.com/theslava))
+- Docker images serve the bundled web UI from global installs
+- Docker web UI connections work when opened through either `localhost` or `127.0.0.1`
+- Docker images can extract downloaded local speech models
+
+## 0.1.101 - 2026-06-26
+
+### Added
+
+- Copy a troubleshooting report from Settings when support needs host, daemon, provider, and log details ([#1728](https://github.com/getpaseo/paseo/pull/1728))
+- Claude image tool results now render as images in chat ([#1717](https://github.com/getpaseo/paseo/pull/1717))
+- Added Japanese ([#1694](https://github.com/getpaseo/paseo/pull/1694) by [@sysCat64](https://github.com/sysCat64))
+- Added Brazilian Portuguese ([#1653](https://github.com/getpaseo/paseo/pull/1653) by [@Alcimerio](https://github.com/Alcimerio))
+
+### Improved
+
+- Provider diagnostics stay useful even when model discovery is slow ([#1724](https://github.com/getpaseo/paseo/pull/1724))
+- Slow provider requests no longer make the app look disconnected ([#1723](https://github.com/getpaseo/paseo/pull/1723))
+- Worktrees linked to differently named tracked branches find their PRs correctly ([#1718](https://github.com/getpaseo/paseo/pull/1718))
+- Workspaces started from slash-command prompts get clearer names ([#1709](https://github.com/getpaseo/paseo/pull/1709))
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Pi no longer creates empty sessions while loading new-agent options ([#1727](https://github.com/getpaseo/paseo/pull/1727))
+- Windows daemon status finds the daemon process more reliably ([#1725](https://github.com/getpaseo/paseo/pull/1725))
+- OpenAI voice credentials no longer affect other OpenAI-backed tools
+- Provider model lists no longer disappear during refresh
+
+## 0.1.100 - 2026-06-24
+
+### Added
+
+- Cycle agent modes with Shift+Tab
+- Select a custom Copilot agent when starting or mid-session ([#1700](https://github.com/getpaseo/paseo/pull/1700))
+
+### Improved
+
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Claude no longer sends an extra API request after each message ([#1701](https://github.com/getpaseo/paseo/pull/1701))
+- OpenCode no longer leaves stray background servers running after sessions end ([#1697](https://github.com/getpaseo/paseo/pull/1697))
+- Slash commands and skills now load in OMP agents ([#1698](https://github.com/getpaseo/paseo/pull/1698))
+
+## 0.1.99 - 2026-06-23
+
+### Improved
+
+- The PR panel now has a refresh button and clearer loading states ([#1664](https://github.com/getpaseo/paseo/pull/1664))
+- Provider diagnostics and model lists now stay in sync ([#1660](https://github.com/getpaseo/paseo/pull/1660))
+
+### Fixed
+
+- ACP providers like Grok no longer show duplicate user messages
+- Saved composer modes no longer reset while provider data is loading ([#1658](https://github.com/getpaseo/paseo/pull/1658))
+- The right sidebar no longer gets stuck on mobile ([#1661](https://github.com/getpaseo/paseo/pull/1661))
+
+## 0.1.98 - 2026-06-21
+
+### Added
+
+- See plan usage in-app for Claude, Codex, Copilot, Cursor, Z.AI, Grok, and Kimi ([#1278](https://github.com/getpaseo/paseo/pull/1278) by [@ABorakati](https://github.com/ABorakati))
+- Added Ultracode for Claude ([#1625](https://github.com/getpaseo/paseo/pull/1625))
+- Detach a subagent to run it on its own ([#1612](https://github.com/getpaseo/paseo/pull/1612))
+- Add a project without creating a workspace
+- Add a setting to show branch names instead of titles in the sidebar
+
+### Improved
+
+- Mid-turn thinking and mode changes now say they apply next turn
+- PR merge options name their method: squash, merge, or rebase ([#1608](https://github.com/getpaseo/paseo/pull/1608) by [@mcowger](https://github.com/mcowger))
+- A running agent's mode change is remembered for new agents
+- Copy a provider's launch diagnostic in one tap ([#1611](https://github.com/getpaseo/paseo/pull/1611))
+
+### Fixed
+
+- OpenCode no longer scans your whole disk on macOS desktop ([#1626](https://github.com/getpaseo/paseo/pull/1626))
+- Daemon no longer crashes when OpenAI speech has no API key ([#1368](https://github.com/getpaseo/paseo/pull/1368) by [@mcowger](https://github.com/mcowger))
+- Reopening an archived Codex agent no longer hangs
+- Claude's context meter no longer jumps to subagent usage
+- Claude's context meter fills from the first message in a new session
+- OpenCode's mode picker now respects your disabled modes ([#1366](https://github.com/getpaseo/paseo/pull/1366) by [@mcowger](https://github.com/mcowger))
+- File links and @-mentions find files in dot-folders and deep paths ([#1609](https://github.com/getpaseo/paseo/pull/1609))
+- Archiving a project's last workspace no longer makes it vanish ([#1631](https://github.com/getpaseo/paseo/pull/1631))
+- Collapsed sidebar projects stay collapsed
+
 ## 0.1.97 - 2026-06-18
 
 ### Added
@@ -33,6 +149,9 @@
 - Imported session previews show clean prompts ([#1502](https://github.com/getpaseo/paseo/pull/1502))
 - Local pairing offers use the correct app URL ([#1187](https://github.com/getpaseo/paseo/pull/1187) by [@aibaiiqpl](https://github.com/aibaiiqpl))
 - The app no longer freezes from repeated provider re-probes
+- Removing a project from the sidebar now removes the project itself instead of leaving it behind
+- Workspace shortcut numbers no longer appear for the wrong key ([#1580](https://github.com/getpaseo/paseo/pull/1580) by [@cleiter](https://github.com/cleiter))
+- Chats no longer hang when a message contains unmatched backticks ([#1585](https://github.com/getpaseo/paseo/pull/1585) by [@thaning0](https://github.com/thaning0))
 
 ## 0.1.96 - 2026-06-13
 

@@ -166,7 +166,7 @@ export const fr: TranslationResources = {
     hints: {
       thinking: "Mode réflexion",
       model: "Changer de modèle",
-      mode: "Changer le mode d'autorisation",
+      mode: "Changer de mode",
     },
   },
   agentStream: {
@@ -610,16 +610,16 @@ export const fr: TranslationResources = {
           success: "Archivé",
         },
         mergePr: {
-          squash: "Fusionner",
-          merge: "Fusionner",
-          rebase: "Fusionner",
-          pending: "Fusion dePR...",
-          success: "PRfusionné",
+          squash: "Fusionner PR (squash)",
+          merge: "Fusionner PR (merge)",
+          rebase: "Fusionner PR (rebase)",
+          pending: "Fusion de PR...",
+          success: "PR fusionné",
         },
         autoMerge: {
-          enableSquash: "Fusion automatique",
-          enableMerge: "Fusion automatique",
-          enableRebase: "Fusion automatique",
+          enableSquash: "Fusion automatique (squash)",
+          enableMerge: "Fusion automatique (merge)",
+          enableRebase: "Fusion automatique (rebase)",
           enabled: "Fusion automatique activée",
           enabling: "Activation de la fusion automatique...",
           disabling: "Désactivation de la fusion automatique...",
@@ -743,6 +743,9 @@ export const fr: TranslationResources = {
         failedOpen: "Échec de l'ouverture de l'espace de travail",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Voir",
+        },
         sections: {
           checks: "Chèques",
           reviews: "Avis",
@@ -813,6 +816,7 @@ export const fr: TranslationResources = {
       toasts: {
         hostDisconnected: "Hostn'est pas connecté",
         removeFailed: "Échec de la suppression de certains espaces de travail",
+        updateHostToRemove: "Mettez à jour le host pour supprimer des projets.",
       },
       empty: {
         title: "Aucun projet pour l'instant",
@@ -1085,6 +1089,7 @@ export const fr: TranslationResources = {
   projectPicker: {
     placeholder: "Tapez un chemin de répertoire...",
     opening: "Projet d'ouverture...",
+    searching: "Recherche en cours...",
     empty: "Commencez à taper un chemin",
     errors: {
       directory_not_found: "Répertoire introuvable.",
@@ -1345,6 +1350,8 @@ export const fr: TranslationResources = {
     backdrop: "Toile de fond du menu",
   },
   subagents: {
+    detachAction: "Detacher {{label}}",
+    detachTooltip: "Detacher le sous-agent",
     archiveAction: "Archiver{{label}}",
     archiveTooltip: "Sous-agent d'archivage",
   },
@@ -1430,6 +1437,7 @@ export const fr: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Fournisseurs",
+      usage: "Utilisation",
       terminals: "Terminals",
       host: "Host",
     },
@@ -1471,6 +1479,8 @@ export const fr: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1482,6 +1492,22 @@ export const fr: TranslationResources = {
       playTest: "Jouer à l'essai",
       playing: "Jouant...",
       playbackFailed: "Échec de la lecture:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "À propos",
@@ -1602,6 +1628,7 @@ export const fr: TranslationResources = {
         toggleFocusMode: "Basculer le mode de mise au point",
         cycleTheme: "Thème du cycle",
         focusMessageInput: "Saisie du message de focus",
+        cycleAgentMode: "Parcourir les modes de l'agent",
         toggleVoiceMode: "Changer le mode vocal",
         startStopDictation: "Démarrer la dictée/stop",
         interruptAgent: "Agent d'interruption",
@@ -1765,6 +1792,30 @@ export const fr: TranslationResources = {
           dialogFailedMessage:
             "Impossible d'ouvrir la boîte de dialogue de confirmation de redémarrage.",
         },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
+        },
         dangerZone: "Zone dangereuse",
         remove: {
           title: "Supprimer l'hôte",
@@ -1823,6 +1874,9 @@ export const fr: TranslationResources = {
         button: "Diagnostique",
         refresh: "Rafraîchir",
         refreshing: "Rafraîchissant...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copier le diagnostic",
+        copyFailed: "Échec de la copie du diagnostic",
         refreshAccessibility: "Actualiser le diagnostic",
         refreshingAccessibility: "Diagnostic rafraîchissant",
         running: "Exécution du diagnostic...",

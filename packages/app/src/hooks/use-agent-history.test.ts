@@ -1,10 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type {
   DaemonClient,
   FetchAgentHistoryEntry,
   FetchAgentHistoryOptions,
 } from "@getpaseo/client/internal/daemon-client";
-import { type AgentHistoryClient, fetchAgentHistoryPage } from "./use-agent-history";
+import type { AgentHistoryClient, AgentHistoryHost } from "./use-agent-history";
+import { allAgentHistoryQueryKey } from "./agent-history-query-key";
+
+(
+  globalThis as unknown as {
+    __DEV__: boolean;
+  }
+).__DEV__ = false;
+
+type UseAgentHistoryModule = typeof import("./use-agent-history");
+
+let fetchAgentHistoryBatch: UseAgentHistoryModule["fetchAgentHistoryBatch"];
+let fetchAgentHistoryPage: UseAgentHistoryModule["fetchAgentHistoryPage"];
+
+beforeAll(async () => {
+  const module = await import("./use-agent-history");
+  fetchAgentHistoryBatch = module.fetchAgentHistoryBatch;
+  fetchAgentHistoryPage = module.fetchAgentHistoryPage;
+});
 
 type FetchAgentHistory = DaemonClient["fetchAgentHistory"];
 type FetchAgentHistoryResult = Awaited<ReturnType<FetchAgentHistory>>;
@@ -26,6 +44,17 @@ function createClient(pages: FetchAgentHistoryResult[]): FakeAgentHistoryClient 
         throw new Error("No more history pages configured");
       }
       return page;
+    },
+  };
+}
+
+function createFailingClient(): FakeAgentHistoryClient {
+  const calls: FetchAgentHistoryOptions[] = [];
+  return {
+    calls,
+    fetchAgentHistory: async (options) => {
+      calls.push(options ?? {});
+      throw new Error("Host history failed");
     },
   };
 }
@@ -105,6 +134,12 @@ function historyEntry(input: {
 }
 
 describe("fetchAgentHistoryPage", () => {
+  it("builds the all-host query key independent of host order", () => {
+    expect(allAgentHistoryQueryKey(["server-b", "server-a"])).toEqual(
+      allAgentHistoryQueryKey(["server-a", "server-b"]),
+    );
+  });
+
   it("requests the first page with the default limit and updated_at descending sort", async () => {
     const client = createClient([
       historyPayload({
@@ -205,5 +240,135 @@ describe("fetchAgentHistoryPage", () => {
     const page = await fetchAgentHistoryPage({ client, serverId: "server-1", cursor: null });
 
     expect(page.agents[0]?.archivedAt).toEqual(new Date("2026-04-01T10:05:00.000Z"));
+  });
+
+  it("fetches and sorts history across hosts with host labels", async () => {
+    const serverAClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "older-a",
+            cwd: "/repo/a",
+            updatedAt: "2026-04-01T10:00:00.000Z",
+            title: "Older A",
+          }),
+        ],
+      }),
+    ]);
+    const serverBClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "newer-b",
+            cwd: "/repo/b",
+            updatedAt: "2026-04-02T10:00:00.000Z",
+            title: "Newer B",
+          }),
+        ],
+      }),
+    ]);
+
+    const page = await fetchAgentHistoryBatch({
+      hosts: [
+        { serverId: "server-a", serverLabel: "MacBook", client: serverAClient },
+        { serverId: "server-b", serverLabel: "Linux box", client: serverBClient },
+      ] satisfies AgentHistoryHost[],
+      cursorByServerId: null,
+    });
+
+    expect(page.agents.map((agent) => `${agent.serverLabel}:${agent.id}`)).toEqual([
+      "Linux box:newer-b",
+      "MacBook:older-a",
+    ]);
+  });
+
+  it("fetches only hosts with a cursor when loading the next all-host page", async () => {
+    const serverAClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "next-a",
+            cwd: "/repo/a",
+            updatedAt: "2026-04-01T10:00:00.000Z",
+          }),
+        ],
+      }),
+    ]);
+    const serverBClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "next-b",
+            cwd: "/repo/b",
+            updatedAt: "2026-04-02T10:00:00.000Z",
+          }),
+        ],
+      }),
+    ]);
+
+    const page = await fetchAgentHistoryBatch({
+      hosts: [
+        { serverId: "server-a", serverLabel: "MacBook", client: serverAClient },
+        { serverId: "server-b", serverLabel: "Linux box", client: serverBClient },
+      ] satisfies AgentHistoryHost[],
+      cursorByServerId: { "server-b": "cursor-b" },
+    });
+
+    expect(page.agents.map((agent) => agent.id)).toEqual(["next-b"]);
+    expect(serverAClient.calls).toEqual([]);
+    expect(serverBClient.calls).toEqual([
+      {
+        sort: [{ key: "updated_at", direction: "desc" }],
+        page: { limit: 200, cursor: "cursor-b" },
+      } satisfies FetchAgentHistoryOptions,
+    ]);
+  });
+
+  it("keeps fulfilled host history when another host fails", async () => {
+    const failedClient = createFailingClient();
+    const healthyClient = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "healthy-history",
+            cwd: "/repo/healthy",
+            updatedAt: "2026-04-02T10:00:00.000Z",
+          }),
+        ],
+        hasMore: true,
+        nextCursor: "healthy-cursor",
+      }),
+    ]);
+
+    const page = await fetchAgentHistoryBatch({
+      hosts: [
+        { serverId: "failed-host", serverLabel: "Failed", client: failedClient },
+        { serverId: "healthy-host", serverLabel: "Healthy", client: healthyClient },
+      ] satisfies AgentHistoryHost[],
+      cursorByServerId: null,
+    });
+
+    expect(page.agents.map((agent) => `${agent.serverLabel}:${agent.id}`)).toEqual([
+      "Healthy:healthy-history",
+    ]);
+    expect(page.pageInfoByServerId).toEqual({
+      "healthy-host": {
+        nextCursor: "healthy-cursor",
+        prevCursor: null,
+        hasMore: true,
+      },
+    });
+  });
+
+  it("throws when every requested host history fetch fails", async () => {
+    await expect(
+      fetchAgentHistoryBatch({
+        hosts: [
+          { serverId: "failed-a", serverLabel: "Failed A", client: createFailingClient() },
+          { serverId: "failed-b", serverLabel: "Failed B", client: createFailingClient() },
+        ] satisfies AgentHistoryHost[],
+        cursorByServerId: null,
+      }),
+    ).rejects.toThrow("No connected hosts could load agent history");
   });
 });

@@ -3,7 +3,7 @@ import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -60,7 +60,9 @@ import {
 import {
   WebSocketRuntimeMetricsWindow,
   type WebSocketRuntimeCounters,
+  type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
+import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -80,6 +82,11 @@ interface WebSocketServerConfig {
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
+type WebSocketRuntimeDiagnosticPayload = WebSocketRuntimeDiagnosticSnapshot<
+  WebSocketRuntimeMetrics,
+  AgentMetricsSnapshot
+>;
+type WebSocketRuntimeMetricsLogPayload = Omit<WebSocketRuntimeDiagnosticPayload, "collectedAt">;
 
 type TerminalAttentionReason = "finished" | "needs_input";
 
@@ -349,7 +356,6 @@ export class VoiceAssistantWebSocketServer {
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly externalSessionsByKey: Map<string, SessionConnection> = new Map();
-  private readonly socketMessageQueues: Map<WebSocketLike, Promise<void>> = new Map();
   private readonly serverId: string;
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig:
@@ -403,10 +409,12 @@ export class VoiceAssistantWebSocketServer {
     | null;
   private serverCapabilities: ServerCapabilities | undefined;
   private readonly runtimeMetrics = new WebSocketRuntimeMetricsWindow();
+  private lastRuntimeMetricsSnapshot: WebSocketRuntimeDiagnosticPayload | null = null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
+  private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
 
   constructor(
@@ -533,6 +541,10 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
+    this.providerUsageService = new ProviderUsageService({
+      logger: this.logger,
+    });
+
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();
 
@@ -657,10 +669,7 @@ export class VoiceAssistantWebSocketServer {
       callback(false, 403, "Host not allowed");
       return;
     }
-    const sameOrigin =
-      !!origin &&
-      !!requestHost &&
-      (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
+    const sameOrigin = isWebSocketSameOrigin(origin, requestHost);
 
     if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
       callback(true);
@@ -977,6 +986,7 @@ export class VoiceAssistantWebSocketServer {
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
+      providerUsageService: this.providerUsageService,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
@@ -1014,6 +1024,7 @@ export class VoiceAssistantWebSocketServer {
       serverId: this.serverId,
       daemonVersion: this.daemonVersion,
       daemonRuntimeConfig: this.daemonRuntimeConfig,
+      getWebSocketRuntimeMetrics: () => this.lastRuntimeMetricsSnapshot,
     });
 
     connection = {
@@ -1157,8 +1168,20 @@ export class VoiceAssistantWebSocketServer {
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: true,
-        // COMPAT(worktreeRestore): added in v0.1.98, drop the gate when floor >= v0.1.98
+        // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
+        projectRemove: true,
+        // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
+        projectAdd: true,
+        // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: true,
+        // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
+        providerUsageList: true,
+        // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
+        agentDetach: true,
+        // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
+        daemonDiagnostics: true,
+        // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
+        daemonSelfUpdate: true,
       },
     };
   }
@@ -1194,7 +1217,7 @@ export class VoiceAssistantWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      this.enqueueRawMessage(ws, data);
+      this.handleRawMessage(ws, data);
     });
 
     ws.on("close", async (...args: unknown[]) => {
@@ -1215,25 +1238,6 @@ export class VoiceAssistantWebSocketServer {
       log.error({ err }, "Client error");
       await this.detachSocket(ws, { error: err });
     });
-  }
-
-  private enqueueRawMessage(
-    ws: WebSocketLike,
-    data: Buffer | ArrayBuffer | Buffer[] | string,
-  ): void {
-    const previous = this.socketMessageQueues.get(ws) ?? Promise.resolve();
-    const next = previous.then(
-      () => this.handleRawMessage(ws, data),
-      () => this.handleRawMessage(ws, data),
-    );
-    this.socketMessageQueues.set(ws, next);
-    void next
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.socketMessageQueues.get(ws) === next) {
-          this.socketMessageQueues.delete(ws);
-        }
-      });
   }
 
   public resolveVoiceSpeakHandler(callerAgentId: string): VoiceSpeakHandler | null {
@@ -1415,12 +1419,12 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
-  private async maybeHandleBinaryFrame(params: {
+  private maybeHandleBinaryFrame(params: {
     ws: WebSocketLike;
     buffer: Buffer;
     activeConnection: SessionConnection | undefined;
     log: pino.Logger;
-  }): Promise<boolean> {
+  }): boolean {
     const { ws, buffer, activeConnection, log } = params;
     const asBytes = asUint8Array(buffer);
     if (!asBytes) {
@@ -1441,7 +1445,16 @@ export class VoiceAssistantWebSocketServer {
       }
       return true;
     }
-    await activeConnection.session.handleBinaryFrame(decodedFrame);
+    void Promise.resolve(activeConnection.session.handleBinaryFrame(decodedFrame)).catch(
+      (error: unknown) => {
+        this.handleRawMessageError({
+          ws,
+          data: buffer,
+          error,
+          log: activeConnection.connectionLogger,
+        });
+      },
+    );
     return true;
   }
 
@@ -1475,10 +1488,10 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private async handleRawMessage(
+  private handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
-  ): Promise<void> {
+  ): void {
     const activeConnection = this.sessions.get(ws);
     const pendingConnection = this.pendingConnections.get(ws);
     const log =
@@ -1486,7 +1499,7 @@ export class VoiceAssistantWebSocketServer {
 
     try {
       const buffer = bufferFromWsData(data);
-      const binaryHandled = await this.maybeHandleBinaryFrame({
+      const binaryHandled = this.maybeHandleBinaryFrame({
         ws,
         buffer,
         activeConnection,
@@ -1549,7 +1562,9 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
-        await this.dispatchSessionMessage(activeConnection, message);
+        void this.dispatchSessionMessage(activeConnection, message).catch((error: unknown) => {
+          this.handleRawMessageError({ ws, data, error, log: activeConnection.connectionLogger });
+        });
       }
     } catch (error) {
       this.handleRawMessageError({ ws, data, error, log });
@@ -1713,36 +1728,38 @@ export class VoiceAssistantWebSocketServer {
     ).length;
     const sessionMetrics = this.collectSessionRuntimeMetrics();
     const agentSnapshot = this.agentManager.getMetricsSnapshot();
-
-    this.logger.info(
-      {
-        windowMs: runtimeMetrics.windowMs,
-        final: Boolean(options?.final),
-        sessions: {
-          activeConnections,
-          externalSessionKeys: this.externalSessionsByKey.size,
-          reconnectGraceSessions,
-        },
-        sockets: {
-          activeSockets,
-          pendingConnections,
-        },
-        counters: runtimeMetrics.counters,
-        inboundMessageTypesTop: runtimeMetrics.inboundMessageTypesTop,
-        inboundSessionRequestTypesTop: runtimeMetrics.inboundSessionRequestTypesTop,
-        outboundMessageTypesTop: runtimeMetrics.outboundMessageTypesTop,
-        outboundSessionMessageTypesTop: runtimeMetrics.outboundSessionMessageTypesTop,
-        outboundAgentStreamTypesTop: runtimeMetrics.outboundAgentStreamTypesTop,
-        outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
-        outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
-        bufferedAmount: runtimeMetrics.bufferedAmount,
-        eventLoopDelay: this.snapshotEventLoopDelay(),
-        runtime: sessionMetrics,
-        latency: runtimeMetrics.latency,
-        agents: agentSnapshot,
+    const loggedMetrics = {
+      windowMs: runtimeMetrics.windowMs,
+      final: Boolean(options?.final),
+      sessions: {
+        activeConnections,
+        externalSessionKeys: this.externalSessionsByKey.size,
+        reconnectGraceSessions,
       },
-      "ws_runtime_metrics",
-    );
+      sockets: {
+        activeSockets,
+        pendingConnections,
+      },
+      counters: runtimeMetrics.counters,
+      inboundMessageTypesTop: runtimeMetrics.inboundMessageTypesTop,
+      inboundSessionRequestTypesTop: runtimeMetrics.inboundSessionRequestTypesTop,
+      outboundMessageTypesTop: runtimeMetrics.outboundMessageTypesTop,
+      outboundSessionMessageTypesTop: runtimeMetrics.outboundSessionMessageTypesTop,
+      outboundAgentStreamTypesTop: runtimeMetrics.outboundAgentStreamTypesTop,
+      outboundAgentStreamAgentsTop: runtimeMetrics.outboundAgentStreamAgentsTop,
+      outboundBinaryFrameTypesTop: runtimeMetrics.outboundBinaryFrameTypesTop,
+      bufferedAmount: runtimeMetrics.bufferedAmount,
+      eventLoopDelay: this.snapshotEventLoopDelay(),
+      runtime: sessionMetrics,
+      latency: runtimeMetrics.latency,
+      agents: agentSnapshot,
+    } satisfies WebSocketRuntimeMetricsLogPayload;
+
+    this.lastRuntimeMetricsSnapshot = {
+      collectedAt: new Date().toISOString(),
+      ...loggedMetrics,
+    };
+    this.logger.info(loggedMetrics, "ws_runtime_metrics");
   }
 
   private getClientActivityState(session: Session): ClientPresenceState {
@@ -1939,6 +1956,106 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
     ...(userAgent ? { userAgent } : {}),
     ...(remoteAddress ? { remoteAddress } : {}),
   };
+}
+
+interface HostAuthority {
+  hostname: string;
+  port: string | null;
+}
+
+function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
+function parseHostAuthority(host: string): HostAuthority | null {
+  const trimmed = host.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    if (end === -1) {
+      return null;
+    }
+    const hostname = stripIpv6Brackets(trimmed.slice(0, end + 1)).toLowerCase();
+    const rest = trimmed.slice(end + 1);
+    if (!rest) {
+      return { hostname, port: null };
+    }
+    if (!rest.startsWith(":")) {
+      return null;
+    }
+    const port = rest.slice(1);
+    return port ? { hostname, port } : null;
+  }
+
+  const firstColon = trimmed.indexOf(":");
+  if (firstColon === -1) {
+    return { hostname: trimmed.toLowerCase(), port: null };
+  }
+  if (trimmed.indexOf(":", firstColon + 1) !== -1) {
+    return { hostname: trimmed.toLowerCase(), port: null };
+  }
+  const hostname = trimmed.slice(0, firstColon).toLowerCase();
+  const port = trimmed.slice(firstColon + 1);
+  return hostname && port ? { hostname, port } : null;
+}
+
+function defaultPortForOriginProtocol(protocol: string): string | null {
+  if (protocol === "http:") {
+    return "80";
+  }
+  if (protocol === "https:") {
+    return "443";
+  }
+  return null;
+}
+
+function isLoopbackAlias(hostname: string): boolean {
+  const normalized = stripIpv6Brackets(hostname).toLowerCase();
+  if (normalized === "localhost" || normalized.endsWith(".localhost")) {
+    return true;
+  }
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  return /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+export function isWebSocketSameOrigin(
+  origin: string | undefined,
+  requestHost: string | null,
+): boolean {
+  if (!origin || !requestHost) {
+    return false;
+  }
+
+  if (origin === `http://${requestHost}` || origin === `https://${requestHost}`) {
+    return true;
+  }
+
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return false;
+  }
+  const originPort = originUrl.port || defaultPortForOriginProtocol(originUrl.protocol);
+  if (!originPort) {
+    return false;
+  }
+
+  const requestAuthority = parseHostAuthority(requestHost);
+  if (!requestAuthority) {
+    return false;
+  }
+  const requestPort = requestAuthority.port || defaultPortForOriginProtocol(originUrl.protocol);
+  if (originPort !== requestPort) {
+    return false;
+  }
+
+  return isLoopbackAlias(originUrl.hostname) && isLoopbackAlias(requestAuthority.hostname);
 }
 
 function selectWebSocketProtocol(

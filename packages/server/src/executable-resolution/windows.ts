@@ -70,6 +70,9 @@ async function findFirstProbeable(
       continue;
     }
     seen.add(candidate);
+    if (!options.exists(candidate)) {
+      continue;
+    }
     if (await options.probeExecutable(candidate, options.probeTimeoutMs)) {
       return candidate;
     }

@@ -8,7 +8,7 @@ category: Configuration
 
 # Voice
 
-Paseo has first-class voice support for dictation and realtime conversations with your coding environment.
+Paseo has first-class voice support for dictation and voice mode conversations with your coding environment.
 
 ## Philosophy
 
@@ -72,11 +72,11 @@ For multilingual local dictation, set the model to v3 — it auto-detects the la
 }
 ```
 
-The `language` field applies only to the OpenAI STT provider: set `features.dictation.stt.language` for dictation and `features.voiceMode.stt.language` for realtime voice. If voice language is omitted, Paseo uses the dictation language before falling back to `en`. It has no effect on the local Parakeet models.
+The `language` field applies only to the OpenAI STT provider: set `features.dictation.stt.language` for dictation and `features.voiceMode.stt.language` for voice mode. If voice language is omitted, Paseo uses the dictation language before falling back to `en`. It has no effect on the local Parakeet models.
 
-## OpenAI Speech Option
+## OpenAI Voice Option
 
-You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider fields to `openai` and providing `OPENAI_API_KEY`.
+You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider fields to `openai` and providing OpenAI credentials.
 
 ```json
 {
@@ -89,22 +89,35 @@ You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider
     }
   },
   "providers": {
-    "openai": { "apiKey": "..." }
+    "openai": {
+      "voice": {
+        "apiKey": "...",
+        "baseUrl": "https://api.openai.com/v1"
+      }
+    }
   }
 }
 ```
 
+`providers.openai.voice.apiKey` and `providers.openai.voice.baseUrl` configure only Paseo OpenAI voice traffic, without changing Codex or other OpenAI-backed tools.
+
+Paseo uses these paths under the configured OpenAI base URL:
+
+- dictation STT: `/v1/audio/transcriptions`
+- voice mode STT: `/v1/audio/transcriptions`
+- voice mode TTS: `/v1/audio/speech`
+
 ## Environment Variables
 
-- `OPENAI_API_KEY`, OpenAI speech credentials
 - `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override
+- `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, speech provider selection (`local` or `openai`)
 - `PASEO_LOCAL_MODELS_DIR`, local model storage directory
 - `PASEO_DICTATION_LOCAL_STT_MODEL`, local dictation STT model ID
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, local voice STT/TTS model IDs
 - `PASEO_DICTATION_LANGUAGE`, dictation STT language (OpenAI STT only; ignored by local Parakeet)
-- `PASEO_VOICE_LANGUAGE`, realtime voice STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset (OpenAI STT only; ignored by local Parakeet)
+- `PASEO_VOICE_LANGUAGE`, voice mode STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset (OpenAI STT only; ignored by local Parakeet)
 - `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED`, optional local voice TTS tuning
 
 ## Operational Notes
 
-Realtime voice can launch and control agents. Treat voice prompts with the same care as direct agent instructions, especially when specifying working directories or destructive operations.
+Voice mode can launch and control agents. Treat voice prompts with the same care as direct agent instructions, especially when specifying working directories or destructive operations.

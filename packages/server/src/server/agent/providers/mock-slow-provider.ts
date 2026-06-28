@@ -2,14 +2,12 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentLaunchContext,
-  AgentMode,
-  AgentModelDefinition,
   AgentPersistenceHandle,
   AgentProvider,
   AgentSession,
   AgentSessionConfig,
-  ListModelsOptions,
-  ListModesOptions,
+  FetchCatalogOptions,
+  ProviderCatalog,
 } from "../agent-sdk-types.js";
 
 export const MOCK_SLOW_PROVIDER_ID = "mock-slow";
@@ -35,21 +33,17 @@ export class MockSlowProviderClient implements AgentClient {
   readonly capabilities = CAPABILITIES;
 
   async isAvailable(): Promise<boolean> {
-    return true;
+    return process.env.PASEO_ENABLE_MOCK_SLOW === "true";
   }
 
-  listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    return neverResolves<AgentModelDefinition[]>();
-  }
-
-  listModes(_options: ListModesOptions): Promise<AgentMode[]> {
-    return neverResolves<AgentMode[]>();
+  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    return neverResolves<ProviderCatalog>();
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     return {
       diagnostic:
-        "Mock slow provider: dev-only. listModels() never resolves so the snapshot manager will time out.",
+        "Mock slow provider: dev-only. fetchCatalog() never resolves so the snapshot manager will time out.",
     };
   }
 

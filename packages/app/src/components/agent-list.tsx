@@ -33,6 +33,7 @@ interface AgentListProps {
   onAgentSelect?: () => void;
   listFooterComponent?: ReactElement | null;
   showAttentionIndicator?: boolean;
+  showHostColumn?: boolean;
 }
 
 type DateSectionKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
@@ -152,11 +153,62 @@ function WorkspaceTitlePrefix({
   );
 }
 
+function SessionRowBadges({
+  agent,
+  archivedIcon,
+  pendingPermissionCount,
+  showDesktopAttention,
+}: {
+  agent: AggregatedAgent;
+  archivedIcon: ReactElement;
+  pendingPermissionCount: number;
+  showDesktopAttention: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {agent.archivedAt ? (
+        <SessionBadge label={t("agentList.badges.archived")} icon={archivedIcon} />
+      ) : null}
+      {pendingPermissionCount > 0 ? (
+        <SessionBadge
+          label={t("agentList.badges.pending", { count: pendingPermissionCount })}
+          tone="warning"
+        />
+      ) : null}
+      {showDesktopAttention ? (
+        <SessionBadge label={t("agentList.badges.attention")} tone="danger" />
+      ) : null}
+    </>
+  );
+}
+
+function SessionRowTrailingAttention({
+  isMobile,
+  showAttentionIndicator,
+  requiresAttention,
+}: {
+  isMobile: boolean;
+  showAttentionIndicator: boolean;
+  requiresAttention: boolean | undefined;
+}) {
+  const { t } = useTranslation();
+  if (!isMobile || !showAttentionIndicator || !requiresAttention) {
+    return null;
+  }
+  return (
+    <View style={styles.rowTrailing}>
+      <SessionBadge label={t("agentList.badges.attention")} tone="danger" />
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   isMobile,
   selectedAgentId,
   showAttentionIndicator,
+  showHostColumn,
   onPress,
   onLongPress,
 }: {
@@ -164,6 +216,7 @@ function SessionRow({
   isMobile: boolean;
   selectedAgentId?: string;
   showAttentionIndicator: boolean;
+  showHostColumn: boolean;
   onPress: (agent: AggregatedAgent) => void;
   onLongPress: (agent: AggregatedAgent) => void;
 }) {
@@ -200,6 +253,8 @@ function SessionRow({
     () => <Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />,
     [theme.fontSize.xs, theme.colors.foregroundMuted],
   );
+  const showDesktopAttention =
+    !isMobile && showAttentionIndicator && Boolean(agent.requiresAttention);
 
   return (
     <Pressable
@@ -223,20 +278,14 @@ function SessionRow({
           <Text style={sessionTitleStyle} numberOfLines={1}>
             {agent.title || t("agentList.fallbackTitle")}
           </Text>
-          {agent.archivedAt ? (
-            <SessionBadge label={t("agentList.badges.archived")} icon={archivedIcon} />
-          ) : null}
-          {pendingPermissionCount > 0 ? (
-            <SessionBadge
-              label={t("agentList.badges.pending", { count: pendingPermissionCount })}
-              tone="warning"
-            />
-          ) : null}
-          {!isMobile && showAttentionIndicator && agent.requiresAttention ? (
-            <SessionBadge label={t("agentList.badges.attention")} tone="danger" />
-          ) : null}
+          <SessionRowBadges
+            agent={agent}
+            archivedIcon={archivedIcon}
+            pendingPermissionCount={pendingPermissionCount}
+            showDesktopAttention={showDesktopAttention}
+          />
         </View>
-        {isMobile && (
+        {isMobile ? (
           <View style={styles.rowMetaRow}>
             <Text
               style={styles.sessionMetaText}
@@ -263,10 +312,18 @@ function SessionRow({
             </Text>
             <Text style={styles.sessionMetaSeparator}>·</Text>
             <Text style={styles.sessionMetaText}>{timeAgo}</Text>
+            {showHostColumn && agent.serverLabel ? (
+              <>
+                <Text style={styles.sessionMetaSeparator}>·</Text>
+                <Text style={styles.sessionMetaText} numberOfLines={1}>
+                  {agent.serverLabel}
+                </Text>
+              </>
+            ) : null}
           </View>
-        )}
+        ) : null}
       </View>
-      {!isMobile && (
+      {!isMobile ? (
         <View style={styles.rowColumns}>
           <Text
             style={styles.columnMeta}
@@ -275,6 +332,11 @@ function SessionRow({
           >
             {projectName}
           </Text>
+          {showHostColumn ? (
+            <Text style={styles.columnMetaHost} numberOfLines={1}>
+              {agent.serverLabel}
+            </Text>
+          ) : null}
           <Text
             style={styles.columnMeta}
             numberOfLines={1}
@@ -286,12 +348,12 @@ function SessionRow({
             {timeAgo}
           </Text>
         </View>
-      )}
-      {isMobile && showAttentionIndicator && agent.requiresAttention ? (
-        <View style={styles.rowTrailing}>
-          <SessionBadge label={t("agentList.badges.attention")} tone="danger" />
-        </View>
       ) : null}
+      <SessionRowTrailingAttention
+        isMobile={isMobile}
+        showAttentionIndicator={showAttentionIndicator}
+        requiresAttention={agent.requiresAttention}
+      />
     </Pressable>
   );
 }
@@ -304,6 +366,7 @@ export function AgentList({
   onAgentSelect,
   listFooterComponent,
   showAttentionIndicator = true,
+  showHostColumn = false,
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -428,12 +491,21 @@ export function AgentList({
           isMobile={isMobile}
           selectedAgentId={selectedAgentId}
           showAttentionIndicator={showAttentionIndicator}
+          showHostColumn={showHostColumn}
           onPress={handleAgentPress}
           onLongPress={handleAgentLongPress}
         />
       );
     },
-    [handleAgentLongPress, handleAgentPress, isMobile, selectedAgentId, showAttentionIndicator, t],
+    [
+      handleAgentLongPress,
+      handleAgentPress,
+      isMobile,
+      selectedAgentId,
+      showAttentionIndicator,
+      showHostColumn,
+      t,
+    ],
   );
 
   const keyExtractor = useCallback((item: FlatListItem) => item.key, []);
@@ -638,6 +710,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
     width: 72,
+    textAlign: "right" as const,
+  },
+  columnMetaHost: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 0,
+    width: 120,
+    marginLeft: theme.spacing[4],
     textAlign: "right" as const,
   },
   badge: {

@@ -11,13 +11,15 @@ import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 type WorkspaceSetupDaemonClient = Pick<
   InternalDaemonClient,
   | "close"
+  | "addProject"
   | "connect"
   | "createPaseoWorktree"
+  | "createWorkspace"
   | "fetchAgent"
   | "fetchAgents"
   | "fetchWorkspaces"
   | "listTerminals"
-  | "openProject"
+  | "removeProject"
   | "subscribeRawMessages"
 >;
 
@@ -36,9 +38,11 @@ export async function openProjectViaDaemon(
   client: WorkspaceSetupDaemonClient,
   repoPath: string,
 ): Promise<{ id: string; name: string; workspaceDirectory: string }> {
-  const result = await client.openProject(repoPath);
+  const result = await client.createWorkspace({
+    source: { kind: "directory", path: repoPath },
+  });
   if (!result.workspace || result.error) {
-    throw new Error(result.error ?? `Failed to open project ${repoPath}`);
+    throw new Error(result.error ?? `Failed to create workspace ${repoPath}`);
   }
   return {
     id: result.workspace.id,
@@ -51,7 +55,10 @@ export async function seedProjectForWorkspaceSetup(
   client: WorkspaceSetupDaemonClient,
   repoPath: string,
 ): Promise<void> {
-  await openProjectViaDaemon(client, repoPath);
+  const result = await client.addProject(repoPath);
+  if (!result.project || result.error) {
+    throw new Error(result.error ?? `Failed to add project ${repoPath}`);
+  }
 }
 
 export function projectNameFromPath(repoPath: string): string {

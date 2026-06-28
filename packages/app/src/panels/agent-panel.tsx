@@ -14,18 +14,7 @@ import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
-import { FileDropZone } from "@/components/file-drop-zone";
-import { uploadFileAttachments } from "@/composer/actions";
-import {
-  getMimeTypeFromPath,
-  isRasterImageFile,
-  isRasterImagePath,
-} from "@/attachments/file-types";
-import { readDesktopFileBytes } from "@/hooks/use-file-picker";
-import type { DroppedItem } from "@/hooks/use-file-drop-zone";
-import type { UserComposerAttachment } from "@/attachments/types";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
-import type { ImageAttachment } from "@/composer/types";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
   ToastViewport,
@@ -53,6 +42,10 @@ import {
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
+import {
+  clearHistorySyncErrorAfterSuccessfulSync,
+  reconcileMissingAgentStateWithPresentAgent,
+} from "@/panels/agent-panel-load-state";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -77,7 +70,7 @@ import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
-import { useArchiveSubagent, useSubagentsForParent } from "@/subagents";
+import { useArchiveSubagent, useDetachSubagent, useSubagentsForParent } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -702,8 +695,6 @@ function ChatAgentContent({
   const { api: toastApi, toast: toastState, dismiss: dismissToast } = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
-  const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
-  const addFilesRef = useRef<((files: UserComposerAttachment[]) => void) | null>(null);
   const clearOnAgentBlurRef = useRef<() => void>(() => {});
   const wasPaneFocusedRef = useRef(isPaneFocused);
   const reconnectToastArmedRef = useRef(false);
@@ -712,54 +703,6 @@ function ChatAgentContent({
     routeKey: string;
     reason: "initial-entry" | "resume";
   } | null>(null);
-  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
-    addImagesRef.current?.(files);
-  }, []);
-
-  const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
-    addImagesRef.current = addImages;
-  }, []);
-
-  const handleAddFilesCallback = useCallback(
-    (addFiles: (files: UserComposerAttachment[]) => void) => {
-      addFilesRef.current = addFiles;
-    },
-    [],
-  );
-
-  const handleGenericFilesDropped = useCallback(
-    async (items: DroppedItem[]) => {
-      if (!client || !isConnected) return;
-      const nonImageItems = items.filter((item) => {
-        if (item.kind === "web-file") return !isRasterImageFile(item.file);
-        return !isRasterImagePath(item.path);
-      });
-      if (nonImageItems.length === 0) return;
-      try {
-        const files = await Promise.all(
-          nonImageItems.map(async (item) => {
-            if (item.kind === "web-file") {
-              return {
-                fileName: item.file.name,
-                mimeType: item.file.type || getMimeTypeFromPath(item.file.name),
-                bytes: new Uint8Array(await item.file.arrayBuffer()),
-              };
-            }
-            const fileName = item.path.split("/").pop() ?? item.path.split("\\").pop() ?? item.path;
-            const bytes = await readDesktopFileBytes(item.path);
-            return { fileName, mimeType: getMimeTypeFromPath(item.path), bytes };
-          }),
-        );
-        const uploaded = await uploadFileAttachments({ client, files });
-        addFilesRef.current?.(uploaded);
-      } catch (error) {
-        console.error("[AgentPanel] Failed to upload dropped files:", error);
-        toastApi.error(error instanceof Error ? error.message : "Failed to upload file");
-      }
-    },
-    [client, isConnected, toastApi],
-  );
-
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
@@ -847,9 +790,15 @@ function ChatAgentContent({
       if (!agentId) {
         return;
       }
-      ensureAgentIsInitialized(agentId).catch((error) => {
-        handleHistorySyncFailure({ origin, error });
-      });
+      ensureAgentIsInitialized(agentId)
+        .then(() => {
+          setMissingAgentState(clearHistorySyncErrorAfterSuccessfulSync);
+          return undefined;
+        })
+        .catch((error) => {
+          handleHistorySyncFailure({ origin, error });
+          return undefined;
+        });
     },
     [agentId, ensureAgentIsInitialized, handleHistorySyncFailure],
   );
@@ -1011,8 +960,8 @@ function ChatAgentContent({
       return;
     }
     if (agentState.id) {
-      if (missingAgentState.kind !== "idle") {
-        setMissingAgentState({ kind: "idle" });
+      if (missingAgentState.kind === "resolving" || missingAgentState.kind === "not_found") {
+        setMissingAgentState(reconcileMissingAgentStateWithPresentAgent);
       }
       return;
     }
@@ -1111,10 +1060,6 @@ function ChatAgentContent({
       dismiss={dismissToast}
       streamViewRef={streamViewRef}
       animatedContentStyle={animatedContentStyle}
-      handleFilesDropped={handleFilesDropped}
-      handleGenericFilesDropped={handleGenericFilesDropped}
-      handleAddImagesCallback={handleAddImagesCallback}
-      handleAddFilesCallback={handleAddFilesCallback}
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
       showHistorySyncOverlay={showHistorySyncOverlay}
@@ -1140,10 +1085,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   dismiss,
   streamViewRef,
   animatedContentStyle,
-  handleFilesDropped,
-  handleGenericFilesDropped,
-  handleAddImagesCallback,
-  handleAddFilesCallback,
   handleComposerHeightChange,
   handleMessageSent,
   showHistorySyncOverlay,
@@ -1165,10 +1106,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   dismiss: () => void;
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   animatedContentStyle: object[];
-  handleFilesDropped: (files: ImageAttachment[]) => void;
-  handleGenericFilesDropped: (items: DroppedItem[]) => void;
-  handleAddImagesCallback: (addImages: (images: ImageAttachment[]) => void) => void;
-  handleAddFilesCallback: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
   showHistorySyncOverlay: boolean;
@@ -1227,8 +1164,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         agentInputDraft={agentInputDraft}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
-        onAddImages={handleAddImagesCallback}
-        onAddFiles={handleAddFilesCallback}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
       />
@@ -1242,25 +1177,19 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
       <View style={styles.root}>
-        <FileDropZone
-          onFilesDropped={handleFilesDropped}
-          onGenericFilesDropped={handleGenericFilesDropped}
-          disabled={isArchivingCurrentAgent}
-        >
-          <View style={styles.container}>
-            {contentContainer}
+        <View style={styles.container}>
+          {contentContainer}
 
-            {composerSection}
+          {composerSection}
 
-            {showHistorySyncOverlay ? (
-              <View style={styles.historySyncOverlay} testID="agent-history-overlay">
-                <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
-              </View>
-            ) : null}
+          {showHistorySyncOverlay ? (
+            <View style={styles.historySyncOverlay} testID="agent-history-overlay">
+              <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
+            </View>
+          ) : null}
 
-            <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
-          </View>
-        </FileDropZone>
+          <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
+        </View>
 
         {isArchivingCurrentAgent ? (
           <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
@@ -1351,8 +1280,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
   agentInputDraft,
   onAttentionInputFocus,
   onAttentionPromptSend,
-  onAddImages,
-  onAddFiles,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1366,8 +1293,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
   agentInputDraft: AgentInputDraft;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
-  onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
-  onAddFiles: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1391,8 +1316,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
       agentInputDraft={agentInputDraft}
       onAttentionInputFocus={onAttentionInputFocus}
       onAttentionPromptSend={onAttentionPromptSend}
-      onAddImages={onAddImages}
-      onAddFiles={onAddFiles}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
     />
@@ -1408,8 +1331,6 @@ function ActiveAgentComposer({
   agentInputDraft,
   onAttentionInputFocus,
   onAttentionPromptSend,
-  onAddImages,
-  onAddFiles,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1421,8 +1342,6 @@ function ActiveAgentComposer({
   agentInputDraft: AgentInputDraft;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
-  onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
-  onAddFiles: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1442,6 +1361,9 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
+  const canDetachSubagents = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
+  );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1449,6 +1371,7 @@ function ActiveAgentComposer({
     [serverId],
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
+  const handleDetachSubagent = useDetachSubagent({ serverId });
   const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd,
@@ -1545,6 +1468,7 @@ function ActiveAgentComposer({
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
         onArchiveSubagent={handleArchiveSubagent}
+        onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
       />
       <Composer
         agentId={agentId}
@@ -1563,8 +1487,6 @@ function ActiveAgentComposer({
         isSubmitLoading={isSubmitLoading}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
-        onAddImages={onAddImages}
-        onAddFiles={onAddFiles}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}

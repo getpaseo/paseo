@@ -1,26 +1,15 @@
-import { homedir } from "node:os";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags, AgentProvider } from "../agent-sdk-types.js";
+import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
+import { ACPAgentClient, DEFAULT_ACP_CAPABILITIES } from "./acp-agent.js";
 import {
-  ACPAgentClient,
-  DEFAULT_ACP_CAPABILITIES,
-  deriveModelDefinitionsFromACP,
-  deriveModesFromACP,
-  type SessionStateResponse,
-} from "./acp-agent.js";
-import {
-  formatDiagnosticStatus,
-  formatProviderDiagnostic,
-  formatProviderDiagnosticError,
   buildBinaryDiagnosticRows,
+  formatProviderDiagnostic,
+  type DiagnosticEntry,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
-
-const ACP_DIAGNOSTIC_INITIALIZE_TIMEOUT_MS = 8_000;
-const ACP_DIAGNOSTIC_SESSION_TIMEOUT_MS = 8_000;
 
 export const GenericACPProviderParamsSchema = z
   .object({
@@ -39,12 +28,14 @@ interface GenericACPAgentClientOptions {
   providerParams?: unknown;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  diagnosticPhaseTimeoutMs?: number;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
   private readonly command: [string, ...string[]];
   private readonly providerId?: string;
   private readonly label?: string;
+  private readonly diagnosticPhaseTimeoutMs?: number;
 
   constructor(options: GenericACPAgentClientOptions) {
     super({
@@ -62,6 +53,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
     this.command = options.command;
     this.providerId = options.providerId;
     this.label = options.label;
+    this.diagnosticPhaseTimeoutMs = options.diagnosticPhaseTimeoutMs;
   }
 
   protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
@@ -79,50 +71,43 @@ export class GenericACPAgentClient extends ACPAgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     const providerName = formatProviderName(this.label, this.providerId);
+    const entries: DiagnosticEntry[] = [
+      { label: "Provider ID", value: this.providerId ?? "unknown" },
+      { label: "Configured command", value: this.command.join(" ") },
+    ];
+    const versionProbe = buildVersionProbeCommand(this.command);
 
     try {
       const launch = await this.resolveConfiguredLaunch();
       const availability = await checkProviderLaunchAvailable(launch);
-      const available = availability.available;
-      const versionProbe = buildVersionProbeCommand(this.command);
-      const probeResult = available
-        ? await this.runDiagnosticACPProbe()
-        : {
-            status: formatDiagnosticStatus(false),
-            initialize: "Not checked",
-            session: "Not checked",
-            models: "Not checked",
-            modes: "Not checked",
-          };
-
-      return {
-        diagnostic: formatProviderDiagnostic(providerName, [
-          { label: "Provider ID", value: this.providerId ?? "unknown" },
-          { label: "Configured command", value: this.command.join(" ") },
-          ...(await buildBinaryDiagnosticRows(launch, availability, {
-            binaryLabel: "Launcher binary",
-            versionCommand: {
-              command: versionProbe.command,
-              args: versionProbe.args,
-              env: this.runtimeSettings?.env,
-            },
-          })),
-          {
-            label: "Version command",
-            value: formatCommand(versionProbe.command, versionProbe.args),
+      entries.push(
+        ...(await buildBinaryDiagnosticRows(launch, availability, {
+          binaryLabel: "Launcher binary",
+          versionCommand: {
+            command: versionProbe.command,
+            args: versionProbe.args,
+            env: this.runtimeSettings?.env,
           },
-          { label: "ACP initialize", value: probeResult.initialize },
-          { label: "ACP session/new", value: probeResult.session },
-          { label: "Models", value: probeResult.models },
-          { label: "Modes", value: probeResult.modes },
-          { label: "Status", value: probeResult.status },
-        ]),
-      };
+        })),
+      );
     } catch (error) {
-      return {
-        diagnostic: formatProviderDiagnosticError(providerName, error),
-      };
+      entries.push({
+        label: "Launcher binary",
+        value: `error: ${toDiagnosticErrorMessage(error)}`,
+      });
     }
+
+    entries.push(
+      {
+        label: "Version command",
+        value: formatCommand(versionProbe.command, versionProbe.args),
+      },
+      ...(await this.getACPProbeRowsForDiagnostic()),
+    );
+
+    return {
+      diagnostic: formatProviderDiagnostic(providerName, entries),
+    };
   }
 
   private async resolveConfiguredLaunch() {
@@ -132,55 +117,18 @@ export class GenericACPAgentClient extends ACPAgentClient {
     });
   }
 
-  private async runDiagnosticACPProbe(): Promise<ACPDiagnosticProbeResult> {
-    let initializeValue = "Not checked";
-    let sessionValue = "Not checked";
-
+  private async getACPProbeRowsForDiagnostic() {
     try {
-      const probe = await this.spawnProcess(
-        {
-          NO_BROWSER: "true",
-          NO_OPEN_BROWSER: "1",
-          GEMINI_CLI_NO_BROWSER: "true",
-          CI: "1",
-        },
-        {
-          initializeTimeoutMs: ACP_DIAGNOSTIC_INITIALIZE_TIMEOUT_MS,
-        },
-      );
-      try {
-        initializeValue = formatInitializeResult(probe.initialize);
-        const response = await withTimeout(
-          probe.connection.newSession({
-            cwd: homedir(),
-            mcpServers: [],
-          }),
-          ACP_DIAGNOSTIC_SESSION_TIMEOUT_MS,
-          "ACP session/new",
-        );
-        sessionValue = response.sessionId ? `ok (${response.sessionId})` : "ok";
-        const transformed = this.transformSessionResponse(response);
-        return {
-          status: formatDiagnosticStatus(true),
-          initialize: initializeValue,
-          session: sessionValue,
-          ...summarizeSessionState(this.provider, transformed),
-        };
-      } finally {
-        await this.closeProbe(probe);
-      }
+      return await this.buildACPProbeDiagnosticRows({
+        phaseTimeoutMs: this.diagnosticPhaseTimeoutMs,
+      });
     } catch (error) {
-      return {
-        status: formatDiagnosticStatus(true, {
-          source: "ACP probe",
-          cause: error,
-        }),
-        initialize: formatProbeError(initializeValue, error),
-        session:
-          initializeValue === "Not checked" ? "Not checked" : formatProbeError(sessionValue, error),
-        models: "Not checked",
-        modes: "Not checked",
-      };
+      return [
+        {
+          label: "ACP probe",
+          value: `error: ${toDiagnosticErrorMessage(error)}`,
+        },
+      ];
     }
   }
 }
@@ -195,14 +143,6 @@ function buildGenericACPCapabilities(options: GenericACPAgentClientOptions): Age
 
 function parseGenericACPProviderParams(params: unknown): GenericACPProviderParams {
   return GenericACPProviderParamsSchema.parse(params ?? {});
-}
-
-interface ACPDiagnosticProbeResult {
-  status: string;
-  initialize: string;
-  session: string;
-  models: string;
-  modes: string;
 }
 
 export interface CommandInvocation {
@@ -270,61 +210,4 @@ function takePackageSpecPrefix(args: string[]): string[] {
     }
   }
   return prefix;
-}
-
-function formatInitializeResult(initialize: {
-  protocolVersion: number;
-  agentInfo?: unknown;
-}): string {
-  const agentInfo = isAgentInfo(initialize.agentInfo)
-    ? `${initialize.agentInfo.name}${initialize.agentInfo.version ? ` ${initialize.agentInfo.version}` : ""}`
-    : "ok";
-  return `ok (protocol ${initialize.protocolVersion}, ${agentInfo})`;
-}
-
-function isAgentInfo(value: unknown): value is { name: string; version?: string } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "name" in value &&
-    typeof Reflect.get(value, "name") === "string"
-  );
-}
-
-function summarizeSessionState(
-  provider: AgentProvider,
-  response: SessionStateResponse,
-): Pick<ACPDiagnosticProbeResult, "models" | "modes"> {
-  const models = deriveModelDefinitionsFromACP(provider, response.models, response.configOptions);
-  const { modes } = deriveModesFromACP([], response.modes, response.configOptions);
-  return {
-    models: `${models.length}`,
-    modes:
-      modes.length > 0 ? modes.map((mode) => mode.label || mode.id).join(", ") : "none reported",
-  };
-}
-
-function formatProbeError(currentValue: string, error: unknown): string {
-  if (currentValue !== "Not checked") {
-    return currentValue;
-  }
-  return `Error - ${toDiagnosticErrorMessage(error)}`;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
 }

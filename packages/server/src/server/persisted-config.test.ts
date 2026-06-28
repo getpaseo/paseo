@@ -63,6 +63,46 @@ describe("PersistedConfigSchema daemon relay config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon trusted proxy config", () => {
+  test("accepts optional trusted proxy ranges", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        trustedProxies: ["loopback", "172.16.0.0/12"],
+      },
+    });
+
+    expect(parsed.daemon?.trustedProxies).toEqual(["loopback", "172.16.0.0/12"]);
+  });
+
+  test("accepts explicit trust-all proxy config", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        trustedProxies: true,
+      },
+    });
+
+    expect(parsed.daemon?.trustedProxies).toBe(true);
+  });
+});
+
+describe("PersistedConfigSchema daemon web UI feature config", () => {
+  test("accepts optional web UI enable flag and dist dir", () => {
+    const parsed = PersistedConfigSchema.parse({
+      features: {
+        webUi: {
+          enabled: true,
+          distDir: "web-ui-dist",
+        },
+      },
+    });
+
+    expect(parsed.features?.webUi).toEqual({
+      enabled: true,
+      distDir: "web-ui-dist",
+    });
+  });
+});
+
 describe("PersistedConfigSchema worktrees config", () => {
   test("accepts optional worktree root", () => {
     const parsed = PersistedConfigSchema.parse({
@@ -72,6 +112,24 @@ describe("PersistedConfigSchema worktrees config", () => {
     });
 
     expect(parsed.worktrees?.root).toBe("/mnt/fast/paseo-worktrees");
+  });
+});
+
+describe("PersistedConfigSchema provider credentials", () => {
+  test("accepts OpenAI voice credentials", () => {
+    const parsed = PersistedConfigSchema.parse({
+      providers: {
+        openai: {
+          voice: {
+            apiKey: " voice-secret ",
+            baseUrl: " https://voice.example.com/v1 ",
+          },
+        },
+      },
+    });
+
+    expect(parsed.providers?.openai?.voice?.apiKey).toBe("voice-secret");
+    expect(parsed.providers?.openai?.voice?.baseUrl).toBe("https://voice.example.com/v1");
   });
 });
 

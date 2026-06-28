@@ -27,6 +27,7 @@ export interface UsePrPaneDataResult {
   data: PrPaneData | null;
   prNumber: number | null;
   isLoading: boolean;
+  activityLoading: boolean;
   isRefreshing: boolean;
   error: Error | null;
   githubFeaturesEnabled: boolean;
@@ -167,13 +168,14 @@ export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataR
       : mapPrPaneData(input.status, input.timelinePayload);
   const statusRefreshing = input.statusIsFetching && !input.statusIsLoading;
   const timelineRefreshing = input.timelineIsFetching && !input.timelineIsLoading;
+  const timelinePending =
+    input.shouldFetchTimeline && input.timelineIsLoading && input.timelinePayload === undefined;
 
   return {
     data,
     prNumber: identity.prNumber,
-    isLoading:
-      input.statusIsLoading ||
-      (input.shouldFetchTimeline && input.timelineIsLoading && input.timelinePayload === undefined),
+    isLoading: input.statusIsLoading || timelinePending,
+    activityLoading: timelinePending,
     isRefreshing: statusRefreshing || timelineRefreshing,
     error: firstNonSuppressedError({
       statusPayloadError: input.statusPayloadError,

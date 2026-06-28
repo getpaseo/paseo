@@ -511,6 +511,59 @@ describe("resolveFormState", () => {
     expect(resolved.thinkingOptionId).toBe("xhigh");
   });
 
+  it("preserves the saved mode while provider modes are absent from a loading snapshot", () => {
+    const loadingEntries: ProviderSnapshotEntry[] = [
+      {
+        provider: "codex",
+        status: "loading",
+        enabled: true,
+        label: TEST_CODEX_DEFINITION.label,
+        description: TEST_CODEX_DEFINITION.description,
+        defaultModeId: TEST_CODEX_DEFINITION.defaultModeId,
+      },
+    ];
+    const providerDefinitions = buildProviderDefinitions(loadingEntries);
+    const resolvableProviderMap = buildProviderDefinitionMapForStatuses({
+      snapshotEntries: loadingEntries,
+      providerDefinitions,
+      statuses: new Set<ProviderSnapshotEntry["status"]>(["ready", "loading"]),
+    });
+
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { mode: "full-access", model: "gpt-5.3-codex" } },
+      },
+      null,
+      INITIAL_USER_MODIFIED,
+      makeState({ provider: "codex", modeId: "full-access", model: "gpt-5.3-codex" }).form,
+
+      resolvableProviderMap,
+    );
+
+    expect(resolved.provider).toBe("codex");
+    expect(resolved.modeId).toBe("full-access");
+  });
+
+  it("preserves a saved mode that is not in the current mode list", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { mode: "workspace-write", model: "gpt-5.3-codex" } },
+      },
+      CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState({ provider: "codex" }).form,
+
+      codexProviderMap,
+    );
+
+    expect(resolved.provider).toBe("codex");
+    expect(resolved.modeId).toBe("workspace-write");
+  });
+
   it("ignores disabled ready providers when resolving selectable defaults", () => {
     const entries: ProviderSnapshotEntry[] = [
       {

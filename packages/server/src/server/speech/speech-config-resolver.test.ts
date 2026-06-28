@@ -129,7 +129,7 @@ describe("resolveSpeechConfig", () => {
       dictation: "es",
       voice: "pt",
     });
-    expect(result.openai?.apiKey).toBe("env-key");
+    expect(result.openai?.apiKey).toBe("persisted-key");
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
 

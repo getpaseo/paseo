@@ -45,17 +45,22 @@ describe("CursorACPAgentClient model discovery", () => {
       configOptions: [],
     });
 
-    await expect(client.listModels({ cwd: "/tmp/cursor", force: false })).resolves.toEqual([
-      {
-        provider: "acp",
-        id: "gpt-5.4[context=272k,reasoning=medium,fast=false]",
-        label: "gpt-5.4",
-        description: undefined,
-        isDefault: true,
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-      },
-    ]);
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/cursor", force: false }),
+    ).resolves.toEqual({
+      models: [
+        {
+          provider: "acp",
+          id: "gpt-5.4[context=272k,reasoning=medium,fast=false]",
+          label: "gpt-5.4",
+          description: undefined,
+          isDefault: true,
+          thinkingOptions: undefined,
+          defaultThinkingOptionId: undefined,
+        },
+      ],
+      modes: [],
+    });
   });
 
   test("does not fall back to cursor-agent models when ACP reports zero models", async () => {
@@ -65,6 +70,11 @@ describe("CursorACPAgentClient model discovery", () => {
       configOptions: [],
     });
 
-    await expect(client.listModels({ cwd: "/tmp/cursor", force: false })).resolves.toEqual([]);
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/cursor", force: false }),
+    ).resolves.toEqual({
+      models: [],
+      modes: [],
+    });
   });
 });

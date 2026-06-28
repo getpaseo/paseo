@@ -5,14 +5,13 @@ import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { STTConfig } from "./stt.js";
 import type { TTSConfig } from "./tts.js";
 
-export const DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 export const DEFAULT_OPENAI_TTS_MODEL = "tts-1";
 
 export interface OpenAiSpeechProviderConfig {
   apiKey?: string;
+  baseUrl?: string;
   stt?: Partial<STTConfig> & { apiKey?: string };
   tts?: Partial<TTSConfig> & { apiKey?: string };
-  realtimeTranscriptionModel?: string;
 }
 
 const OpenAiTtsVoiceSchema = z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
@@ -33,6 +32,7 @@ const OptionalTrimmedStringSchema = z
 
 const OpenAiSpeechResolutionSchema = z.object({
   apiKey: OptionalTrimmedStringSchema,
+  baseUrl: OptionalTrimmedStringSchema,
   sttConfidenceThreshold: OptionalFiniteNumberSchema,
   sttModel: OptionalTrimmedStringSchema,
   ttsVoice: z.string().trim().toLowerCase().pipe(OpenAiTtsVoiceSchema).default("alloy"),
@@ -42,9 +42,6 @@ const OpenAiSpeechResolutionSchema = z.object({
     .toLowerCase()
     .pipe(OpenAiTtsModelSchema)
     .default(DEFAULT_OPENAI_TTS_MODEL),
-  realtimeTranscriptionModel: OptionalTrimmedStringSchema.default(
-    DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-  ),
 });
 
 function isOpenAiProviderActive(provider: { enabled?: boolean; provider: string }): boolean {
@@ -83,11 +80,6 @@ function buildOpenAiSttInput(params: {
       pickIfOpenAi(providers.voiceStt, persisted.features?.voiceMode?.stt?.model),
       pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
     ]),
-    realtimeTranscriptionModel: firstDefined<string>([
-      env.OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-      pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
-      DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-    ]),
   };
 }
 
@@ -118,8 +110,16 @@ function buildOpenAiResolutionInput(params: {
 }): Record<string, unknown> {
   return {
     apiKey: firstDefined<string>([
-      params.env.OPENAI_API_KEY,
+      params.persisted.providers?.openai?.voice?.apiKey,
+      params.env.OPENAI_VOICE_API_KEY,
       params.persisted.providers?.openai?.apiKey,
+      params.env.OPENAI_API_KEY,
+    ]),
+    baseUrl: firstDefined<string>([
+      params.persisted.providers?.openai?.voice?.baseUrl,
+      params.env.OPENAI_VOICE_BASE_URL,
+      params.persisted.providers?.openai?.baseUrl,
+      params.env.OPENAI_BASE_URL,
     ]),
     ...buildOpenAiSttInput(params),
     ...buildOpenAiTtsInput(params),
@@ -139,8 +139,10 @@ export function resolveOpenAiSpeechConfig(params: {
 
   return {
     apiKey: parsed.apiKey,
+    ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
     stt: {
       apiKey: parsed.apiKey,
+      ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
       ...(parsed.sttConfidenceThreshold !== undefined
         ? { confidenceThreshold: parsed.sttConfidenceThreshold }
         : {}),
@@ -148,10 +150,10 @@ export function resolveOpenAiSpeechConfig(params: {
     },
     tts: {
       apiKey: parsed.apiKey,
+      ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
       voice: parsed.ttsVoice,
       model: parsed.ttsModel,
       responseFormat: "pcm",
     },
-    realtimeTranscriptionModel: parsed.realtimeTranscriptionModel,
   };
 }

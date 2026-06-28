@@ -1,4 +1,5 @@
 import { View, Text } from "react-native";
+import type { StyleProp, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Animated, { useAnimatedStyle, withTiming, useSharedValue } from "react-native-reanimated";
 import { useEffect, useMemo } from "react";
@@ -13,6 +14,7 @@ interface FileDropZoneProps {
   onFilesDropped: (files: ImageAttachment[]) => void;
   onGenericFilesDropped?: (items: DroppedItem[]) => void;
   disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
 }
 
 const IS_WEB = isWeb;
@@ -22,6 +24,7 @@ export function FileDropZone({
   onFilesDropped,
   onGenericFilesDropped,
   disabled = false,
+  style,
 }: FileDropZoneProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -46,6 +49,7 @@ export function FileDropZone({
     () => [styles.overlay, overlayAnimatedStyle],
     [overlayAnimatedStyle],
   );
+  const containerStyle = useMemo(() => [styles.container, style], [style]);
 
   // On non-web platforms, just render children
   if (!IS_WEB) {
@@ -56,7 +60,7 @@ export function FileDropZone({
     <View
       // Cast ref for web - View renders as div on web
       ref={containerRef as unknown as React.RefObject<View>}
-      style={styles.container}
+      style={containerStyle}
     >
       {children}
 
