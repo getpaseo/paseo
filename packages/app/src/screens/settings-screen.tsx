@@ -101,6 +101,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
+  buildHostOpenProjectRoute,
   buildOpenProjectRoute,
   buildProjectsSettingsRoute,
   buildSettingsHostSectionRoute,
@@ -108,7 +109,10 @@ import {
   type HostSectionSlug,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
-import { navigateToLastWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  getLastActiveHostServerId,
+  navigateToLastWorkspace,
+} from "@/stores/navigation-active-workspace-store";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -1332,8 +1336,17 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     if (navigateToLastWorkspace()) {
       return;
     }
+    // No remembered workspace (the user never opened one this session). Fall
+    // back to the host they were last looking at instead of the no-host route,
+    // which would otherwise re-select the default host and look like the host
+    // "changed" on exit.
+    const lastHostServerId = getLastActiveHostServerId();
+    if (lastHostServerId && hosts.some((host) => host.serverId === lastHostServerId)) {
+      router.replace(buildHostOpenProjectRoute(lastHostServerId));
+      return;
+    }
     router.replace(buildOpenProjectRoute());
-  }, [router]);
+  }, [hosts, router]);
 
   const detailHeader = ((): {
     title: string;

@@ -39,6 +39,10 @@ export function useProjects(): UseProjectsResult {
   const projectsQuery = useQuery({
     queryKey: projectsQueryKey,
     queryFn: () => fetchAggregatedProjects({ hosts: hostInputs, runtime }),
+    // Refetch-if-stale on mount so a project added (and the cache invalidated)
+    // while this screen was unmounted isn't silently served stale. With the
+    // global staleTime: Infinity the cache only goes stale via that invalidate.
+    refetchOnMount: true,
   });
 
   return {
