@@ -399,4 +399,14 @@ describe("resolveHostIndexRoute", () => {
       }),
     ).toEqual("/open-project");
   });
+
+  it("opens global project selection when no workspace is remembered", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: null,
+        workspaceSelectionStatus: "unknown",
+      }),
+    ).toEqual("/open-project");
+  });
 });
