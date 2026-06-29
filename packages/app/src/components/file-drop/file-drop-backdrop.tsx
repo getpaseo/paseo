@@ -18,9 +18,10 @@ export function FileDropBackdrop() {
   const { t } = useTranslation();
   const ctx = useFileDropContext();
   const isDragging = ctx?.isDragging;
+  const suppressed = ctx?.suppressed;
 
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(isDragging?.value ? 1 : 0, { duration: 150 }),
+    opacity: withTiming(isDragging?.value && !suppressed?.value ? 1 : 0, { duration: 150 }),
   }));
 
   const overlayStyle = useMemo(() => [positionStyles.overlay, animatedStyle], [animatedStyle]);

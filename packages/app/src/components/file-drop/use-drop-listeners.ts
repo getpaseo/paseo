@@ -37,6 +37,8 @@ async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
 
 interface UseDropListenersOptions {
   isDragging: SharedValue<boolean>;
+  /** Active sink can't accept right now: reject drops without showing acceptance. */
+  suppressed: SharedValue<boolean>;
   /** Stable getter for the currently registered sink. */
   getSink: () => FileDropSink | null;
   disabled: boolean;
@@ -48,6 +50,7 @@ interface UseDropListenersOptions {
  */
 export function useDropListeners({
   isDragging,
+  suppressed,
   getSink,
   disabled,
 }: UseDropListenersOptions): RefObject<HTMLElement | null> {
@@ -117,7 +120,7 @@ export function useDropListeners({
           // Drop always ends the current drag operation.
           isDragging.value = false;
 
-          if (disabledRef.current) return;
+          if (disabledRef.current || suppressed.value) return;
 
           const sink = getSink();
           if (!sink) return;
@@ -141,7 +144,9 @@ export function useDropListeners({
               if (attachments.length === 0) {
                 return;
               }
-              getSink()?.onFiles(attachments);
+              // Use the sink captured at drop time, not a fresh getSink() — the active sink may
+              // have changed during the async persist (matches the web path below).
+              sink.onFiles(attachments);
               return;
             })
             .catch((error) => {
@@ -210,7 +215,7 @@ export function useDropListeners({
         isDragging.value = false;
         dragCounter.current = 0;
 
-        if (disabledRef.current) return;
+        if (disabledRef.current || suppressed.value) return;
 
         const sink = getSink();
         if (!sink) return;
@@ -262,7 +267,7 @@ export function useDropListeners({
       disposed = true;
       runCleanup();
     };
-  }, [isDragging, getSink]);
+  }, [isDragging, suppressed, getSink]);
 
   return containerRef;
 }

@@ -1882,18 +1882,13 @@ export function Composer({
 
   const isSubmitBusy = isProcessing || isSubmitLoading || isUploadingFile;
 
-  // Ignore drops while submitting/uploading: the submit path clears and restores attachments,
-  // so a drop in that window would be lost or land on a locked draft.
-  useFileDrop({
-    onFiles: (images) => {
-      if (isSubmitBusy) return;
-      addImages(images);
-    },
-    onGenericFiles: (items) => {
-      if (isSubmitBusy) return;
-      handleGenericFilesDropped(items);
-    },
-  });
+  // Disable drops while submitting/uploading: the submit path clears and restores attachments,
+  // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
+  // backdrop and rejects the drop atomically, instead of accepting a drop with no feedback.
+  useFileDrop(
+    { onFiles: addImages, onGenericFiles: handleGenericFilesDropped },
+    { disabled: isSubmitBusy },
+  );
 
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
