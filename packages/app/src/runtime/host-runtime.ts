@@ -2202,6 +2202,27 @@ export function useHostRuntimeConnectionStatus(serverId: string): HostRuntimeCon
   );
 }
 
+export function useHostRuntimeConnectionStatuses(
+  serverIds: readonly string[],
+): ReadonlyMap<string, HostRuntimeConnectionStatus> {
+  const store = getHostRuntimeStore();
+  const version = useSyncExternalStore(
+    (onStoreChange) => store.subscribeAll(onStoreChange),
+    () => store.getVersion(),
+    () => store.getVersion(),
+  );
+
+  return useMemo(() => {
+    void version;
+    return new Map(
+      serverIds.map(
+        (serverId) =>
+          [serverId, store.getSnapshot(serverId)?.connectionStatus ?? "connecting"] as const,
+      ),
+    );
+  }, [serverIds, store, version]);
+}
+
 export function useHostRuntimeLastError(serverId: string): string | null {
   const store = getHostRuntimeStore();
   return useSyncExternalStore(

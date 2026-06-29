@@ -37,6 +37,11 @@ remembered workspace for that host after the remembered selection has hydrated
 and the workspace has not been proven missing. If there is no restorable
 workspace, it goes to global `/open-project`.
 
+This restore is based on the last navigated workspace, not current connection
+status. Do not redirect to another online host just because the remembered host
+is still connecting or offline; the workspace screen owns that offline/loading
+state.
+
 This split is deliberate. The host layout must mount first so native local
 dynamic params exist before any nested workspace leaf is selected.
 

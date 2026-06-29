@@ -262,6 +262,18 @@ describe("resolveStartupRoute", () => {
     ).toEqual({ kind: "redirect", href: "/h/server-1" });
   });
 
+  it("restores the last workspace host even when a different host is already online", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-offline" }, { serverId: "server-online" }],
+        anyOnlineHostServerId: "server-online",
+        workspaceSelection: { serverId: "server-offline", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "unknown",
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-offline" });
+  });
+
   it("does not restore a saved workspace after workspace hydration proves it is missing", () => {
     expect(
       resolveStartupRoute({
