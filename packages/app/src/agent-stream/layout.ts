@@ -122,21 +122,74 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
   });
 }
 
+function findTurnEndIndexInSegment(input: {
+  strategy: StreamStrategy;
+  items: StreamItem[];
+  startIndex: number;
+}): number {
+  let endIndex = input.startIndex;
+  for (
+    let index = input.strategy.getNeighborIndex(input.startIndex, "below");
+    index >= 0 && index < input.items.length;
+    index = input.strategy.getNeighborIndex(index, "below")
+  ) {
+    const item = input.items[index];
+    if (!item || item.kind === "user_message") {
+      break;
+    }
+    endIndex = index;
+  }
+  return endIndex;
+}
+
 function shouldRenderCompletedFooter(input: {
+  strategy: StreamStrategy;
+  items: StreamItem[];
+  index: number;
   item: StreamItem;
   belowItem: StreamItem | null;
   agentStatus: string;
   auxiliaryTurnFooter: TurnFooterHost | null;
 }): boolean {
-  return (
-    input.item.kind === "assistant_message" &&
-    input.auxiliaryTurnFooter?.itemId !== input.item.id &&
-    (input.belowItem?.kind === "user_message" ||
-      (input.belowItem === null && input.agentStatus !== "running"))
-  );
+  if (
+    input.item.kind !== "assistant_message" ||
+    input.auxiliaryTurnFooter?.itemId === input.item.id
+  ) {
+    return false;
+  }
+
+  if (
+    input.belowItem?.kind === "user_message" ||
+    (input.belowItem === null && input.agentStatus !== "running")
+  ) {
+    return true;
+  }
+
+  if (!isToolSequenceItem(input.belowItem)) {
+    return false;
+  }
+
+  const sameSegmentBelowItem = input.strategy.getNeighborItem(input.items, input.index, "below");
+  if (sameSegmentBelowItem?.id !== input.belowItem.id) {
+    return false;
+  }
+
+  const turnEndIndex = findTurnEndIndexInSegment({
+    strategy: input.strategy,
+    items: input.items,
+    startIndex: input.index,
+  });
+  const assistantIndex = findLatestAssistantIndexInTurn({
+    strategy: input.strategy,
+    items: input.items,
+    startIndex: turnEndIndex,
+  });
+  return assistantIndex === input.index;
 }
 
-function isToolSequenceItem(item: StreamItem | null): boolean {
+function isToolSequenceItem(
+  item: StreamItem | null,
+): item is Extract<StreamItem, { kind: "tool_call" | "thought" | "todo_list" }> {
   return item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
 }
 
@@ -205,6 +258,9 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
       belowItem,
     });
     const completedFooter = shouldRenderCompletedFooter({
+      strategy: input.strategy,
+      items: input.items,
+      index,
       item,
       belowItem,
       agentStatus: input.agentStatus,

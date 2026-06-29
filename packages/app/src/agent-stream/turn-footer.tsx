@@ -9,6 +9,7 @@ import {
   collectAssistantTurnContentForStreamRenderStrategy,
   type StreamStrategy,
 } from "./strategy";
+import { resolveAssistantTurnBoundaryMessageId } from "./turn-boundary";
 import {
   AssistantTurnFooter,
   LiveElapsed,
@@ -25,28 +26,6 @@ const workingIndicatorColorMapping = (theme: Theme) => ({
       ? theme.colors.palette.amber[700]
       : theme.colors.palette.amber[500],
 });
-
-function resolveAssistantTurnBoundaryMessageId(input: {
-  strategy: TurnContentStrategy;
-  items: StreamItem[];
-  startIndex: number;
-}): string | undefined {
-  for (
-    let index = input.startIndex;
-    index >= 0 && index < input.items.length;
-    index = input.strategy.getNeighborIndex(index, "above")
-  ) {
-    const currentItem = input.items[index];
-    if (!currentItem || currentItem.kind === "user_message") {
-      break;
-    }
-    if (currentItem.kind === "assistant_message" && currentItem.messageId) {
-      return currentItem.messageId;
-    }
-  }
-  // Forking without a durable message id would send an unbounded timeline slice.
-  return undefined;
-}
 
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
@@ -166,7 +145,6 @@ function CompletedTurnFooter({
     [strategy, items, startIndex],
   );
   const boundaryMessageId = resolveAssistantTurnBoundaryMessageId({
-    strategy,
     items,
     startIndex,
   });
