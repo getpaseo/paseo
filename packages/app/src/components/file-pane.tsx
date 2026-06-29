@@ -20,7 +20,8 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { resolveTextPreviewMode } from "@/components/file-pane-render-mode";
+import { HtmlFilePreview } from "@/components/html-file-preview";
 import { isWeb } from "@/constants/platform";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
@@ -200,8 +201,11 @@ function FilePreviewBody({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const filePath = location.path;
-  const isMarkdownFile =
-    preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
+  const textPreviewMode =
+    preview?.kind === "text"
+      ? resolveTextPreviewMode(filePath, { hasLineSelection: Boolean(location.lineStart) })
+      : "code";
+  const isMarkdownFile = textPreviewMode === "markdown";
 
   const previewScrollRef = useRef<RNScrollView>(null);
   const webScrollbarStyle = useWebScrollbarStyle();
@@ -210,12 +214,12 @@ function FilePreviewBody({
   });
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text" || isMarkdownFile) {
+    if (!preview || preview.kind !== "text" || textPreviewMode !== "code") {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [isMarkdownFile, preview, filePath]);
+  }, [textPreviewMode, preview, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
@@ -285,6 +289,14 @@ function FilePreviewBody({
             <MarkdownRenderer text={preview.content ?? ""} />
           </RNScrollView>
           {scrollbar.overlay}
+        </View>
+      );
+    }
+
+    if (textPreviewMode === "html") {
+      return (
+        <View style={styles.previewScrollContainer}>
+          <HtmlFilePreview content={preview.content ?? ""} />
         </View>
       );
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
+import { isRenderedMarkdownFile, resolveTextPreviewMode } from "@/components/file-pane-render-mode";
 
 describe("isRenderedMarkdownFile", () => {
   it("detects .md files", () => {
@@ -19,5 +19,30 @@ describe("isRenderedMarkdownFile", () => {
   it("does not treat other text files as rendered markdown", () => {
     expect(isRenderedMarkdownFile("src/index.ts")).toBe(false);
     expect(isRenderedMarkdownFile("README.md.txt")).toBe(false);
+  });
+});
+
+describe("resolveTextPreviewMode", () => {
+  it("renders markdown for markdown files", () => {
+    expect(resolveTextPreviewMode("README.md")).toBe("markdown");
+  });
+
+  it("renders live html for html files", () => {
+    expect(resolveTextPreviewMode("index.html")).toBe("html");
+    expect(resolveTextPreviewMode("page.htm")).toBe("html");
+  });
+
+  it("renders source code for everything else", () => {
+    expect(resolveTextPreviewMode("main.ts")).toBe("code");
+    expect(resolveTextPreviewMode("Makefile")).toBe("code");
+    // SVG is an image (handled by the image viewer), not an html text preview.
+    expect(resolveTextPreviewMode("diagram.svg")).toBe("code");
+    // .mdx is not rendered markdown.
+    expect(resolveTextPreviewMode("page.mdx")).toBe("code");
+  });
+
+  it("forces source view when a specific line is targeted", () => {
+    expect(resolveTextPreviewMode("index.html", { hasLineSelection: true })).toBe("code");
+    expect(resolveTextPreviewMode("README.md", { hasLineSelection: true })).toBe("code");
   });
 });
