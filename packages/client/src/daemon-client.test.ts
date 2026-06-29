@@ -617,6 +617,46 @@ test("honors explicit fetchAgent timeout below the session RPC default", async (
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (5000ms)");
 });
 
+test("preserves legacy fetchAgent id overload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgent("agent-1", "req-agent-legacy");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_request",
+    requestId: "req-agent-legacy",
+    agentId: "agent-1",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_response",
+      payload: {
+        requestId: "req-agent-legacy",
+        agent: null,
+        project: null,
+        error: "legacy fetch sentinel",
+      },
+    }),
+  );
+
+  await expect(responsePromise).rejects.toThrow("legacy fetch sentinel");
+});
+
 test("honors explicit fetchAgentTimeline timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();
@@ -3908,6 +3948,112 @@ test("lists commands with explicit requestId via RPC", async () => {
     commands: [],
     error: null,
     requestId: "req-commands",
+  });
+});
+
+test("preserves legacy listCommands id overload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.listCommands("agent-1", "req-commands-legacy");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "list_commands_request",
+    requestId: "req-commands-legacy",
+    agentId: "agent-1",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "list_commands_response",
+      payload: {
+        agentId: "agent-1",
+        commands: [],
+        error: null,
+        requestId: "req-commands-legacy",
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    agentId: "agent-1",
+    commands: [],
+    error: null,
+    requestId: "req-commands-legacy",
+  });
+});
+
+test("preserves legacy listCommands options overload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.listCommands("__new_agent__", {
+    requestId: "req-commands-draft-legacy",
+    draftConfig: {
+      provider: "codex",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "gpt-5",
+      thinkingOptionId: "off",
+    },
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "list_commands_request",
+    requestId: "req-commands-draft-legacy",
+    agentId: "__new_agent__",
+    draftConfig: {
+      provider: "codex",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "gpt-5",
+      thinkingOptionId: "off",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "list_commands_response",
+      payload: {
+        agentId: "__new_agent__",
+        commands: [{ name: "help", description: "Show help", argumentHint: "" }],
+        error: null,
+        requestId: "req-commands-draft-legacy",
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    agentId: "__new_agent__",
+    commands: [{ name: "help", description: "Show help", argumentHint: "" }],
+    error: null,
+    requestId: "req-commands-draft-legacy",
   });
 });
 

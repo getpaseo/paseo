@@ -378,6 +378,7 @@ interface ListCommandsOptions {
   requestId?: string;
   draftConfig?: ListCommandsDraftConfig;
 }
+type LegacyListCommandsOptions = Omit<ListCommandsOptions, "agentId">;
 type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
@@ -464,6 +465,7 @@ export interface FetchAgentOptions {
   requestId?: string;
   timeout?: number;
 }
+type LegacyFetchAgentOptions = Omit<FetchAgentOptions, "agentId">;
 export interface FetchAgentTimelineOptions {
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
@@ -471,6 +473,34 @@ export interface FetchAgentTimelineOptions {
   projection?: FetchAgentTimelineProjection;
   requestId?: string;
   timeout?: number;
+}
+
+// COMPAT(daemon-client-object-options): added in v0.1.102; remove after
+// 2026-12-29 once SDK callers have migrated to object parameters.
+function normalizeFetchAgentOptions(
+  input: FetchAgentOptions | string,
+  legacyOptions?: LegacyFetchAgentOptions | string,
+): FetchAgentOptions {
+  if (typeof input !== "string") {
+    return input;
+  }
+  if (typeof legacyOptions === "string") {
+    return { agentId: input, requestId: legacyOptions };
+  }
+  return { agentId: input, ...legacyOptions };
+}
+
+function normalizeListCommandsOptions(
+  input: ListCommandsOptions | string,
+  legacyOptions?: LegacyListCommandsOptions | string,
+): ListCommandsOptions {
+  if (typeof input !== "string") {
+    return input;
+  }
+  if (typeof legacyOptions === "string") {
+    return { agentId: input, requestId: legacyOptions };
+  }
+  return { agentId: input, ...legacyOptions };
 }
 
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
@@ -1964,7 +1994,17 @@ export class DaemonClient {
     });
   }
 
-  async fetchAgent(options: FetchAgentOptions): Promise<FetchAgentResult | null> {
+  async fetchAgent(options: FetchAgentOptions): Promise<FetchAgentResult | null>;
+  async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null>;
+  async fetchAgent(
+    agentId: string,
+    options?: LegacyFetchAgentOptions,
+  ): Promise<FetchAgentResult | null>;
+  async fetchAgent(
+    input: FetchAgentOptions | string,
+    legacyOptions?: LegacyFetchAgentOptions | string,
+  ): Promise<FetchAgentResult | null> {
+    const options = normalizeFetchAgentOptions(input, legacyOptions);
     const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_request",
@@ -3834,7 +3874,17 @@ export class DaemonClient {
     });
   }
 
-  async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload> {
+  async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload>;
+  async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
+  async listCommands(
+    agentId: string,
+    options?: LegacyListCommandsOptions,
+  ): Promise<ListCommandsPayload>;
+  async listCommands(
+    input: ListCommandsOptions | string,
+    legacyOptions?: LegacyListCommandsOptions | string,
+  ): Promise<ListCommandsPayload> {
+    const options = normalizeListCommandsOptions(input, legacyOptions);
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
