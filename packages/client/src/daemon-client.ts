@@ -71,6 +71,7 @@ import type {
   DaemonGetPairingOfferResponse,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
+  AgentForkResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -2536,6 +2537,38 @@ export class DaemonClient {
     });
     if (!payload.ok) {
       throw new Error(payload.error ?? "Agent rewind failed");
+    }
+    return payload;
+  }
+
+  async forkAgent(
+    agentId: string,
+    messageId?: string,
+  ): Promise<AgentForkResponseMessage["payload"]> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.fork.request",
+      requestId,
+      agentId,
+      ...(messageId ? { messageId } : {}),
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.fork.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.ok) {
+      throw new Error(payload.error ?? "Agent fork failed");
     }
     return payload;
   }

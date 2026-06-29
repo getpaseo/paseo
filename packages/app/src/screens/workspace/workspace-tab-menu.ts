@@ -8,6 +8,7 @@ export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 export interface WorkspaceTabMenuLabels {
   copyResumeCommand: string;
   copyAgentId: string;
+  forkAgent: string;
   copyFilePath: string;
   rename: string;
   closeAbove: string;
@@ -23,6 +24,7 @@ export interface WorkspaceTabMenuLabels {
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
+  forkAgent: i18n.t("workspace.tabs.menu.forkAgent"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
@@ -42,6 +44,7 @@ export type WorkspaceTabMenuEntry =
       label: string;
       icon?:
         | "copy"
+        | "git-branch"
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
@@ -68,6 +71,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   menuTestIDBase: string;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -84,6 +88,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tabCount: number;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onForkAgent: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -152,6 +157,7 @@ export function buildWorkspaceTabMenuEntries(
     menuTestIDBase,
     onCopyResumeCommand,
     onCopyAgentId,
+    onForkAgent,
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,
@@ -187,6 +193,16 @@ export function buildWorkspaceTabMenuEntries(
       testID: `${menuTestIDBase}-copy-agent-id`,
       onSelect: () => {
         void onCopyAgentId(agentId);
+      },
+    });
+    entries.push({
+      kind: "item",
+      key: "fork-agent",
+      label: labels.forkAgent,
+      icon: "git-branch",
+      testID: `${menuTestIDBase}-fork-agent`,
+      onSelect: () => {
+        void onForkAgent(agentId);
       },
     });
   }
@@ -297,6 +313,7 @@ export function buildWorkspaceDesktopTabActions(
       menuTestIDBase: contextMenuTestId,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
+      onForkAgent: input.onForkAgent,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
       onRenameTab: input.onRenameTab,

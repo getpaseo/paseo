@@ -474,6 +474,7 @@ export const ru: TranslationResources = {
         openFor: "Открыть меню для{{label}}",
         copyResumeCommand: "Копировать команду возобновления",
         copyAgentId: "Скопировать идентификатор агента",
+        forkAgent: "Разветвить разговор",
         copyFilePath: "Copy file path",
         rename: "Переименовать",
         closeAbove: "Закрыть вкладки выше",
@@ -1348,6 +1349,12 @@ export const ru: TranslationResources = {
       mute: "Отключить звук в реальном времени",
       unmute: "Включить звук голоса в реальном времени",
       stop: "Остановить голос в реальном времени и прервать поворот",
+    },
+  },
+  fork: {
+    tooltip: "Разветвить отсюда",
+    errors: {
+      failed: "Не удалось разветвить разговор",
     },
   },
   rewind: {

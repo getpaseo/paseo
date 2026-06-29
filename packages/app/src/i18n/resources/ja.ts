@@ -474,6 +474,7 @@ export const ja: TranslationResources = {
         openFor: "{{label}}のメニューを開く",
         copyResumeCommand: "再開コマンドをコピー",
         copyAgentId: "エージェントIDをコピー",
+        forkAgent: "会話を分岐",
         copyFilePath: "ファイルパスをコピー",
         rename: "名前を変更",
         closeAbove: "上のタブを閉じる",
@@ -1334,6 +1335,12 @@ export const ja: TranslationResources = {
       mute: "リアルタイム音声をミュート",
       unmute: "リアルタイム音声のミュートを解除",
       stop: "リアルタイム音声を停止してターンを中断",
+    },
+  },
+  fork: {
+    tooltip: "ここから分岐",
+    errors: {
+      failed: "会話の分岐に失敗しました",
     },
   },
   rewind: {

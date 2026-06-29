@@ -470,6 +470,7 @@ export const en = {
         openFor: "Open menu for {{label}}",
         copyResumeCommand: "Copy resume command",
         copyAgentId: "Copy agent id",
+        forkAgent: "Fork agent",
         copyFilePath: "Copy file path",
         rename: "Rename",
         closeAbove: "Close tabs above",
@@ -1325,6 +1326,12 @@ export const en = {
       mute: "Mute realtime voice",
       unmute: "Unmute realtime voice",
       stop: "Stop realtime voice and interrupt turn",
+    },
+  },
+  fork: {
+    tooltip: "Fork from here",
+    errors: {
+      failed: "Failed to fork conversation",
     },
   },
   rewind: {

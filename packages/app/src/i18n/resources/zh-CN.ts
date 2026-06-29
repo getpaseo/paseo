@@ -470,6 +470,7 @@ export const zhCN: TranslationResources = {
         openFor: "打开 {{label}} 的菜单",
         copyResumeCommand: "复制恢复命令",
         copyAgentId: "复制 Agent ID",
+        forkAgent: "分叉会话",
         copyFilePath: "Copy file path",
         rename: "重命名",
         closeAbove: "关闭上方标签",
@@ -1300,6 +1301,12 @@ export const zhCN: TranslationResources = {
       mute: "静音 realtime voice",
       unmute: "取消静音 realtime voice",
       stop: "停止 realtime voice 并中断 turn",
+    },
+  },
+  fork: {
+    tooltip: "从这里分叉",
+    errors: {
+      failed: "分叉会话失败",
     },
   },
   rewind: {
