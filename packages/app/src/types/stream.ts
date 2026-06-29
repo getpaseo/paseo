@@ -946,10 +946,7 @@ function getTailAssistantToResume(params: {
   if (params.tailAssistant?.kind !== "assistant_message") {
     return null;
   }
-  const incomingMessageId =
-    params.event.type === "timeline" && params.event.item.type === "assistant_message"
-      ? params.event.item.messageId
-      : undefined;
+  const incomingMessageId = getIncomingAssistantMessageId(params.event);
   if (incomingMessageId !== undefined && params.tailAssistant.messageId !== incomingMessageId) {
     return null;
   }
