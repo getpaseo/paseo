@@ -343,11 +343,10 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
       .map((event) => event.item)
       .at(-1);
 
-    expect(latestSubAgentUpdate).toBeDefined();
-    if (!latestSubAgentUpdate || latestSubAgentUpdate.detail.type !== "sub_agent") {
-      throw new Error("expected sub_agent detail");
-    }
-    expect(latestSubAgentUpdate.detail.log).toContain("[Read] README.md");
+    expect(latestSubAgentUpdate?.detail).toMatchObject({
+      type: "sub_agent",
+      log: expect.stringContaining("[Read] README.md"),
+    });
   });
 
   test("tails sub-agent actions instead of dropping latest entries at cap", async () => {
