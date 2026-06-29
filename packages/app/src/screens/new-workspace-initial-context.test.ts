@@ -78,6 +78,22 @@ describe("resolveNewWorkspaceInitialServerId", () => {
     ).toBe("offline");
   });
 
+  it("prefers a connecting project host over a stale offline last active project", () => {
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["offline", "connecting"],
+        routeServerId: null,
+        lastActiveProject: projectFor("offline", "remembered"),
+        projects: [projectFor("offline", "remembered"), projectFor("connecting", "current")],
+        hostConnectionStatusByServerId: statuses({
+          offline: "offline",
+          connecting: "connecting",
+        }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("connecting");
+  });
+
   it("prefers the online last active project over another hydrated online project", () => {
     expect(
       resolveNewWorkspaceInitialServerId({
@@ -192,6 +208,24 @@ describe("resolveNewWorkspaceAutomaticServerId", () => {
         nextServerId: "online",
       }),
     ).toBe("online");
+  });
+
+  it("switches from an offline automatic host to a connecting default with projects", () => {
+    expect(
+      resolveNewWorkspaceAutomaticServerId({
+        allServerIds: ["offline", "connecting"],
+        routeServerId: null,
+        lastActiveProject: projectFor("offline", "remembered"),
+        projects: [projectFor("offline", "remembered"), projectFor("connecting", "current")],
+        hostConnectionStatusByServerId: statuses({
+          offline: "offline",
+          connecting: "connecting",
+        }),
+        workspaceMultiplicityByServerId: multiplicity(),
+        currentServerId: "offline",
+        nextServerId: "connecting",
+      }),
+    ).toBe("connecting");
   });
 
   it("switches to the default when the current automatic host has no selectable projects", () => {

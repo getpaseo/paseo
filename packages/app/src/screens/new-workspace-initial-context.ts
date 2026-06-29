@@ -165,15 +165,15 @@ export function resolveNewWorkspaceInitialServerId(input: NewWorkspaceInitialSer
     return onlineServerIds[0] ?? "";
   }
 
-  if (lastActiveProjectServerId) {
-    return lastActiveProjectServerId;
-  }
-
   const reachableServerIdsWithProjects = serverIdsWithProjects.filter(
     (serverId) => !isKnownUnreachable(input.hostConnectionStatusByServerId, serverId),
   );
   if (reachableServerIdsWithProjects.length === 1) {
     return reachableServerIdsWithProjects[0] ?? "";
+  }
+
+  if (lastActiveProjectServerId) {
+    return lastActiveProjectServerId;
   }
 
   if (serverIdsWithProjects.length === 1) {
@@ -234,6 +234,13 @@ export function resolveNewWorkspaceAutomaticServerId(
     serverId: nextServerId,
     workspaceMultiplicityByServerId: input.workspaceMultiplicityByServerId,
   });
+  if (
+    isKnownUnreachable(input.hostConnectionStatusByServerId, currentServerId) &&
+    nextHasProject &&
+    !isKnownUnreachable(input.hostConnectionStatusByServerId, nextServerId)
+  ) {
+    return nextServerId;
+  }
   if (
     !currentHasProject &&
     nextHasProject &&
