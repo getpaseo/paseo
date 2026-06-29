@@ -417,6 +417,25 @@ export const zhCN: TranslationResources = {
         openDevTools: "打开浏览器开发者工具",
         cancelSelector: "取消元素选择器",
         selectElement: "选择元素",
+        grabElement: "复制元素到剪贴板",
+        grabElementLabel: "元素",
+        grabFailed: "复制元素失败",
+      },
+      annotate: {
+        title: "发送反馈给智能体",
+        placeholder: "描述需要修改的内容…",
+        submit: "附加",
+        cancel: "取消",
+        intents: {
+          fix: "修复",
+          change: "修改",
+          question: "提问",
+          approve: "认可",
+        },
+      },
+      devices: {
+        label: "设备尺寸",
+        responsive: "自适应",
       },
       errors: {
         failedToLoad: "页面加载失败",
@@ -755,9 +774,20 @@ export const zhCN: TranslationResources = {
       home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      commandCenter: "命令中心",
+      openCommandCenter: "打开命令中心",
+      displayPreferences: "显示偏好",
+    },
+    search: {
+      placeholder: "筛选项目...",
+      clear: "清除搜索",
+      open: "搜索项目",
+      close: "关闭搜索",
+      closeAccessibility: "关闭项目搜索",
     },
     sections: {
       sessions: "历史",
+      workspaces: "工作区",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",

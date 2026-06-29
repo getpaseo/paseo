@@ -1,11 +1,22 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, History, Home, Plus, Search, Server, Settings, X } from "lucide-react-native";
+import {
+  Command,
+  FolderPlus,
+  History,
+  Home,
+  Plus,
+  Search,
+  Server,
+  Settings,
+  X,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
   StyleSheet as RNStyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
   type PressableStateCallbackType,
@@ -915,10 +926,51 @@ function DesktopSidebar({
 }
 
 function WorkspacesSectionHeader() {
+  const { t } = useTranslation();
   const { theme } = useUnistyles();
-  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const commandCenterKeys = useShortcutKeys("toggle-command-center");
-  const handleSearchPress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
+  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const handleOpenCommandCenter = useCallback(
+    () => setCommandCenterOpen(true),
+    [setCommandCenterOpen],
+  );
+  const searchQuery = useSidebarViewStore((state) => state.searchQuery);
+  const setSearchQuery = useSidebarViewStore((state) => state.setSearchQuery);
+  // Start open when a persisted query is already filtering the list, so the
+  // field is visible to explain why the list is narrowed (and to clear it).
+  const [isSearchActive, setIsSearchActive] = useState(() => searchQuery.trim().length > 0);
+  const searchInputRef = useRef<TextInput>(null);
+
+  const handleSearchPress = useCallback(() => {
+    const nextActive = !isSearchActive;
+    setIsSearchActive(nextActive);
+    if (nextActive) {
+      // Focus the input on the next frame after it mounts
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+    }
+    // Closing keeps the query: searchQuery lives in sidebar-view-store and is
+    // included in its partialize, so the filter survives toggling the field shut
+    // and reopening it, and across app restarts.
+  }, [isSearchActive]);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery("");
+    searchInputRef.current?.focus();
+  }, [setSearchQuery]);
+
+  const handleSubmitSearch = useCallback(() => {
+    // Keep input visible after submit — no-op
+  }, []);
+
+  const handleSearchChange = useCallback(
+    (text: string) => {
+      setSearchQuery(text);
+    },
+    [setSearchQuery],
+  );
+
   const searchButtonStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.workspacesHeaderIconButton,
@@ -929,14 +981,70 @@ function WorkspacesSectionHeader() {
 
   return (
     <View style={styles.workspacesSectionHeader}>
-      <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
+      {isSearchActive ? (
+        <View style={styles.searchInputContainer}>
+          <Search size={14} color={theme.colors.foregroundMuted} />
+          <TextInput
+            ref={searchInputRef}
+            style={styles.searchInput}
+            placeholder={t("sidebar.search.placeholder")}
+            placeholderTextColor={theme.colors.foregroundMuted}
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={handleSubmitSearch}
+            testID="sidebar-project-search-input"
+          />
+          {searchQuery.length > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("sidebar.search.clear")}
+              onPress={handleClearSearch}
+              style={styles.searchClearButton}
+            >
+              <X size={12} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          )}
+        </View>
+      ) : (
+        <Text style={styles.workspacesSectionTitle}>{t("sidebar.sections.workspaces")}</Text>
+      )}
       <View style={styles.workspacesSectionActions}>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Open command center"
-              testID="sidebar-command-center-search"
+              accessibilityLabel={t("sidebar.actions.openCommandCenter")}
+              testID="sidebar-command-center-open"
+              style={styles.workspacesHeaderIconButton}
+              onPress={handleOpenCommandCenter}
+            >
+              {({ hovered, pressed }) => (
+                <Command
+                  size={14}
+                  color={
+                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
+                  }
+                />
+              )}
+            </Pressable>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <HeaderIconTooltipContent
+              label={t("sidebar.actions.commandCenter")}
+              shortcutKeys={commandCenterKeys}
+            />
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                isSearchActive ? t("sidebar.search.closeAccessibility") : t("sidebar.search.open")
+              }
+              testID="sidebar-project-search-toggle"
               style={searchButtonStyle}
               onPress={handleSearchPress}
             >
@@ -951,7 +1059,9 @@ function WorkspacesSectionHeader() {
             </Pressable>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <HeaderIconTooltipContent label="Search" shortcutKeys={commandCenterKeys} />
+            <HeaderIconTooltipContent
+              label={isSearchActive ? t("sidebar.search.close") : t("sidebar.search.open")}
+            />
           </TooltipContent>
         </Tooltip>
         <Tooltip delayDuration={300}>
@@ -961,7 +1071,7 @@ function WorkspacesSectionHeader() {
             </View>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center" offset={8}>
-            <HeaderIconTooltipContent label="Display preferences" />
+            <HeaderIconTooltipContent label={t("sidebar.actions.displayPreferences")} />
           </TooltipContent>
         </Tooltip>
       </View>
@@ -1036,6 +1146,34 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspacesHeaderIconButtonHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  searchInputContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    paddingLeft: theme.spacing[1.5],
+    paddingRight: theme.spacing[1],
+    height: 28,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  searchInput: {
+    flex: 1,
+    // Fill the 28px container so the web <input> isn't collapsed to its line
+    // box (which renders noticeably shorter than the surrounding pill).
+    height: "100%",
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foreground,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+  },
+  searchClearButton: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.sm,
   },
   sidebarContent: {
     flex: 1,

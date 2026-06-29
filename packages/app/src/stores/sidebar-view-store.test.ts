@@ -70,6 +70,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilter: null,
+      searchQuery: "",
     });
   });
 
@@ -78,10 +79,12 @@ describe("sidebar view store", () => {
       migrateSidebarViewState({
         groupMode: "status",
         hostFilter: "host-a",
+        searchQuery: "auth",
       }),
     ).toEqual({
       groupMode: "status",
       hostFilter: "host-a",
+      searchQuery: "auth",
     });
   });
 

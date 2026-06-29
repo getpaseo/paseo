@@ -80,5 +80,11 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
     clearPartition: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:clear-partition", browserId),
+    captureElement: (
+      browserId: string,
+      rect: { x: number; y: number; width: number; height: number },
+    ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
+    copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
+      ipcRenderer.invoke("paseo:browser:copy-element", payload),
   },
 });

@@ -421,6 +421,25 @@ export const es: TranslationResources = {
         openDevTools: "Abrir herramientas de desarrollo del navegador",
         cancelSelector: "Cancelar selector de elementos",
         selectElement: "Seleccionar elemento",
+        grabElement: "Copiar elemento al portapapeles",
+        grabElementLabel: "elemento",
+        grabFailed: "No se pudo copiar el elemento",
+      },
+      annotate: {
+        title: "Enviar comentarios al agente",
+        placeholder: "Describe qué debería cambiar…",
+        submit: "Adjuntar",
+        cancel: "Cancelar",
+        intents: {
+          fix: "Corregir",
+          change: "Cambiar",
+          question: "Pregunta",
+          approve: "Aprobar",
+        },
+      },
+      devices: {
+        label: "Tamaño del dispositivo",
+        responsive: "Adaptable",
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
@@ -788,9 +807,20 @@ export const es: TranslationResources = {
       home: "Hogar",
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
+      commandCenter: "Centro de comando",
+      openCommandCenter: "Abrir centro de comando",
+      displayPreferences: "Preferencias de visualización",
+    },
+    search: {
+      placeholder: "Filtrar proyectos...",
+      clear: "Borrar búsqueda",
+      open: "Buscar proyectos",
+      close: "Cerrar búsqueda",
+      closeAccessibility: "Cerrar búsqueda de proyectos",
     },
     sections: {
       sessions: "Historial",
+      workspaces: "Espacios de trabajo",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",

@@ -417,6 +417,25 @@ export const ar: TranslationResources = {
         openDevTools: "افتح أدوات تطوير المتصفح",
         cancelSelector: "إلغاء محدد العنصر",
         selectElement: "حدد العنصر",
+        grabElement: "نسخ العنصر إلى الحافظة",
+        grabElementLabel: "العنصر",
+        grabFailed: "تعذّر نسخ العنصر",
+      },
+      annotate: {
+        title: "إرسال ملاحظات إلى الوكيل",
+        placeholder: "صف ما الذي ينبغي تغييره…",
+        submit: "إرفاق",
+        cancel: "إلغاء",
+        intents: {
+          fix: "إصلاح",
+          change: "تغيير",
+          question: "سؤال",
+          approve: "موافقة",
+        },
+      },
+      devices: {
+        label: "حجم الجهاز",
+        responsive: "متجاوب",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
@@ -761,9 +780,20 @@ export const ar: TranslationResources = {
       home: "بيت",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+      commandCenter: "مركز القيادة",
+      openCommandCenter: "فتح مركز القيادة",
+      displayPreferences: "تفضيلات العرض",
+    },
+    search: {
+      placeholder: "تصفية المشاريع...",
+      clear: "مسح البحث",
+      open: "البحث في المشاريع",
+      close: "إغلاق البحث",
+      closeAccessibility: "إغلاق بحث المشاريع",
     },
     sections: {
       sessions: "السجل",
+      workspaces: "مساحات العمل",
     },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",

@@ -88,8 +88,49 @@ export interface SidebarWorkspacesListResult {
   refreshAll: () => void;
 }
 
+function filterBySearchQuery(
+  projects: SidebarProjectEntry[],
+  query: string,
+): SidebarProjectEntry[] {
+  if (!query.trim()) {
+    return projects;
+  }
+
+  const lowerQuery = query.toLowerCase().trim();
+
+  return projects
+    .map((project) => {
+      const projectNameMatch = project.projectName.toLowerCase().includes(lowerQuery);
+      const iconDirMatch = project.iconWorkingDir.toLowerCase().includes(lowerQuery);
+
+      // If the project name or working directory matches, show the whole project
+      if (projectNameMatch || iconDirMatch) {
+        return project;
+      }
+
+      // Otherwise, check if any workspace matches
+      const matchingWorkspaces = project.workspaces.filter((workspace) => {
+        const nameMatch = workspace.name.toLowerCase().includes(lowerQuery);
+        const dirMatch = workspace.workspaceDirectory?.toLowerCase().includes(lowerQuery) ?? false;
+        const rootMatch = workspace.projectRootPath?.toLowerCase().includes(lowerQuery) ?? false;
+        return nameMatch || dirMatch || rootMatch;
+      });
+
+      if (matchingWorkspaces.length === 0) {
+        return null;
+      }
+
+      return {
+        ...project,
+        workspaces: matchingWorkspaces,
+      };
+    })
+    .filter((project): project is SidebarProjectEntry => project !== null);
+}
+
 export function useSidebarWorkspacesList(options?: {
   hostFilter?: string | null;
+  searchQuery?: string;
   enabled?: boolean;
 }): SidebarWorkspacesListResult {
   const runtime = getHostRuntimeStore();
@@ -98,7 +139,9 @@ export function useSidebarWorkspacesList(options?: {
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
 
   const storeHostFilter = useSidebarViewStore((state) => state.hostFilter);
+  const storeSearchQuery = useSidebarViewStore((state) => state.searchQuery);
   const hostFilter = options?.hostFilter ?? storeHostFilter;
+  const searchQuery = options?.searchQuery ?? storeSearchQuery;
   const reconcileHostFilter = useSidebarViewStore((state) => state.reconcileHostFilter);
   const hasHostFilterMatch = hostFilter ? allServerIds.includes(hostFilter) : false;
   const effectiveHostFilter =
@@ -137,11 +180,22 @@ export function useSidebarWorkspacesList(options?: {
     [hostProjects],
   );
 
-  const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
-  const workspacePlacements =
-    sidebarModel.workspaces.length > 0 ? sidebarModel.workspaces : EMPTY_WORKSPACES;
-  const projectNamesByKey =
-    sidebarModel.projectNamesByKey.size > 0 ? sidebarModel.projectNamesByKey : EMPTY_PROJECT_NAMES;
+  const rawProjects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
+  const projects = useMemo(
+    () => filterBySearchQuery(rawProjects, searchQuery),
+    [rawProjects, searchQuery],
+  );
+  const workspacePlacements = useMemo(
+    () => (projects.length > 0 ? projects.flatMap((p) => p.workspaces) : EMPTY_WORKSPACES),
+    [projects],
+  );
+  const projectNamesByKey = useMemo(
+    () =>
+      projects.length > 0
+        ? new Map(projects.map((p) => [p.projectKey, p.projectName]))
+        : EMPTY_PROJECT_NAMES,
+    [projects],
+  );
 
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();

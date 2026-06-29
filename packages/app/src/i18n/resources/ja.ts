@@ -421,6 +421,25 @@ export const ja: TranslationResources = {
         openDevTools: "ブラウザ開発ツールを開く",
         cancelSelector: "要素セレクターをキャンセル",
         selectElement: "要素を選択",
+        grabElement: "要素をクリップボードにコピー",
+        grabElementLabel: "要素",
+        grabFailed: "要素をコピーできませんでした",
+      },
+      annotate: {
+        title: "エージェントにフィードバックを送信",
+        placeholder: "変更すべき内容を記述…",
+        submit: "添付",
+        cancel: "キャンセル",
+        intents: {
+          fix: "修正",
+          change: "変更",
+          question: "質問",
+          approve: "承認",
+        },
+      },
+      devices: {
+        label: "デバイスサイズ",
+        responsive: "レスポンシブ",
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
@@ -773,9 +792,20 @@ export const ja: TranslationResources = {
       home: "ホーム",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
+      commandCenter: "コマンドセンター",
+      openCommandCenter: "コマンドセンターを開く",
+      displayPreferences: "表示設定",
+    },
+    search: {
+      placeholder: "プロジェクトを絞り込む...",
+      clear: "検索をクリア",
+      open: "プロジェクトを検索",
+      close: "検索を閉じる",
+      closeAccessibility: "プロジェクト検索を閉じる",
     },
     sections: {
       sessions: "履歴",
+      workspaces: "ワークスペース",
     },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",

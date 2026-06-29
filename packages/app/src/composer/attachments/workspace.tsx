@@ -59,6 +59,8 @@ function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
       tag: attachment.attachment.tag,
       text: attachment.attachment.text,
       html: attachment.attachment.outerHTML,
+      intent: attachment.attachment.intent ?? null,
+      comment: attachment.attachment.comment ?? null,
     });
   }
   if (isPullRequestContextAttachment(attachment)) {
@@ -116,11 +118,20 @@ interface PillContent {
   subtitle: string;
 }
 
+const BROWSER_INTENT_LABEL_KEYS: Record<string, string> = {
+  fix: "workspace.browser.annotate.intents.fix",
+  change: "workspace.browser.annotate.intents.change",
+  question: "workspace.browser.annotate.intents.question",
+  approve: "workspace.browser.annotate.intents.approve",
+};
+
 function getPillContent(attachment: WorkspaceComposerAttachment, t: TranslationFn): PillContent {
   if (attachment.kind === "browser_element") {
+    const intent = attachment.attachment.intent;
+    const intentKey = intent ? BROWSER_INTENT_LABEL_KEYS[intent] : undefined;
     return {
       title: attachment.attachment.tag,
-      subtitle: t("composer.attachments.element"),
+      subtitle: intentKey ? t(intentKey) : t("composer.attachments.element"),
     };
   }
   if (isPullRequestContextAttachment(attachment)) {

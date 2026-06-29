@@ -421,6 +421,25 @@ export const ptBR: TranslationResources = {
         openDevTools: "Abrir ferramentas de desenvolvedor do navegador",
         cancelSelector: "Cancelar seletor de elemento",
         selectElement: "Selecionar elemento",
+        grabElement: "Copiar elemento para a área de transferência",
+        grabElementLabel: "elemento",
+        grabFailed: "Não foi possível copiar o elemento",
+      },
+      annotate: {
+        title: "Enviar feedback ao agente",
+        placeholder: "Descreva o que deve mudar…",
+        submit: "Anexar",
+        cancel: "Cancelar",
+        intents: {
+          fix: "Corrigir",
+          change: "Alterar",
+          question: "Pergunta",
+          approve: "Aprovar",
+        },
+      },
+      devices: {
+        label: "Tamanho do dispositivo",
+        responsive: "Responsivo",
       },
       errors: {
         failedToLoad: "Falha ao carregar página",
@@ -779,9 +798,20 @@ export const ptBR: TranslationResources = {
       home: "Início",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
+      commandCenter: "Central de comandos",
+      openCommandCenter: "Abrir central de comandos",
+      displayPreferences: "Preferências de exibição",
+    },
+    search: {
+      placeholder: "Filtrar projetos...",
+      clear: "Limpar busca",
+      open: "Buscar projetos",
+      close: "Fechar busca",
+      closeAccessibility: "Fechar busca de projetos",
     },
     sections: {
       sessions: "Histórico",
+      workspaces: "Workspaces",
     },
     worktreeSetup: {
       title: "Configurar scripts de worktree",
