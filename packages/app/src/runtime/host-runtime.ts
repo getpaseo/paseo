@@ -2213,6 +2213,7 @@ export function useHostRuntimeConnectionStatuses(
   );
 
   return useMemo(() => {
+    // The aggregate version is the reactivity trigger; re-read snapshots on every host tick.
     void version;
     return new Map(
       serverIds.map(

@@ -3,6 +3,7 @@ import { useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useSyncExternalStore } from "react";
 import {
   createLastWorkspaceSelectionStore,
+  LAST_WORKSPACE_SELECTION_STORAGE_KEY,
   type ActiveWorkspaceSelection,
   type LastWorkspaceSelectionStorage,
 } from "@/stores/last-workspace-selection";
@@ -22,8 +23,6 @@ export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection
 interface NavigateToWorkspaceOptions {
   currentPathname?: string | null;
 }
-
-const LAST_WORKSPACE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
 
 const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
   read: () => AsyncStorage.getItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY),

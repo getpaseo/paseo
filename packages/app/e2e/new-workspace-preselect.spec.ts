@@ -8,10 +8,10 @@ import {
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 import { seedSavedSettingsHosts } from "./helpers/settings";
+import { LAST_WORKSPACE_SELECTION_STORAGE_KEY } from "@/stores/last-workspace-selection";
 import { buildHostWorkspaceRoute, buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { switchWorkspaceViaSidebar, waitForSidebarHydration } from "./helpers/workspace-ui";
 
-const LAST_WORKSPACE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
 const OFFLINE_SERVER_IDS = [
   "srv_e2e_preselect_offline_1",
   "srv_e2e_preselect_offline_2",
