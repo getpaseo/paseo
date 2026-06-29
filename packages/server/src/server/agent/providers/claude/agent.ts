@@ -1731,6 +1731,14 @@ function isClaudeSubagentToolName(name: string | undefined): boolean {
   return name === "Task" || name === "Agent";
 }
 
+function readClaudeParentToolUseId(message: SDKMessage): string | null {
+  if (!("parent_tool_use_id" in message)) {
+    return null;
+  }
+  const parentToolUseId = (message as { parent_tool_use_id?: unknown }).parent_tool_use_id;
+  return typeof parentToolUseId === "string" && parentToolUseId.length > 0 ? parentToolUseId : null;
+}
+
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
   private streamRequestInputTokens: number | undefined;
@@ -3495,20 +3503,22 @@ class ClaudeAgentSession implements AgentSession {
       suppressAssistantText: true,
       suppressReasoning: true,
     });
-    const assistantTimelineEvents = this.timelineAssembler
-      .consume({
-        message,
-        runId: turnId,
-        messageIdHint,
-      })
-      .map(
-        (item) =>
-          ({
-            type: "timeline",
-            item,
-            provider: "claude",
-          }) satisfies AgentStreamEvent,
-      );
+    const assistantTimelineEvents = readClaudeParentToolUseId(message)
+      ? []
+      : this.timelineAssembler
+          .consume({
+            message,
+            runId: turnId,
+            messageIdHint,
+          })
+          .map(
+            (item) =>
+              ({
+                type: "timeline",
+                item,
+                provider: "claude",
+              }) satisfies AgentStreamEvent,
+          );
 
     return [...messageEvents, ...assistantTimelineEvents];
   }
@@ -3582,10 +3592,7 @@ class ClaudeAgentSession implements AgentSession {
       suppressReasoning?: boolean;
     },
   ): AgentStreamEvent[] {
-    const parentToolUseId =
-      "parent_tool_use_id" in message
-        ? (message as { parent_tool_use_id: string | null }).parent_tool_use_id
-        : null;
+    const parentToolUseId = readClaudeParentToolUseId(message);
     if (parentToolUseId) {
       return this.sidechainTracker.handleMessage(message, parentToolUseId);
     }
