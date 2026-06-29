@@ -144,6 +144,23 @@ describe("resolveNewWorkspaceInitialServerId", () => {
     ).toBe("online-a");
   });
 
+  it("prefers the first online project host over an empty online host", () => {
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["empty-online", "project-online-a", "project-online-b"],
+        routeServerId: null,
+        lastActiveProject: null,
+        projects: [projectFor("project-online-a", "a"), projectFor("project-online-b", "b")],
+        hostConnectionStatusByServerId: statuses({
+          "empty-online": "online",
+          "project-online-a": "online",
+          "project-online-b": "online",
+        }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("project-online-a");
+  });
+
   it("uses the only host with selectable projects even before runtime status is online", () => {
     expect(
       resolveNewWorkspaceInitialServerId({

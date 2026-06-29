@@ -154,7 +154,7 @@ export function resolveNewWorkspaceInitialServerId(input: NewWorkspaceInitialSer
     return lastActiveProjectServerId;
   }
 
-  if (onlineServerIdsWithProjects.length === 1) {
+  if (onlineServerIdsWithProjects.length > 0) {
     return onlineServerIdsWithProjects[0] ?? "";
   }
   if (onlineServerIds.length === 1) {
