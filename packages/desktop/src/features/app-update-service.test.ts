@@ -273,4 +273,39 @@ describe("app update service", () => {
       errorMessage: null,
     });
   });
+
+  it("keeps runtime update errors visible after a manual retry fails", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.failRuntime(new Error("sha512 checksum mismatch"));
+
+    runtime.failNextCheck(new Error("network down"));
+    const retryResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    const automaticResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(retryResult.errorMessage).toBe("network down");
+    expect(automaticResult).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: "sha512 checksum mismatch",
+    });
+  });
 });

@@ -253,7 +253,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       });
     } catch (error) {
       deps.reportCheckError?.(error);
-      runtimeErrorMessage = null;
+      if (!runtimeErrorResult) {
+        runtimeErrorMessage = null;
+      }
       return buildCheckResult({
         currentVersion,
         hasUpdate: false,
