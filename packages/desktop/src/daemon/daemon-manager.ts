@@ -46,16 +46,7 @@ const STARTUP_POLL_MAX_ATTEMPTS = 150;
 const DETACHED_STARTUP_GRACE_MS = 1200;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
-export type DesktopDaemonStopReason =
-  | "manual_ipc"
-  | "settings"
-  | "host_remove"
-  | "quit"
-  | "app_update"
-  | "version_mismatch"
-  | "restart";
-
-const DESKTOP_DAEMON_STOP_REASONS = new Set<DesktopDaemonStopReason>([
+const DESKTOP_DAEMON_STOP_REASON_VALUES = [
   "manual_ipc",
   "settings",
   "host_remove",
@@ -63,7 +54,10 @@ const DESKTOP_DAEMON_STOP_REASONS = new Set<DesktopDaemonStopReason>([
   "app_update",
   "version_mismatch",
   "restart",
-]);
+] as const;
+export type DesktopDaemonStopReason = (typeof DESKTOP_DAEMON_STOP_REASON_VALUES)[number];
+
+const DESKTOP_DAEMON_STOP_REASONS = new Set<string>(DESKTOP_DAEMON_STOP_REASON_VALUES);
 const DEFAULT_DESKTOP_DAEMON_STOP_REASON: DesktopDaemonStopReason = "manual_ipc";
 
 export interface DesktopDaemonStatus {
@@ -111,10 +105,7 @@ function parseDesktopDaemonStopReason(
   args: Record<string, unknown> | undefined,
 ): DesktopDaemonStopReason {
   const reason = args?.reason;
-  if (
-    typeof reason === "string" &&
-    DESKTOP_DAEMON_STOP_REASONS.has(reason as DesktopDaemonStopReason)
-  ) {
+  if (typeof reason === "string" && DESKTOP_DAEMON_STOP_REASONS.has(reason)) {
     return reason as DesktopDaemonStopReason;
   }
   return DEFAULT_DESKTOP_DAEMON_STOP_REASON;

@@ -61,6 +61,10 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import {
+  CLIENT_SHUTDOWN_RPC_REASON,
+  normalizeClientRestartRpcReason,
+} from "./lifecycle-reasons.js";
 
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -1745,7 +1749,7 @@ export class Session {
   }
 
   private async handleRestartServerRequest(requestId: string, reason?: string): Promise<void> {
-    const lifecycleReason = reason?.trim() || "client_restart_rpc";
+    const lifecycleReason = normalizeClientRestartRpcReason(reason);
     const payload: { status: string } & Record<string, unknown> = {
       status: "restart_requested",
       clientId: this.clientId,
@@ -1770,7 +1774,7 @@ export class Session {
   }
 
   private async handleShutdownServerRequest(requestId: string): Promise<void> {
-    const reason = "client_shutdown_rpc";
+    const reason = CLIENT_SHUTDOWN_RPC_REASON;
     this.sessionLogger.warn({ reason }, "Shutdown requested via websocket");
     this.emit({
       type: "status",

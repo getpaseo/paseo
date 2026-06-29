@@ -65,6 +65,10 @@ import {
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
+import {
+  CLIENT_SHUTDOWN_RPC_REASON,
+  normalizeClientRestartRpcReason,
+} from "./lifecycle-reasons.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -2173,11 +2177,11 @@ function getControlRpcLogInfo(
     return {
       requestType: message.type,
       requestId: message.requestId,
-      reason: "client_shutdown_rpc",
+      reason: CLIENT_SHUTDOWN_RPC_REASON,
     };
   }
   if (message.type === "restart_server_request") {
-    const reason = message.reason?.trim() || "client_restart_rpc";
+    const reason = normalizeClientRestartRpcReason(message.reason);
     return {
       requestType: message.type,
       requestId: message.requestId,
