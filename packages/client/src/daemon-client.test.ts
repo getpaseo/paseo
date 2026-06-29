@@ -810,6 +810,98 @@ test("honors explicit readChatMessages timeout below the session RPC default", a
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2500ms)");
 });
 
+test("honors explicit getDaemonStatus timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.getDaemonStatus({
+    requestId: "req-daemon-status-1",
+    timeout: 1_500,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "daemon.get_status.request",
+    requestId: "req-daemon-status-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+});
+
+test("honors explicit getDaemonPairingOffer timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.getDaemonPairingOffer({
+    requestId: "req-pairing-offer-1",
+    timeout: 1_500,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "daemon.get_pairing_offer.request",
+    requestId: "req-pairing-offer-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+});
+
 test("keeps waitForAgentUpsert initial fetch inside the requested deadline", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

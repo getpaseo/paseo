@@ -478,6 +478,14 @@ export interface ShutdownServerOptions {
   requestId?: string;
   timeout?: number;
 }
+export interface DaemonStatusOptions {
+  requestId?: string;
+  timeout?: number;
+}
+export interface DaemonPairingOfferOptions {
+  requestId?: string;
+  timeout?: number;
+}
 type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
@@ -3725,23 +3733,37 @@ export class DaemonClient {
     });
   }
 
-  async getDaemonStatus(requestId?: string): Promise<DaemonStatusPayload> {
+  async getDaemonStatus(
+    requestIdOrOptions?: string | DaemonStatusOptions,
+  ): Promise<DaemonStatusPayload> {
+    const options =
+      typeof requestIdOrOptions === "string"
+        ? { requestId: requestIdOrOptions }
+        : requestIdOrOptions;
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "daemon.get_status.request",
       },
       responseType: "daemon.get_status.response",
+      timeout: options?.timeout,
     });
   }
 
-  async getDaemonPairingOffer(requestId?: string): Promise<DaemonPairingOfferPayload> {
+  async getDaemonPairingOffer(
+    requestIdOrOptions?: string | DaemonPairingOfferOptions,
+  ): Promise<DaemonPairingOfferPayload> {
+    const options =
+      typeof requestIdOrOptions === "string"
+        ? { requestId: requestIdOrOptions }
+        : requestIdOrOptions;
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "daemon.get_pairing_offer.request",
       },
       responseType: "daemon.get_pairing_offer.response",
+      timeout: options?.timeout,
     });
   }
 

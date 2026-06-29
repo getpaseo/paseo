@@ -10,6 +10,8 @@ interface PairOptions {
   json?: boolean;
 }
 
+const PAIRING_DAEMON_RPC_TIMEOUT_MS = 1500;
+
 export function pairCommand(): Command {
   return addJsonOption(new Command("pair").description("Print the daemon pairing QR code and link"))
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
@@ -35,7 +37,9 @@ export async function runPairCommand(options: PairOptions): Promise<void> {
         client.getLastServerInfoMessage()?.features?.daemonStatusRpc === true;
       if (supportsDaemonStatusRpc) {
         try {
-          const offer = await client.getDaemonPairingOffer();
+          const offer = await client.getDaemonPairingOffer({
+            timeout: PAIRING_DAEMON_RPC_TIMEOUT_MS,
+          });
           await client.close().catch(() => {});
           outputPairingResult(
             { relayEnabled: offer.relayEnabled, url: offer.url, qr: offer.qr ?? null },

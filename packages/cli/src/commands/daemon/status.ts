@@ -6,6 +6,8 @@ import type { CommandOptions, ListResult, OutputSchema } from "../../output/inde
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
 import { resolveNodePathFromPid } from "./runtime-toolchain.js";
 
+const DAEMON_STATUS_PROBE_TIMEOUT_MS = 1500;
+
 interface ProviderBinaryStatus {
   label: string;
   path: string | null;
@@ -276,7 +278,10 @@ async function probeDaemonOverWebsocket(args: {
   const supportsDaemonStatusRpc =
     client.getLastServerInfoMessage()?.features?.daemonStatusRpc === true;
   try {
-    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
+    const agentsPayload = await client.fetchAgents({
+      filter: { includeArchived: true },
+      timeout: DAEMON_STATUS_PROBE_TIMEOUT_MS,
+    });
     const agents = agentsPayload.entries.map((entry) => entry.agent);
     const runningAgents = agents.filter((a) => a.status === "running").length;
     const idleAgents = agents.filter((a) => a.status === "idle").length;
@@ -284,7 +289,9 @@ async function probeDaemonOverWebsocket(args: {
     let daemonProviders: ProviderBinaryStatus[] | undefined;
     if (supportsDaemonStatusRpc) {
       try {
-        const statusPayload = await client.getDaemonStatus();
+        const statusPayload = await client.getDaemonStatus({
+          timeout: DAEMON_STATUS_PROBE_TIMEOUT_MS,
+        });
         const labelMap = new Map(PROVIDER_BINARIES.map((p) => [p.binary, p.label]));
         daemonProviders = statusPayload.providers.map((p) => ({
           label: labelMap.get(p.provider) ?? p.provider,
