@@ -127,20 +127,18 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     runtimeErrorMessage = null;
   }
 
-  function consumeRuntimeError(currentVersion: string): AppUpdateCheckResult | null {
+  function buildRuntimeErrorResult(currentVersion: string): AppUpdateCheckResult | null {
     if (!runtimeErrorMessage) {
       return null;
     }
 
-    const errorMessage = runtimeErrorMessage;
     const info = cachedUpdateInfo;
-    clearUpdateState();
     return buildCheckResult({
       currentVersion,
       hasUpdate: info?.version !== undefined && info.version !== currentVersion,
       readyToInstall: false,
       info,
-      errorMessage,
+      errorMessage: runtimeErrorMessage,
     });
   }
 
@@ -205,13 +203,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     configureRuntime(releaseChannel, intent);
 
-    const runtimeErrorResult = consumeRuntimeError(currentVersion);
-    if (runtimeErrorResult) {
+    const runtimeErrorResult = buildRuntimeErrorResult(currentVersion);
+    if (runtimeErrorResult && intent === "automatic") {
       return runtimeErrorResult;
     }
 
     const cachedVersion = cachedUpdateInfo?.version ?? null;
-    if (cachedVersion && cachedVersion !== currentVersion) {
+    if (!runtimeErrorResult && cachedVersion && cachedVersion !== currentVersion) {
       return buildCheckResult({
         currentVersion,
         hasUpdate: true,
@@ -238,6 +236,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       if (hasUpdate) {
         cachedUpdateInfo = info;
         downloading = !isReadyToInstallVersion(latestVersion);
+        runtimeErrorMessage = null;
         return buildCheckResult({
           currentVersion,
           hasUpdate: true,

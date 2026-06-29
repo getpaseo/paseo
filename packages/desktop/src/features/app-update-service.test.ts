@@ -221,4 +221,56 @@ describe("app update service", () => {
       errorMessage: "sha512 checksum mismatch",
     });
   });
+
+  it("returns runtime update errors to multiple automatic checks before a manual retry clears them", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.failRuntime(new Error("sha512 checksum mismatch"));
+
+    const firstAutomaticResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    const secondAutomaticResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(firstAutomaticResult).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: "sha512 checksum mismatch",
+    });
+    expect(secondAutomaticResult).toEqual(firstAutomaticResult);
+
+    runtime.nextCheck(null);
+    const retryResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    expect(runtime.checkCount).toBe(2);
+    expect(retryResult).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+  });
 });
