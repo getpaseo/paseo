@@ -212,6 +212,39 @@ describe("desktop app updater — check", () => {
     expect(updater.getSnapshot().status).toBe("up-to-date");
   });
 
+  it("does not let an older silent check supersede a newer silent check", async () => {
+    const { updater, port } = createUpdater();
+    const olderCheck = port.deferNextCheck();
+    const olderPending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+    const newerCheck = port.deferNextCheck();
+    const newerPending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+
+    newerCheck.resolve(
+      buildFakeCheckResult({ hasUpdate: true, readyToInstall: true, latestVersion: "2.0.0" }),
+    );
+    await newerPending;
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      availableUpdate: { latestVersion: "2.0.0" },
+    });
+
+    olderCheck.resolve(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
+    await olderPending;
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      availableUpdate: { latestVersion: "2.0.0" },
+    });
+  });
+
   it("does not move to 'error' when a silent check throws", async () => {
     const { updater, port } = createUpdater();
     port.nextCheckResult(buildFakeCheckResult({ hasUpdate: true, readyToInstall: true }));

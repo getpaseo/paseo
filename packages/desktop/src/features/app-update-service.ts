@@ -115,6 +115,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   let downloading = false;
   let configuredReleaseChannel: AppReleaseChannel | null = null;
   let runtimeErrorMessage: string | null = null;
+  let checkingForUpdates = false;
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -178,7 +179,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       },
       onError(error) {
         downloading = false;
-        runtimeErrorMessage = getErrorMessage(error);
+        if (!checkingForUpdates) {
+          runtimeErrorMessage = getErrorMessage(error);
+        }
         deps.reportRuntimeError?.(error);
       },
     });
@@ -219,7 +222,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     try {
+      checkingForUpdates = true;
       const result = await deps.runtime.checkForUpdates();
+      checkingForUpdates = false;
       if (!result || !result.updateInfo || !result.isUpdateAvailable) {
         clearUpdateState();
         return buildCheckResult({
@@ -252,10 +257,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         readyToInstall: false,
       });
     } catch (error) {
+      checkingForUpdates = false;
       deps.reportCheckError?.(error);
-      if (!runtimeErrorResult) {
-        runtimeErrorMessage = null;
-      }
       return buildCheckResult({
         currentVersion,
         hasUpdate: false,

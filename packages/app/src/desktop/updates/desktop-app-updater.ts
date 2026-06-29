@@ -203,14 +203,16 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       return null;
     }
 
-    const requestVersion = state.requestVersion + 1;
+    const requestVersion = silent ? state.requestVersion : state.requestVersion + 1;
 
-    commit({
-      ...state,
-      requestVersion,
-      status: silent ? state.status : "checking",
-      errorMessage: silent ? state.errorMessage : null,
-    });
+    if (!silent) {
+      commit({
+        ...state,
+        requestVersion,
+        status: "checking",
+        errorMessage: null,
+      });
+    }
 
     try {
       const result = await deps.port.checkDesktopAppUpdate({ releaseChannel, intent });
@@ -219,6 +221,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       }
 
       const nextLastCheckedAt = intent === "manual" ? deps.now() : state.lastCheckedAt;
+      const resolvedRequestVersion = silent ? state.requestVersion + 1 : state.requestVersion;
       if (result.errorMessage) {
         if (silent && !result.hasUpdate) {
           console.warn("[DesktopUpdater] Silent update check failed", result.errorMessage);
@@ -227,6 +230,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
 
         commit({
           ...state,
+          requestVersion: resolvedRequestVersion,
           status: "error",
           availableUpdate: null,
           errorMessage: result.errorMessage,
@@ -252,6 +256,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
 
       commit({
         ...state,
+        requestVersion: resolvedRequestVersion,
         status: nextStatus,
         availableUpdate: nextAvailable,
         errorMessage: null,

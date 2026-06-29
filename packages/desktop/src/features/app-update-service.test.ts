@@ -194,6 +194,35 @@ describe("app update service", () => {
     });
   });
 
+  it("does not replay runtime errors emitted by the active check to automatic consumers", async () => {
+    const { runtime, service } = createService();
+    runtime.failNextCheckAndEmitRuntimeError(new Error("network down"));
+
+    const checkResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    expect(checkResult.errorMessage).toBe("network down");
+
+    const automaticResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(runtime.checkCount).toBe(2);
+    expect(automaticResult).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+  });
+
   it("returns runtime update errors after an update fails to prepare", async () => {
     const { runtime, service } = createService();
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
