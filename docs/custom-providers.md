@@ -22,6 +22,7 @@ Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`)
 ## Table of Contents
 
 - [Extending a built-in provider](#extending-a-built-in-provider)
+- [MiniMax Token Plan](#minimax-token-plan)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
@@ -61,6 +62,70 @@ Required fields for custom providers:
 - `label` — display name in the UI
 
 See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
+
+---
+
+## MiniMax Token Plan
+
+[MiniMax](https://www.minimax.com) offers a Token Plan that exposes OpenAI-compatible and Anthropic-compatible API endpoints. Paseo can display your remaining token balance on the **Host Usage** page.
+
+### Setup
+
+1. Subscribe to a MiniMax Token Plan and create an API key from the MiniMax dashboard.
+2. Set the environment variable for the daemon process:
+
+```bash
+export MINIMAX_API_KEY="<your-minimax-api-key>"
+```
+
+Paseo reads this variable when fetching usage. If you run the desktop app, make sure the variable is visible to the packaged daemon (for example, by setting it in your shell profile and launching the app from that shell).
+
+### Endpoints
+
+| Region | Base URL                   |
+| ------ | -------------------------- |
+| Global | `https://api.minimax.io`   |
+| China  | `https://api.minimaxi.com` |
+
+By default, Paseo queries the **global** endpoint. If your key is only valid on the China endpoint, Paseo automatically falls back to `https://api.minimaxi.com` when the global endpoint returns no usable quota data.
+
+To force a specific endpoint, set `MINIMAX_BASE_URL`:
+
+```bash
+export MINIMAX_BASE_URL=https://api.minimaxi.com
+```
+
+When `MINIMAX_BASE_URL` is set explicitly, Paseo does **not** fall back to the other endpoint.
+
+### Usage in agent providers
+
+MiniMax is not a built-in agent provider. To actually use MiniMax models inside Paseo, extend `claude` or `codex` with the Anthropic-compatible or OpenAI-compatible MiniMax endpoint. For example:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "minimax": {
+        "extends": "claude",
+        "label": "MiniMax",
+        "description": "MiniMax Token Plan via Anthropic-compatible API",
+        "env": {
+          "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
+          "ANTHROPIC_API_KEY": "<your-minimax-api-key>"
+        },
+        "disallowedTools": ["WebSearch"],
+        "models": [
+          { "id": "MiniMax-M2.5", "label": "MiniMax-M2.5" },
+          { "id": "MiniMax-M2.7", "label": "MiniMax-M2.7", "isDefault": true },
+          { "id": "MiniMax-M3", "label": "MiniMax-M3" }
+        ]
+      }
+    }
+  }
+}
+```
+
+> Note: The Host Usage fetcher and the agent provider use separate credential paths. `MINIMAX_API_KEY` controls the usage display; `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` inside the provider `env` controls model calls. You can set both to the same MiniMax key.
 
 ---
 

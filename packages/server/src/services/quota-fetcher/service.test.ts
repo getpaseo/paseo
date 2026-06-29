@@ -830,6 +830,73 @@ describe("real provider usage fetchers", () => {
     });
   });
 
+  it("falls back to the CN endpoint when global MiniMax endpoint yields no usage", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    const requestedUrls: string[] = [];
+    fetchApi = (async (url: RequestInfo | URL, _init?: RequestInit) => {
+      requestedUrls.push(url.toString());
+      if (url.toString() === "https://api.minimax.io/v1/token_plan/remains") {
+        return jsonResponse({
+          base_resp: { status_code: 2049, status_msg: "invalid api key" },
+        });
+      }
+      return jsonResponse({
+        model_remains: [
+          {
+            model_name: "general",
+            end_time: Date.parse("2026-06-19T05:00:00.000Z"),
+            weekly_end_time: Date.parse("2026-06-26T00:00:00.000Z"),
+            current_interval_total_count: 1000,
+            current_interval_usage_count: 250,
+            current_interval_remaining_percent: 75,
+            current_weekly_total_count: 5000,
+            current_weekly_usage_count: 1200,
+            current_weekly_remaining_percent: 76,
+          },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(requestedUrls).toEqual([
+      "https://api.minimax.io/v1/token_plan/remains",
+      "https://api.minimaxi.com/v1/token_plan/remains",
+    ]);
+    expect(miniMax).toMatchObject({
+      status: "available",
+      windows: expect.arrayContaining([
+        expect.objectContaining({
+          id: "interval_general",
+          label: "general · Interval",
+          usedPct: 25,
+        }),
+        expect.objectContaining({
+          id: "weekly_general",
+          label: "general · Weekly",
+          usedPct: 24,
+        }),
+      ]),
+    });
+  });
+
+  it("does not fall back to the CN endpoint when an explicit base URL is configured", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    process.env["MINIMAX_BASE_URL"] = "https://api.minimax.io";
+    const requestedUrls: string[] = [];
+    fetchApi = (async (url: RequestInfo | URL, _init?: RequestInit) => {
+      requestedUrls.push(url.toString());
+      return jsonResponse({
+        base_resp: { status_code: 2049, status_msg: "invalid api key" },
+      });
+    }) as unknown as typeof fetch;
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(requestedUrls).toEqual(["https://api.minimax.io/v1/token_plan/remains"]);
+    expect(miniMax.status).toBe("unavailable");
+  });
+
   it("returns unavailable MiniMax usage when no credentials are configured", async () => {
     fetchApi = vi.fn() as never;
 

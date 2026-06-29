@@ -168,16 +168,43 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
     const auth = await this.resolveAuth();
     if (!auth) return unavailableUsage(this);
 
-    const res = await fetchProviderApi(this.fetchApi, `${auth.baseUrl}/v1/token_plan/remains`, {
+    let result = await this.fetchFromBaseUrl(auth.token, auth.baseUrl);
+
+    const isExplicitBaseUrl =
+      auth.baseUrl !== MINIMAX_GLOBAL_BASE_URL && auth.baseUrl !== MINIMAX_CN_BASE_URL;
+    const shouldFallback =
+      !isExplicitBaseUrl && result.windows.length === 0 && auth.baseUrl === MINIMAX_GLOBAL_BASE_URL;
+
+    if (shouldFallback) {
+      result = await this.fetchFromBaseUrl(auth.token, MINIMAX_CN_BASE_URL);
+    }
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: result.windows.length > 0 ? "available" : "unavailable",
+      planLabel: null,
+      windows: result.windows,
+      balances: [],
+      details: [],
+      error: null,
+    };
+  }
+
+  private async fetchFromBaseUrl(
+    token: string,
+    baseUrl: string,
+  ): Promise<{ windows: ProviderUsageWindow[] }> {
+    const res = await fetchProviderApi(this.fetchApi, `${baseUrl}/v1/token_plan/remains`, {
       headers: {
-        Authorization: `Bearer ${auth.token}`,
+        Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
     });
 
     if (!res.ok) {
-      this.logger.debug({ status: res.status }, "MiniMax usage fetch failed");
-      return unavailableUsage(this);
+      this.logger.debug({ status: res.status, baseUrl }, "MiniMax usage fetch failed");
+      return { windows: [] };
     }
 
     const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
@@ -192,16 +219,7 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
       if (weeklyWindow) windows.push(weeklyWindow);
     }
 
-    return {
-      providerId: this.providerId,
-      displayName: this.displayName,
-      status: windows.length > 0 ? "available" : "unavailable",
-      planLabel: null,
-      windows,
-      balances: [],
-      details: [],
-      error: null,
-    };
+    return { windows };
   }
 
   private async resolveAuth(): Promise<MiniMaxResolvedAuth | null> {
