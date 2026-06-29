@@ -27,7 +27,10 @@ import { useWorkspaceDraftSetupStore } from "@/stores/workspace-draft-setup-stor
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
-import { validateDraftSubmission } from "@/composer/draft/workspace-tab-core";
+import {
+  shouldAllowEmptyDraftText,
+  validateDraftSubmission,
+} from "@/composer/draft/workspace-tab-core";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -448,15 +451,20 @@ export function WorkspaceDraftAgentTab({
     getPendingServerId: () => serverId,
     initialAttempt: initialCreateAttempt,
     allowEmptyText: allowsEmptyAutoSubmit,
-    validateBeforeSubmit: ({ text }) =>
-      validateDraftSubmission({
-        text,
+    validateBeforeSubmit: ({ text, attachments }) => {
+      const allowsEmptyDraftText = shouldAllowEmptyDraftText({
         allowsEmptyAutoSubmit,
+        attachments,
+      });
+      return validateDraftSubmission({
+        text,
+        allowsEmptyAutoSubmit: allowsEmptyDraftText,
         composerState,
         autoSubmitConfig,
         workspaceDirectory: draftWorkingDirectory,
         hasClient: Boolean(client),
-      }),
+      });
+    },
     onBeforeSubmit: async () => {
       await composerState.persistFormPreferences();
       if (isWeb) {
