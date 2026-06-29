@@ -166,6 +166,7 @@ export type WorktreeSource =
       baseRefName: string;
       localBranchName?: string;
       pushRemoteUrl?: string;
+      trackOriginHead?: boolean;
     };
 
 export interface CreateWorktreeOptions {
@@ -1207,6 +1208,13 @@ export const createWorktree = async ({
       remote: sourcePlan.trackingRemote,
     });
   }
+  if (sourcePlan.pushTarget) {
+    await configureWorktreeBranchPushTarget({
+      cwd,
+      branchName: sourcePlan.branchName,
+      remote: sourcePlan.pushTarget,
+    });
+  }
 
   writePaseoWorktreeMetadata(worktreePath, { baseRefName: sourcePlan.metadataBaseRefName });
 
@@ -1253,6 +1261,10 @@ interface WorktreeSourcePlan {
     headRef: string;
   };
   trackingRemote?: {
+    name: string;
+    headRef: string;
+  };
+  pushTarget?: {
     name: string;
     headRef: string;
   };
@@ -1319,21 +1331,27 @@ async function resolveWorktreeSourcePlan({
           timeout: 120_000,
         },
       );
-      const trackingRemote = source.pushRemoteUrl
-        ? undefined
-        : await fetchWorktreeTrackingRemote({
+      const trackingRemote = source.trackOriginHead
+        ? await fetchWorktreeTrackingRemote({
             cwd,
             remoteName: "origin",
             headRef: source.headRef,
-          });
-      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
+          })
+        : undefined;
+      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote" | "pushTarget"> =
+        {};
       if (source.pushRemoteUrl) {
+        const remoteName = `paseo-pr-${source.githubPrNumber}`;
         remotePlan.pushRemote = {
-          name: `paseo-pr-${source.githubPrNumber}`,
+          name: remoteName,
           url: source.pushRemoteUrl,
           headRef: source.headRef,
         };
-      } else if (trackingRemote) {
+        remotePlan.pushTarget = { name: remoteName, headRef: source.headRef };
+      } else if (source.trackOriginHead) {
+        remotePlan.pushTarget = { name: "origin", headRef: source.headRef };
+      }
+      if (trackingRemote) {
         remotePlan.trackingRemote = trackingRemote;
       }
 
@@ -1418,6 +1436,24 @@ async function configureWorktreeTrackingRemote(options: {
   });
   await runGitCommand(
     ["config", `branch.${options.branchName}.merge`, `refs/heads/${options.remote.headRef}`],
+    { cwd: options.cwd },
+  );
+}
+
+async function configureWorktreeBranchPushTarget(options: {
+  cwd: string;
+  branchName: string;
+  remote: {
+    name: string;
+    headRef: string;
+  };
+}): Promise<void> {
+  await runGitCommand(
+    ["config", `branch.${options.branchName}.paseo-push-remote`, options.remote.name],
+    { cwd: options.cwd },
+  );
+  await runGitCommand(
+    ["config", `branch.${options.branchName}.paseo-push-head`, options.remote.headRef],
     { cwd: options.cwd },
   );
 }

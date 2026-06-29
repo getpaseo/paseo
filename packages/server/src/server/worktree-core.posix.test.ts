@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test, afterEach } from "vitest";
 import type { GitHubService } from "../services/github-service.js";
-import { getCheckoutStatus } from "../utils/checkout-git.js";
+import { getCheckoutStatus, pushCurrentBranch } from "../utils/checkout-git.js";
 import { UnknownBranchError } from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
@@ -488,6 +488,90 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         aheadOfOrigin: 0,
         behindOfOrigin: 0,
       });
+    });
+
+    test("pushes a deduplicated same-repo GitHub PR branch to the PR head", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+        }),
+      };
+
+      await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "first-pr-worktree",
+          action: "checkout",
+          githubPrNumber: 1790,
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps({ github }),
+      );
+      const second = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "second-pr-worktree",
+          action: "checkout",
+          githubPrNumber: 1790,
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps({ github }),
+      );
+      writeFileSync(path.join(second.worktree.worktreePath, "FOLLOWUP.md"), "same repo edit\n");
+      execFileSync("git", ["add", "FOLLOWUP.md"], {
+        cwd: second.worktree.worktreePath,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "same repo edit"], {
+        cwd: second.worktree.worktreePath,
+        stdio: "pipe",
+      });
+      const localHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: second.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+
+      await pushCurrentBranch(second.worktree.worktreePath);
+
+      const remotePrHead = execFileSync(
+        "git",
+        ["--git-dir", remoteDir, "rev-parse", "refs/heads/daemon-shutdown-diagnostics"],
+        { stdio: "pipe" },
+      )
+        .toString()
+        .trim();
+      const dedupedRemoteBranch = spawnSync(
+        "git",
+        [
+          "--git-dir",
+          remoteDir,
+          "show-ref",
+          "--verify",
+          "--quiet",
+          "refs/heads/daemon-shutdown-diagnostics-1",
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(second.worktree.branchName).toBe("daemon-shutdown-diagnostics-1");
+      expect(getBranchUpstream(second.worktree.worktreePath)).toBe(
+        "origin/daemon-shutdown-diagnostics",
+      );
+      expect(remotePrHead).toBe(localHead);
+      expect(dedupedRemoteBranch.status).toBe(1);
     });
 
     test("checks out a fork PR whose head branch collides with local main", async () => {

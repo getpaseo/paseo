@@ -132,6 +132,7 @@ describe("resolveWorktreeCreationIntent", () => {
       githubPrNumber: 1790,
       headRef: "daemon-shutdown-diagnostics",
       baseRefName: "main",
+      trackOriginHead: true,
     });
     expect(deps.headRefLookups).toEqual([]);
   });

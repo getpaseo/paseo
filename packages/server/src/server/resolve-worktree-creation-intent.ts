@@ -119,6 +119,7 @@ async function resolveGitHubPrCheckoutIntent(params: {
   const pushRemoteUrl = checkoutTarget?.isCrossRepository
     ? checkoutTarget.headRepositorySshUrl || checkoutTarget.headRepositoryUrl || undefined
     : undefined;
+  const trackOriginHead = checkoutTarget ? !checkoutTarget.isCrossRepository : false;
 
   return {
     kind: "checkout-github-pr",
@@ -127,6 +128,7 @@ async function resolveGitHubPrCheckoutIntent(params: {
     baseRefName,
     ...(localBranchName !== headRef ? { localBranchName } : {}),
     ...(pushRemoteUrl ? { pushRemoteUrl } : {}),
+    ...(trackOriginHead ? { trackOriginHead } : {}),
   };
 }
 
