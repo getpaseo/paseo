@@ -526,7 +526,7 @@ describe("translation resources", () => {
     );
     expect(en.desktop.updates.status.availableWithVersion).toBe("Update ready: {{version}}");
     expect(en.desktop.updates.status.availableWithVersionAndLastChecked).toBe(
-      "Update ready: {{version}} Last checked at {{time}}.",
+      "Update ready: {{version}}. Last checked at {{time}}.",
     );
     expect(en.desktop.updates.status.available).toBe("An app update is ready to install.");
     expect(en.desktop.updates.status.availableWithLastChecked).toBe(

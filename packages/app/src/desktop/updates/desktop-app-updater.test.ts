@@ -368,7 +368,7 @@ describe("formatStatusText", () => {
         formatVersion,
         formatLastCheckedAt,
       }),
-    ).toBe("Update ready: v1.2.3 Last checked at time-42.");
+    ).toBe("Update ready: v1.2.3. Last checked at time-42.");
   });
 
   it("falls back to a generic 'available' message when no version is reported", () => {
