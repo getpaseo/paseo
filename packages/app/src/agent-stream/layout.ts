@@ -68,18 +68,48 @@ function createTurnFooterHost(input: {
   };
 }
 
+function findLatestAssistantIndexInTurn(input: {
+  strategy: StreamStrategy;
+  items: StreamItem[];
+  startIndex: number;
+}): number | null {
+  for (
+    let index = input.startIndex;
+    index >= 0 && index < input.items.length;
+    index = input.strategy.getNeighborIndex(index, "above")
+  ) {
+    const item = input.items[index];
+    if (!item || item.kind === "user_message") {
+      return null;
+    }
+    if (item.kind === "assistant_message") {
+      return index;
+    }
+  }
+  return null;
+}
+
 function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | null {
   if (input.agentStatus === "running") {
     return null;
   }
 
   const footerItems = input.liveHead.length > 0 ? input.liveHead : input.history;
-  const startIndex = input.strategy.getLatestItemIndex(footerItems);
-  if (startIndex === null) {
+  const latestIndex = input.strategy.getLatestItemIndex(footerItems);
+  if (latestIndex === null) {
     return null;
   }
 
-  const item = footerItems[startIndex];
+  const assistantIndex = findLatestAssistantIndexInTurn({
+    strategy: input.strategy,
+    items: footerItems,
+    startIndex: latestIndex,
+  });
+  if (assistantIndex === null) {
+    return null;
+  }
+
+  const item = footerItems[assistantIndex];
   if (!item || item.kind !== "assistant_message") {
     return null;
   }
@@ -87,7 +117,7 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
   return createTurnFooterHost({
     item,
     items: footerItems,
-    index: startIndex,
+    index: assistantIndex,
     timingByAssistantId: input.timingByAssistantId,
   });
 }

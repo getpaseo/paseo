@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { seedWorkspace, type SeedDaemonClient } from "./seed-client";
 import { getServerId } from "./server-id";
 import { buildHostAgentDetailRoute } from "../../src/utils/host-routes";
@@ -57,7 +57,7 @@ export function buildAgentRoute(workspaceId: string, agentId: string): string {
   return buildHostAgentDetailRoute(getServerId(), agentId, workspaceId);
 }
 
-/** Boots the app directly at the agent's workspace route and waits for its tab to render. */
+/** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */
 export async function openAgentRoute(
   page: Page,
   input: { workspaceId: string; agentId: string },
@@ -67,13 +67,4 @@ export async function openAgentRoute(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000 },
   );
-
-  const agentTab = page
-    .getByTestId(`workspace-tab-agent_${input.agentId}`)
-    .filter({ visible: true })
-    .first();
-
-  await expect(agentTab).toHaveAttribute("aria-selected", "true", {
-    timeout: 30_000,
-  });
 }

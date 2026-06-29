@@ -289,4 +289,21 @@ describe("layoutStream", () => {
     expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
     expect(footerOwners(layout)).toEqual([assistant.id]);
   });
+
+  it.each(["web", "android"] as const)(
+    "keeps bottom footer on the latest assistant turn when trailing tool rows end the turn on %s",
+    (platform) => {
+      const assistant = assistantMessage("a1", 2);
+      const tool = toolCall("tool-1", 3);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), assistant, tool],
+        timingIds: [assistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter?.itemId).toBe(assistant.id);
+      expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
+      expect(footerOwners(layout)).toEqual([assistant.id]);
+    },
+  );
 });

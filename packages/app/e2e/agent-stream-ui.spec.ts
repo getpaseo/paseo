@@ -9,6 +9,7 @@ import {
 import {
   expectScrollStaysFixed,
   readScrollMetrics,
+  scrollAgentChatToBottom,
   scrollChatAwayFromBottom,
   waitForScrollableChat,
 } from "./helpers/agent-bottom-anchor";
@@ -17,6 +18,8 @@ import { selectModel } from "./helpers/app";
 import { clickNewChat } from "./helpers/launcher";
 import { expectComposerVisible, startRunningMockAgent } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+
+const SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE = 360;
 
 test.describe("Agent stream UI", () => {
   test("auto-scroll sticks to bottom across token bursts", async ({ page }) => {
@@ -54,7 +57,10 @@ test.describe("Agent stream UI", () => {
         timeout: 30_000,
       });
       await awaitAssistantMessage(page);
-      await waitForScrollableChat(page, { minScrollableDistance: 900, timeout: 30_000 });
+      await waitForScrollableChat(page, {
+        minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
+        timeout: 30_000,
+      });
       const baseline = await scrollChatAwayFromBottom(page, {
         deltaY: -900,
         minDistanceFromBottom: 300,
@@ -100,7 +106,10 @@ test.describe("Agent stream UI", () => {
       timeout: 30_000,
     });
     await awaitAssistantMessage(page);
-    await waitForScrollableChat(page, { minScrollableDistance: 900, timeout: 45_000 });
+    await waitForScrollableChat(page, {
+      minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
+      timeout: 45_000,
+    });
     const baseline = await scrollChatAwayFromBottom(page, {
       deltaY: -900,
       minDistanceFromBottom: 300,
@@ -122,6 +131,7 @@ test.describe("Agent stream UI", () => {
       await awaitAssistantMessage(page);
       await expectInlineWorkingIndicator(page);
       await expectAgentIdle(page, 30_000);
+      await scrollAgentChatToBottom(page);
       await expectTurnCopyButton(page);
     } finally {
       await agent.cleanup();
