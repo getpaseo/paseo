@@ -1370,6 +1370,10 @@ async function configureWorktreePushRemote(options: {
     ],
     { cwd: options.cwd },
   );
+  await runGitCommand(
+    ["config", `remote.${options.remote.name}.push`, `HEAD:refs/heads/${options.remote.headRef}`],
+    { cwd: options.cwd },
+  );
   const trackingRemote = await tryFetchWorktreeTrackingRemote({
     cwd: options.cwd,
     remoteName: options.remote.name,

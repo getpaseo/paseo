@@ -654,6 +654,12 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         .trim();
       const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
       const cleanStatus = await getCheckoutStatus(result.worktree.worktreePath, { paseoHome });
+      const pushRefspec = execFileSync("git", ["config", "remote.paseo-pr-526.push"], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
       writeFileSync(path.join(result.worktree.worktreePath, "FOLLOWUP.md"), "maintainer edit\n");
       execFileSync("git", ["add", "FOLLOWUP.md"], {
         cwd: result.worktree.worktreePath,
@@ -670,7 +676,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         .toString()
         .trim();
 
-      await pushCurrentBranch(result.worktree.worktreePath);
+      execFileSync("git", ["push"], { cwd: result.worktree.worktreePath, stdio: "pipe" });
 
       const remotePrHead = execFileSync("git", [
         "--git-dir",
@@ -695,6 +701,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(worktreeBranch).toBe("therainisme/main");
       expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
       expect(getBranchUpstream(result.worktree.worktreePath)).toBe("paseo-pr-526/main");
+      expect(pushRefspec).toBe("HEAD:refs/heads/main");
       expect(cleanStatus).toMatchObject({
         isGit: true,
         currentBranch: "therainisme/main",
