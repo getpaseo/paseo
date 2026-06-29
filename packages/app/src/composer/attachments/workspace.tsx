@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { withUnistyles } from "react-native-unistyles";
-import { FileText, MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
   ComposerAttachment,
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
+import { getWorkspaceAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AttachmentLabel, AttachmentPill } from "@/components/attachment-pill";
 import {
   isWorkspaceAttachment,
@@ -19,10 +18,7 @@ import {
   removeSentContextAttachments,
   removeWorkspaceAttachmentsMatching,
 } from "./workspace-cleanup";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useClearReviewDraft } from "@/review/store";
-
-type TranslationFn = ReturnType<typeof useTranslation>["t"];
 
 interface WorkspaceAttachmentBindingInput {
   normalAttachments: UserComposerAttachment[];
@@ -54,52 +50,9 @@ interface ComposerWorkspaceAttachmentBinding {
   resetSuppression: () => void;
 }
 
-function getContextSourceLabel(attachment: WorkspaceComposerAttachment): string {
-  if (attachment.kind === "github.pull_request_check") {
-    return "Check logs";
-  }
-  if (attachment.kind === "github.pull_request_comment") {
-    return "Comment";
-  }
-  return "Review";
-}
-
-interface PillContent {
-  title: string;
-  subtitle: string;
-}
-
-function getPillContent(attachment: WorkspaceComposerAttachment, t: TranslationFn): PillContent {
-  if (attachment.kind === "browser_element") {
-    return {
-      title: attachment.attachment.tag,
-      subtitle: t("composer.attachments.element"),
-    };
-  }
-  if (isPullRequestContextAttachment(attachment)) {
-    return {
-      title: attachment.title,
-      subtitle: getContextSourceLabel(attachment),
-    };
-  }
-  if (attachment.kind === "chat_history") {
-    return {
-      title: attachment.attachment.title ?? "Chat history",
-      subtitle: "Chat history",
-    };
-  }
-  return {
-    title: t("message.attachments.review"),
-    subtitle:
-      attachment.commentCount === 1
-        ? t("message.attachments.commentsOne")
-        : t("message.attachments.commentsMany", { count: attachment.commentCount }),
-  };
-}
-
 function getOpenAccessibilityLabel(
   attachment: WorkspaceComposerAttachment,
-  t: TranslationFn,
+  t: ReturnType<typeof useTranslation>["t"],
 ): string {
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.openBrowserElement");
@@ -115,7 +68,7 @@ function getOpenAccessibilityLabel(
 
 function getRemoveAccessibilityLabel(
   attachment: WorkspaceComposerAttachment,
-  t: TranslationFn,
+  t: ReturnType<typeof useTranslation>["t"],
 ): string {
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.removeBrowserElement");
@@ -127,19 +80,6 @@ function getRemoveAccessibilityLabel(
     return "Remove chat history attachment";
   }
   return t("composer.attachments.removeReview");
-}
-
-function renderPillIcon(attachment: WorkspaceComposerAttachment): ReactElement {
-  if (attachment.kind === "browser_element") {
-    return <ThemedMousePointer2 size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
-  }
-  if (isPullRequestContextAttachment(attachment)) {
-    return <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
-  }
-  if (attachment.kind === "chat_history") {
-    return <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
-  }
-  return <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
 }
 
 function getPillTestID(attachment: WorkspaceComposerAttachment): string {
@@ -302,7 +242,7 @@ function WorkspaceAttachmentPill({
   onRemove,
 }: WorkspaceAttachmentPillProps) {
   const { t } = useTranslation();
-  const content = getPillContent(attachment, t);
+  const content = getWorkspaceAttachmentPillContent(attachment, t);
   const handleOpen = useCallback(() => {
     onOpen(attachment);
   }, [onOpen, attachment]);
@@ -318,11 +258,7 @@ function WorkspaceAttachmentPill({
       removeAccessibilityLabel={getRemoveAccessibilityLabel(attachment, t)}
       disabled={disabled}
     >
-      <AttachmentLabel
-        icon={renderPillIcon(attachment)}
-        title={content.title}
-        subtitle={content.subtitle}
-      />
+      <AttachmentLabel icon={content.icon} title={content.title} subtitle={content.subtitle} />
     </AttachmentPill>
   );
 }
@@ -334,8 +270,3 @@ export const composerWorkspaceAttachment = {
   userAttachmentsOnly,
   useBinding: useWorkspaceAttachmentBinding,
 };
-
-const ThemedMousePointer2 = withUnistyles(MousePointer2);
-const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);
-const ThemedFileText = withUnistyles(FileText);
-const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

@@ -846,6 +846,7 @@ export const GitHubIssueAttachmentSchema = z.object({
 export const TextAttachmentSchema = z.object({
   type: z.literal("text"),
   mimeType: z.literal("text/plain"),
+  contextKind: z.enum(["chat_history"]).optional(),
   title: z.string().nullable().optional(),
   text: z.string(),
 });

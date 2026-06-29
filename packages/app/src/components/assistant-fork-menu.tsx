@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { FolderPlus, GitFork, MoreVertical } from "lucide-react-native";
+import { FolderPlus, Split } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   DropdownMenu,
@@ -20,8 +20,7 @@ interface AssistantForkMenuProps {
 }
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
-const ThemedGitFork = withUnistyles(GitFork);
-const ThemedMoreVertical = withUnistyles(MoreVertical);
+const ThemedSplit = withUnistyles(Split);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -29,7 +28,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 function getIcon(target: AssistantForkTarget) {
   switch (target) {
     case "tab":
-      return <ThemedGitFork size={16} uniProps={foregroundColorMapping} />;
+      return <ThemedSplit size={16} uniProps={foregroundColorMapping} />;
     case "workspace":
       return <ThemedFolderPlus size={16} uniProps={foregroundColorMapping} />;
   }
@@ -93,7 +92,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
               testID={`${testID}-trigger`}
             >
               {({ hovered, open }) => (
-                <ThemedMoreVertical
+                <ThemedSplit
                   size={16}
                   uniProps={hovered || open ? foregroundColorMapping : foregroundMutedColorMapping}
                 />

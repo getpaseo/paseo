@@ -287,6 +287,7 @@ export function buildAgentForkContextAttachment(input: {
     attachment: {
       type: "text",
       mimeType: "text/plain",
+      contextKind: "chat_history",
       title: "Chat history",
       text: buildForkContextText({
         body,

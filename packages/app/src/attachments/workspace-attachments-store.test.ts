@@ -66,6 +66,7 @@ function chatHistoryAttachment(id: string, text = "Previous chat."): WorkspaceCo
     attachment: {
       type: "text",
       mimeType: "text/plain",
+      contextKind: "chat_history",
       title: "Chat history",
       text,
     },

@@ -14,6 +14,7 @@ function chatHistoryAttachment(): WorkspaceComposerAttachment {
     attachment: {
       type: "text",
       mimeType: "text/plain",
+      contextKind: "chat_history",
       title: "Chat history",
       text: "Previous chat.",
     },

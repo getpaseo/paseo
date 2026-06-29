@@ -272,6 +272,7 @@ second line'`,
     expect(result.attachment).toMatchObject({
       type: "text",
       mimeType: "text/plain",
+      contextKind: "chat_history",
       title: "Chat history",
     });
     expect(result.attachment.text).toContain("Source agent: Source Agent");
