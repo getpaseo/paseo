@@ -285,9 +285,8 @@ async function probeDaemonOverWebsocket(args: {
     return {
       connectedDaemon: "reachable",
       daemonVersion,
-      localDaemonOverride: state.running ? "unresponsive" : undefined,
       note: state.running
-        ? `Local daemon PID is running but daemon status request to ${host} failed`
+        ? `Local daemon PID is running but daemon detail request to ${host} failed`
         : `Connected daemon websocket is reachable at ${host} but daemon status request failed`,
     };
   } finally {
