@@ -15,8 +15,6 @@ import {
 } from "@gorhom/bottom-sheet";
 import Animated from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
-import { FileDropZone } from "@/components/file-drop-zone";
-import type { ImageAttachment } from "@/composer/types";
 import {
   IsolatedBottomSheetModal,
   useIsolatedBottomSheetVisibility,
@@ -451,9 +449,6 @@ export interface AdaptiveModalSheetProps {
   testID?: string;
   /** Override the max width of the desktop card. */
   desktopMaxWidth?: number;
-  /** When provided, wraps the card content in a FileDropZone. */
-  onFilesDropped?: (files: ImageAttachment[]) => void;
-  onGenericFilesDropped?: (items: import("@/hooks/use-file-drop-zone").DroppedItem[]) => void;
   scrollable?: boolean;
   presentation?: "push" | "replace";
 }
@@ -467,8 +462,6 @@ export function AdaptiveModalSheet({
   snapPoints,
   testID,
   desktopMaxWidth,
-  onFilesDropped,
-  onGenericFilesDropped,
   scrollable = true,
   presentation,
 }: AdaptiveModalSheetProps) {
@@ -602,18 +595,7 @@ export function AdaptiveModalSheet({
         style={ABSOLUTE_FILL_STYLE}
         onPress={onClose}
       />
-      <View style={desktopCardStyle}>
-        {onFilesDropped ? (
-          <FileDropZone
-            onFilesDropped={onFilesDropped}
-            onGenericFilesDropped={onGenericFilesDropped}
-          >
-            {cardInner}
-          </FileDropZone>
-        ) : (
-          cardInner
-        )}
-      </View>
+      <View style={desktopCardStyle}>{cardInner}</View>
     </View>
   );
 

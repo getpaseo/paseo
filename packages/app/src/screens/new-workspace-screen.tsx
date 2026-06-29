@@ -11,6 +11,7 @@ import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Folder, GitBranch, GitPullRequest, X } from "lucide-react-native";
 import { Composer } from "@/composer";
+import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { HostStatusDot } from "@/components/host-status-dot";
@@ -1967,7 +1968,7 @@ export function NewWorkspaceScreen({
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
   return (
-    <View style={styles.container}>
+    <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
       <View style={contentStyle}>
         <TitlebarDragRegion />
@@ -2003,7 +2004,7 @@ export function NewWorkspaceScreen({
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </ReanimatedAnimated.View>
       </View>
-    </View>
+    </FileDropZone>
   );
 }
 

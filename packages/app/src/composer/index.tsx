@@ -43,8 +43,8 @@ import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
-import { FileDropZone } from "@/components/file-drop-zone";
-import type { DroppedItem } from "@/hooks/use-file-drop-zone";
+import { useFileDrop } from "@/components/file-drop/use-file-drop";
+import type { DroppedItem } from "@/components/file-drop/types";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -1881,6 +1881,20 @@ export function Composer({
   const messageInputContainerRef = useRef<View>(null);
 
   const isSubmitBusy = isProcessing || isSubmitLoading || isUploadingFile;
+
+  // Ignore drops while submitting/uploading: the submit path clears and restores attachments,
+  // so a drop in that window would be lost or land on a locked draft.
+  useFileDrop({
+    onFiles: (images) => {
+      if (isSubmitBusy) return;
+      addImages(images);
+    },
+    onGenericFiles: (items) => {
+      if (isSubmitBusy) return;
+      handleGenericFilesDropped(items);
+    },
+  });
+
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
@@ -1894,97 +1908,90 @@ export function Composer({
 
   return (
     <ComposerKeyboardScopeProvider isActiveComposer={isPaneFocused}>
-      <FileDropZone
-        onFilesDropped={addImages}
-        onGenericFilesDropped={handleGenericFilesDropped}
-        disabled={isSubmitBusy}
-        style={styles.dropZone}
-      >
-        <Animated.View style={composerContainerStyle}>
-          <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
-          {/* Input area */}
-          <View style={inputAreaContainerStyle}>
-            <View style={styles.inputAreaContent}>
-              {queueList}
-              {sendErrorNode}
+      <Animated.View style={composerContainerStyle}>
+        <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+        {/* Input area */}
+        <View style={inputAreaContainerStyle}>
+          <View style={styles.inputAreaContent}>
+            {queueList}
+            {sendErrorNode}
 
-              <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
-                <AutocompletePopover
-                  visible={autocompleteVisible}
-                  anchorRef={messageInputContainerRef}
-                  options={autocomplete.options}
-                  selectedIndex={autocomplete.selectedIndex}
-                  onSelect={autocomplete.onSelectOption}
-                  isLoading={autocomplete.isLoading}
-                  errorMessage={autocomplete.errorMessage}
-                  loadingText={autocomplete.loadingText}
-                  emptyText={autocomplete.emptyText}
-                />
+            <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
+              <AutocompletePopover
+                visible={autocompleteVisible}
+                anchorRef={messageInputContainerRef}
+                options={autocomplete.options}
+                selectedIndex={autocomplete.selectedIndex}
+                onSelect={autocomplete.onSelectOption}
+                isLoading={autocomplete.isLoading}
+                errorMessage={autocomplete.errorMessage}
+                loadingText={autocomplete.loadingText}
+                emptyText={autocomplete.emptyText}
+              />
 
-                {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
-                <StableMessageInput
-                  ref={messageInputRef}
-                  value={userInput}
-                  onChangeText={setUserInput}
-                  onSubmit={handleSubmit}
-                  hasExternalContent={hasExternalContent}
-                  allowEmptySubmit={allowEmptySubmit}
-                  submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
-                  submitButtonTestID={submitButtonTestID}
-                  submitIcon={submitIcon}
-                  isSubmitDisabled={isSubmitBusy}
-                  isSubmitLoading={isSubmitBusy}
-                  preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
-                  attachments={selectedAttachments}
-                  cwd={cwd}
-                  attachmentMenuItems={attachmentMenuItems}
-                  onAttachButtonRef={handleAttachButtonRef}
-                  onAddImages={addImages}
-                  client={client}
-                  isReadyForDictation={isDictationReady}
-                  placeholder={messagePlaceholder}
-                  autoFocus={messageInputAutoFocus}
-                  autoFocusKey={`${serverId}:${agentId}`}
-                  disabled={isSubmitLoading}
-                  isPaneFocused={isPaneFocused}
-                  leftContent={leftContent}
-                  beforeVoiceContent={beforeVoiceContent}
-                  rightContent={rightContent}
-                  voiceServerId={serverId}
-                  voiceAgentId={agentId}
-                  isAgentRunning={isAgentRunning}
-                  defaultSendBehavior={appSettings.sendBehavior}
-                  onQueue={handleQueue}
-                  onSubmitLoadingPress={submitLoadingPressHandler}
-                  onKeyPress={handleCommandKeyPress}
-                  onSelectionChange={handleSelectionChange}
-                  onFocusChange={handleFocusChange}
-                  onHeightChange={onComposerHeightChange}
-                  inputWrapperStyle={inputWrapperStyle}
-                  attachmentSlot={attachmentTray}
-                />
-                <Combobox
-                  options={githubSearchOptions}
-                  value=""
-                  onSelect={noop}
-                  keepOpenOnSelect
-                  searchable
-                  searchPlaceholder={t("composer.github.searchPlaceholder")}
-                  title={t("composer.github.title")}
-                  open={isGithubPickerOpen}
-                  onOpenChange={handleGithubPickerOpenChange}
-                  onSearchQueryChange={setGithubSearchQuery}
-                  desktopPlacement="top-start"
-                  anchorRef={attachButtonRef}
-                  emptyText={githubEmptyText}
-                  renderOption={renderGithubPickerOption}
-                />
-              </View>
+              {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
+              <StableMessageInput
+                ref={messageInputRef}
+                value={userInput}
+                onChangeText={setUserInput}
+                onSubmit={handleSubmit}
+                hasExternalContent={hasExternalContent}
+                allowEmptySubmit={allowEmptySubmit}
+                submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
+                submitButtonTestID={submitButtonTestID}
+                submitIcon={submitIcon}
+                isSubmitDisabled={isSubmitBusy}
+                isSubmitLoading={isSubmitBusy}
+                preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
+                attachments={selectedAttachments}
+                cwd={cwd}
+                attachmentMenuItems={attachmentMenuItems}
+                onAttachButtonRef={handleAttachButtonRef}
+                onAddImages={addImages}
+                client={client}
+                isReadyForDictation={isDictationReady}
+                placeholder={messagePlaceholder}
+                autoFocus={messageInputAutoFocus}
+                autoFocusKey={`${serverId}:${agentId}`}
+                disabled={isSubmitLoading}
+                isPaneFocused={isPaneFocused}
+                leftContent={leftContent}
+                beforeVoiceContent={beforeVoiceContent}
+                rightContent={rightContent}
+                voiceServerId={serverId}
+                voiceAgentId={agentId}
+                isAgentRunning={isAgentRunning}
+                defaultSendBehavior={appSettings.sendBehavior}
+                onQueue={handleQueue}
+                onSubmitLoadingPress={submitLoadingPressHandler}
+                onKeyPress={handleCommandKeyPress}
+                onSelectionChange={handleSelectionChange}
+                onFocusChange={handleFocusChange}
+                onHeightChange={onComposerHeightChange}
+                inputWrapperStyle={inputWrapperStyle}
+                attachmentSlot={attachmentTray}
+              />
+              <Combobox
+                options={githubSearchOptions}
+                value=""
+                onSelect={noop}
+                keepOpenOnSelect
+                searchable
+                searchPlaceholder={t("composer.github.searchPlaceholder")}
+                title={t("composer.github.title")}
+                open={isGithubPickerOpen}
+                onOpenChange={handleGithubPickerOpenChange}
+                onSearchQueryChange={setGithubSearchQuery}
+                desktopPlacement="top-start"
+                anchorRef={attachButtonRef}
+                emptyText={githubEmptyText}
+                renderOption={renderGithubPickerOption}
+              />
             </View>
           </View>
-          {renderComposerFooter(footer, footerInlineContent)}
-        </Animated.View>
-      </FileDropZone>
+        </View>
+        {renderComposerFooter(footer, footerInlineContent)}
+      </Animated.View>
     </ComposerKeyboardScopeProvider>
   );
 }
@@ -1993,10 +2000,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     flexDirection: "column",
     position: "relative",
-  },
-  dropZone: {
-    flex: 0,
-    width: "100%",
   },
   borderSeparator: {
     height: theme.borderWidth[1],

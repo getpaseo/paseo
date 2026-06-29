@@ -4,7 +4,7 @@ import {
   isRasterImagePath,
 } from "@/attachments/file-types";
 import { readDesktopFileBytes, type PickedFile } from "@/attachments/picked-file";
-import type { DroppedItem } from "@/hooks/use-file-drop-zone";
+import type { DroppedItem } from "@/components/file-drop/types";
 
 interface DroppedAttachmentsRuntime {
   readDesktopFileBytes(path: string): Promise<Uint8Array>;
