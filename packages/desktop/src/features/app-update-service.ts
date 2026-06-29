@@ -163,9 +163,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         });
       },
       onUpdateAvailable(info) {
+        const alreadyReady = downloadedUpdateVersion === info.version;
         cachedUpdateInfo = info;
-        downloadedUpdateVersion = null;
-        downloading = true;
+        downloadedUpdateVersion = alreadyReady ? info.version : null;
+        downloading = !alreadyReady;
         runtimeErrorMessage = null;
       },
       onUpdateDownloaded(info) {
