@@ -179,7 +179,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       },
       onError(error) {
         downloading = false;
-        if (inFlightUpdateCheckCount === 0) {
+        if (inFlightUpdateCheckCount === 0 || cachedUpdateInfo) {
           runtimeErrorMessage = getErrorMessage(error);
         }
         deps.reportRuntimeError?.(error);

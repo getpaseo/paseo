@@ -54,6 +54,10 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     this.configuration?.onError(error);
   }
 
+  prepareUpdate(info: RuntimeUpdateInfo): void {
+    this.configuration?.onUpdateAvailable(info);
+  }
+
   async checkForUpdates(): Promise<{
     isUpdateAvailable: boolean;
     updateInfo: RuntimeUpdateInfo;
@@ -280,6 +284,38 @@ describe("app update service", () => {
       body: null,
       date: null,
       errorMessage: null,
+    });
+  });
+
+  it("keeps preparation errors emitted before the update check rejects", async () => {
+    const { runtime, service } = createService();
+    const deferredCheck = runtime.deferNextCheck();
+    const pending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    runtime.prepareUpdate(rolledOutUpdate);
+    runtime.failRuntime(new Error("sha512 checksum mismatch"));
+    deferredCheck.reject(new Error("sha512 checksum mismatch"));
+    const checkResult = await pending;
+    expect(checkResult.errorMessage).toBe("sha512 checksum mismatch");
+
+    const automaticResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(automaticResult).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: "sha512 checksum mismatch",
     });
   });
 
