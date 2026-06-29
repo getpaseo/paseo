@@ -154,6 +154,10 @@ function normalizeWindowsDrivePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+function isMarkdownEncodedWindowsDrivePath(source: string): boolean {
+  return /^[A-Za-z]:(?:%5[Cc]|%2[Ff])/.test(source);
+}
+
 export function fileUriToPath(uri: string): string {
   if (!uri.startsWith("file://")) {
     return uri;
@@ -163,7 +167,12 @@ export function fileUriToPath(uri: string): string {
 }
 
 export function localFileSourceToPath(source: string): string {
-  const path = source.startsWith("file://") ? fileUriToPath(source) : decodeFilePathSource(source);
+  let path = source;
+  if (source.startsWith("file://")) {
+    path = fileUriToPath(source);
+  } else if (isMarkdownEncodedWindowsDrivePath(source)) {
+    path = decodeFilePathSource(source);
+  }
   return normalizeWindowsDrivePath(path);
 }
 

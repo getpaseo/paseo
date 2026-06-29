@@ -40,6 +40,12 @@ describe("localFileSourceToPath", () => {
   it("decodes markdown-encoded Windows drive-letter paths", () => {
     expect(localFileSourceToPath("C:%5CUsers%5Cfile.txt")).toBe("C:/Users/file.txt");
   });
+
+  it("preserves literal percent sequences in plain local paths", () => {
+    expect(localFileSourceToPath("/tmp/image%20with%20literal%20percent.png")).toBe(
+      "/tmp/image%20with%20literal%20percent.png",
+    );
+  });
 });
 
 describe("parseDataUrl", () => {
