@@ -78,6 +78,22 @@ describe("resolveNewWorkspaceInitialServerId", () => {
     ).toBe("offline");
   });
 
+  it("prefers the online last active project over another hydrated online project", () => {
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["host-a", "host-b"],
+        routeServerId: null,
+        lastActiveProject: projectFor("host-b", "remembered"),
+        projects: [projectFor("host-a")],
+        hostConnectionStatusByServerId: statuses({
+          "host-a": "online",
+          "host-b": "online",
+        }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("host-b");
+  });
+
   it("falls back to the only online host even before projects have hydrated", () => {
     expect(
       resolveNewWorkspaceInitialServerId({
@@ -93,6 +109,23 @@ describe("resolveNewWorkspaceInitialServerId", () => {
         workspaceMultiplicityByServerId: multiplicity(),
       }),
     ).toBe("online");
+  });
+
+  it("prefers an online host over the only cached offline project", () => {
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["offline", "online-a", "online-b"],
+        routeServerId: null,
+        lastActiveProject: projectFor("offline"),
+        projects: [projectFor("offline")],
+        hostConnectionStatusByServerId: statuses({
+          offline: "offline",
+          "online-a": "online",
+          "online-b": "online",
+        }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("online-a");
   });
 
   it("uses the only host with selectable projects even before runtime status is online", () => {
@@ -126,6 +159,24 @@ describe("resolveNewWorkspaceAutomaticServerId", () => {
         nextServerId: "host-b",
       }),
     ).toBe("host-a");
+  });
+
+  it("switches to the remembered online host after it hydrates", () => {
+    expect(
+      resolveNewWorkspaceAutomaticServerId({
+        allServerIds: ["host-a", "host-b"],
+        routeServerId: null,
+        lastActiveProject: projectFor("host-b", "remembered"),
+        projects: [projectFor("host-a"), projectFor("host-b", "remembered")],
+        hostConnectionStatusByServerId: statuses({
+          "host-a": "online",
+          "host-b": "online",
+        }),
+        workspaceMultiplicityByServerId: multiplicity(),
+        currentServerId: "host-a",
+        nextServerId: "host-b",
+      }),
+    ).toBe("host-b");
   });
 
   it("switches from an offline automatic host to the online default", () => {
