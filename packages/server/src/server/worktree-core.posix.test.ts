@@ -490,6 +490,44 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       });
     });
 
+    test("checks out a same-repo GitHub PR whose head branch was deleted", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      execFileSync(
+        "git",
+        ["--git-dir", remoteDir, "update-ref", "-d", "refs/heads/daemon-shutdown-diagnostics"],
+        { stdio: "pipe" },
+      );
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          githubPrNumber: 1790,
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps({ github }),
+      );
+      const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
+
+      expect(result.worktree.branchName).toBe("daemon-shutdown-diagnostics");
+      expect(readme.replace(/\r\n/g, "\n")).toBe("same repo pr branch\n");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+    });
+
     test("pushes a deduplicated same-repo GitHub PR branch to the PR head", async () => {
       const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);

@@ -1321,7 +1321,7 @@ async function resolveWorktreeSourcePlan({
         },
       );
       const trackingRemote = source.trackOriginHead
-        ? await fetchWorktreeTrackingRemote({
+        ? await tryFetchWorktreeTrackingRemote({
             cwd,
             remoteName: "origin",
             headRef: source.headRef,
@@ -1370,24 +1370,26 @@ async function configureWorktreePushRemote(options: {
     ],
     { cwd: options.cwd },
   );
-  const trackingRemote = await fetchWorktreeTrackingRemote({
+  const trackingRemote = await tryFetchWorktreeTrackingRemote({
     cwd: options.cwd,
     remoteName: options.remote.name,
     headRef: options.remote.headRef,
   });
-  await configureWorktreeTrackingRemote({
-    cwd: options.cwd,
-    branchName: options.branchName,
-    remote: trackingRemote,
-  });
+  if (trackingRemote) {
+    await configureWorktreeTrackingRemote({
+      cwd: options.cwd,
+      branchName: options.branchName,
+      remote: trackingRemote,
+    });
+  }
 }
 
-async function fetchWorktreeTrackingRemote(options: {
+async function tryFetchWorktreeTrackingRemote(options: {
   cwd: string;
   remoteName: string;
   headRef: string;
-}): Promise<{ name: string; headRef: string }> {
-  await runGitCommand(
+}): Promise<{ name: string; headRef: string } | undefined> {
+  const result = await runGitCommand(
     [
       "fetch",
       options.remoteName,
@@ -1396,9 +1398,10 @@ async function fetchWorktreeTrackingRemote(options: {
     {
       cwd: options.cwd,
       timeout: 120_000,
+      acceptExitCodes: [0, 1, 128],
     },
   );
-  return { name: options.remoteName, headRef: options.headRef };
+  return result.exitCode === 0 ? { name: options.remoteName, headRef: options.headRef } : undefined;
 }
 
 async function configureWorktreeTrackingRemote(options: {
