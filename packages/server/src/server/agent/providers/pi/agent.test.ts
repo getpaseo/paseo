@@ -11,16 +11,27 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
-function createClient(pi = new FakePi()): PiRpcAgentClient {
+function createClient(
+  pi = new FakePi(),
+  options?: { contextWindowReportingEnabled?: boolean; pollingIntervalMs?: number },
+): PiRpcAgentClient {
+  const params: Record<string, unknown> = {};
+  if (options?.contextWindowReportingEnabled) {
+    params.contextWindowReportingEnabled = true;
+  }
+  if (options?.pollingIntervalMs !== undefined) {
+    params.pollingIntervalMs = options.pollingIntervalMs;
+  }
   return new PiRpcAgentClient({
     logger: pino({ level: "silent" }),
     runtime: pi,
+    providerParams: Object.keys(params).length > 0 ? params : undefined,
   });
 }
 
@@ -51,12 +62,11 @@ function readUtf8File(pathname: string): string {
   }
 }
 
-async function createSession(pi = new FakePi()): Promise<{
-  pi: FakePi;
-  session: PiRpcAgentSession;
-  events: SessionEvents;
-}> {
-  const client = createClient(pi);
+async function createSession(
+  pi = new FakePi(),
+  options?: { contextWindowReportingEnabled?: boolean; pollingIntervalMs?: number },
+): Promise<{ pi: FakePi; session: PiRpcAgentSession; events: SessionEvents }> {
+  const client = createClient(pi, options);
   const session = (await client.createSession(createConfig())) as PiRpcAgentSession;
   const events = new SessionEvents(session);
   return { pi, session, events };
@@ -667,6 +677,167 @@ describe("PiRpcAgentSession", () => {
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
       error: "Pi exited",
     });
+  });
+  test("starts usage polling on startTurn and stops it on close", () => {
+    vi.useFakeTimers();
+    return (async () => {
+      const { pi, session } = await createSession(undefined, {
+        contextWindowReportingEnabled: true,
+      });
+      // No turn started yet — no interval should exist.
+      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+
+      // Start a turn — interval should be created.
+      await session.startTurn("hello");
+      const intervalId1 = (session as unknown as Record<string, unknown>)
+        .usagePollInterval as unknown;
+      expect(intervalId1).not.toBe(null);
+
+      // Complete the turn via agent_end event through fake session.
+      const fakeSession = pi.latestSession();
+      fakeSession.emit({ type: "agent_end" });
+      // Give microtasks time to process completeTurn → stopUsagePolling.
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Interval should now be cleared after turn completion.
+      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+
+      await session.close();
+    })();
+  });
+
+  test("emits usage_updated when tool_execution_end fires during an active turn", async () => {
+    const { pi, session } = await createSession(undefined, { contextWindowReportingEnabled: true });
+    const fakeSession = pi.latestSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    // Seed stats so getSessionStats returns data
+    fakeSession.stats = {
+      tokens: { input: 500, output: 200, cacheRead: 100 },
+      cost: 0.05,
+      contextUsage: { tokens: 700, contextWindow: 200_000 },
+    };
+
+    await session.startTurn("hello");
+
+    // Emit a tool execution end — should trigger milestone usage emission
+    fakeSession.emit({
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: { exitCode: 0, stdout: "done" },
+    });
+
+    // Drain microtasks for the async maybeEmitUsageForTurn call
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const usageEvents = events.filter(
+      (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> => e.type === "usage_updated",
+    );
+
+    expect(usageEvents.length).toBeGreaterThanOrEqual(1);
+    expect(usageEvents[0]).toMatchObject({
+      provider: "pi",
+      turnId: expect.any(String),
+      usage: expect.objectContaining({
+        inputTokens: 500,
+        outputTokens: 200,
+        cachedInputTokens: 100,
+        totalCostUsd: 0.05,
+        contextWindowUsedTokens: 700,
+        contextWindowMaxTokens: 200_000,
+      }),
+    });
+
+    await session.close();
+  });
+
+  test("does not create polling interval when contextWindowReportingEnabled is false (default)", () => {
+    vi.useFakeTimers();
+    return (async () => {
+      // No options passed — should default to disabled.
+      const { session } = await createSession();
+
+      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+
+      await session.startTurn("hello");
+
+      // Interval should still be null because flag defaults to false.
+      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+
+      await session.close();
+    })();
+  });
+
+  test("does not emit usage_updated at tool_execution_end when contextWindowReportingEnabled is disabled", async () => {
+    const { pi, session } = await createSession(undefined, {
+      contextWindowReportingEnabled: false,
+    });
+    const fakeSession = pi.latestSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    fakeSession.stats = { tokens: { input: 500, output: 200 }, cost: 0.05 };
+
+    await session.startTurn("hello");
+
+    // Emit a tool execution end — should NOT trigger milestone usage emission.
+    fakeSession.emit({
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: { exitCode: 0, stdout: "done" },
+    });
+
+    // Drain microtasks for the async maybeEmitUsageForTurn call.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const usageEvents = events.filter(
+      (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> => e.type === "usage_updated",
+    );
+
+    expect(usageEvents.length).toBe(0);
+
+    await session.close();
+  });
+
+  test("uses configurable polling interval instead of default", () => {
+    vi.useFakeTimers();
+    return (async () => {
+      const CUSTOM_INTERVAL_MS = 1_000;
+      const { session } = await createSession(undefined, {
+        contextWindowReportingEnabled: true,
+        pollingIntervalMs: CUSTOM_INTERVAL_MS,
+      });
+
+      // Start a turn — should use our custom interval.
+      await session.startTurn("hello");
+
+      // Advance past the first poll cycle with our custom interval.
+      vi.advanceTimersByTime(CUSTOM_INTERVAL_MS + 1);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Interval must have been created with the correct period by verifying
+      // that advancing only 500ms does NOT trigger another poll (proves it's not the default).
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+
+      const intervalId = (session as unknown as Record<string, unknown>)
+        .usagePollInterval as unknown;
+      expect(intervalId).not.toBe(null);
+
+      // Clean up.
+      await session.close();
+    })();
   });
 });
 

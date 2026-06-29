@@ -95,10 +95,16 @@ const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
 const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
 
+/** Default polling interval for real-time context window reporting (5 seconds). */
+const DEFAULT_CONTEXT_WINDOW_POLLING_INTERVAL_MS = 5_000;
 export const PiProviderParamsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
     extensionTimeoutMs: z.number().int().positive().default(DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS),
+    /** Enable periodic usage polling during active turns for real-time context window updates. */
+    contextWindowReportingEnabled: z.boolean().optional(),
+    /** Polling interval in milliseconds for real-time context window reporting. Defaults to 5000ms. */
+    pollingIntervalMs: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -189,6 +195,10 @@ interface PiRpcAgentSessionOptions {
   capabilities: AgentCapabilityFlags;
   cleanup?: () => void;
   extensionTimeoutMs?: number;
+  /** Enable periodic usage polling during active turns for real-time context window updates. */
+  contextWindowReportingEnabled?: boolean;
+  /** Polling interval in milliseconds for real-time context window reporting. Defaults to 5000ms. */
+  pollingIntervalMs?: number;
 }
 
 interface PiResumeConfig {
@@ -1002,6 +1012,14 @@ export class PiRpcAgentSession implements AgentSession {
   private outOfBandCompactionCompleted = false;
   private state: PiSessionState;
   private closed = false;
+  /** Periodic timer that polls getSessionStats during active turns for real-time context updates. */
+  private usagePollInterval: NodeJS.Timeout | null = null;
+  /** Last-emitted usage snapshot used to deduplicate rapid poll results. */
+  private lastEmittedUsageKey: string | null = null;
+  /** Whether periodic usage polling is enabled for real-time context window updates. */
+  private readonly contextWindowReportingEnabled: boolean;
+  /** Polling interval in milliseconds for real-time context window reporting. */
+  private readonly pollingIntervalMs: number;
 
   constructor(options: PiRpcAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -1014,7 +1032,9 @@ export class PiRpcAgentSession implements AgentSession {
       this.state.thinkingLevel ??
       null;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
-
+    this.contextWindowReportingEnabled = options.contextWindowReportingEnabled ?? false;
+    this.pollingIntervalMs =
+      options.pollingIntervalMs ?? DEFAULT_CONTEXT_WINDOW_POLLING_INTERVAL_MS;
     this.runtimeSession.onEvent((event) => {
       this.handleRuntimeEvent(event);
     });
@@ -1049,9 +1069,16 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt);
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    // Start periodic usage polling during active turns for real-time context updates.
+    if (this.contextWindowReportingEnabled) {
+      this.usagePollInterval = setInterval(() => {
+        void this.pollUsage();
+      }, this.pollingIntervalMs);
+    }
 
     void this.runtimeSession.prompt(payload.text, payload.images).catch((error) => {
       const failedTurnId = this.activeTurnId ?? turnId;
+      this.stopUsagePolling();
       this.activeTurnId = null;
       if (isPiRequestAbortError(error)) {
         this.emit({
@@ -1160,6 +1187,7 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    this.stopUsagePolling();
     await this.runtimeSession.abort();
   }
 
@@ -1197,6 +1225,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.stopUsagePolling();
     try {
       await this.runtimeSession.close();
     } finally {
@@ -1611,6 +1640,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
+  // eslint-disable-next-line complexity
   private handleSessionEvent(event: PiAgentSessionEvent): void {
     const turnId = this.currentTurnIdForEvent();
 
@@ -1667,6 +1697,7 @@ export class PiRpcAgentSession implements AgentSession {
         const result = parseToolResult(event.result);
         const error = event.isError ? event.result : null;
         const status = event.isError ? "failed" : "completed";
+        void this.maybeEmitUsageForTurn(this.activeTurnId);
         this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
         return;
       }
@@ -1689,11 +1720,10 @@ export class PiRpcAgentSession implements AgentSession {
             trigger: event.reason === "manual" ? "manual" : "auto",
           },
         });
+        void this.maybeEmitUsageForTurn(turnId ?? null);
         return;
       case "agent_end":
         this.completeTurn(turnId, event.messages ?? []);
-        return;
-      default:
         return;
     }
   }
@@ -1824,6 +1854,7 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
+    this.stopUsagePolling();
     this.activeTurnId = null;
     const errorMessage = latestPiErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
@@ -1854,6 +1885,80 @@ export class PiRpcAgentSession implements AgentSession {
       .then(toAgentUsage)
       .catch(() => undefined);
     if (usage) {
+      this.emit({
+        type: "usage_updated",
+        provider: PI_PROVIDER,
+        turnId,
+        usage,
+      });
+    }
+  }
+
+  /** Stop the periodic usage polling interval for an active turn. */
+  private stopUsagePolling(): void {
+    if (this.usagePollInterval !== null) {
+      clearInterval(this.usagePollInterval);
+      this.usagePollInterval = null;
+    }
+  }
+
+  /** Build a dedup key from a usage snapshot so we don't emit duplicate updates. */
+  private buildUsageKey(usage: AgentUsage): string | null {
+    const parts: Array<string | undefined> = [
+      typeof usage.inputTokens === "number" ? String(usage.inputTokens) : undefined,
+      typeof usage.outputTokens === "number" ? String(usage.outputTokens) : undefined,
+      typeof usage.cachedInputTokens === "number" ? String(usage.cachedInputTokens) : undefined,
+      typeof usage.totalCostUsd === "number" ? String(usage.totalCostUsd) : undefined,
+      typeof usage.contextWindowUsedTokens === "number"
+        ? String(usage.contextWindowUsedTokens)
+        : undefined,
+      typeof usage.contextWindowMaxTokens === "number"
+        ? String(usage.contextWindowMaxTokens)
+        : undefined,
+    ];
+    return parts.filter((p): p is string => p !== undefined).join(",") || null;
+  }
+
+  /** Periodic callback that polls getSessionStats during an active turn. */
+  private async pollUsage(): Promise<void> {
+    if (!this.activeTurnId) {
+      this.stopUsagePolling();
+      return;
+    }
+    const usage = await this.runtimeSession
+      .getSessionStats()
+      .then(toAgentUsage)
+      .catch(() => undefined);
+    if (usage) {
+      const key = this.buildUsageKey(usage);
+      if (key !== null && key === this.lastEmittedUsageKey) {
+        return; // no change since last emission
+      }
+      this.lastEmittedUsageKey = key;
+      this.emit({
+        type: "usage_updated",
+        provider: PI_PROVIDER,
+        turnId: this.activeTurnId ?? undefined,
+        usage,
+      });
+    }
+  }
+
+  /** Emit usage_updated at natural agent milestones (tool execution boundaries). */
+  private async maybeEmitUsageForTurn(turnId: string | null): Promise<void> {
+    if (!this.contextWindowReportingEnabled || !turnId) {
+      return;
+    }
+    const usage = await this.runtimeSession
+      .getSessionStats()
+      .then(toAgentUsage)
+      .catch(() => undefined);
+    if (usage) {
+      const key = this.buildUsageKey(usage);
+      if (key !== null && key === this.lastEmittedUsageKey) {
+        return; // no change since last emission
+      }
+      this.lastEmittedUsageKey = key;
       this.emit({
         type: "usage_updated",
         provider: PI_PROVIDER,
@@ -1916,6 +2021,8 @@ export class PiRpcAgentClient implements AgentClient {
         capabilities: withPiMcpCapability(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
+        contextWindowReportingEnabled: this.providerParams.contextWindowReportingEnabled,
+        pollingIntervalMs: this.providerParams.pollingIntervalMs,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -1967,6 +2074,8 @@ export class PiRpcAgentClient implements AgentClient {
         capabilities: withPiMcpCapability(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
+        contextWindowReportingEnabled: this.providerParams.contextWindowReportingEnabled,
+        pollingIntervalMs: this.providerParams.pollingIntervalMs,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
