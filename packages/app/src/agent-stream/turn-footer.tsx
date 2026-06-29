@@ -44,6 +44,7 @@ function resolveAssistantTurnBoundaryMessageId(input: {
       return currentItem.messageId;
     }
   }
+  // Forking without a durable message id would send an unbounded timeline slice.
   return undefined;
 }
 

@@ -96,6 +96,7 @@ import {
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { toErrorMessage } from "@/utils/error-messages";
+import { useWorkspaceDraftSetupStore } from "@/stores/workspace-draft-setup-store";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -255,9 +256,10 @@ function buildChatHistoryAttachment(input: {
   serverId: string;
   agentId: string;
   payload: Awaited<ReturnType<DaemonClient["buildAgentForkContext"]>>;
+  missingAttachmentMessage: string;
 }): WorkspaceComposerAttachment {
   if (!input.payload.attachment) {
-    throw new Error("No chat history was returned.");
+    throw new Error(input.missingAttachmentMessage);
   }
   return {
     kind: "chat_history",
@@ -292,8 +294,10 @@ function buildForkDraftSetup(agent: AgentScreenAgent): WorkspaceDraftTabSetup | 
   };
 }
 
-function buildForkDraftTabTarget(agent: AgentScreenAgent, draftId: string): WorkspaceTabTarget {
-  const setup = buildForkDraftSetup(agent);
+function buildForkDraftTabTarget(
+  setup: WorkspaceDraftTabSetup | undefined,
+  draftId: string,
+): WorkspaceTabTarget {
   return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
 }
 
@@ -439,6 +443,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           if (!client) {
             throw new Error(t("workspace.terminal.hostDisconnected"));
           }
+          const draftSetup = buildForkDraftSetup(agent);
           const prepareForkDraft = async () => {
             const draftId = generateDraftId();
             const payload = await client.buildAgentForkContext(
@@ -450,6 +455,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               serverId: resolvedServerId,
               agentId,
               payload,
+              missingAttachmentMessage: t("message.actions.forkFailed"),
             });
             useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
               scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
@@ -467,7 +473,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             navigateToPreparedWorkspaceTab({
               serverId: resolvedServerId,
               workspaceId,
-              target: buildForkDraftTabTarget(agent, draftId),
+              target: buildForkDraftTabTarget(draftSetup, draftId),
             });
             return;
           }
@@ -475,6 +481,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           const draftId = await prepareForkDraft();
           const sourceDirectory =
             agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
+          if (draftSetup) {
+            useWorkspaceDraftSetupStore.getState().setDraftSetup({
+              draftId,
+              setup: draftSetup,
+              sourceDirectory,
+            });
+          }
           router.push(
             buildNewWorkspaceRoute({
               serverId: resolvedServerId,

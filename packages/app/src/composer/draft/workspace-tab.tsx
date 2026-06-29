@@ -23,6 +23,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+import { useWorkspaceDraftSetupStore } from "@/stores/workspace-draft-setup-store";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -119,6 +120,7 @@ async function submitDraftCreateRequest(input: {
   text: string;
   images?: UserMessageImageAttachment[];
   attachments?: unknown;
+  cwd: string;
   client: DaemonClient | null;
   workspaceDirectory: string | null;
   workspaceId: string | null;
@@ -139,6 +141,7 @@ async function submitDraftCreateRequest(input: {
     text,
     images,
     attachments,
+    cwd,
     client,
     workspaceDirectory,
     workspaceId,
@@ -163,7 +166,7 @@ async function submitDraftCreateRequest(input: {
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
-    cwd: workspaceDirectory,
+    cwd,
     ...modeIdOverride,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
@@ -471,12 +474,13 @@ export function WorkspaceDraftAgentTab({
         composerState,
         selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
-    createRequest: async ({ attempt, text, images, attachments }) =>
+    createRequest: async ({ attempt, text, images, attachments, cwd }) =>
       submitDraftCreateRequest({
         attempt,
         text,
         images,
         attachments,
+        cwd,
         client,
         workspaceDirectory: draftWorkingDirectory,
         workspaceId: workspaceFields?.id ?? null,
@@ -488,6 +492,7 @@ export function WorkspaceDraftAgentTab({
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");
       clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
+      useWorkspaceDraftSetupStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
     },
   });
