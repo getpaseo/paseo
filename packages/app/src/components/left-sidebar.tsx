@@ -32,6 +32,8 @@ import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
+import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
+import { useHostFeature } from "@/runtime/host-features";
 import {
   type SidebarProjectEntry,
   type SidebarStatusWorkspacePlacement,
@@ -431,11 +433,19 @@ const SidebarNewWorkspaceHeaderRow = memo(function SidebarNewWorkspaceHeaderRow(
   const activeWorkspaceServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeWorkspaceId = activeWorkspaceSelection?.workspaceId ?? null;
   const activeWorkspace = useWorkspace(activeWorkspaceServerId, activeWorkspaceId);
+  const supportsWorkspaceMultiplicity = useHostFeature(
+    activeWorkspaceServerId,
+    "workspaceMultiplicity",
+  );
+  const canUseActiveWorkspaceContext = Boolean(
+    activeWorkspace &&
+    (supportsWorkspaceMultiplicity || canCreateWorktreeForProjectKind(activeWorkspace.projectKind)),
+  );
 
   const handlePress = useCallback(() => {
     onBeforeNavigate?.();
     router.push(
-      activeWorkspaceServerId && activeWorkspace
+      activeWorkspaceServerId && activeWorkspace && canUseActiveWorkspaceContext
         ? buildNewWorkspaceRoute({
             serverId: activeWorkspaceServerId,
             sourceDirectory: activeWorkspace.projectRootPath,
@@ -443,7 +453,7 @@ const SidebarNewWorkspaceHeaderRow = memo(function SidebarNewWorkspaceHeaderRow(
           })
         : buildNewWorkspaceRoute(),
     );
-  }, [activeWorkspace, activeWorkspaceServerId, onBeforeNavigate]);
+  }, [activeWorkspace, activeWorkspaceServerId, canUseActiveWorkspaceContext, onBeforeNavigate]);
 
   return (
     <SidebarHeaderRow

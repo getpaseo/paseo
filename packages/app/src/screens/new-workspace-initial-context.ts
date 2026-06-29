@@ -101,6 +101,13 @@ function hasSelectableProject(input: {
   );
 }
 
+function isOnline(
+  statuses: ReadonlyMap<string, HostRuntimeConnectionStatus>,
+  serverId: string,
+): boolean {
+  return statuses.get(serverId) === "online";
+}
+
 export function resolveNewWorkspaceInitialServerId(input: NewWorkspaceInitialServerInput): string {
   const serverIds = new Set(input.allServerIds);
   const routeServerId = knownServerId(serverIds, input.routeServerId);
@@ -108,18 +115,8 @@ export function resolveNewWorkspaceInitialServerId(input: NewWorkspaceInitialSer
     return routeServerId;
   }
 
-  const lastActiveProjectServerId = findLastActiveProjectServerId({
-    serverIds,
-    lastActiveProject: input.lastActiveProject,
-    projects: input.projects,
-    workspaceMultiplicityByServerId: input.workspaceMultiplicityByServerId,
-  });
-  if (lastActiveProjectServerId) {
-    return lastActiveProjectServerId;
-  }
-
-  const onlineServerIds = input.allServerIds.filter(
-    (serverId) => input.hostConnectionStatusByServerId.get(serverId) === "online",
+  const onlineServerIds = input.allServerIds.filter((serverId) =>
+    isOnline(input.hostConnectionStatusByServerId, serverId),
   );
   const onlineServerIdsWithProjects = onlineServerIds.filter((serverId) =>
     hasSelectableProject({
@@ -139,12 +136,65 @@ export function resolveNewWorkspaceInitialServerId(input: NewWorkspaceInitialSer
   if (onlineServerIdsWithProjects.length === 1) {
     return onlineServerIdsWithProjects[0] ?? "";
   }
-  if (serverIdsWithProjects.length === 1) {
-    return serverIdsWithProjects[0] ?? "";
-  }
   if (onlineServerIds.length === 1) {
     return onlineServerIds[0] ?? "";
   }
 
+  const lastActiveProjectServerId = findLastActiveProjectServerId({
+    serverIds,
+    lastActiveProject: input.lastActiveProject,
+    projects: input.projects,
+    workspaceMultiplicityByServerId: input.workspaceMultiplicityByServerId,
+  });
+  if (lastActiveProjectServerId) {
+    return lastActiveProjectServerId;
+  }
+
+  if (serverIdsWithProjects.length === 1) {
+    return serverIdsWithProjects[0] ?? "";
+  }
+
   return input.allServerIds[0] ?? "";
+}
+
+export function resolveNewWorkspaceAutomaticServerId(
+  input: NewWorkspaceInitialServerInput & {
+    currentServerId: string | null | undefined;
+    nextServerId: string | null | undefined;
+  },
+): string {
+  const serverIds = new Set(input.allServerIds);
+  const currentServerId = knownServerId(serverIds, input.currentServerId);
+  const nextServerId = knownServerId(serverIds, input.nextServerId) ?? input.allServerIds[0] ?? "";
+  if (!currentServerId || currentServerId === nextServerId) {
+    return nextServerId;
+  }
+
+  if (
+    isOnline(input.hostConnectionStatusByServerId, nextServerId) &&
+    !isOnline(input.hostConnectionStatusByServerId, currentServerId)
+  ) {
+    return nextServerId;
+  }
+
+  const currentHasProject = hasSelectableProject({
+    projects: input.projects,
+    serverId: currentServerId,
+    workspaceMultiplicityByServerId: input.workspaceMultiplicityByServerId,
+  });
+  const nextHasProject = hasSelectableProject({
+    projects: input.projects,
+    serverId: nextServerId,
+    workspaceMultiplicityByServerId: input.workspaceMultiplicityByServerId,
+  });
+  if (
+    !currentHasProject &&
+    nextHasProject &&
+    (!isOnline(input.hostConnectionStatusByServerId, currentServerId) ||
+      isOnline(input.hostConnectionStatusByServerId, nextServerId))
+  ) {
+    return nextServerId;
+  }
+
+  return currentServerId;
 }

@@ -73,7 +73,10 @@ import {
   type PickerItem,
 } from "./new-workspace-picker-item";
 import { findCheckoutHintPrAttachment, syncPickerPrAttachment } from "./new-workspace-picker-state";
-import { resolveNewWorkspaceInitialServerId } from "./new-workspace-initial-context";
+import {
+  resolveNewWorkspaceAutomaticServerId,
+  resolveNewWorkspaceInitialServerId,
+} from "./new-workspace-initial-context";
 
 function resolveCheckoutRequest(
   selectedItem: PickerItem | null,
@@ -988,6 +991,7 @@ function useNewWorkspaceHostSelector(input: {
   hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
   workspaceMultiplicityByServerId: ReadonlyMap<string, boolean>;
 }) {
+  const routeServerId = input.initialServerId.trim();
   const defaultServerId = useMemo(
     () =>
       resolveNewWorkspaceInitialServerId({
@@ -1007,17 +1011,67 @@ function useNewWorkspaceHostSelector(input: {
       input.workspaceMultiplicityByServerId,
     ],
   );
-  const [manualServerId, setManualServerId] = useState<string | null>(null);
+  const [automaticSelection, setAutomaticSelection] = useState(() => ({
+    routeServerId,
+    serverId: defaultServerId,
+  }));
+  const [manualSelection, setManualSelection] = useState<{
+    routeServerId: string;
+    serverId: string;
+  } | null>(null);
   const [hostPickerOpen, setHostPickerOpen] = useState(false);
-  const selectedServerId =
-    manualServerId && input.allServerIds.includes(manualServerId)
-      ? manualServerId
-      : defaultServerId;
 
-  const handleSelectHost = useCallback((id: string) => {
-    setManualServerId(id);
-    setHostPickerOpen(false);
-  }, []);
+  useEffect(() => {
+    setAutomaticSelection((current) => {
+      const nextServerId =
+        current.routeServerId === routeServerId
+          ? resolveNewWorkspaceAutomaticServerId({
+              allServerIds: input.allServerIds,
+              routeServerId: input.initialServerId,
+              lastActiveProject: input.lastActiveProject,
+              projects: input.projects,
+              hostConnectionStatusByServerId: input.hostConnectionStatusByServerId,
+              workspaceMultiplicityByServerId: input.workspaceMultiplicityByServerId,
+              currentServerId: current.serverId,
+              nextServerId: defaultServerId,
+            })
+          : defaultServerId;
+
+      if (current.routeServerId === routeServerId && current.serverId === nextServerId) {
+        return current;
+      }
+
+      return { routeServerId, serverId: nextServerId };
+    });
+  }, [
+    defaultServerId,
+    input.allServerIds,
+    input.hostConnectionStatusByServerId,
+    input.initialServerId,
+    input.lastActiveProject,
+    input.projects,
+    input.workspaceMultiplicityByServerId,
+    routeServerId,
+  ]);
+
+  const automaticServerId =
+    automaticSelection.routeServerId === routeServerId &&
+    input.allServerIds.includes(automaticSelection.serverId)
+      ? automaticSelection.serverId
+      : defaultServerId;
+  const selectedServerId =
+    manualSelection?.routeServerId === routeServerId &&
+    input.allServerIds.includes(manualSelection.serverId)
+      ? manualSelection.serverId
+      : automaticServerId;
+
+  const handleSelectHost = useCallback(
+    (id: string) => {
+      setManualSelection({ routeServerId, serverId: id });
+      setHostPickerOpen(false);
+    },
+    [routeServerId],
+  );
 
   const handleHostPickerOpenChange = useCallback((open: boolean) => {
     setHostPickerOpen(open);
