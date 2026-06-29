@@ -22,15 +22,8 @@ function createClient(response: ListCommandsResult): FakeAgentCommandsClient {
   const calls: ListCommandsCall[] = [];
   return {
     calls,
-    listCommands: (async (
-      agentId: string,
-      requestIdOrOptions?: string | { draftConfig?: DraftCommandConfig },
-    ) => {
-      const options =
-        typeof requestIdOrOptions === "object" && requestIdOrOptions !== null
-          ? requestIdOrOptions
-          : undefined;
-      calls.push({ agentId, draftConfig: options?.draftConfig });
+    listCommands: (async (options: Parameters<ListCommands>[0]) => {
+      calls.push({ agentId: options.agentId, draftConfig: options.draftConfig });
       return response;
     }) as ListCommands,
   };

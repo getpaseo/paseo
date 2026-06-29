@@ -77,7 +77,7 @@ describe("opencode custom command Big Pickle E2E (real)", () => {
       expect(agent.model).toBe(OPENCODE_REAL_TEST_MODEL);
       expect(agent.status).toBe("idle");
 
-      const commands = await ctx.client.listCommands(agent.id);
+      const commands = await ctx.client.listCommands({ agentId: agent.id });
       expect(commands.error).toBeNull();
       expect(commands.commands).toEqual(
         expect.arrayContaining([

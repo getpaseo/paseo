@@ -575,7 +575,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         }
         expect(sawTimelineGrowth).toBe(true);
       } else {
-        const current = await client.fetchAgent(agent.id);
+        const current = await client.fetchAgent({ agentId: agent.id });
         expect(current.agent.status).toBe("idle");
       }
     } finally {
@@ -642,7 +642,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         expect(settled.status).toBe("idle");
       }
 
-      const finalResult = await client.fetchAgent(agent.id);
+      const finalResult = await client.fetchAgent({ agentId: agent.id });
       expect(finalResult?.agent.status).toBe("idle");
     } finally {
       await client.close();
@@ -835,7 +835,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         try {
           secondCompletion = await client.waitForFinish(agent.id, 20_000);
         } catch {
-          const atTimeoutResult = await client.fetchAgent(agent.id);
+          const atTimeoutResult = await client.fetchAgent({ agentId: agent.id });
           // eslint-disable-next-line no-console
           console.log(
             JSON.stringify({
@@ -911,7 +911,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       try {
         secondCompletion = await client.waitForFinish(agent.id, 20_000);
       } catch {
-        const atTimeoutResult = await client.fetchAgent(agent.id);
+        const atTimeoutResult = await client.fetchAgent({ agentId: agent.id });
         // eslint-disable-next-line no-console
         console.log(
           JSON.stringify({
@@ -1068,7 +1068,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
           error instanceof Error ? error : new Error(String(error ?? "wait_for_finish failed"));
       }
 
-      let afterWaitResult = await client.fetchAgent(agent.id);
+      let afterWaitResult = await client.fetchAgent({ agentId: agent.id });
       let cancelRecovered = true;
       if (afterWaitResult?.agent.status === "running") {
         await client.cancelAgent(agent.id);
@@ -1078,7 +1078,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         } catch {
           cancelRecovered = false;
         }
-        afterWaitResult = await client.fetchAgent(agent.id);
+        afterWaitResult = await client.fetchAgent({ agentId: agent.id });
       }
 
       expect(waitError).toBeNull();

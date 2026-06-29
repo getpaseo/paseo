@@ -23,7 +23,8 @@ export async function fetchAgentCommands(input: {
   agentId: string;
   draftConfig?: DraftCommandConfig;
 }): Promise<AgentSlashCommand[]> {
-  const response = await input.client.listCommands(input.agentId, {
+  const response = await input.client.listCommands({
+    agentId: input.agentId,
     draftConfig: input.draftConfig,
   });
   return response.commands as AgentSlashCommand[];

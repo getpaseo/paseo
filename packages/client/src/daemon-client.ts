@@ -374,6 +374,7 @@ export interface WriteProjectConfigInput {
   requestId?: string;
 }
 interface ListCommandsOptions {
+  agentId: string;
   requestId?: string;
   draftConfig?: ListCommandsDraftConfig;
 }
@@ -459,6 +460,7 @@ export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"]
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
 export type FetchAgentTimelineCursor = NonNullable<FetchAgentTimelinePayload["startCursor"]>;
 export interface FetchAgentOptions {
+  agentId: string;
   requestId?: string;
   timeout?: number;
 }
@@ -1962,19 +1964,12 @@ export class DaemonClient {
     });
   }
 
-  async fetchAgent(
-    agentId: string,
-    requestIdOrOptions?: string | FetchAgentOptions,
-  ): Promise<FetchAgentResult | null> {
-    const options =
-      typeof requestIdOrOptions === "string"
-        ? { requestId: requestIdOrOptions }
-        : (requestIdOrOptions ?? {});
+  async fetchAgent(options: FetchAgentOptions): Promise<FetchAgentResult | null> {
     const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_request",
       requestId: resolvedRequestId,
-      agentId,
+      agentId: options.agentId,
     });
     const payload = await this.sendRequest({
       requestId: resolvedRequestId,
@@ -2610,13 +2605,7 @@ export class DaemonClient {
     });
   }
 
-  async shutdownServer(
-    requestIdOrOptions?: string | ShutdownServerOptions,
-  ): Promise<ShutdownRequestedStatusPayload> {
-    const options =
-      typeof requestIdOrOptions === "string"
-        ? { requestId: requestIdOrOptions }
-        : requestIdOrOptions;
+  async shutdownServer(options?: ShutdownServerOptions): Promise<ShutdownRequestedStatusPayload> {
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "shutdown_server_request",
@@ -3733,13 +3722,7 @@ export class DaemonClient {
     });
   }
 
-  async getDaemonStatus(
-    requestIdOrOptions?: string | DaemonStatusOptions,
-  ): Promise<DaemonStatusPayload> {
-    const options =
-      typeof requestIdOrOptions === "string"
-        ? { requestId: requestIdOrOptions }
-        : requestIdOrOptions;
+  async getDaemonStatus(options?: DaemonStatusOptions): Promise<DaemonStatusPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
@@ -3751,12 +3734,8 @@ export class DaemonClient {
   }
 
   async getDaemonPairingOffer(
-    requestIdOrOptions?: string | DaemonPairingOfferOptions,
+    options?: DaemonPairingOfferOptions,
   ): Promise<DaemonPairingOfferPayload> {
-    const options =
-      typeof requestIdOrOptions === "string"
-        ? { requestId: requestIdOrOptions }
-        : requestIdOrOptions;
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
@@ -3855,23 +3834,13 @@ export class DaemonClient {
     });
   }
 
-  async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
-  async listCommands(agentId: string, options?: ListCommandsOptions): Promise<ListCommandsPayload>;
-  async listCommands(
-    agentId: string,
-    requestIdOrOptions?: string | ListCommandsOptions,
-  ): Promise<ListCommandsPayload> {
-    const requestId =
-      typeof requestIdOrOptions === "string" ? requestIdOrOptions : requestIdOrOptions?.requestId;
-    const draftConfig =
-      typeof requestIdOrOptions === "string" ? undefined : requestIdOrOptions?.draftConfig;
-
+  async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload> {
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options.requestId,
       message: {
         type: "list_commands_request",
-        agentId,
-        ...(draftConfig ? { draftConfig } : {}),
+        agentId: options.agentId,
+        ...(options.draftConfig ? { draftConfig: options.draftConfig } : {}),
       },
       responseType: "list_commands_response",
     });
@@ -3939,7 +3908,7 @@ export class DaemonClient {
     const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
     const timeoutError = () => new Error(`Timed out waiting for agent ${agentId}`);
     const fetchAgentWithinDeadline = () =>
-      this.fetchAgent(agentId, { timeout: remainingTimeoutMs() }).catch(() => null);
+      this.fetchAgent({ agentId, timeout: remainingTimeoutMs() }).catch(() => null);
 
     const initialResult = await fetchAgentWithinDeadline();
     if (initialResult && predicate(initialResult.agent)) {

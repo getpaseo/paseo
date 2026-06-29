@@ -149,7 +149,7 @@ test(
           model: PI_FREE_COMPACTION_TEST_MODEL,
         });
 
-        const result = await client.listCommands(agent.id);
+        const result = await client.listCommands({ agentId: agent.id });
         expect(result.commands).toEqual(
           expect.arrayContaining([
             expect.objectContaining({

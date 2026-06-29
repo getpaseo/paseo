@@ -108,7 +108,7 @@ export async function runLogsCommand(
   }
 
   try {
-    const fetchResult = await client.fetchAgent(id);
+    const fetchResult = await client.fetchAgent({ agentId: id });
     if (!fetchResult) {
       console.error(`Error: No agent found matching: ${id}`);
       console.error("Use `paseo ls` to list available agents");

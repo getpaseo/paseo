@@ -540,7 +540,10 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const responsePromise = client.fetchAgent("agent-1", "req-agent-1");
+  const responsePromise = client.fetchAgent({
+    agentId: "agent-1",
+    requestId: "req-agent-1",
+  });
   let settled = false;
   void responsePromise.then(
     () => {
@@ -584,7 +587,8 @@ test("honors explicit fetchAgent timeout below the session RPC default", async (
   mock.triggerOpen();
   await connectPromise;
 
-  const responsePromise = client.fetchAgent("agent-1", {
+  const responsePromise = client.fetchAgent({
+    agentId: "agent-1",
     requestId: "req-agent-1",
     timeout: 5_000,
   });
@@ -2224,16 +2228,8 @@ test("sends explicit shutdown_server_request via shutdownServer", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const lifecycleClient = client as unknown as {
-    shutdownServer: (requestId?: string) => Promise<{
-      status: "shutdown_requested";
-      clientId: string;
-      requestId: string;
-    }>;
-  };
-
-  expect(typeof lifecycleClient.shutdownServer).toBe("function");
-  const promise = lifecycleClient.shutdownServer("req-shutdown-1");
+  expect(typeof client.shutdownServer).toBe("function");
+  const promise = client.shutdownServer({ requestId: "req-shutdown-1" });
 
   expect(mock.sent).toHaveLength(1);
   const request = parseSentFrame(mock.sent[0]);
@@ -3817,7 +3813,8 @@ test("lists commands with draft config via RPC", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const promise = client.listCommands("__new_agent__", {
+  const promise = client.listCommands({
+    agentId: "__new_agent__",
     draftConfig: {
       provider: "codex",
       cwd: "/tmp/project",
@@ -3862,7 +3859,7 @@ test("lists commands with draft config via RPC", async () => {
   });
 });
 
-test("lists commands with legacy requestId signature via RPC", async () => {
+test("lists commands with explicit requestId via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -3879,13 +3876,16 @@ test("lists commands with legacy requestId signature via RPC", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const promise = client.listCommands("agent-1", "req-legacy");
+  const promise = client.listCommands({
+    agentId: "agent-1",
+    requestId: "req-commands",
+  });
   expect(mock.sent).toHaveLength(1);
 
   const request = parseSentFrame(mock.sent[0]);
   expect(request.type).toBe("list_commands_request");
   expect(request.agentId).toBe("agent-1");
-  expect(request.requestId).toBe("req-legacy");
+  expect(request.requestId).toBe("req-commands");
   expect(request.draftConfig).toBeUndefined();
 
   mock.triggerMessage(
@@ -3897,7 +3897,7 @@ test("lists commands with legacy requestId signature via RPC", async () => {
           agentId: "agent-1",
           commands: [],
           error: null,
-          requestId: "req-legacy",
+          requestId: "req-commands",
         },
       },
     }),
@@ -3907,7 +3907,7 @@ test("lists commands with legacy requestId signature via RPC", async () => {
     agentId: "agent-1",
     commands: [],
     error: null,
-    requestId: "req-legacy",
+    requestId: "req-commands",
   });
 });
 
