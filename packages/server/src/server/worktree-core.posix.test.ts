@@ -625,11 +625,23 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         cwd: result.worktree.worktreePath,
         stdio: "pipe",
       });
-      const pushDryRunResult = spawnSync("git", ["push", "--dry-run"], {
+      const localHead = execFileSync("git", ["rev-parse", "HEAD"], {
         cwd: result.worktree.worktreePath,
-        encoding: "utf8",
-      });
-      const pushDryRun = `${pushDryRunResult.stdout}${pushDryRunResult.stderr}`;
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+
+      await pushCurrentBranch(result.worktree.worktreePath);
+
+      const remotePrHead = execFileSync("git", [
+        "--git-dir",
+        headRemoteDir,
+        "rev-parse",
+        "refs/heads/main",
+      ])
+        .toString()
+        .trim();
 
       expect(sourceBranch).toBe("main");
       expect(result.intent).toEqual({
@@ -651,7 +663,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         aheadOfOrigin: 0,
         behindOfOrigin: 0,
       });
-      expect(pushDryRun).toContain("HEAD -> main");
+      expect(remotePrHead).toBe(localHead);
     });
 
     test("uses a unique local branch when the same fork PR branch already exists", async () => {
@@ -697,14 +709,8 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
 
       expect(first.worktree.branchName).toBe("therainisme/main");
       expect(second.worktree.branchName).toBe("therainisme/main-1");
-      expect(
-        execFileSync("git", ["config", "--get", "remote.paseo-pr-526.push"], {
-          cwd: second.worktree.worktreePath,
-          stdio: "pipe",
-        })
-          .toString()
-          .trim(),
-      ).toBe("HEAD:refs/heads/main");
+      expect(getBranchUpstream(first.worktree.worktreePath)).toBe("paseo-pr-526/main");
+      expect(getBranchUpstream(second.worktree.worktreePath)).toBe("paseo-pr-526/main");
     });
 
     test("throws a typed error for an unknown checkout branch", async () => {

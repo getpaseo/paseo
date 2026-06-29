@@ -1208,13 +1208,6 @@ export const createWorktree = async ({
       remote: sourcePlan.trackingRemote,
     });
   }
-  if (sourcePlan.pushTarget) {
-    await configureWorktreeBranchPushTarget({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.pushTarget,
-    });
-  }
 
   writePaseoWorktreeMetadata(worktreePath, { baseRefName: sourcePlan.metadataBaseRefName });
 
@@ -1261,10 +1254,6 @@ interface WorktreeSourcePlan {
     headRef: string;
   };
   trackingRemote?: {
-    name: string;
-    headRef: string;
-  };
-  pushTarget?: {
     name: string;
     headRef: string;
   };
@@ -1338,8 +1327,7 @@ async function resolveWorktreeSourcePlan({
             headRef: source.headRef,
           })
         : undefined;
-      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote" | "pushTarget"> =
-        {};
+      const remotePlan: Pick<WorktreeSourcePlan, "pushRemote" | "trackingRemote"> = {};
       if (source.pushRemoteUrl) {
         const remoteName = `paseo-pr-${source.githubPrNumber}`;
         remotePlan.pushRemote = {
@@ -1347,9 +1335,6 @@ async function resolveWorktreeSourcePlan({
           url: source.pushRemoteUrl,
           headRef: source.headRef,
         };
-        remotePlan.pushTarget = { name: remoteName, headRef: source.headRef };
-      } else if (source.trackOriginHead) {
-        remotePlan.pushTarget = { name: "origin", headRef: source.headRef };
       }
       if (trackingRemote) {
         remotePlan.trackingRemote = trackingRemote;
@@ -1385,30 +1370,24 @@ async function configureWorktreePushRemote(options: {
     ],
     { cwd: options.cwd },
   );
-  await runGitCommand(
-    ["config", `remote.${options.remote.name}.push`, `HEAD:refs/heads/${options.remote.headRef}`],
-    { cwd: options.cwd },
-  );
   const trackingRemote = await fetchWorktreeTrackingRemote({
     cwd: options.cwd,
     remoteName: options.remote.name,
     headRef: options.remote.headRef,
   });
-  if (trackingRemote) {
-    await configureWorktreeTrackingRemote({
-      cwd: options.cwd,
-      branchName: options.branchName,
-      remote: trackingRemote,
-    });
-  }
+  await configureWorktreeTrackingRemote({
+    cwd: options.cwd,
+    branchName: options.branchName,
+    remote: trackingRemote,
+  });
 }
 
 async function fetchWorktreeTrackingRemote(options: {
   cwd: string;
   remoteName: string;
   headRef: string;
-}): Promise<{ name: string; headRef: string } | undefined> {
-  const result = await runGitCommand(
+}): Promise<{ name: string; headRef: string }> {
+  await runGitCommand(
     [
       "fetch",
       options.remoteName,
@@ -1417,10 +1396,9 @@ async function fetchWorktreeTrackingRemote(options: {
     {
       cwd: options.cwd,
       timeout: 120_000,
-      acceptExitCodes: [0, 1, 128],
     },
   );
-  return result.exitCode === 0 ? { name: options.remoteName, headRef: options.headRef } : undefined;
+  return { name: options.remoteName, headRef: options.headRef };
 }
 
 async function configureWorktreeTrackingRemote(options: {
@@ -1431,29 +1409,13 @@ async function configureWorktreeTrackingRemote(options: {
     headRef: string;
   };
 }): Promise<void> {
-  await runGitCommand(["config", `branch.${options.branchName}.remote`, options.remote.name], {
-    cwd: options.cwd,
-  });
   await runGitCommand(
-    ["config", `branch.${options.branchName}.merge`, `refs/heads/${options.remote.headRef}`],
-    { cwd: options.cwd },
-  );
-}
-
-async function configureWorktreeBranchPushTarget(options: {
-  cwd: string;
-  branchName: string;
-  remote: {
-    name: string;
-    headRef: string;
-  };
-}): Promise<void> {
-  await runGitCommand(
-    ["config", `branch.${options.branchName}.paseo-push-remote`, options.remote.name],
-    { cwd: options.cwd },
-  );
-  await runGitCommand(
-    ["config", `branch.${options.branchName}.paseo-push-head`, options.remote.headRef],
+    [
+      "branch",
+      "--set-upstream-to",
+      `${options.remote.name}/${options.remote.headRef}`,
+      options.branchName,
+    ],
     { cwd: options.cwd },
   );
 }

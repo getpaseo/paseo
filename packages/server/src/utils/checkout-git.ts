@@ -2689,10 +2689,10 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
   }
-  const configuredTarget = await getPaseoBranchPushTarget(cwd, currentBranch);
-  if (configuredTarget) {
+  const upstreamTarget = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch);
+  if (upstreamTarget) {
     await runGitCommand(
-      ["push", "-u", configuredTarget.remoteName, `HEAD:refs/heads/${configuredTarget.headRef}`],
+      ["push", "-u", upstreamTarget.remoteName, `HEAD:refs/heads/${upstreamTarget.headRef}`],
       { cwd, timeout: 120_000 },
     );
     github?.invalidate({ cwd });
@@ -2707,14 +2707,15 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   github?.invalidate({ cwd });
 }
 
-async function getPaseoBranchPushTarget(
+async function getCurrentBranchUpstreamPushTarget(
   cwd: string,
   currentBranch: string,
 ): Promise<{ remoteName: string; headRef: string } | null> {
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.paseo-push-remote`);
-  const headRef = remoteName
-    ? await getGitConfigValue(cwd, `branch.${currentBranch}.paseo-push-head`)
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
+  const mergeRef = remoteName
+    ? await getGitConfigValue(cwd, `branch.${currentBranch}.merge`)
     : null;
+  const headRef = parseBranchMergeHeadRef(mergeRef);
   if (!remoteName || !headRef) {
     return null;
   }

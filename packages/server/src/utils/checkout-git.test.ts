@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync, execSync } from "child_process";
+import { execFileSync, execSync, spawnSync } from "child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -1700,7 +1700,7 @@ const x = 1;
     expect(upstream).toBe("origin/feature");
   });
 
-  it("pushes the current branch to its configured PR remote", async () => {
+  it("pushes the current branch to its configured upstream", async () => {
     const originDir = join(tempDir, "origin.git");
     const prRemoteDir = join(tempDir, "pr-remote.git");
     execFileSync("git", ["clone", "--bare", repoDir, originDir]);
@@ -1708,10 +1708,11 @@ const x = 1;
     execFileSync("git", ["remote", "add", "origin", originDir], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "paseo-pr-526", prRemoteDir], { cwd: repoDir });
     execFileSync("git", ["checkout", "-b", "therainisme/main"], { cwd: repoDir });
-    execFileSync("git", ["config", "branch.therainisme/main.paseo-push-remote", "paseo-pr-526"], {
+    execFileSync("git", ["fetch", "paseo-pr-526", "main"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.therainisme/main.remote", "paseo-pr-526"], {
       cwd: repoDir,
     });
-    execFileSync("git", ["config", "branch.therainisme/main.paseo-push-head", "main"], {
+    execFileSync("git", ["config", "branch.therainisme/main.merge", "refs/heads/main"], {
       cwd: repoDir,
     });
     writeFileSync(join(repoDir, "fork-pr.txt"), "fork pr edit\n");
@@ -1744,21 +1745,14 @@ const x = 1;
     expect(upstream).toBe("paseo-pr-526/main");
   });
 
-  it("does not push ordinary non-origin upstream branches to their upstream", async () => {
+  it("pushes ordinary branches to their configured upstream", async () => {
     const originDir = join(tempDir, "origin.git");
     const upstreamDir = join(tempDir, "upstream.git");
     execFileSync("git", ["clone", "--bare", repoDir, originDir]);
     execFileSync("git", ["clone", "--bare", repoDir, upstreamDir]);
     execFileSync("git", ["remote", "add", "origin", originDir], { cwd: repoDir });
     execFileSync("git", ["remote", "add", "upstream", upstreamDir], { cwd: repoDir });
-    const upstreamMainBefore = execFileSync("git", [
-      "--git-dir",
-      upstreamDir,
-      "rev-parse",
-      "refs/heads/main",
-    ])
-      .toString()
-      .trim();
+    execFileSync("git", ["fetch", "upstream", "main"], { cwd: repoDir });
     execFileSync("git", ["checkout", "-b", "contrib"], { cwd: repoDir });
     execFileSync("git", ["config", "branch.contrib.remote", "upstream"], { cwd: repoDir });
     execFileSync("git", ["config", "branch.contrib.merge", "refs/heads/main"], { cwd: repoDir });
@@ -1773,14 +1767,6 @@ const x = 1;
 
     await pushCurrentBranch(repoDir);
 
-    const originContrib = execFileSync("git", [
-      "--git-dir",
-      originDir,
-      "rev-parse",
-      "refs/heads/contrib",
-    ])
-      .toString()
-      .trim();
     const upstreamMainAfter = execFileSync("git", [
       "--git-dir",
       upstreamDir,
@@ -1789,8 +1775,13 @@ const x = 1;
     ])
       .toString()
       .trim();
-    expect(originContrib).toBe(localHead);
-    expect(upstreamMainAfter).toBe(upstreamMainBefore);
+    const originContrib = spawnSync(
+      "git",
+      ["--git-dir", originDir, "show-ref", "--verify", "--quiet", "refs/heads/contrib"],
+      { encoding: "utf8" },
+    );
+    expect(upstreamMainAfter).toBe(localHead);
+    expect(originContrib.status).toBe(1);
   });
 
   it("lists merged local and remote branch suggestions with provenance", async () => {
