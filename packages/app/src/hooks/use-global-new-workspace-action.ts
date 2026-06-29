@@ -28,12 +28,16 @@ export function useGlobalNewWorkspaceAction() {
       return false;
     }
     router.navigate(
-      (serverId && activeWorkspace && canUseActiveWorkspaceContext
-        ? buildNewWorkspaceRoute({
-            serverId,
-            sourceDirectory: activeWorkspace.projectRootPath,
-            projectId: activeWorkspace.projectId,
-          })
+      (serverId
+        ? buildNewWorkspaceRoute(
+            activeWorkspace && canUseActiveWorkspaceContext
+              ? {
+                  serverId,
+                  sourceDirectory: activeWorkspace.projectRootPath,
+                  projectId: activeWorkspace.projectId,
+                }
+              : { serverId },
+          )
         : buildNewWorkspaceRoute()) as never,
     );
     return true;

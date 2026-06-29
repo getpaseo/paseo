@@ -445,12 +445,16 @@ const SidebarNewWorkspaceHeaderRow = memo(function SidebarNewWorkspaceHeaderRow(
   const handlePress = useCallback(() => {
     onBeforeNavigate?.();
     router.push(
-      activeWorkspaceServerId && activeWorkspace && canUseActiveWorkspaceContext
-        ? buildNewWorkspaceRoute({
-            serverId: activeWorkspaceServerId,
-            sourceDirectory: activeWorkspace.projectRootPath,
-            projectId: activeWorkspace.projectId,
-          })
+      activeWorkspaceServerId
+        ? buildNewWorkspaceRoute(
+            activeWorkspace && canUseActiveWorkspaceContext
+              ? {
+                  serverId: activeWorkspaceServerId,
+                  sourceDirectory: activeWorkspace.projectRootPath,
+                  projectId: activeWorkspace.projectId,
+                }
+              : { serverId: activeWorkspaceServerId },
+          )
         : buildNewWorkspaceRoute(),
     );
   }, [activeWorkspace, activeWorkspaceServerId, canUseActiveWorkspaceContext, onBeforeNavigate]);
