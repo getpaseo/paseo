@@ -2689,12 +2689,41 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
   }
+  const configuredTarget = await getConfiguredBranchPushTarget(cwd, currentBranch);
+  if (configuredTarget) {
+    await runGitCommand(
+      ["push", "-u", configuredTarget.remoteName, `HEAD:refs/heads/${configuredTarget.headRef}`],
+      { cwd, timeout: 120_000 },
+    );
+    github?.invalidate({ cwd });
+    return;
+  }
+
   const hasRemote = await hasOriginRemote(cwd);
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
   await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
   github?.invalidate({ cwd });
+}
+
+async function getConfiguredBranchPushTarget(
+  cwd: string,
+  currentBranch: string,
+): Promise<{ remoteName: string; headRef: string } | null> {
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
+  const mergeRef = remoteName
+    ? await getGitConfigValue(cwd, `branch.${currentBranch}.merge`)
+    : null;
+  const headRef = parseBranchMergeHeadRef(mergeRef);
+  if (!remoteName || !headRef) {
+    return null;
+  }
+  if (remoteName === "origin" && headRef !== currentBranch) {
+    return null;
+  }
+  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
+  return remoteUrl ? { remoteName, headRef } : null;
 }
 
 export interface CreatePullRequestOptions {

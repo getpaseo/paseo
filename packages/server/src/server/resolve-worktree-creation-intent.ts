@@ -116,7 +116,7 @@ async function resolveGitHubPrCheckoutIntent(params: {
     checkoutTarget?.baseRefName?.trim() ||
     (await resolveDefaultBranch(params.repoRoot, params.deps));
   const localBranchName = buildGitHubPrLocalBranchName({ headRef, checkoutTarget });
-  const pushRemoteUrl = checkoutTarget
+  const pushRemoteUrl = checkoutTarget?.isCrossRepository
     ? checkoutTarget.headRepositorySshUrl || checkoutTarget.headRepositoryUrl || undefined
     : undefined;
 
