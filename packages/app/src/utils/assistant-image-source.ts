@@ -1,4 +1,4 @@
-import { fileUriToPath } from "@/attachments/utils";
+import { localFileSourceToPath } from "@/attachments/utils";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 
 export type AssistantImageSourceResolution =
@@ -18,13 +18,8 @@ export function resolveAssistantImageSource(input: {
     return { kind: "direct", uri: source };
   }
 
-  const sourcePath = source.startsWith("file://") ? fileUriToPath(source) : source;
-  if (!sourcePath) {
-    return null;
-  }
-
   const readTarget = resolveFilePreviewReadTarget({
-    path: sourcePath,
+    path: localFileSourceToPath(source),
     workspaceRoot: input.workspaceRoot,
   });
   if (!readTarget) {

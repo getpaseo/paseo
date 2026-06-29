@@ -139,11 +139,32 @@ export function pathToFileUri(path: string): string {
   return `file:///${path.replace(/\\/g, "/")}`;
 }
 
+function decodeFilePathSource(source: string): string {
+  try {
+    return decodeURIComponent(source);
+  } catch {
+    return source;
+  }
+}
+
+function normalizeWindowsDrivePath(path: string): string {
+  if (!/^[A-Za-z]:[\\/]/.test(path)) {
+    return path;
+  }
+  return path.replace(/\\/g, "/");
+}
+
 export function fileUriToPath(uri: string): string {
   if (!uri.startsWith("file://")) {
     return uri;
   }
-  return decodeURIComponent(uri.replace(/^file:\/\//, ""));
+  const decodedPath = decodeFilePathSource(uri.replace(/^file:\/\//, ""));
+  return normalizeWindowsDrivePath(decodedPath.replace(/^\/([A-Za-z]:[\\/])/, "$1"));
+}
+
+export function localFileSourceToPath(source: string): string {
+  const path = source.startsWith("file://") ? fileUriToPath(source) : decodeFilePathSource(source);
+  return normalizeWindowsDrivePath(path);
 }
 
 export function getFileExtensionFromName(fileName: string | null | undefined): string {

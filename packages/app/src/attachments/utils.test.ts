@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createImageSourceCacheKey, parseDataUrl, parseImageDataUrl, pathToFileUri } from "./utils";
+import {
+  createImageSourceCacheKey,
+  fileUriToPath,
+  localFileSourceToPath,
+  parseDataUrl,
+  parseImageDataUrl,
+  pathToFileUri,
+} from "./utils";
 
 describe("pathToFileUri", () => {
   it("converts POSIX absolute paths to file URIs", () => {
@@ -20,6 +27,18 @@ describe("pathToFileUri", () => {
 
   it("passes through relative paths unchanged", () => {
     expect(pathToFileUri("relative/path")).toBe("relative/path");
+  });
+});
+
+describe("fileUriToPath", () => {
+  it("converts Windows drive-letter file URIs back to paths", () => {
+    expect(fileUriToPath("file:///C:/Users/file.txt")).toBe("C:/Users/file.txt");
+  });
+});
+
+describe("localFileSourceToPath", () => {
+  it("decodes markdown-encoded Windows drive-letter paths", () => {
+    expect(localFileSourceToPath("C:%5CUsers%5Cfile.txt")).toBe("C:/Users/file.txt");
   });
 });
 
