@@ -1775,6 +1775,7 @@ const x = 1;
     const localHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir })
       .toString()
       .trim();
+    const upstreamBeforePush = getBranchUpstream(repoDir);
 
     await pushCurrentBranch(repoDir);
 
@@ -1791,7 +1792,21 @@ const x = 1;
       ["--git-dir", originDir, "show-ref", "--verify", "--quiet", "refs/heads/therainisme/main"],
       { encoding: "utf8" },
     );
+    const trackedPrRemoteHead = execFileSync(
+      "git",
+      ["rev-parse", "refs/remotes/paseo-pr-526/main"],
+      {
+        cwd: repoDir,
+      },
+    )
+      .toString()
+      .trim();
+    const afterPushStatus = await getCheckoutStatus(repoDir);
+    expect(upstreamBeforePush).toBeNull();
     expect(prRemoteMain).toBe(localHead);
+    expect(getBranchUpstream(repoDir)).toBe("paseo-pr-526/main");
+    expect(trackedPrRemoteHead).toBe(localHead);
+    expect(afterPushStatus).toMatchObject({ aheadOfOrigin: 0, behindOfOrigin: 0 });
     expect(originBranch.status).toBe(1);
   });
 

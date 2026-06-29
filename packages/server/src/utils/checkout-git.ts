@@ -2856,10 +2856,28 @@ async function refreshCurrentBranchTrackedRefAfterPush(
   pushedTarget: { remoteName: string; headRef: string },
 ): Promise<void> {
   const trackingRemoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
-  const trackingMergeRef = trackingRemoteName
-    ? await getGitConfigValue(cwd, `branch.${currentBranch}.merge`)
-    : null;
+  const trackingMergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`);
   const trackingHeadRef = parseBranchMergeHeadRef(trackingMergeRef);
+  if (!trackingRemoteName && !trackingMergeRef) {
+    const updated = await updateRemoteTrackingRef(
+      cwd,
+      pushedTarget.remoteName,
+      pushedTarget.headRef,
+    );
+    if (!updated) {
+      return;
+    }
+    await runGitCommand(["config", `branch.${currentBranch}.remote`, pushedTarget.remoteName], {
+      cwd,
+    });
+    await runGitCommand(
+      ["config", `branch.${currentBranch}.merge`, `refs/heads/${pushedTarget.headRef}`],
+      {
+        cwd,
+      },
+    );
+    return;
+  }
   if (!trackingRemoteName || trackingHeadRef !== pushedTarget.headRef) {
     return;
   }
@@ -2872,15 +2890,24 @@ async function refreshCurrentBranchTrackedRefAfterPush(
     return;
   }
 
-  const trackingRef = `refs/remotes/${trackingRemoteName}/${trackingHeadRef}`;
+  await updateRemoteTrackingRef(cwd, trackingRemoteName, trackingHeadRef);
+}
+
+async function updateRemoteTrackingRef(
+  cwd: string,
+  remoteName: string,
+  headRef: string,
+): Promise<boolean> {
+  const trackingRef = `refs/remotes/${remoteName}/${headRef}`;
   const checkRef = await runGitCommand(["check-ref-format", trackingRef], {
     cwd,
     acceptExitCodes: [0, 1],
   });
   if (checkRef.exitCode !== 0) {
-    return;
+    return false;
   }
   await runGitCommand(["update-ref", trackingRef, "HEAD"], { cwd, timeout: 120_000 });
+  return true;
 }
 
 async function getCurrentBranchUpstreamPushTarget(

@@ -817,13 +817,31 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       ])
         .toString()
         .trim();
+      const trackedPrRemoteHead = execFileSync(
+        "git",
+        ["rev-parse", "refs/remotes/paseo-pr-526/main"],
+        {
+          cwd: result.worktree.worktreePath,
+          stdio: "pipe",
+        },
+      )
+        .toString()
+        .trim();
+      const afterPushStatus = await getCheckoutStatus(result.worktree.worktreePath);
 
       expect(result.worktree.branchName).toBe("therainisme/main");
       expect(upstreamBeforePush).toBeNull();
-      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBe("paseo-pr-526/main");
       expect(pushRemote).toBe("paseo-pr-526");
       expect(pushRefspec).toBe("HEAD:refs/heads/main");
       expect(remotePrHead).toBe(localHead);
+      expect(trackedPrRemoteHead).toBe(localHead);
+      expect(afterPushStatus).toMatchObject({
+        isGit: true,
+        currentBranch: "therainisme/main",
+        aheadOfOrigin: 0,
+        behindOfOrigin: 0,
+      });
     });
 
     test("uses a unique local branch when the same fork PR branch already exists", async () => {
