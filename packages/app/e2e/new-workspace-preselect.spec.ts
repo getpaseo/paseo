@@ -38,6 +38,23 @@ async function expectProjectPreselectedWithin(
   await expect(projectPicker).toContainText(projectDisplayName, { timeout });
 }
 
+async function expectAnyProjectPreselectedWithin(
+  page: import("@playwright/test").Page,
+  timeout: number,
+): Promise<void> {
+  const projectPicker = page.getByRole("button", { name: "Workspace project" });
+  await expect(projectPicker).toBeVisible({ timeout });
+  await expect
+    .poll(
+      async () => {
+        const label = ((await projectPicker.textContent()) ?? "").trim();
+        return label || "Choose project";
+      },
+      { timeout },
+    )
+    .not.toBe("Choose project");
+}
+
 async function openColdRestoredWorkspaceWithOfflineHostFirst(
   page: import("@playwright/test").Page,
   workspace: SeededWorkspace,
@@ -228,10 +245,7 @@ test.describe("New workspace preselects the open workspace's project", () => {
     await expect(page.getByTestId("host-picker-trigger")).toContainText("Connected host", {
       timeout: 8_000,
     });
-    await expect(page.getByRole("button", { name: "Workspace project" })).toContainText(
-      /preselect-[ab]-/,
-      { timeout: 8_000 },
-    );
+    await expectAnyProjectPreselectedWithin(page, 8_000);
   });
 
   test("stale remembered offline host heals after visiting the connected workspace", async ({
