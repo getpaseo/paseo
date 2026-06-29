@@ -71,6 +71,9 @@ export async function ensureAgentLoaded(
     }
 
     await deps.agentManager.hydrateTimelineFromProvider(agentId);
+    // Restore persisted task progress + incremental accumulator onto the live
+    // agent so the indicator and further deltas survive a daemon restart.
+    deps.agentManager.restoreTaskState(agentId, record);
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 

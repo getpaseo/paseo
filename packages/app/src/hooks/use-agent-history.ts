@@ -85,6 +85,8 @@ export async function fetchAgentHistoryPage(input: {
       createdAt: agent.createdAt,
       labels: agent.labels,
       projectPlacement: agent.projectPlacement,
+      parentAgentId: agent.parentAgentId,
+      taskProgress: agent.taskProgress ?? null,
     })),
     pageInfo: payload.pageInfo,
   };

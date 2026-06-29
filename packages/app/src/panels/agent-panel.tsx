@@ -73,6 +73,7 @@ import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
 import { useArchiveSubagent, useDetachSubagent, useSubagentsForParent } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
+import { TaskProgressTrack } from "@/components/task-progress-track";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
@@ -1365,6 +1366,18 @@ function ActiveAgentComposer({
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
+  const supportsTaskProgress = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.taskProgress === true,
+  );
+  const taskProgress = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      const session = state.sessions[serverId];
+      const agent = session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null;
+      return agent?.taskProgress ?? null;
+    },
+    (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
+  );
   const handleOpenSubagent = useCallback(
     (subagentId: string) => {
       navigateToAgent({ serverId, agentId: subagentId });
@@ -1465,6 +1478,9 @@ function ActiveAgentComposer({
 
   return (
     <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
+      {supportsTaskProgress && taskProgress ? (
+        <TaskProgressTrack taskProgress={taskProgress} />
+      ) : null}
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}

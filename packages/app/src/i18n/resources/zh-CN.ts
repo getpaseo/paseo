@@ -1299,6 +1299,16 @@ export const zhCN: TranslationResources = {
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
   },
+  taskProgress: {
+    title: "任务",
+    progress: "{{completed}}/{{total}} 个任务",
+    sidebar: "任务",
+    dashboardTitle: "任务",
+    empty: "暂无进行中的任务",
+    emptyHint: "当 agent 创建任务列表时，进度会显示在这里。",
+    subagentsLabel: "{{count}} 个子 agent",
+    subagentsLabel_other: "{{count}} 个子 agent",
+  },
   panels: {
     draft: {
       newAgent: "新建 Agent",

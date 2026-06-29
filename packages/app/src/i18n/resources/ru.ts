@@ -1344,6 +1344,16 @@ export const ru: TranslationResources = {
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
   },
+  taskProgress: {
+    title: "Задачи",
+    progress: "{{completed}}/{{total}} задач",
+    sidebar: "Задачи",
+    dashboardTitle: "Задачи",
+    empty: "Нет активных задач",
+    emptyHint: "Прогресс задач появится здесь, когда ваши агенты создадут списки задач.",
+    subagentsLabel: "{{count}} субагент",
+    subagentsLabel_other: "{{count}} субагентов",
+  },
   panels: {
     draft: {
       newAgent: "Новый агент",

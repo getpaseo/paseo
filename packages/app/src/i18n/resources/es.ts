@@ -1352,6 +1352,16 @@ export const es: TranslationResources = {
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
   },
+  taskProgress: {
+    title: "Tareas",
+    progress: "{{completed}}/{{total}} tareas",
+    sidebar: "Tareas",
+    dashboardTitle: "Tareas",
+    empty: "No hay tareas activas",
+    emptyHint: "El progreso de las tareas aparece aquí cuando tus agentes crean listas de tareas.",
+    subagentsLabel: "{{count}} subagente",
+    subagentsLabel_other: "{{count}} subagentes",
+  },
   panels: {
     draft: {
       newAgent: "Nuevo agente",

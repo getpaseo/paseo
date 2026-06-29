@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { HighlightToken } from "@getpaseo/highlight";
 
 export interface DiffSegment {
@@ -258,83 +257,8 @@ export function parseUnifiedDiff(diffText?: string): DiffLine[] {
 }
 
 // ---- Task Extraction (cross-provider) ----
-
-export type TaskStatus = "pending" | "in_progress" | "completed";
-
-export interface TaskEntry {
-  text: string;
-  status: TaskStatus;
-  completed: boolean;
-}
-
-const TaskStatusSchema = z.enum(["pending", "in_progress", "completed"]);
-
-const ClaudeTodoWriteSchema = z.object({
-  todos: z.array(
-    z.object({
-      content: z.string(),
-      status: TaskStatusSchema,
-      activeForm: z.string().optional(),
-    }),
-  ),
-});
-
-const UpdatePlanSchema = z.object({
-  plan: z.array(
-    z.object({
-      step: z.string(),
-      status: TaskStatusSchema.catch("pending"),
-    }),
-  ),
-});
-
-function normalizeToolName(toolName: string): string {
-  return toolName
-    .trim()
-    .replace(/[.\s-]+/g, "_")
-    .toLowerCase();
-}
-
-export function extractTaskEntriesFromToolCall(
-  toolName: string,
-  input: unknown,
-): TaskEntry[] | null {
-  const normalized = normalizeToolName(toolName);
-
-  // Claude's plan mode uses ExitPlanMode for the approval prompt; it is not a task list.
-  if (normalized === "exitplanmode") {
-    return null;
-  }
-
-  if (normalized === "todowrite" || normalized === "todo_write") {
-    const parsed = ClaudeTodoWriteSchema.safeParse(input);
-    if (!parsed.success) {
-      return null;
-    }
-    return parsed.data.todos.map((todo) => {
-      const status = todo.status;
-      const text = todo.activeForm?.trim() || todo.content.trim();
-      return {
-        text: text.length ? text : todo.content,
-        status,
-        completed: status === "completed",
-      };
-    });
-  }
-
-  if (normalized === "update_plan") {
-    const parsed = UpdatePlanSchema.safeParse(input);
-    if (!parsed.success) {
-      return null;
-    }
-    return parsed.data.plan
-      .map((entry) => ({
-        text: entry.step.trim(),
-        status: entry.status,
-        completed: entry.status === "completed",
-      }))
-      .filter((entry) => entry.text.length > 0);
-  }
-
-  return null;
-}
+// Parsing lives in @getpaseo/protocol/task-progress so the daemon and the app
+// share one implementation. Re-exported here to preserve existing import sites.
+export type { TaskEntry } from "@getpaseo/protocol/task-progress";
+export type { TaskStatus } from "@getpaseo/protocol/messages";
+export { extractTaskEntriesFromToolCall } from "@getpaseo/protocol/task-progress";

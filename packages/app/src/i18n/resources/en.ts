@@ -1323,6 +1323,16 @@ export const en = {
     archiveAction: "Archive {{label}}",
     archiveTooltip: "Archive subagent",
   },
+  taskProgress: {
+    title: "Tasks",
+    progress: "{{completed}}/{{total}} tasks",
+    sidebar: "Tasks",
+    dashboardTitle: "Tasks",
+    empty: "No active tasks",
+    emptyHint: "Task progress appears here when your agents create task lists.",
+    subagentsLabel: "{{count}} subagent",
+    subagentsLabel_other: "{{count}} subagents",
+  },
   panels: {
     draft: {
       newAgent: "New Agent",

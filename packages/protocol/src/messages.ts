@@ -666,6 +666,30 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   extra: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const TaskStatusSchema = z.enum(["pending", "in_progress", "completed"]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+export const TaskProgressItemSchema = z.object({
+  text: z.string(),
+  status: TaskStatusSchema,
+});
+export type TaskProgressItem = z.infer<typeof TaskProgressItemSchema>;
+
+/**
+ * A persisted snapshot of an agent's latest task list (Claude TodoWrite /
+ * OpenCode todos / Codex UpdatePlan). Carried on the agent snapshot so every
+ * client — even ones that never opened the agent — can render task progress.
+ */
+export const TaskProgressPayloadSchema = z.object({
+  items: z.array(TaskProgressItemSchema),
+  pending: z.number().int(),
+  inProgress: z.number().int(),
+  completed: z.number().int(),
+  total: z.number().int(),
+  updatedAt: z.string(),
+});
+export type TaskProgressPayload = z.infer<typeof TaskProgressPayloadSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -694,6 +718,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
+  // COMPAT(taskProgress): added in v0.1.X, drop the gate when floor >= v0.1.X.
+  taskProgress: TaskProgressPayloadSchema.optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -2335,6 +2361,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
         daemonSelfUpdate: z.boolean().optional(),
+        // COMPAT(taskProgress): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        taskProgress: z.boolean().optional(),
       })
       .optional(),
   })

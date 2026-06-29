@@ -1338,6 +1338,16 @@ export const ptBR: TranslationResources = {
     archiveAction: "Arquivar {{label}}",
     archiveTooltip: "Arquivar subagente",
   },
+  taskProgress: {
+    title: "Tarefas",
+    progress: "{{completed}}/{{total}} tarefas",
+    sidebar: "Tarefas",
+    dashboardTitle: "Tarefas",
+    empty: "Nenhuma tarefa ativa",
+    emptyHint: "O progresso das tarefas aparece aqui quando seus agentes criam listas de tarefas.",
+    subagentsLabel: "{{count}} subagente",
+    subagentsLabel_other: "{{count}} subagentes",
+  },
   panels: {
     draft: {
       newAgent: "Novo Agente",

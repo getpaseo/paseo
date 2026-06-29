@@ -88,6 +88,8 @@ export function useAggregatedAgents(options?: {
           createdAt: agent.createdAt,
           labels: agent.labels,
           projectPlacement: agent.projectPlacement,
+          parentAgentId: agent.parentAgentId,
+          taskProgress: agent.taskProgress ?? null,
         };
         const cacheKey = `${serverId}:${agent.id}`;
         const prev = prevAgentsRef.current.get(cacheKey);

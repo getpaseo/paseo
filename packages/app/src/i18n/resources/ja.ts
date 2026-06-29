@@ -1332,6 +1332,16 @@ export const ja: TranslationResources = {
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
   },
+  taskProgress: {
+    title: "タスク",
+    progress: "{{completed}}/{{total}} 件のタスク",
+    sidebar: "タスク",
+    dashboardTitle: "タスク",
+    empty: "進行中のタスクはありません",
+    emptyHint: "エージェントがタスクリストを作成すると、ここに進捗が表示されます。",
+    subagentsLabel: "{{count}} 個のサブエージェント",
+    subagentsLabel_other: "{{count}} 個のサブエージェント",
+  },
   panels: {
     draft: {
       newAgent: "新しいエージェント",

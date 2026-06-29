@@ -17,6 +17,8 @@ export type AgentDirectoryEntry = Pick<
   | "createdAt"
   | "labels"
   | "projectPlacement"
+  | "parentAgentId"
+  | "taskProgress"
 > & {
   pendingPermissionCount?: number;
 };

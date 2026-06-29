@@ -1,5 +1,15 @@
 import { router, usePathname } from "expo-router";
-import { FolderPlus, History, Home, Plus, Search, Server, Settings, X } from "lucide-react-native";
+import {
+  FolderPlus,
+  History,
+  Home,
+  ListTodo,
+  Plus,
+  Search,
+  Server,
+  Settings,
+  X,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -53,6 +63,7 @@ import {
   buildOpenProjectRoute,
   buildNewWorkspaceRoute,
   buildSessionsRoute,
+  buildTasksRoute,
   buildSettingsAddHostRoute,
   buildSettingsHostSectionRoute,
   buildSettingsRoute,
@@ -102,6 +113,7 @@ interface SidebarLabels {
   switchHost: string;
   searchHosts: string;
   sessions: string;
+  tasks: string;
   closeSidebar: string;
 }
 
@@ -232,6 +244,7 @@ export const LeftSidebar = memo(function LeftSidebar({
       switchHost: t("sidebar.host.switchTitle"),
       searchHosts: t("sidebar.host.searchPlaceholder"),
       sessions: t("sidebar.sections.sessions"),
+      tasks: t("taskProgress.sidebar"),
       closeSidebar: t("sidebar.actions.closeSidebar"),
     }),
     [t],
@@ -514,6 +527,7 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
+  const isTasksActive = pathname.includes("/tasks");
   const {
     translateX,
     backdropOpacity,
@@ -540,6 +554,13 @@ function MobileSidebar({
     closeSidebar();
     handleViewMoreNavigate();
   }, [backdropOpacity, closeSidebar, handleViewMoreNavigate, translateX, windowWidth]);
+
+  const handleTasks = useCallback(() => {
+    translateX.value = -windowWidth;
+    backdropOpacity.value = 0;
+    closeSidebar();
+    router.push(buildTasksRoute());
+  }, [backdropOpacity, closeSidebar, translateX, windowWidth]);
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -700,6 +721,14 @@ function MobileSidebar({
                 shortcutKeys={newWorkspaceKeys}
               />
               <SidebarHeaderRow
+                icon={ListTodo}
+                label={labels.tasks}
+                onPress={handleTasks}
+                isActive={isTasksActive}
+                testID="sidebar-tasks"
+                variant="compact"
+              />
+              <SidebarHeaderRow
                 icon={History}
                 label={labels.sessions}
                 onPress={handleViewMore}
@@ -791,6 +820,10 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
+  const isTasksActive = pathname.includes("/tasks");
+  const handleTasks = useCallback(() => {
+    router.push(buildTasksRoute());
+  }, []);
   const padding = useWindowControlsPadding("sidebar");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -863,6 +896,14 @@ function DesktopSidebar({
               testID="sidebar-global-new-workspace"
               variant="compact"
               shortcutKeys={newWorkspaceKeys}
+            />
+            <SidebarHeaderRow
+              icon={ListTodo}
+              label={labels.tasks}
+              onPress={handleTasks}
+              isActive={isTasksActive}
+              testID="sidebar-tasks"
+              variant="compact"
             />
             <SidebarHeaderRow
               icon={History}

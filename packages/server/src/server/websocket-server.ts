@@ -1200,6 +1200,8 @@ export class VoiceAssistantWebSocketServer {
         daemonDiagnostics: true,
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
         daemonSelfUpdate: true,
+        // COMPAT(taskProgress): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        taskProgress: true,
       },
     };
   }

@@ -25,6 +25,7 @@ import type {
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
+  TaskProgressPayload,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
@@ -118,6 +119,7 @@ export interface Agent {
   parentAgentId: string | null;
   labels: Record<string, string>;
   projectPlacement?: ProjectPlacementPayload | null;
+  taskProgress?: TaskProgressPayload | null;
 }
 
 export interface WorkspaceDescriptor {
@@ -1612,6 +1614,8 @@ export const useSessionStore = create<SessionStore>()(
             attentionTimestamp: agent.attentionTimestamp ?? null,
             createdAt: agent.createdAt,
             labels: agent.labels,
+            parentAgentId: agent.parentAgentId,
+            taskProgress: agent.taskProgress ?? null,
           });
         }
         return entries;

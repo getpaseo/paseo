@@ -1316,6 +1316,16 @@ export const ar: TranslationResources = {
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
   },
+  taskProgress: {
+    title: "المهام",
+    progress: "{{completed}}/{{total}} مهمة",
+    sidebar: "المهام",
+    dashboardTitle: "المهام",
+    empty: "لا توجد مهام نشطة",
+    emptyHint: "يظهر تقدم المهام هنا عندما ينشئ وكلاؤك قوائم مهام.",
+    subagentsLabel: "{{count}} وكيل فرعي",
+    subagentsLabel_other: "{{count}} وكلاء فرعيون",
+  },
   panels: {
     draft: {
       newAgent: "وكيل جديد",
