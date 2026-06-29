@@ -269,3 +269,31 @@ test("addProjectForDirectory materializes a workspace for a worktree directory",
   expect(workspaces).toHaveLength(1);
   expect(workspaces[0]?.cwd).toBe(worktreeDir);
 });
+
+test("addProjectForDirectory reuses an existing worktree workspace", async () => {
+  const mainRepo = path.join(tmpDir, "main-repo");
+  const worktreeDir = path.join(tmpDir, "feature-worktree");
+  const worktreeProvisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
+      getCheckout: async (cwd: string) => ({
+        cwd,
+        isGit: true,
+        currentBranch: "feature",
+        remoteUrl: null,
+        worktreeRoot: worktreeDir,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: mainRepo,
+      }),
+    }),
+  });
+
+  const first = await worktreeProvisioning.addProjectForDirectory(worktreeDir);
+  const second = await worktreeProvisioning.addProjectForDirectory(worktreeDir);
+
+  expect(first.workspace?.workspaceId).toBeDefined();
+  expect(second.workspace?.workspaceId).toBe(first.workspace?.workspaceId);
+  expect(await workspaceRegistry.list()).toHaveLength(1);
+});

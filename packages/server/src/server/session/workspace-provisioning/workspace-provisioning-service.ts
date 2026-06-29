@@ -282,7 +282,11 @@ export function createWorkspaceProvisioningService(deps: {
       return { project, workspace };
     }
 
-    const project = await findOrCreateProjectForDirectory(normalizedCwd);
+    const project = await resolveProjectRecordForPlacement({
+      membership,
+      timestamp: new Date().toISOString(),
+    });
+    await projectRegistry.upsert(project);
     return { project, workspace: null };
   }
 
