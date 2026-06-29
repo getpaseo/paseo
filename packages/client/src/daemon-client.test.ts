@@ -566,6 +566,52 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (60000ms)");
 });
 
+test("keeps default connect timeout shorter than session RPC waiters", async () => {
+  useHeartbeatClock();
+  try {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    let settled = false;
+    const pendingConnect = client.connect().then(
+      () => {
+        settled = true;
+        return { ok: true as const };
+      },
+      (error) => {
+        settled = true;
+        return { ok: false as const, error };
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(settled).toBe(false);
+    expect(client.getConnectionState().status).toBe("connecting");
+
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await pendingConnect;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+      if (result.error instanceof Error) {
+        expect(result.error.message).toContain("Connection timed out");
+      }
+    }
+    expect(client.getConnectionState().status).toBe("disconnected");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("stays online through ten minutes of pongs that arrive five seconds late", async () => {
   useHeartbeatClock();
   const session = new DaemonClientSession();

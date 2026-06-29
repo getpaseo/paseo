@@ -80,7 +80,7 @@ describe("ensureAgentIsInitialized", () => {
     expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
   });
 
-  it("times out initialization after 60 seconds", async () => {
+  it("times out initialization after 65 seconds", async () => {
     vi.useFakeTimers();
     const client = makeClient();
     useSessionStore.getState().initializeSession(serverId, client as never);
@@ -92,12 +92,12 @@ describe("ensureAgentIsInitialized", () => {
       setAgentInitializing: bindSetAgentInitializing(),
     });
 
-    vi.advanceTimersByTime(59_999);
+    vi.advanceTimersByTime(64_999);
     expect(getInitDeferred(getInitKey(serverId, agentId))).toBeDefined();
 
     vi.advanceTimersByTime(1);
 
-    await expect(promise).rejects.toThrow("History sync timed out after 60s");
+    await expect(promise).rejects.toThrow("History sync timed out after 65s");
     expect(getInitDeferred(getInitKey(serverId, agentId))).toBeUndefined();
     expect(useSessionStore.getState().sessions[serverId]?.initializingAgents.get(agentId)).toBe(
       false,
