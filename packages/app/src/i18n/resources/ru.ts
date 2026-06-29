@@ -950,6 +950,7 @@ export const ru: TranslationResources = {
         installing: "Установка обновления приложения...",
         upToDate: "Приложение актуально.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
+        lastCheckedAt: "Последняя проверка в {{time}}.",
         pending: "Мы сообщим вам, когда обновление будет готово.",
         availableWithVersion: "Обновление готово:{{version}}",
         available: "Обновление приложения готово к установке.",

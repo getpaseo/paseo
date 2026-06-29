@@ -8,10 +8,14 @@ import {
 } from "./app-update-service";
 
 class FakeAppUpdateRuntime implements AppUpdateRuntime {
-  private checks: Array<{ isUpdateAvailable: boolean; updateInfo: RuntimeUpdateInfo } | null> = [];
+  private checks: Array<
+    { isUpdateAvailable: boolean; updateInfo: RuntimeUpdateInfo } | null | Error
+  > = [];
   private gate: ((info: RuntimeUpdateInfo) => boolean | Promise<boolean>) | null = null;
+  private configuration: AppUpdateRuntimeConfiguration | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
+    this.configuration = input;
     this.gate = input.shouldAdmitUpdate;
   }
 
@@ -19,11 +23,20 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     this.checks.push(result);
   }
 
+  failNextCheck(error: Error): void {
+    this.checks.push(error);
+  }
+
+  failRuntime(error: Error): void {
+    this.configuration?.onError(error);
+  }
+
   async checkForUpdates(): Promise<{
     isUpdateAvailable: boolean;
     updateInfo: RuntimeUpdateInfo;
   } | null> {
     const result = this.checks.shift() ?? null;
+    if (result instanceof Error) throw result;
     if (!result || !this.gate) return result;
     const admitted = await this.gate(result.updateInfo);
     return { ...result, isUpdateAvailable: result.isUpdateAvailable && admitted };
@@ -69,6 +82,7 @@ describe("app update service", () => {
       latestVersion: "1.2.3",
       body: null,
       date: null,
+      errorMessage: null,
     });
   });
 
@@ -89,6 +103,7 @@ describe("app update service", () => {
       latestVersion: "1.2.4",
       body: null,
       date: "2026-04-28T00:00:00.000Z",
+      errorMessage: null,
     });
   });
 
@@ -109,6 +124,56 @@ describe("app update service", () => {
       latestVersion: "1.2.3",
       body: null,
       date: null,
+      errorMessage: null,
+    });
+  });
+
+  it("returns check errors so the renderer can show feedback", async () => {
+    const { runtime, service } = createService();
+    runtime.failNextCheck(new Error("network down"));
+
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    expect(result).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: "network down",
+    });
+  });
+
+  it("returns runtime update errors after an update fails to prepare", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.failRuntime(new Error("sha512 checksum mismatch"));
+
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(result).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: "sha512 checksum mismatch",
     });
   });
 });

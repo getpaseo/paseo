@@ -931,6 +931,7 @@ export const ar: TranslationResources = {
         installing: "جارٍ تثبيت تحديث التطبيق...",
         upToDate: "التطبيق محدث.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
+        lastCheckedAt: "آخر فحص في {{time}}.",
         pending: "سنخبرك عندما يصبح التحديث جاهزًا.",
         availableWithVersion: "التحديث جاهز:{{version}}",
         available: "تحديث التطبيق جاهز للتثبيت.",

@@ -12,6 +12,7 @@ export interface AppUpdateCheckResult {
   latestVersion: string;
   body: string | null;
   date: string | null;
+  errorMessage: string | null;
 }
 
 export interface AppUpdateInstallResult {
@@ -78,8 +79,9 @@ function buildCheckResult(input: {
   hasUpdate: boolean;
   readyToInstall: boolean;
   info?: RuntimeUpdateInfo | null;
+  errorMessage?: string | null;
 }): AppUpdateCheckResult {
-  const { currentVersion, hasUpdate, readyToInstall, info } = input;
+  const { currentVersion, hasUpdate, readyToInstall, info, errorMessage = null } = input;
 
   return {
     hasUpdate,
@@ -88,6 +90,7 @@ function buildCheckResult(input: {
     latestVersion: info?.version ?? currentVersion,
     body: typeof info?.releaseNotes === "string" ? info.releaseNotes : null,
     date: typeof info?.releaseDate === "string" ? info.releaseDate : null,
+    errorMessage,
   };
 }
 
@@ -99,11 +102,19 @@ async function performQuitAndInstall(
   runtime.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && typeof error.message === "string") {
+    return error.message;
+  }
+  return String(error);
+}
+
 export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateService {
   let cachedUpdateInfo: RuntimeUpdateInfo | null = null;
   let downloadedUpdateVersion: string | null = null;
   let downloading = false;
   let configuredReleaseChannel: AppReleaseChannel | null = null;
+  let runtimeErrorMessage: string | null = null;
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -113,6 +124,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     cachedUpdateInfo = null;
     downloadedUpdateVersion = null;
     downloading = false;
+    runtimeErrorMessage = null;
+  }
+
+  function consumeRuntimeError(currentVersion: string): AppUpdateCheckResult | null {
+    if (!runtimeErrorMessage) {
+      return null;
+    }
+
+    const errorMessage = runtimeErrorMessage;
+    const info = cachedUpdateInfo;
+    clearUpdateState();
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: info?.version !== undefined && info.version !== currentVersion,
+      readyToInstall: false,
+      info,
+      errorMessage,
+    });
   }
 
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
@@ -138,17 +167,20 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         cachedUpdateInfo = info;
         downloadedUpdateVersion = null;
         downloading = true;
+        runtimeErrorMessage = null;
       },
       onUpdateDownloaded(info) {
         cachedUpdateInfo = info;
         downloadedUpdateVersion = info.version;
         downloading = false;
+        runtimeErrorMessage = null;
       },
       onUpdateNotAvailable() {
         clearUpdateState();
       },
       onError(error) {
         downloading = false;
+        runtimeErrorMessage = getErrorMessage(error);
         deps.reportRuntimeError?.(error);
       },
     });
@@ -172,6 +204,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     configureRuntime(releaseChannel, intent);
+
+    const runtimeErrorResult = consumeRuntimeError(currentVersion);
+    if (runtimeErrorResult) {
+      return runtimeErrorResult;
+    }
 
     const cachedVersion = cachedUpdateInfo?.version ?? null;
     if (cachedVersion && cachedVersion !== currentVersion) {
@@ -221,6 +258,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         currentVersion,
         hasUpdate: false,
         readyToInstall: false,
+        errorMessage: getErrorMessage(error),
       });
     }
   }

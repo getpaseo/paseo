@@ -920,6 +920,7 @@ export const zhCN: TranslationResources = {
         installing: "正在安装 app 更新...",
         upToDate: "App 已是最新版本。",
         upToDateWithLastChecked: "已是最新版本。上次检查时间：{{time}}。",
+        lastCheckedAt: "上次检查时间：{{time}}。",
         pending: "更新准备好后会通知你。",
         availableWithVersion: "更新已就绪：{{version}}",
         available: "有 app 更新可安装。",

@@ -943,6 +943,7 @@ export const ja: TranslationResources = {
         installing: "アプリの更新をインストール中...",
         upToDate: "アプリは最新です。",
         upToDateWithLastChecked: "最新の状態です。最終確認: {{time}}。",
+        lastCheckedAt: "最終確認: {{time}}。",
         pending: "更新の準備ができたらお知らせします。",
         availableWithVersion: "更新の準備ができました: {{version}}",
         available: "アプリの更新をインストールできます。",

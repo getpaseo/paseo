@@ -938,6 +938,7 @@ export const en = {
         installing: "Installing app update...",
         upToDate: "App is up to date.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
+        lastCheckedAt: "Last checked at {{time}}.",
         pending: "We'll let you know when the update is ready.",
         availableWithVersion: "Update ready: {{version}}",
         available: "An app update is ready to install.",

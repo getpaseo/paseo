@@ -102,6 +102,20 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function appendLastChecked(input: {
+  text: string;
+  lastCheckedAt: number | null;
+  formatLastCheckedAt: (timestamp: number) => string;
+}): string {
+  if (input.lastCheckedAt == null) {
+    return input.text;
+  }
+
+  return `${input.text} ${i18n.t("desktop.updates.status.lastCheckedAt", {
+    time: input.formatLastCheckedAt(input.lastCheckedAt),
+  })}`;
+}
+
 export function formatStatusText(input: {
   status: DesktopAppUpdateStatus;
   availableUpdate: DesktopAppUpdateCheckResult | null;
@@ -137,16 +151,21 @@ export function formatStatusText(input: {
   }
 
   if (status === "pending") {
-    return i18n.t("desktop.updates.status.pending");
+    return appendLastChecked({
+      text: i18n.t("desktop.updates.status.pending"),
+      lastCheckedAt,
+      formatLastCheckedAt,
+    });
   }
 
   if (status === "available") {
-    if (availableUpdate?.latestVersion) {
-      return i18n.t("desktop.updates.status.availableWithVersion", {
-        version: formatVersion(availableUpdate.latestVersion),
-      });
-    }
-    return i18n.t("desktop.updates.status.available");
+    const text = availableUpdate?.latestVersion
+      ? i18n.t("desktop.updates.status.availableWithVersion", {
+          version: formatVersion(availableUpdate.latestVersion),
+        })
+      : i18n.t("desktop.updates.status.available");
+
+    return appendLastChecked({ text, lastCheckedAt, formatLastCheckedAt });
   }
 
   if (status === "installed") {
@@ -188,7 +207,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       ...state,
       requestVersion,
       status: silent ? state.status : "checking",
-      errorMessage: null,
+      errorMessage: silent ? state.errorMessage : null,
     });
 
     try {
@@ -197,7 +216,24 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         return result;
       }
 
-      const nextLastCheckedAt = deps.now();
+      const nextLastCheckedAt = intent === "manual" ? deps.now() : state.lastCheckedAt;
+      if (result.errorMessage) {
+        if (silent && !result.hasUpdate) {
+          console.warn("[DesktopUpdater] Silent update check failed", result.errorMessage);
+          return result;
+        }
+
+        commit({
+          ...state,
+          status: "error",
+          availableUpdate: null,
+          errorMessage: result.errorMessage,
+          installMessage: null,
+          lastCheckedAt: nextLastCheckedAt,
+        });
+        return result;
+      }
+
       let nextStatus: DesktopAppUpdateStatus;
       let nextAvailable: DesktopAppUpdateCheckResult | null;
 
@@ -216,6 +252,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         ...state,
         status: nextStatus,
         availableUpdate: nextAvailable,
+        errorMessage: null,
         installMessage: null,
         lastCheckedAt: nextLastCheckedAt,
       });
@@ -229,12 +266,12 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       const message = getErrorMessage(error);
       if (silent) {
         console.warn("[DesktopUpdater] Silent update check failed", message);
-        commit({ ...state });
       } else {
         commit({
           ...state,
           status: "error",
           errorMessage: message,
+          lastCheckedAt: intent === "manual" ? deps.now() : state.lastCheckedAt,
         });
       }
       return null;

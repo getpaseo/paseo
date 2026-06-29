@@ -957,6 +957,7 @@ export const fr: TranslationResources = {
         installing: "Installation de la mise à jour de l'application...",
         upToDate: "L'application est à jour.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
+        lastCheckedAt: "Dernière vérification à {{time}}.",
         pending: "Nous vous informerons lorsque la mise à jour sera prête.",
         availableWithVersion: "Mise à jour prête:{{version}}",
         available: "Une mise à jour de l'application est prête à être installée.",
