@@ -5,6 +5,7 @@ import { getInitDeferred, getInitKey, resolveInitDeferred } from "@/utils/agent-
 import {
   createSetAgentInitializing,
   ensureAgentIsInitialized,
+  refreshAgentInitializationTimeout,
   refreshAgent,
 } from "./use-agent-initialization";
 
@@ -102,6 +103,38 @@ describe("ensureAgentIsInitialized", () => {
     expect(useSessionStore.getState().sessions[serverId]?.initializingAgents.get(agentId)).toBe(
       false,
     );
+    vi.useRealTimers();
+  });
+
+  it("refreshes the initialization timeout after paged catch-up progress", async () => {
+    vi.useFakeTimers();
+    const client = makeClient();
+    useSessionStore.getState().initializeSession(serverId, client as never);
+    const setAgentInitializing = bindSetAgentInitializing();
+    const key = getInitKey(serverId, agentId);
+
+    const promise = ensureAgentIsInitialized({
+      serverId,
+      agentId,
+      client: client as never,
+      setAgentInitializing,
+    });
+
+    vi.advanceTimersByTime(64_999);
+    refreshAgentInitializationTimeout({ key, agentId, setAgentInitializing });
+
+    vi.advanceTimersByTime(1);
+    expect(getInitDeferred(key)).toBeDefined();
+
+    const rejection = expect(promise).rejects.toThrow("History sync timed out after 65s");
+
+    vi.advanceTimersByTime(64_998);
+    expect(getInitDeferred(key)).toBeDefined();
+
+    vi.advanceTimersByTime(1);
+
+    await rejection;
+    expect(getInitDeferred(key)).toBeUndefined();
     vi.useRealTimers();
   });
 });

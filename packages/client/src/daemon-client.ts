@@ -474,6 +474,10 @@ export interface FetchAgentTimelineOptions {
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
+export interface ShutdownServerOptions {
+  requestId?: string;
+  timeout?: number;
+}
 type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
@@ -482,6 +486,7 @@ type FetchAgentsPayload = Extract<
 type FetchAgentsRequest = Extract<SessionInboundMessage, { type: "fetch_agents_request" }>;
 export type FetchAgentsOptions = Omit<FetchAgentsRequest, "type" | "requestId"> & {
   requestId?: string;
+  timeout?: number;
 };
 export type FetchAgentsEntry = FetchAgentsPayload["entries"][number];
 export type FetchAgentsPageInfo = FetchAgentsPayload["pageInfo"];
@@ -549,6 +554,7 @@ export interface ReadChatMessagesOptions {
   since?: string;
   authorAgentId?: string;
   requestId?: string;
+  timeout?: number;
 }
 export interface WaitForChatMessagesOptions {
   room: string;
@@ -1787,6 +1793,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
+      timeout: options?.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agents_response") {
@@ -2595,8 +2602,14 @@ export class DaemonClient {
     });
   }
 
-  async shutdownServer(requestId?: string): Promise<ShutdownRequestedStatusPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
+  async shutdownServer(
+    requestIdOrOptions?: string | ShutdownServerOptions,
+  ): Promise<ShutdownRequestedStatusPayload> {
+    const options =
+      typeof requestIdOrOptions === "string"
+        ? { requestId: requestIdOrOptions }
+        : requestIdOrOptions;
+    const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "shutdown_server_request",
       requestId: resolvedRequestId,
@@ -2604,6 +2617,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
+      timeout: options?.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -4287,6 +4301,7 @@ export class DaemonClient {
         ...(options.authorAgentId ? { authorAgentId: options.authorAgentId } : {}),
       },
       responseType: "chat/read/response",
+      timeout: options.timeout,
     });
   }
 

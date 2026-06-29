@@ -667,7 +667,9 @@ async function requestLifecycleShutdown(
     };
   }
 
-  const client = await tryConnectToDaemon({ host, timeout: Math.min(timeoutMs, 5000) });
+  const deadline = Date.now() + timeoutMs;
+  const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
+  const client = await tryConnectToDaemon({ host, timeout: Math.min(remainingTimeoutMs(), 5000) });
   if (!client) {
     return {
       requested: false,
@@ -676,7 +678,7 @@ async function requestLifecycleShutdown(
   }
 
   try {
-    await client.shutdownServer();
+    await client.shutdownServer({ timeout: Math.min(remainingTimeoutMs(), 5000) });
     return { requested: true };
   } catch (error) {
     return {
@@ -696,8 +698,10 @@ export async function stopLocalDaemon(
   const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   const killTimeoutMs = options.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
   const state = resolveLocalDaemonState({ home: options.home });
+  const deadline = Date.now() + timeoutMs;
+  const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
 
-  const shutdownAttempt = await requestLifecycleShutdown(state, timeoutMs);
+  const shutdownAttempt = await requestLifecycleShutdown(state, remainingTimeoutMs());
   const lifecycleRequested = shutdownAttempt.requested;
 
   if (!state.pidInfo || (!state.running && !lifecycleRequested)) {
@@ -720,7 +724,7 @@ export async function stopLocalDaemon(
   const { stopped, forced } = await waitForStopAfterRequest({
     state,
     pid,
-    timeoutMs,
+    timeoutMs: remainingTimeoutMs(),
     killTimeoutMs,
     force: options.force,
   });
