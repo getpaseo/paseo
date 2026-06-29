@@ -949,10 +949,15 @@ export const ptBR: TranslationResources = {
         installing: "Instalando atualização do app...",
         upToDate: "O app está atualizado.",
         upToDateWithLastChecked: "Atualizado. Última verificação às {{time}}.",
-        lastCheckedAt: "Última verificação às {{time}}.",
         pending: "Avisaremos quando a atualização estiver pronta.",
+        pendingWithLastChecked:
+          "Avisaremos quando a atualização estiver pronta. Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
+        availableWithVersionAndLastChecked:
+          "Atualização pronta: {{version}}. Última verificação às {{time}}.",
         available: "Há uma atualização do app pronta para instalar.",
+        availableWithLastChecked:
+          "Há uma atualização do app pronta para instalar. Última verificação às {{time}}.",
         installed: "Atualização do app instalada. Reinicialização obrigatória.",
         failed: "Falha ao atualizar o app.",
         idle: "O status de atualização ainda não foi verificado.",

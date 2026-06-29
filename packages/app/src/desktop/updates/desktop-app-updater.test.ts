@@ -177,6 +177,41 @@ describe("desktop app updater — check", () => {
     });
   });
 
+  it("shows silent update preparation errors when an update is involved", async () => {
+    const { updater, port } = createUpdater();
+    port.nextCheckResult(
+      buildFakeCheckResult({
+        hasUpdate: true,
+        readyToInstall: false,
+        latestVersion: "1.2.3",
+        errorMessage: "sha512 checksum mismatch",
+      }),
+    );
+
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "error",
+      errorMessage: "sha512 checksum mismatch",
+      lastCheckedAt: null,
+    });
+  });
+
+  it("does not let a silent check supersede an in-flight manual check", async () => {
+    const { updater, port } = createUpdater();
+    const deferred = port.deferNextCheck();
+
+    const manualCheck = updater.checkForUpdates({ releaseChannel: "stable" });
+    port.nextCheckResult(buildFakeCheckResult({ errorMessage: "network down" }));
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    deferred.resolve(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
+    await manualCheck;
+
+    expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "manual" }]);
+    expect(updater.getSnapshot().status).toBe("up-to-date");
+  });
+
   it("does not move to 'error' when a silent check throws", async () => {
     const { updater, port } = createUpdater();
     port.nextCheckResult(buildFakeCheckResult({ hasUpdate: true, readyToInstall: true }));

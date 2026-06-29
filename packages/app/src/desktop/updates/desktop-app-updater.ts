@@ -102,20 +102,6 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
-function appendLastChecked(input: {
-  text: string;
-  lastCheckedAt: number | null;
-  formatLastCheckedAt: (timestamp: number) => string;
-}): string {
-  if (input.lastCheckedAt == null) {
-    return input.text;
-  }
-
-  return `${input.text} ${i18n.t("desktop.updates.status.lastCheckedAt", {
-    time: input.formatLastCheckedAt(input.lastCheckedAt),
-  })}`;
-}
-
 export function formatStatusText(input: {
   status: DesktopAppUpdateStatus;
   availableUpdate: DesktopAppUpdateCheckResult | null;
@@ -151,21 +137,33 @@ export function formatStatusText(input: {
   }
 
   if (status === "pending") {
-    return appendLastChecked({
-      text: i18n.t("desktop.updates.status.pending"),
-      lastCheckedAt,
-      formatLastCheckedAt,
-    });
+    if (lastCheckedAt != null) {
+      return i18n.t("desktop.updates.status.pendingWithLastChecked", {
+        time: formatLastCheckedAt(lastCheckedAt),
+      });
+    }
+    return i18n.t("desktop.updates.status.pending");
   }
 
   if (status === "available") {
-    const text = availableUpdate?.latestVersion
-      ? i18n.t("desktop.updates.status.availableWithVersion", {
+    if (availableUpdate?.latestVersion) {
+      return i18n.t(
+        lastCheckedAt != null
+          ? "desktop.updates.status.availableWithVersionAndLastChecked"
+          : "desktop.updates.status.availableWithVersion",
+        {
           version: formatVersion(availableUpdate.latestVersion),
-        })
-      : i18n.t("desktop.updates.status.available");
+          time: lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined,
+        },
+      );
+    }
 
-    return appendLastChecked({ text, lastCheckedAt, formatLastCheckedAt });
+    if (lastCheckedAt != null) {
+      return i18n.t("desktop.updates.status.availableWithLastChecked", {
+        time: formatLastCheckedAt(lastCheckedAt),
+      });
+    }
+    return i18n.t("desktop.updates.status.available");
   }
 
   if (status === "installed") {
@@ -201,6 +199,10 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       return null;
     }
     const { releaseChannel, intent = "manual", silent = false } = options;
+    if (silent && state.status === "checking") {
+      return null;
+    }
+
     const requestVersion = state.requestVersion + 1;
 
     commit({

@@ -9,10 +9,14 @@ import {
 
 class FakeAppUpdateRuntime implements AppUpdateRuntime {
   private checks: Array<
-    { isUpdateAvailable: boolean; updateInfo: RuntimeUpdateInfo } | null | Error
+    | { isUpdateAvailable: boolean; updateInfo: RuntimeUpdateInfo }
+    | null
+    | Error
+    | { kind: "check-error"; error: Error; emitRuntimeError: boolean }
   > = [];
   private gate: ((info: RuntimeUpdateInfo) => boolean | Promise<boolean>) | null = null;
   private configuration: AppUpdateRuntimeConfiguration | null = null;
+  checkCount = 0;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
@@ -27,6 +31,10 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     this.checks.push(error);
   }
 
+  failNextCheckAndEmitRuntimeError(error: Error): void {
+    this.checks.push({ kind: "check-error", error, emitRuntimeError: true });
+  }
+
   failRuntime(error: Error): void {
     this.configuration?.onError(error);
   }
@@ -35,8 +43,15 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     isUpdateAvailable: boolean;
     updateInfo: RuntimeUpdateInfo;
   } | null> {
+    this.checkCount += 1;
     const result = this.checks.shift() ?? null;
     if (result instanceof Error) throw result;
+    if (result?.kind === "check-error") {
+      if (result.emitRuntimeError) {
+        this.configuration?.onError(result.error);
+      }
+      throw result.error;
+    }
     if (!result || !this.gate) return result;
     const admitted = await this.gate(result.updateInfo);
     return { ...result, isUpdateAvailable: result.isUpdateAvailable && admitted };
@@ -146,6 +161,36 @@ describe("app update service", () => {
       body: null,
       date: null,
       errorMessage: "network down",
+    });
+  });
+
+  it("performs a fresh retry after a failed check emits a runtime error", async () => {
+    const { runtime, service } = createService();
+    runtime.failNextCheckAndEmitRuntimeError(new Error("network down"));
+
+    const firstResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    expect(firstResult.errorMessage).toBe("network down");
+
+    runtime.nextCheck(null);
+    const retryResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    expect(runtime.checkCount).toBe(2);
+    expect(retryResult).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
     });
   });
 
