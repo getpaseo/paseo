@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { create } from "zustand";
+import { useShallow } from "zustand/shallow";
 import type { WorkspaceComposerAttachment } from "./types";
 
 const EMPTY_WORKSPACE_ATTACHMENTS: readonly WorkspaceComposerAttachment[] = [];
@@ -188,26 +189,40 @@ export function useWorkspaceAttachments(scopeKey: string): readonly WorkspaceCom
   );
 }
 
-export function useDraftWorkspaceAttachments(
-  draftId: string | null | undefined,
-): readonly WorkspaceComposerAttachment[] {
-  const scopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
-  return useWorkspaceAttachments(scopeKey);
+export function collectWorkspaceAttachmentsForScopes(input: {
+  attachmentsByScope: Record<string, readonly WorkspaceComposerAttachment[]>;
+  scopeKeys: readonly string[];
+}): readonly WorkspaceComposerAttachment[] {
+  const attachments: WorkspaceComposerAttachment[] = [];
+  for (const scopeKey of input.scopeKeys) {
+    const normalizedScopeKey = scopeKey.trim();
+    if (!normalizedScopeKey) {
+      continue;
+    }
+    attachments.push(
+      ...(input.attachmentsByScope[normalizedScopeKey] ?? EMPTY_WORKSPACE_ATTACHMENTS),
+    );
+  }
+  return attachments;
 }
 
-export function useWorkspaceDraftAttachments(input: {
-  draftId: string;
-  workspaceScopeKey: string;
-}): readonly WorkspaceComposerAttachment[] {
-  const draftScopeKey = useDraftWorkspaceAttachmentScopeKey(input.draftId);
-  const draftAttachments = useWorkspaceAttachments(draftScopeKey);
-  const workspaceAttachments = useWorkspaceAttachments(input.workspaceScopeKey);
+export function useWorkspaceAttachmentsForScopes(
+  scopeKeys: readonly string[] | undefined,
+): readonly WorkspaceComposerAttachment[] {
+  const normalizedScopeKeys = useMemo(
+    () => (scopeKeys ?? []).map((scopeKey) => scopeKey.trim()).filter(Boolean),
+    [scopeKeys],
+  );
+  const attachmentsByScope = useWorkspaceAttachmentsStore(
+    useShallow((state) => state.attachmentsByScope),
+  );
   return useMemo(
     () =>
-      draftAttachments.length > 0
-        ? [...draftAttachments, ...workspaceAttachments]
-        : workspaceAttachments,
-    [draftAttachments, workspaceAttachments],
+      collectWorkspaceAttachmentsForScopes({
+        attachmentsByScope,
+        scopeKeys: normalizedScopeKeys,
+      }),
+    [attachmentsByScope, normalizedScopeKeys],
   );
 }
 

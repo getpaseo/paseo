@@ -96,7 +96,7 @@ import {
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { toErrorMessage } from "@/utils/error-messages";
-import { useWorkspaceDraftSetupStore } from "@/stores/workspace-draft-setup-store";
+import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -482,7 +482,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           const sourceDirectory =
             agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
           if (draftSetup) {
-            useWorkspaceDraftSetupStore.getState().setDraftSetup({
+            useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
               draftId,
               setup: draftSetup,
               sourceDirectory,

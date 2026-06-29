@@ -103,6 +103,7 @@ import type {
 } from "@/attachments/types";
 import type { PickedFile } from "@/attachments/picked-file";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
+import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToPickedFiles } from "@/composer/attachments/drop";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
@@ -120,6 +121,8 @@ type QueuedMessage = QueuedComposerMessage;
 type AttachmentListUpdater =
   | UserComposerAttachment[]
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
+
+const EMPTY_ATTACHMENT_SCOPE_KEYS: readonly string[] = [];
 
 function noop() {}
 const noopCallback = () => {};
@@ -759,7 +762,7 @@ interface ComposerProps {
   value: string;
   onChangeText: (text: string) => void;
   attachments: UserComposerAttachment[];
-  workspaceAttachments?: readonly WorkspaceComposerAttachment[];
+  attachmentScopeKeys?: readonly string[];
   onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
   cwd: string;
@@ -971,7 +974,7 @@ export function Composer({
   value,
   onChangeText,
   attachments,
-  workspaceAttachments = [],
+  attachmentScopeKeys = EMPTY_ATTACHMENT_SCOPE_KEYS,
   onOpenWorkspaceAttachment,
   onChangeAttachments,
   cwd,
@@ -1026,6 +1029,7 @@ export function Composer({
   const messagePlaceholder = resolveMessagePlaceholder(isDesktopLayout, t);
   const userInput = value;
   const setUserInput = onChangeText;
+  const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
     selectedAttachments,
     buildOutgoingAttachments,

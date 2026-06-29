@@ -4,6 +4,7 @@ import {
   appendWorkspaceAttachment,
   buildDraftWorkspaceAttachmentScopeKey,
   buildWorkspaceAttachmentScopeKey,
+  collectWorkspaceAttachmentsForScopes,
   resetWorkspaceAttachmentsStore,
   useWorkspaceAttachmentsStore,
 } from "./workspace-attachments-store";
@@ -168,5 +169,26 @@ describe("workspace attachments store", () => {
       review,
       context,
     ]);
+  });
+
+  it("collects attachments across requested scopes in scope order", () => {
+    const draftScopeKey = buildDraftWorkspaceAttachmentScopeKey("draft-1");
+    const workspaceScopeKey = buildWorkspaceAttachmentScopeKey({
+      serverId: "local",
+      workspaceId: "workspace-1",
+      cwd: "/repo",
+    });
+    const draftContext = chatHistoryAttachment("chat_history:draft-1");
+    const workspaceContext = contextAttachment("comment-1");
+
+    expect(
+      collectWorkspaceAttachmentsForScopes({
+        attachmentsByScope: {
+          [workspaceScopeKey]: [workspaceContext],
+          [draftScopeKey]: [draftContext],
+        },
+        scopeKeys: [` ${draftScopeKey} `, "", workspaceScopeKey],
+      }),
+    ).toEqual([draftContext, workspaceContext]);
   });
 });

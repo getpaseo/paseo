@@ -36,11 +36,10 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
-import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import {
-  useWorkspaceDraftSetupStore,
+  useWorkspaceDraftSubmissionStore,
   type PendingWorkspaceDraftSetup,
-} from "@/stores/workspace-draft-setup-store";
+} from "@/stores/workspace-draft-submission-store";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
@@ -60,18 +59,13 @@ import {
   type HostProjectRouteContext,
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
-import type {
-  ComposerAttachment,
-  UserComposerAttachment,
-  WorkspaceComposerAttachment,
-} from "@/attachments/types";
-import { useDraftWorkspaceAttachments } from "@/attachments/workspace-attachments-store";
+import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
+import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
-import { remapWorkspaceDraftSetupForWorkspace } from "@/workspace-drafts/draft-setup";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
   pickerItemToCheckoutRequest,
@@ -93,8 +87,6 @@ function resolveCheckoutRequest(
   };
 }
 
-const EMPTY_WORKSPACE_COMPOSER_ATTACHMENTS: readonly WorkspaceComposerAttachment[] = [];
-
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
   selectedServerId: string;
@@ -109,14 +101,21 @@ function useIsNewWorkspaceDraftHandoffActive(input: {
   );
 }
 
-function resolveVisibleDraftContextAttachments(input: {
+function resolveVisibleDraftContextScopeKeys(input: {
   isDraftHandoffActive: boolean;
-  draftContextAttachments: readonly WorkspaceComposerAttachment[];
-}): readonly WorkspaceComposerAttachment[] {
-  if (input.isDraftHandoffActive) {
-    return EMPTY_WORKSPACE_COMPOSER_ATTACHMENTS;
+  draftContextScopeKey: string;
+}): readonly string[] {
+  if (input.isDraftHandoffActive || !input.draftContextScopeKey) {
+    return [];
   }
-  return input.draftContextAttachments;
+  return [input.draftContextScopeKey];
+}
+
+function isNewWorkspacePending(input: {
+  pendingAction: "chat" | "empty" | null;
+  isDraftHandoffActive: boolean;
+}): boolean {
+  return input.pendingAction !== null || input.isDraftHandoffActive;
 }
 
 function buildFirstAgentContext(input: {
@@ -926,16 +925,41 @@ function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
   if (!input.forkDraftSetup) {
     return undefined;
   }
-  const remappedSetup = remapWorkspaceDraftSetupForWorkspace({
-    setup: input.forkDraftSetup.setup,
-    sourceDirectory: input.forkDraftSetup.sourceDirectory,
-    workspaceDirectory: input.workspaceDirectory,
-  });
   return buildWorkspaceDraftSetupFromComposer({
-    cwd: remappedSetup.cwd,
+    cwd: remapDraftCwdToWorkspace({
+      cwd: input.forkDraftSetup.setup.cwd,
+      sourceDirectory: input.forkDraftSetup.sourceDirectory,
+      workspaceDirectory: input.workspaceDirectory,
+    }),
     provider: input.provider,
     composerState: input.composerState,
   });
+}
+
+function remapDraftCwdToWorkspace(input: {
+  cwd: string;
+  sourceDirectory?: string | null;
+  workspaceDirectory: string;
+}): string {
+  const cwd = input.cwd.trim();
+  const sourceDirectory = input.sourceDirectory?.trim();
+  const workspaceDirectory = input.workspaceDirectory.trim();
+  if (!cwd || !sourceDirectory || cwd === sourceDirectory) {
+    return workspaceDirectory;
+  }
+  const normalizedCwd = cwd.replace(/\\/g, "/");
+  const normalizedSource = sourceDirectory.replace(/\\/g, "/").replace(/\/+$/, "");
+  const relativePath = normalizedCwd.startsWith(`${normalizedSource}/`)
+    ? normalizedCwd.slice(normalizedSource.length + 1)
+    : "";
+  if (!relativePath) {
+    return workspaceDirectory;
+  }
+  const separator =
+    workspaceDirectory.includes("\\") && !workspaceDirectory.includes("/") ? "\\" : "/";
+  return [workspaceDirectory.replace(/[\\/]+$/, ""), ...relativePath.split("/")]
+    .filter(Boolean)
+    .join(separator);
 }
 
 function buildComposerInitialValues(input: {
@@ -1058,21 +1082,12 @@ function usePendingWorkspaceDraftSetup(
   draftId: string | undefined,
 ): PendingWorkspaceDraftSetup | null {
   const normalizedDraftId = draftId?.trim() ?? "";
-  return useWorkspaceDraftSetupStore((state) => {
+  return useWorkspaceDraftSubmissionStore((state) => {
     if (!normalizedDraftId) {
       return null;
     }
     return state.setupByDraftId[normalizedDraftId] ?? null;
   });
-}
-
-function getPendingWorkspaceDraftInitialSetup(
-  forkDraftSetup: PendingWorkspaceDraftSetup | null,
-): WorkspaceDraftTabSetup | null {
-  if (!forkDraftSetup) {
-    return null;
-  }
-  return forkDraftSetup.setup;
 }
 
 function resolveWorkspaceDraftSubmissionConfig(input: {
@@ -1597,7 +1612,7 @@ export function NewWorkspaceScreen({
   }, [pickerSearchQuery]);
 
   const workspace = createdWorkspace;
-  const isPending = pendingAction !== null || isDraftHandoffActive;
+  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -1640,11 +1655,11 @@ export function NewWorkspaceScreen({
     draftId,
   });
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
-  const draftContextAttachments = useDraftWorkspaceAttachments(draftId);
-  const visibleDraftContextAttachments = resolveVisibleDraftContextAttachments({
-    isDraftHandoffActive,
-    draftContextAttachments,
-  });
+  const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
+  const visibleDraftContextScopeKeys = useMemo(
+    () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),
+    [draftContextScopeKey, isDraftHandoffActive],
+  );
   const chatDraft = useAgentInputDraft({
     draftKey,
     composer: buildComposerConfig({
@@ -1652,7 +1667,7 @@ export function NewWorkspaceScreen({
       isConnected,
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
       sourceDirectory: selectedSourceDirectory,
-      initialSetup: getPendingWorkspaceDraftInitialSetup(forkDraftSetup),
+      initialSetup: forkDraftSetup?.setup,
     }),
   });
   const composerState = chatDraft.composerState;
@@ -2199,7 +2214,7 @@ export function NewWorkspaceScreen({
             value={chatDraft.text}
             onChangeText={chatDraft.setText}
             attachments={chatDraft.attachments}
-            workspaceAttachments={visibleDraftContextAttachments}
+            attachmentScopeKeys={visibleDraftContextScopeKeys}
             onChangeAttachments={chatDraft.setAttachments}
             cwd={selectedSourceDirectory ?? ""}
             clearDraft={handleClearDraft}

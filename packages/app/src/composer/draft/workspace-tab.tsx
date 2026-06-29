@@ -23,7 +23,6 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { useWorkspaceDraftSetupStore } from "@/stores/workspace-draft-setup-store";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
@@ -39,7 +38,6 @@ import {
   useDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentsStore,
-  useWorkspaceDraftAttachments,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import {
@@ -408,10 +406,10 @@ export function WorkspaceDraftAgentTab({
     workspaceId,
   });
   const draftAttachmentScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
-  const workspaceAttachments = useWorkspaceDraftAttachments({
-    draftId,
-    workspaceScopeKey: workspaceAttachmentScopeKey,
-  });
+  const attachmentScopeKeys = useMemo(
+    () => [draftAttachmentScopeKey, workspaceAttachmentScopeKey].filter(Boolean),
+    [draftAttachmentScopeKey, workspaceAttachmentScopeKey],
+  );
   const clearWorkspaceAttachments = useWorkspaceAttachmentsStore(
     (state) => state.clearWorkspaceAttachments,
   );
@@ -500,7 +498,7 @@ export function WorkspaceDraftAgentTab({
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");
       clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
-      useWorkspaceDraftSetupStore.getState().clearDraftSetup({ draftId });
+      useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
     },
   });
@@ -712,7 +710,7 @@ export function WorkspaceDraftAgentTab({
           value={draftInput.text}
           onChangeText={draftInput.setText}
           attachments={draftInput.attachments}
-          workspaceAttachments={workspaceAttachments}
+          attachmentScopeKeys={attachmentScopeKeys}
           onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
           onChangeAttachments={draftInput.setAttachments}
           cwd={composerState.workingDir}
