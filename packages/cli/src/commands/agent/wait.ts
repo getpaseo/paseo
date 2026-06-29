@@ -32,6 +32,7 @@ export interface AgentWaitOptions extends CommandOptions {
 }
 
 const WAIT_ACTIVITY_PREVIEW_COUNT = 5;
+const WAIT_ACTIVITY_PREVIEW_TIMEOUT_MS = 2_000;
 
 function appendRecentActivity(message: string, transcript: string | null): string {
   if (!transcript || transcript.trim().length === 0) {
@@ -46,7 +47,9 @@ async function getRecentActivityTranscript(
   agentId: string,
 ): Promise<string | null> {
   try {
-    const timelineItems = await fetchAgentTimelineItems(client, agentId);
+    const timelineItems = await fetchAgentTimelineItems(client, agentId, {
+      timeoutMs: WAIT_ACTIVITY_PREVIEW_TIMEOUT_MS,
+    });
     return formatAgentActivityTranscript(timelineItems, WAIT_ACTIVITY_PREVIEW_COUNT);
   } catch {
     return null;

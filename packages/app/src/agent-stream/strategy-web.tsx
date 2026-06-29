@@ -280,17 +280,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - USER_SCROLL_DELTA_EPSILON;
     const scrolledDown =
       currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
-    const scrollableDistance = Math.max(
-      0,
-      scrollContainer.scrollHeight - scrollContainer.clientHeight,
-    );
 
-    if (
-      !followOutputRef.current &&
-      isAtBottom &&
-      scrolledDown &&
-      scrollableDistance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX
-    ) {
+    if (!followOutputRef.current && isAtBottom && scrolledDown) {
       setFollowOutput(true);
       pendingUserScrollUpIntentRef.current = false;
     } else if (followOutputRef.current && pendingUserScrollUpIntentRef.current) {

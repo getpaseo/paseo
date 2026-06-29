@@ -4,6 +4,7 @@ import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 interface FetchProjectedTimelineItemsInput {
   client: DaemonClient;
   agentId: string;
+  timeoutMs?: number;
 }
 
 export async function fetchProjectedTimelineItems(
@@ -13,6 +14,7 @@ export async function fetchProjectedTimelineItems(
     direction: "tail",
     limit: 0,
     projection: "projected",
+    timeout: input.timeoutMs,
   });
   return timeline.entries.map((entry) => entry.item);
 }

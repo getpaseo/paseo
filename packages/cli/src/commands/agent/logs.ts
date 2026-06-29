@@ -32,8 +32,9 @@ export const NO_ACTIVITY_MESSAGE = "No activity to display.";
 export async function fetchAgentTimelineItems(
   client: DaemonClient,
   agentId: string,
+  options?: { timeoutMs?: number },
 ): Promise<AgentTimelineItem[]> {
-  return fetchProjectedTimelineItems({ client, agentId });
+  return fetchProjectedTimelineItems({ client, agentId, timeoutMs: options?.timeoutMs });
 }
 
 export function formatAgentActivityTranscript(

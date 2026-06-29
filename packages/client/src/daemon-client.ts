@@ -458,12 +458,17 @@ export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["paylo
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
 export type FetchAgentTimelineCursor = NonNullable<FetchAgentTimelinePayload["startCursor"]>;
+export interface FetchAgentOptions {
+  requestId?: string;
+  timeout?: number;
+}
 export interface FetchAgentTimelineOptions {
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
   requestId?: string;
+  timeout?: number;
 }
 
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
@@ -1942,8 +1947,15 @@ export class DaemonClient {
     });
   }
 
-  async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null> {
-    const resolvedRequestId = this.createRequestId(requestId);
+  async fetchAgent(
+    agentId: string,
+    requestIdOrOptions?: string | FetchAgentOptions,
+  ): Promise<FetchAgentResult | null> {
+    const options =
+      typeof requestIdOrOptions === "string"
+        ? { requestId: requestIdOrOptions }
+        : (requestIdOrOptions ?? {});
+    const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_request",
       requestId: resolvedRequestId,
@@ -1952,6 +1964,7 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId: resolvedRequestId,
       message,
+      timeout: options.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_response") {
@@ -2322,6 +2335,7 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId: resolvedRequestId,
       message,
+      timeout: options.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_timeline_response") {
@@ -3885,12 +3899,20 @@ export class DaemonClient {
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000,
   ): Promise<AgentSnapshotPayload> {
-    const initialResult = await this.fetchAgent(agentId).catch(() => null);
+    const deadline = Date.now() + timeout;
+    const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
+    const timeoutError = () => new Error(`Timed out waiting for agent ${agentId}`);
+    const fetchAgentWithinDeadline = () =>
+      this.fetchAgent(agentId, { timeout: remainingTimeoutMs() }).catch(() => null);
+
+    const initialResult = await fetchAgentWithinDeadline();
     if (initialResult && predicate(initialResult.agent)) {
       return initialResult.agent;
     }
+    if (Date.now() >= deadline) {
+      throw timeoutError();
+    }
 
-    const deadline = Date.now() + timeout;
     return await new Promise<AgentSnapshotPayload>((resolve, reject) => {
       let settled = false;
       let pollInFlight = false;
@@ -3941,7 +3963,7 @@ export class DaemonClient {
         }
         pollInFlight = true;
         try {
-          const result = await this.fetchAgent(agentId).catch(() => null);
+          const result = await fetchAgentWithinDeadline();
           maybeResolve(result?.agent ?? null);
         } finally {
           pollInFlight = false;
@@ -3966,7 +3988,7 @@ export class DaemonClient {
       timeoutTimer = setTimeout(() => {
         finish({
           kind: "error",
-          error: new Error(`Timed out waiting for agent ${agentId}`),
+          error: timeoutError(),
         });
       }, remaining);
 
