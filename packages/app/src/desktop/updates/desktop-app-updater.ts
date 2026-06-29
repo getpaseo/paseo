@@ -225,6 +225,10 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       if (result.errorMessage) {
         if (silent && !result.hasUpdate) {
           console.warn("[DesktopUpdater] Silent update check failed", result.errorMessage);
+          commit({
+            ...state,
+            requestVersion: resolvedRequestVersion,
+          });
           return result;
         }
 
