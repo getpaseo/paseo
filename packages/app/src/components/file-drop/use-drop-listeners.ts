@@ -144,10 +144,10 @@ export function useDropListeners({
               if (attachments.length === 0) {
                 return;
               }
-              // Re-check after the async persist: the sink may have become busy in the meantime.
-              if (suppressed.value) return;
               // Use the sink captured at drop time, not a fresh getSink() — routing belongs to the
-              // composer the user dropped on (matches the web path below).
+              // composer the user dropped on (matches the web path below). No post-persist busy
+              // re-check: a mixed drop's own generic upload flips the busy flag, and re-checking
+              // would discard the image from the same drop.
               sink.onFiles(attachments);
               return;
             })
@@ -238,8 +238,9 @@ export function useDropListeners({
 
         try {
           const attachments = await Promise.all(imageFiles.map(fileToImageAttachment));
-          // Re-check after the async persist: the sink may have become busy in the meantime.
-          if (suppressed.value) return;
+          // No post-persist busy re-check: a mixed drop's own generic upload flips the busy flag,
+          // and re-checking would discard the image from the same drop. The guard at drop start
+          // already rejects drops that begin while busy.
           sink.onFiles(attachments);
         } catch (error) {
           console.error("[useDropListeners] Failed to process dropped files:", error);
