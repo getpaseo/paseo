@@ -35,7 +35,7 @@ import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { generateDraftId } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
-import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import {
   useWorkspaceDraftSetupStore,
@@ -60,7 +60,11 @@ import {
   type HostProjectRouteContext,
 } from "@/projects/host-projects";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
-import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
+import type {
+  ComposerAttachment,
+  UserComposerAttachment,
+  WorkspaceComposerAttachment,
+} from "@/attachments/types";
 import { useDraftWorkspaceAttachments } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment, GitHubSearchItem } from "@getpaseo/protocol/messages";
@@ -87,6 +91,32 @@ function resolveCheckoutRequest(
     action: "branch-off",
     refName: currentBranch,
   };
+}
+
+const EMPTY_WORKSPACE_COMPOSER_ATTACHMENTS: readonly WorkspaceComposerAttachment[] = [];
+
+function useIsNewWorkspaceDraftHandoffActive(input: {
+  draftId: string | undefined;
+  selectedServerId: string;
+}): boolean {
+  const normalizedDraftId = input.draftId?.trim() ?? "";
+  return useCreateFlowStore((state) =>
+    isActiveCreateFlowForDraft({
+      draftId: normalizedDraftId,
+      serverId: input.selectedServerId,
+      pending: normalizedDraftId ? state.pendingByDraftId[normalizedDraftId] : null,
+    }),
+  );
+}
+
+function resolveVisibleDraftContextAttachments(input: {
+  isDraftHandoffActive: boolean;
+  draftContextAttachments: readonly WorkspaceComposerAttachment[];
+}): readonly WorkspaceComposerAttachment[] {
+  if (input.isDraftHandoffActive) {
+    return EMPTY_WORKSPACE_COMPOSER_ATTACHMENTS;
+  }
+  return input.draftContextAttachments;
 }
 
 function buildFirstAgentContext(input: {
@@ -1558,6 +1588,7 @@ export function NewWorkspaceScreen({
   const projectPickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
+  const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -1566,7 +1597,7 @@ export function NewWorkspaceScreen({
   }, [pickerSearchQuery]);
 
   const workspace = createdWorkspace;
-  const isPending = pendingAction !== null;
+  const isPending = pendingAction !== null || isDraftHandoffActive;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -1610,6 +1641,10 @@ export function NewWorkspaceScreen({
   });
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextAttachments = useDraftWorkspaceAttachments(draftId);
+  const visibleDraftContextAttachments = resolveVisibleDraftContextAttachments({
+    isDraftHandoffActive,
+    draftContextAttachments,
+  });
   const chatDraft = useAgentInputDraft({
     draftKey,
     composer: buildComposerConfig({
@@ -2158,13 +2193,13 @@ export function NewWorkspaceScreen({
             submitButtonAccessibilityLabel={t("newWorkspace.create")}
             submitButtonTestID="workspace-create-submit"
             submitIcon="return"
-            isSubmitLoading={pendingAction !== null}
+            isSubmitLoading={isPending}
             submitBehavior="preserve-and-lock"
             blurOnSubmit={true}
             value={chatDraft.text}
             onChangeText={chatDraft.setText}
             attachments={chatDraft.attachments}
-            workspaceAttachments={draftContextAttachments}
+            workspaceAttachments={visibleDraftContextAttachments}
             onChangeAttachments={chatDraft.setAttachments}
             cwd={selectedSourceDirectory ?? ""}
             clearDraft={handleClearDraft}
