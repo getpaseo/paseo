@@ -187,6 +187,14 @@ async function readPullRequestLookupTargetFromFacts(
   return facts.pullRequestLookupTarget;
 }
 
+function getBranchUpstream(cwd: string): string | null {
+  const result = spawnSync("git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], {
+    cwd,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
 function setupRemoteTrackingMain(
   repoDir: string,
   tempDir: string,
@@ -1787,6 +1795,42 @@ const x = 1;
     expect(originBranch.status).toBe(1);
   });
 
+  it("refreshes the tracked ref after pushing through a configured push remote", async () => {
+    const originDir = join(tempDir, "origin.git");
+    execFileSync("git", ["clone", "--bare", repoDir, originDir]);
+    execFileSync("git", ["remote", "add", "origin", originDir], { cwd: repoDir });
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["push", "-u", "origin", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "paseo-pr-1790", originDir], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.feature.pushRemote", "paseo-pr-1790"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "remote.paseo-pr-1790.push", "HEAD:refs/heads/feature"], {
+      cwd: repoDir,
+    });
+    writeFileSync(join(repoDir, "feature.txt"), "feature edit\n");
+    execFileSync("git", ["add", "feature.txt"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature edit"], {
+      cwd: repoDir,
+    });
+    const localHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir })
+      .toString()
+      .trim();
+
+    const beforePushStatus = await getCheckoutStatus(repoDir);
+    await pushCurrentBranch(repoDir);
+
+    const trackedOriginHead = execFileSync("git", ["rev-parse", "refs/remotes/origin/feature"], {
+      cwd: repoDir,
+    })
+      .toString()
+      .trim();
+    const afterPushStatus = await getCheckoutStatus(repoDir);
+    expect(beforePushStatus).toMatchObject({ aheadOfOrigin: 1, behindOfOrigin: 0 });
+    expect(trackedOriginHead).toBe(localHead);
+    expect(afterPushStatus).toMatchObject({ aheadOfOrigin: 0, behindOfOrigin: 0 });
+  });
+
   it("pushes ordinary branches to their configured upstream", async () => {
     const originDir = join(tempDir, "origin.git");
     const upstreamDir = join(tempDir, "upstream.git");
@@ -2234,6 +2278,36 @@ const x = 1;
     const lookupTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
 
     expect(lookupTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
+  });
+
+  it("uses the configured push remote for fork PR lookup when upstream is absent", async () => {
+    execFileSync("git", ["checkout", "-b", "chethanuk/main"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["remote", "add", "paseo-pr-345", "git@github.com:chethanuk/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.chethanuk/main.pushRemote", "paseo-pr-345"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "remote.paseo-pr-345.push", "HEAD:refs/heads/main"], {
+      cwd: repoDir,
+    });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const github = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    const factsTarget = await readPullRequestLookupTargetFromFacts(repoDir, paseoHome);
+    await getPullRequestStatus(
+      repoDir,
+      github,
+      { force: true, reason: "push-remote-pr-lookup" },
+      { paseoHome },
+    );
+
+    expect(getBranchUpstream(repoDir)).toBeNull();
+    expect(factsTarget).toEqual({ headRef: "main", headRepositoryOwner: "chethanuk" });
+    expect(requestedTargets).toEqual([{ headRef: "main", headRepositoryOwner: "chethanuk" }]);
   });
 
   it("keeps the local branch lookup when same-repo tracking points at the base branch", async () => {

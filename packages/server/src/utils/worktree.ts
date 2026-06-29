@@ -1339,7 +1339,7 @@ async function resolveWorktreeSourcePlan({
           track: true,
         };
       } else if (source.trackOriginHead && localBranchName !== source.headRef) {
-        const originUrl = await getWorktreeRemoteUrl(cwd, "origin");
+        const originUrl = await getWorktreeRemotePushUrl(cwd, "origin");
         if (originUrl) {
           remotePlan.pushRemote = {
             name: `paseo-pr-${source.githubPrNumber}`,
@@ -1428,9 +1428,12 @@ async function tryFetchWorktreeTrackingRemote(options: {
   return result.exitCode === 0 ? { name: options.remoteName, headRef: options.headRef } : undefined;
 }
 
-async function getWorktreeRemoteUrl(cwd: string, remoteName: string): Promise<string | undefined> {
+async function getWorktreeRemotePushUrl(
+  cwd: string,
+  remoteName: string,
+): Promise<string | undefined> {
   try {
-    const { stdout } = await runGitCommand(["config", "--get", `remote.${remoteName}.url`], {
+    const { stdout } = await runGitCommand(["remote", "get-url", "--push", remoteName], {
       cwd,
     });
     const url = stdout.trim();

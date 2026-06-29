@@ -531,6 +531,14 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
     test("pushes a deduplicated same-repo GitHub PR branch to the PR head", async () => {
       const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
+      execFileSync("git", ["remote", "set-url", "origin", `file://${remoteDir}`], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["remote", "set-url", "--push", "origin", remoteDir], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
       const github = {
         ...createGitHubServiceStub(),
         getPullRequestCheckoutTarget: async () => ({
@@ -597,6 +605,12 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       })
         .toString()
         .trim();
+      const pushRemoteUrl = execFileSync("git", ["config", "remote.paseo-pr-1790.url"], {
+        cwd: second.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
 
       execFileSync("git", ["push"], { cwd: second.worktree.worktreePath, stdio: "pipe" });
 
@@ -626,6 +640,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       );
       expect(pushRemote).toBe("paseo-pr-1790");
       expect(pushRefspec).toBe("HEAD:refs/heads/daemon-shutdown-diagnostics");
+      expect(pushRemoteUrl).toBe(remoteDir);
       expect(remotePrHead).toBe(localHead);
       expect(dedupedRemoteBranch.status).toBe(1);
     });
