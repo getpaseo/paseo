@@ -144,8 +144,10 @@ export function useDropListeners({
               if (attachments.length === 0) {
                 return;
               }
-              // Use the sink captured at drop time, not a fresh getSink() — the active sink may
-              // have changed during the async persist (matches the web path below).
+              // Re-check after the async persist: the sink may have become busy in the meantime.
+              if (suppressed.value) return;
+              // Use the sink captured at drop time, not a fresh getSink() — routing belongs to the
+              // composer the user dropped on (matches the web path below).
               sink.onFiles(attachments);
               return;
             })
@@ -236,6 +238,8 @@ export function useDropListeners({
 
         try {
           const attachments = await Promise.all(imageFiles.map(fileToImageAttachment));
+          // Re-check after the async persist: the sink may have become busy in the meantime.
+          if (suppressed.value) return;
           sink.onFiles(attachments);
         } catch (error) {
           console.error("[useDropListeners] Failed to process dropped files:", error);
