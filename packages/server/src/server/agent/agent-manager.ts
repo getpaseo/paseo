@@ -20,6 +20,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentForkOptions,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -511,6 +512,19 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
   return null;
 }
 
+/** Lineage labels stamped onto a forked agent. */
+function buildForkLabels(
+  sourceAgentId: string,
+  messageId: string | undefined,
+  extra: Record<string, string> | undefined,
+): Record<string, string> {
+  const labels: Record<string, string> = { ...extra, forkedFromAgentId: sourceAgentId };
+  if (messageId) {
+    labels.forkedFromMessageId = messageId;
+  }
+  return labels;
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -989,6 +1003,92 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, options);
+  }
+
+  /**
+   * Fork an existing agent's session into a new, independent parallel session.
+   * Only providers that implement a REAL provider-native fork
+   * (`capabilities.supportsFork` + `forkSession`, e.g. Kiro duplicates its
+   * on-disk session record) are supported — there is intentionally no cosmetic
+   * "snapshot" fallback, because a fork that merely replays prior messages
+   * without real provider context is misleading. Unsupported providers throw.
+   *
+   * The fork preserves the full conversation context (the forked provider
+   * session carries it), is seeded with the full source timeline, and never
+   * mutates the source — so the original and the fork run in parallel.
+   */
+  async forkAgent(
+    sourceAgentId: string,
+    options?: {
+      messageId?: string;
+      labels?: Record<string, string>;
+      workspaceId?: string;
+      agentId?: string;
+    },
+  ): Promise<ManagedAgent> {
+    const source = this.requireAgent(sourceAgentId);
+    const handle = source.persistence;
+    if (!handle) {
+      throw new Error(`Agent ${sourceAgentId} has no persisted session to fork`);
+    }
+    const client = this.requireClient(handle.provider);
+    if (!client.capabilities.supportsFork || !client.forkSession) {
+      throw new Error(`Provider '${handle.provider}' does not support forking sessions`);
+    }
+    const available = await client.isAvailable();
+    if (!available) {
+      throw new Error(
+        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
+      );
+    }
+
+    const newAgentId = validateAgentId(options?.agentId ?? this.idFactory(), "forkAgent");
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const mergedConfig = {
+      ...metadata,
+      provider: handle.provider,
+      cwd: source.cwd,
+    } as AgentSessionConfig;
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      mergedConfig,
+      newAgentId,
+    );
+    const launchContext = await this.buildLaunchContext(newAgentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+
+    // The forked provider session carries the full native context, so seed the
+    // new agent with the full source timeline (not a truncated view).
+    const forkRows = await this.getTimelineRows(sourceAgentId);
+    const forkOptions: AgentForkOptions = options?.messageId
+      ? { upToMessageId: options.messageId }
+      : {};
+    const session = await client.forkSession(
+      handle,
+      forkOptions,
+      providerLaunchConfig,
+      launchContext,
+    );
+
+    const registered = await this.registerSession(session, storedConfig, newAgentId, {
+      labels: buildForkLabels(sourceAgentId, options?.messageId, options?.labels),
+      workspaceId: options?.workspaceId ?? source.workspaceId,
+      timelineRows: forkRows,
+      timelineNextSeq: forkRows.length + 1,
+      historyPrimed: true,
+    });
+
+    this.logger.info(
+      {
+        sourceAgentId,
+        newAgentId,
+        provider: handle.provider,
+        messageId: options?.messageId ?? null,
+        seededRows: forkRows.length,
+      },
+      "agent.fork.complete",
+    );
+
+    return registered;
   }
 
   async importProviderSession(input: {

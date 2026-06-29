@@ -7,6 +7,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentFeature,
+  AgentForkOptions,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -34,6 +35,7 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsFork: true,
 };
 
 const TEST_FEATURE_ID = "test_feature";
@@ -1182,6 +1184,31 @@ class FakeAgentClient implements AgentClient {
       this.provider,
       cfg,
       handle.sessionId,
+      typeof marker === "string" ? marker : null,
+    );
+  }
+
+  async forkSession(
+    handle: AgentPersistenceHandle,
+    _options: AgentForkOptions,
+    overrides?: Partial<AgentSessionConfig>,
+    _launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const cfg: AgentSessionConfig = {
+      provider: this.provider,
+      cwd: overrides?.cwd ?? process.cwd(),
+      ...overrides,
+    };
+    const marker =
+      (handle.metadata as Record<string, unknown> | undefined)?.marker ??
+      (handle.metadata as Record<string, unknown> | undefined)?.conversationId ??
+      null;
+    // A real fork mints a NEW provider session id so the original is never
+    // mutated. Pass no sessionId so FakeAgentSession generates a fresh one.
+    return new FakeAgentSession(
+      this.provider,
+      cfg,
+      undefined,
       typeof marker === "string" ? marker : null,
     );
   }

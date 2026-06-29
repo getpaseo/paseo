@@ -454,6 +454,7 @@ export const ptBR: TranslationResources = {
         openFor: "Abrir menu de {{label}}",
         copyResumeCommand: "Copiar comando de retomada",
         copyAgentId: "Copiar ID do agente",
+        forkAgent: "Bifurcar conversa",
         copyFilePath: "Copiar caminho do arquivo",
         rename: "Renomear",
         closeAbove: "Fechar abas acima",
@@ -1297,6 +1298,12 @@ export const ptBR: TranslationResources = {
       mute: "Silenciar voz em tempo real",
       unmute: "Ativar voz em tempo real",
       stop: "Parar voz em tempo real e interromper a resposta",
+    },
+  },
+  fork: {
+    tooltip: "Bifurcar a partir daqui",
+    errors: {
+      failed: "Falha ao bifurcar a conversa",
     },
   },
   rewind: {

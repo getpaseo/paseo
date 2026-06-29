@@ -450,6 +450,7 @@ export const ar: TranslationResources = {
         openFor: "فتح القائمة لـ{{label}}",
         copyResumeCommand: "نسخ أمر السيرة الذاتية",
         copyAgentId: "نسخ معرف الوكيل",
+        forkAgent: "تفريع المحادثة",
         copyFilePath: "Copy file path",
         rename: "إعادة تسمية",
         closeAbove: "إغلاق علامات التبويب أعلاه",
@@ -1275,6 +1276,12 @@ export const ar: TranslationResources = {
       mute: "كتم صوت الوقت الحقيقي",
       unmute: "إلغاء كتم صوت الوقت الحقيقي",
       stop: "إيقاف الصوت في الوقت الحقيقي ومقاطعة الدوران",
+    },
+  },
+  fork: {
+    tooltip: "تفريع من هنا",
+    errors: {
+      failed: "فشل تفريع المحادثة",
     },
   },
   rewind: {

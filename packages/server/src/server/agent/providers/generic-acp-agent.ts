@@ -34,6 +34,8 @@ interface GenericACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  /** Provider-specific capability flags merged on top of the ACP defaults. */
+  capabilityOverrides?: Partial<AgentCapabilityFlags>;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -50,7 +52,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
         env: options.env,
       },
       defaultCommand: options.command,
-      capabilities: buildGenericACPCapabilities(options),
+      capabilities: { ...buildGenericACPCapabilities(options), ...options.capabilityOverrides },
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
       extensionCommandsParser: options.extensionCommandsParser,

@@ -454,6 +454,7 @@ export const fr: TranslationResources = {
         openFor: "Ouvrir le menu pour{{label}}",
         copyResumeCommand: "Copier la commande de reprise",
         copyAgentId: "Copier l'identifiant de l'agent",
+        forkAgent: "Forker la conversation",
         copyFilePath: "Copy file path",
         rename: "Rebaptiser",
         closeAbove: "Fermer les onglets ci-dessus",
@@ -1314,6 +1315,12 @@ export const fr: TranslationResources = {
       mute: "Couper la voix en temps réel",
       unmute: "Réactiver la voix en temps réel",
       stop: "Arrêtez la voix en temps réel et interrompez le tour",
+    },
+  },
+  fork: {
+    tooltip: "Bifurquer ici",
+    errors: {
+      failed: "Échec de la bifurcation de la conversation",
     },
   },
   rewind: {

@@ -2,7 +2,16 @@ import type { Logger } from "pino";
 
 import type { ACPExtensionCommandsParser } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
-import type { AgentSlashCommand, AgentSlashCommandKind } from "../agent-sdk-types.js";
+import { forkKiroSessionFiles, resolveKiroSessionsDir } from "./kiro-session-fork.js";
+import type {
+  AgentForkOptions,
+  AgentLaunchContext,
+  AgentPersistenceHandle,
+  AgentSession,
+  AgentSessionConfig,
+  AgentSlashCommand,
+  AgentSlashCommandKind,
+} from "../agent-sdk-types.js";
 
 interface KiroACPAgentClientOptions {
   logger: Logger;
@@ -15,8 +24,9 @@ interface KiroACPAgentClientOptions {
 
 // Kiro CLI publishes its slash commands and skills asynchronously through the
 // `_kiro.dev/commands/available` extension notification shortly after
-// `session/new` resolves. Wait for that first batch so listCommands() doesn't
-// resolve to an empty list before Kiro has reported its commands.
+// `session/new` resolves (handled in ACPAgentSession.extNotification via the
+// injected extensionCommandsParser). Wait for that first batch so listCommands()
+// doesn't resolve to an empty list before Kiro has reported its commands.
 const KIRO_INITIAL_COMMANDS_WAIT_TIMEOUT_MS = 10_000;
 
 // ACP extension method (per the `_`-prefixed vendor namespace convention) that
@@ -96,6 +106,39 @@ export class KiroACPAgentClient extends GenericACPAgentClient {
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: KIRO_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       extensionCommandsParser: parseKiroExtensionCommands,
+      // Kiro supports a real provider-native fork: we duplicate its on-disk
+      // session record into a new id and load it (see forkSession).
+      capabilityOverrides: { supportsFork: true },
     });
+  }
+
+  /**
+   * Real Kiro fork: duplicate the persisted session on disk into a NEW Kiro
+   * session id (full conversation context preserved via Kiro's session_state),
+   * then load the forked id as an independent session. The original session is
+   * never mutated, so the two run in parallel.
+   *
+   * `upToMessageId` is accepted for interface compatibility but not used to
+   * truncate: Kiro's `session_state.rts_model_state` is an opaque model-side
+   * blob that cannot be safely truncated, so the fork duplicates the whole
+   * conversation and the branch continues from its end.
+   */
+  async forkSession(
+    handle: AgentPersistenceHandle,
+    _options: AgentForkOptions,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const newId = forkKiroSessionFiles({
+      sessionsDir: resolveKiroSessionsDir(),
+      sourceId: handle.sessionId,
+      titleSuffix: " (fork)",
+    });
+    const forkedHandle: AgentPersistenceHandle = {
+      ...handle,
+      sessionId: newId,
+      nativeHandle: newId,
+    };
+    return this.resumeSession(forkedHandle, overrides, launchContext);
   }
 }

@@ -176,6 +176,11 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /**
+   * Provider can fork a persisted session into a new, independent session
+   * (parallel branch) without mutating the original.
+   */
+  supportsFork?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -184,6 +189,15 @@ export interface AgentPersistenceHandle {
   /** Provider specific handle (Codex thread id, Claude resume token, etc). */
   nativeHandle?: string;
   metadata?: AgentMetadata;
+}
+
+export interface AgentForkOptions {
+  /**
+   * Fork the conversation so the new session contains history up to and
+   * including this user message id, then branches independently. When omitted,
+   * the fork copies the full session at its current state.
+   */
+  upToMessageId?: string;
 }
 
 export type AgentPromptContentBlock =
@@ -671,6 +685,18 @@ export interface AgentClient {
   ): Promise<AgentSession>;
   resumeSession(
     handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession>;
+  /**
+   * Fork a persisted session into a new, independent session (a parallel
+   * branch). The returned session must describe a NEW persistence handle
+   * (distinct sessionId) so the original is never mutated. Only implemented by
+   * providers advertising `capabilities.supportsFork`.
+   */
+  forkSession?(
+    handle: AgentPersistenceHandle,
+    options: AgentForkOptions,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
