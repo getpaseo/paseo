@@ -13,6 +13,7 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     | null
     | Error
     | { kind: "check-error"; error: Error; emitRuntimeError: boolean }
+    | { kind: "deferred"; promise: Promise<RuntimeUpdateCheckResult | null> }
   > = [];
   private gate: ((info: RuntimeUpdateInfo) => boolean | Promise<boolean>) | null = null;
   private configuration: AppUpdateRuntimeConfiguration | null = null;
@@ -35,6 +36,20 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     this.checks.push({ kind: "check-error", error, emitRuntimeError: true });
   }
 
+  deferNextCheck(): {
+    resolve(result: RuntimeUpdateCheckResult | null): void;
+    reject(error: Error): void;
+  } {
+    let resolve!: (result: RuntimeUpdateCheckResult | null) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<RuntimeUpdateCheckResult | null>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    this.checks.push({ kind: "deferred", promise });
+    return { resolve, reject };
+  }
+
   failRuntime(error: Error): void {
     this.configuration?.onError(error);
   }
@@ -51,6 +66,9 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
         this.configuration?.onError(result.error);
       }
       throw result.error;
+    }
+    if (result?.kind === "deferred") {
+      return result.promise;
     }
     if (!result || !this.gate) return result;
     const admitted = await this.gate(result.updateInfo);
@@ -212,6 +230,48 @@ describe("app update service", () => {
     });
 
     expect(runtime.checkCount).toBe(2);
+    expect(automaticResult).toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.3",
+      body: null,
+      date: null,
+      errorMessage: null,
+    });
+  });
+
+  it("does not cache runtime errors from overlapping active checks", async () => {
+    const { runtime, service } = createService();
+    const firstCheck = runtime.deferNextCheck();
+    const firstPending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    const secondCheck = runtime.deferNextCheck();
+    const secondPending = service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    firstCheck.resolve(null);
+    await firstPending;
+
+    runtime.failRuntime(new Error("network down"));
+    secondCheck.reject(new Error("network down"));
+    const secondResult = await secondPending;
+    expect(secondResult.errorMessage).toBe("network down");
+
+    runtime.nextCheck(null);
+    const automaticResult = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(runtime.checkCount).toBe(3);
     expect(automaticResult).toEqual({
       hasUpdate: false,
       readyToInstall: false,
