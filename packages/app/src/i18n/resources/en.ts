@@ -947,6 +947,9 @@ export const en = {
         pending: "We'll let you know when the update is ready.",
         pendingWithLastChecked:
           "We'll let you know when the update is ready. Last checked at {{time}}.",
+        pendingWithVersion: "Update found: {{version}}. Downloading...",
+        pendingWithVersionAndLastChecked:
+          "Update found: {{version}}. Downloading... Last checked at {{time}}.",
         availableWithVersion: "Update ready: {{version}}",
         availableWithVersionAndLastChecked: "Update ready: {{version}}. Last checked at {{time}}.",
         available: "An app update is ready to install.",

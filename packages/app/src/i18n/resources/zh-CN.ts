@@ -928,6 +928,9 @@ export const zhCN: TranslationResources = {
         upToDateWithLastChecked: "已是最新版本。上次检查时间：{{time}}。",
         pending: "更新准备好后会通知你。",
         pendingWithLastChecked: "更新准备好后会通知你。上次检查时间：{{time}}。",
+        pendingWithVersion: "发现更新：{{version}}。正在下载...",
+        pendingWithVersionAndLastChecked:
+          "发现更新：{{version}}。正在下载... 上次检查时间：{{time}}。",
         availableWithVersion: "更新已就绪：{{version}}",
         availableWithVersionAndLastChecked: "更新已就绪：{{version}}。上次检查时间：{{time}}。",
         available: "有 app 更新可安装。",

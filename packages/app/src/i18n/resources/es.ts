@@ -967,6 +967,9 @@ export const es: TranslationResources = {
         pending: "Le avisaremos cuando la actualización esté lista.",
         pendingWithLastChecked:
           "Le avisaremos cuando la actualización esté lista. Última comprobación a las {{time}}.",
+        pendingWithVersion: "Actualización encontrada: {{version}}. Descargando...",
+        pendingWithVersionAndLastChecked:
+          "Actualización encontrada: {{version}}. Descargando... Última comprobación a las {{time}}.",
         availableWithVersion: "Actualización lista:{{version}}",
         availableWithVersionAndLastChecked:
           "Actualización lista:{{version}}. Última comprobación a las {{time}}.",

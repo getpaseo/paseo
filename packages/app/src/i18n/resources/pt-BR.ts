@@ -958,6 +958,9 @@ export const ptBR: TranslationResources = {
         pending: "Avisaremos quando a atualização estiver pronta.",
         pendingWithLastChecked:
           "Avisaremos quando a atualização estiver pronta. Última verificação às {{time}}.",
+        pendingWithVersion: "Atualização encontrada: {{version}}. Baixando...",
+        pendingWithVersionAndLastChecked:
+          "Atualização encontrada: {{version}}. Baixando... Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
         availableWithVersionAndLastChecked:
           "Atualização pronta: {{version}}. Última verificação às {{time}}.",

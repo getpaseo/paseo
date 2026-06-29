@@ -959,6 +959,9 @@ export const ru: TranslationResources = {
         pending: "Мы сообщим вам, когда обновление будет готово.",
         pendingWithLastChecked:
           "Мы сообщим вам, когда обновление будет готово. Последняя проверка в {{time}}.",
+        pendingWithVersion: "Найдено обновление: {{version}}. Загрузка...",
+        pendingWithVersionAndLastChecked:
+          "Найдено обновление: {{version}}. Загрузка... Последняя проверка в {{time}}.",
         availableWithVersion: "Обновление готово:{{version}}",
         availableWithVersionAndLastChecked:
           "Обновление готово:{{version}}. Последняя проверка в {{time}}.",

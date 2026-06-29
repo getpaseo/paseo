@@ -212,7 +212,12 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     const cachedVersion = cachedUpdateInfo?.version ?? null;
-    if (!runtimeErrorResult && cachedVersion && cachedVersion !== currentVersion) {
+    if (
+      !runtimeErrorResult &&
+      intent === "automatic" &&
+      cachedVersion &&
+      cachedVersion !== currentVersion
+    ) {
       return buildCheckResult({
         currentVersion,
         hasUpdate: true,

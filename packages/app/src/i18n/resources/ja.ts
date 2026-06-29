@@ -951,6 +951,9 @@ export const ja: TranslationResources = {
         upToDateWithLastChecked: "最新の状態です。最終確認: {{time}}。",
         pending: "更新の準備ができたらお知らせします。",
         pendingWithLastChecked: "更新の準備ができたらお知らせします。最終確認: {{time}}。",
+        pendingWithVersion: "更新が見つかりました: {{version}}。ダウンロード中...",
+        pendingWithVersionAndLastChecked:
+          "更新が見つかりました: {{version}}。ダウンロード中... 最終確認: {{time}}。",
         availableWithVersion: "更新の準備ができました: {{version}}",
         availableWithVersionAndLastChecked:
           "更新の準備ができました: {{version}}。最終確認: {{time}}。",

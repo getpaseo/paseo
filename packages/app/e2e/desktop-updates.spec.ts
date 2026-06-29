@@ -4,8 +4,11 @@ import { getServerId } from "./helpers/server-id";
 import {
   loadRealDaemonState,
   injectDesktopBridge,
+  openDesktopAboutSettings,
   openDesktopSettings,
   expectUpdateBanner,
+  clickCheckForUpdates,
+  expectPendingUpdateCheckResult,
   clickInstallUpdate,
   expectInstallInProgress,
   interceptDaemonManagementConfirmDialog,
@@ -44,6 +47,21 @@ test.describe("Desktop updates", () => {
     await expectUpdateBanner(page, "1.2.3");
     await clickInstallUpdate(page);
     await expectInstallInProgress(page);
+  });
+
+  test("manual check reports a found update while it downloads", async ({ page }) => {
+    await injectDesktopBridge(page, {
+      serverId: getServerId(),
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+      updateReadyToInstall: false,
+    });
+    await gotoAppShell(page);
+    await openDesktopAboutSettings(page);
+
+    await clickCheckForUpdates(page);
+
+    await expectPendingUpdateCheckResult(page, "1.2.3");
   });
 });
 

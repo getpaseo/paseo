@@ -137,6 +137,18 @@ export function formatStatusText(input: {
   }
 
   if (status === "pending") {
+    if (availableUpdate?.latestVersion) {
+      return i18n.t(
+        lastCheckedAt != null
+          ? "desktop.updates.status.pendingWithVersionAndLastChecked"
+          : "desktop.updates.status.pendingWithVersion",
+        {
+          version: formatVersion(availableUpdate.latestVersion),
+          time: lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined,
+        },
+      );
+    }
+
     if (lastCheckedAt != null) {
       return i18n.t("desktop.updates.status.pendingWithLastChecked", {
         time: formatLastCheckedAt(lastCheckedAt),
@@ -244,7 +256,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         nextAvailable = result;
       } else if (result.hasUpdate) {
         nextStatus = "pending";
-        nextAvailable = null;
+        nextAvailable = result;
       } else {
         nextStatus = "up-to-date";
         nextAvailable = null;

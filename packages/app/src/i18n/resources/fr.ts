@@ -966,6 +966,9 @@ export const fr: TranslationResources = {
         pending: "Nous vous informerons lorsque la mise à jour sera prête.",
         pendingWithLastChecked:
           "Nous vous informerons lorsque la mise à jour sera prête. Dernière vérification à {{time}}.",
+        pendingWithVersion: "Mise à jour trouvée : {{version}}. Téléchargement...",
+        pendingWithVersionAndLastChecked:
+          "Mise à jour trouvée : {{version}}. Téléchargement... Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête:{{version}}",
         availableWithVersionAndLastChecked:
           "Mise à jour prête:{{version}}. Dernière vérification à {{time}}.",
