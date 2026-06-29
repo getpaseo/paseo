@@ -77,4 +77,4 @@ Anyone who builds software:
 - Scheduled agents (cron-style triggers) via app, CLI, and MCP
 - Frequent releases (multiple per week)
 - Community contributions across packaging, providers, and bug fixes
-- Key UX: split panes, keybinding customization, workspace model, in-app browser
+- Key UX: split panes, keybinding customization, workspace model, in-app browser, collapsible per-turn work traces (tools and reasoning) after each assistant reply

@@ -169,6 +169,11 @@ export const en = {
   agentStream: {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
+    workTraces: {
+      worked: "Worked",
+      workedFor: "Worked for {{duration}}",
+      accessibilityLabel: "{{durationLabel}}, work traces",
+    },
     permission: {
       plan: "Plan",
       required: "Permission Required",
@@ -240,6 +245,10 @@ export const en = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "Worked for {{duration}}",
+      endedAccessibility: "{{duration}}, ended {{timestamp}}",
+    },
     actions: {
       copyCode: "Copy code",
       copyTurn: "Copy turn",

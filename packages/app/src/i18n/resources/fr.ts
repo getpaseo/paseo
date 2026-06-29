@@ -172,6 +172,11 @@ export const fr: TranslationResources = {
   agentStream: {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
+    workTraces: {
+      worked: "A travaillé",
+      workedFor: "A travaillé pendant {{duration}}",
+      accessibilityLabel: "{{durationLabel}}, traces de travail",
+    },
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -244,6 +249,10 @@ export const fr: TranslationResources = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "A travaillé pendant {{duration}}",
+      endedAccessibility: "{{duration}}, terminé {{timestamp}}",
+    },
     actions: {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",

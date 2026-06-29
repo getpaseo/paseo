@@ -171,6 +171,11 @@ export const ru: TranslationResources = {
   agentStream: {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
+    workTraces: {
+      worked: "Работал",
+      workedFor: "Работал {{duration}}",
+      accessibilityLabel: "{{durationLabel}}, следы работы",
+    },
     permission: {
       plan: "План",
       required: "Требуется разрешение",
@@ -243,6 +248,10 @@ export const ru: TranslationResources = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "Работал {{duration}}",
+      endedAccessibility: "{{duration}}, завершено {{timestamp}}",
+    },
     actions: {
       copyCode: "Скопировать код",
       copyTurn: "Копировать ход",

@@ -171,6 +171,11 @@ export const ja: TranslationResources = {
   agentStream: {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
+    workTraces: {
+      worked: "作業",
+      workedFor: "{{duration}} 作業",
+      accessibilityLabel: "{{durationLabel}}、作業トレース",
+    },
     permission: {
       plan: "プラン",
       required: "権限が必要です",
@@ -244,6 +249,10 @@ export const ja: TranslationResources = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "{{duration}} 作業",
+      endedAccessibility: "{{duration}}、終了 {{timestamp}}",
+    },
     actions: {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",

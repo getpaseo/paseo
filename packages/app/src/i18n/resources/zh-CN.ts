@@ -171,6 +171,11 @@ export const zhCN: TranslationResources = {
   agentStream: {
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
+    workTraces: {
+      worked: "已工作",
+      workedFor: "工作了 {{duration}}",
+      accessibilityLabel: "{{durationLabel}}，工作记录",
+    },
     permission: {
       plan: "Plan",
       required: "需要权限",
@@ -241,6 +246,10 @@ export const zhCN: TranslationResources = {
     },
   },
   message: {
+    turnFooter: {
+      workedFor: "工作了 {{duration}}",
+      endedAccessibility: "{{duration}}，结束于 {{timestamp}}",
+    },
     actions: {
       copyCode: "复制代码",
       copyTurn: "复制回合",
