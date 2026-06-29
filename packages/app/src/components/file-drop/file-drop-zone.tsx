@@ -50,7 +50,7 @@ export function FileDropZone({ children, disabled = false, style }: FileDropZone
     [isDragging, suppressed, hasSink, registerSink],
   );
 
-  const containerRef = useDropListeners({ isDragging, suppressed, getSink, disabled });
+  const containerRef = useDropListeners({ isDragging, suppressed, hasSink, getSink, disabled });
 
   const targetStyle = useMemo(() => [styles.target, style], [style]);
 

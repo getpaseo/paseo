@@ -39,6 +39,8 @@ interface UseDropListenersOptions {
   isDragging: SharedValue<boolean>;
   /** Active sink can't accept right now: reject drops without showing acceptance. */
   suppressed: SharedValue<boolean>;
+  /** Whether a consumer is mounted: with none, don't advertise or accept drops. */
+  hasSink: SharedValue<boolean>;
   /** Stable getter for the currently registered sink. */
   getSink: () => FileDropSink | null;
   disabled: boolean;
@@ -51,6 +53,7 @@ interface UseDropListenersOptions {
 export function useDropListeners({
   isDragging,
   suppressed,
+  hasSink,
   getSink,
   disabled,
 }: UseDropListenersOptions): RefObject<HTMLElement | null> {
@@ -191,11 +194,11 @@ export function useDropListeners({
         e.preventDefault();
         e.stopPropagation();
 
-        if (disabledRef.current) return;
-
-        if (e.dataTransfer) {
-          e.dataTransfer.dropEffect = "copy";
-        }
+        if (!e.dataTransfer) return;
+        // Only advertise "copy" when the drop would actually be accepted, so the cursor doesn't
+        // promise a drop that the handler then discards (suppressed/archived/no consumer mounted).
+        const canAccept = !disabledRef.current && !suppressed.value && hasSink.value;
+        e.dataTransfer.dropEffect = canAccept ? "copy" : "none";
       }
 
       function handleDragLeave(e: DragEvent) {
@@ -272,7 +275,7 @@ export function useDropListeners({
       disposed = true;
       runCleanup();
     };
-  }, [isDragging, suppressed, getSink]);
+  }, [isDragging, suppressed, hasSink, getSink]);
 
   return containerRef;
 }
