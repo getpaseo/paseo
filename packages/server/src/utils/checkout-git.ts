@@ -2689,6 +2689,16 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
   }
+  const configuredPushTarget = await getCurrentBranchConfiguredPushTarget(cwd, currentBranch);
+  if (configuredPushTarget) {
+    await runGitCommand(
+      ["push", configuredPushTarget.remoteName, `HEAD:refs/heads/${configuredPushTarget.headRef}`],
+      { cwd, timeout: 120_000 },
+    );
+    github?.invalidate({ cwd });
+    return;
+  }
+
   const upstreamTarget = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch);
   if (upstreamTarget) {
     await runGitCommand(
@@ -2707,6 +2717,20 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   github?.invalidate({ cwd });
 }
 
+async function getCurrentBranchConfiguredPushTarget(
+  cwd: string,
+  currentBranch: string,
+): Promise<{ remoteName: string; headRef: string } | null> {
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`);
+  const pushRefspec = remoteName ? await getGitConfigValue(cwd, `remote.${remoteName}.push`) : null;
+  const headRef = parseHeadPushRefspec(pushRefspec);
+  if (!remoteName || !headRef) {
+    return null;
+  }
+  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
+  return remoteUrl ? { remoteName, headRef } : null;
+}
+
 async function getCurrentBranchUpstreamPushTarget(
   cwd: string,
   currentBranch: string,
@@ -2721,6 +2745,16 @@ async function getCurrentBranchUpstreamPushTarget(
   }
   const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
   return remoteUrl ? { remoteName, headRef } : null;
+}
+
+function parseHeadPushRefspec(refspec: string | null): string | null {
+  const prefix = "HEAD:refs/heads/";
+  const normalized = refspec?.trim().replace(/^\+/, "");
+  if (!normalized?.startsWith(prefix)) {
+    return null;
+  }
+  const headRef = normalized.slice(prefix.length).trim();
+  return headRef.length > 0 ? headRef : null;
 }
 
 export interface CreatePullRequestOptions {

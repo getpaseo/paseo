@@ -581,8 +581,24 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       })
         .toString()
         .trim();
+      const pushRemote = execFileSync(
+        "git",
+        ["config", `branch.${second.worktree.branchName}.pushRemote`],
+        {
+          cwd: second.worktree.worktreePath,
+          stdio: "pipe",
+        },
+      )
+        .toString()
+        .trim();
+      const pushRefspec = execFileSync("git", ["config", "remote.paseo-pr-1790.push"], {
+        cwd: second.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
 
-      await pushCurrentBranch(second.worktree.worktreePath);
+      execFileSync("git", ["push"], { cwd: second.worktree.worktreePath, stdio: "pipe" });
 
       const remotePrHead = execFileSync(
         "git",
@@ -608,6 +624,8 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(getBranchUpstream(second.worktree.worktreePath)).toBe(
         "origin/daemon-shutdown-diagnostics",
       );
+      expect(pushRemote).toBe("paseo-pr-1790");
+      expect(pushRefspec).toBe("HEAD:refs/heads/daemon-shutdown-diagnostics");
       expect(remotePrHead).toBe(localHead);
       expect(dedupedRemoteBranch.status).toBe(1);
     });
@@ -708,6 +726,88 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         aheadOfOrigin: 0,
         behindOfOrigin: 0,
       });
+      expect(remotePrHead).toBe(localHead);
+    });
+
+    test("pushes a fork PR when the contributor branch cannot be fetched at checkout", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      execFileSync("git", ["--git-dir", headRemoteDir, "update-ref", "-d", "refs/heads/main"], {
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          githubPrNumber: 526,
+          refName: "main",
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps({ github }),
+      );
+      const pushRemote = execFileSync(
+        "git",
+        ["config", `branch.${result.worktree.branchName}.pushRemote`],
+        {
+          cwd: result.worktree.worktreePath,
+          stdio: "pipe",
+        },
+      )
+        .toString()
+        .trim();
+      const pushRefspec = execFileSync("git", ["config", "remote.paseo-pr-526.push"], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      const upstreamBeforePush = getBranchUpstream(result.worktree.worktreePath);
+      writeFileSync(path.join(result.worktree.worktreePath, "FOLLOWUP.md"), "fork edit\n");
+      execFileSync("git", ["add", "FOLLOWUP.md"], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fork edit"], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      });
+      const localHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+
+      await pushCurrentBranch(result.worktree.worktreePath);
+
+      const remotePrHead = execFileSync("git", [
+        "--git-dir",
+        headRemoteDir,
+        "rev-parse",
+        "refs/heads/main",
+      ])
+        .toString()
+        .trim();
+
+      expect(result.worktree.branchName).toBe("therainisme/main");
+      expect(upstreamBeforePush).toBeNull();
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(pushRemote).toBe("paseo-pr-526");
+      expect(pushRefspec).toBe("HEAD:refs/heads/main");
       expect(remotePrHead).toBe(localHead);
     });
 
