@@ -378,6 +378,38 @@ describe("app update service", () => {
     });
   });
 
+  it("performs a fresh manual check after an update preparation error", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.failRuntime(new Error("sha512 checksum mismatch"));
+
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
+    });
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    expect(result).toEqual({
+      hasUpdate: true,
+      readyToInstall: false,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.5",
+      body: null,
+      date: "2026-04-28T00:00:00.000Z",
+      errorMessage: null,
+    });
+  });
+
   it("returns runtime update errors to multiple automatic checks before a manual retry clears them", async () => {
     const { runtime, service } = createService();
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
