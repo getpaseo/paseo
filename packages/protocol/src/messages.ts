@@ -843,13 +843,18 @@ export const GitHubIssueAttachmentSchema = z.object({
   body: z.string().nullable().optional(),
 });
 
-export const TextAttachmentSchema = z.object({
-  type: z.literal("text"),
-  mimeType: z.literal("text/plain"),
-  contextKind: z.enum(["chat_history"]).optional(),
-  title: z.string().nullable().optional(),
-  text: z.string(),
-});
+export const TextAttachmentSchema = z
+  .object({
+    type: z.literal("text"),
+    mimeType: z.literal("text/plain"),
+    contextKind: z.string().optional(),
+    title: z.string().nullable().optional(),
+    text: z.string(),
+  })
+  .transform(({ contextKind, ...attachment }) => ({
+    ...attachment,
+    ...(contextKind === "chat_history" ? { contextKind } : {}),
+  }));
 
 export const ReviewAttachmentContextLineSchema = z.object({
   oldLineNumber: z.number().int().positive().nullable(),

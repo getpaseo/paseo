@@ -68,6 +68,10 @@ import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
+  getWorkspaceNamingAttachments,
+  remapDraftCwdToWorkspace,
+} from "./new-workspace-fork-context";
+import {
   pickerItemToCheckoutRequest,
   type PickerCheckoutRequest,
   type PickerItem,
@@ -936,32 +940,6 @@ function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
   });
 }
 
-function remapDraftCwdToWorkspace(input: {
-  cwd: string;
-  sourceDirectory?: string | null;
-  workspaceDirectory: string;
-}): string {
-  const cwd = input.cwd.trim();
-  const sourceDirectory = input.sourceDirectory?.trim();
-  const workspaceDirectory = input.workspaceDirectory.trim();
-  if (!cwd || !sourceDirectory || cwd === sourceDirectory) {
-    return workspaceDirectory;
-  }
-  const normalizedCwd = cwd.replace(/\\/g, "/");
-  const normalizedSource = sourceDirectory.replace(/\\/g, "/").replace(/\/+$/, "");
-  const relativePath = normalizedCwd.startsWith(`${normalizedSource}/`)
-    ? normalizedCwd.slice(normalizedSource.length + 1)
-    : "";
-  if (!relativePath) {
-    return workspaceDirectory;
-  }
-  const separator =
-    workspaceDirectory.includes("\\") && !workspaceDirectory.includes("/") ? "\\" : "/";
-  return [workspaceDirectory.replace(/[\\/]+$/, ""), ...relativePath.split("/")]
-    .filter(Boolean)
-    .join(separator);
-}
-
 function buildComposerInitialValues(input: {
   workingDir: string | undefined;
   initialSetup?: WorkspaceDraftTabSetup | null;
@@ -992,10 +970,11 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     throw new Error(input.labels.selectModel);
   }
   const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
+  const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
   const ensuredWorkspace = await ensureWorkspace({
     cwd,
     prompt: text,
-    attachments: reviewAttachments,
+    attachments: workspaceNamingAttachments,
     withInitialAgent: true,
   });
   const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
