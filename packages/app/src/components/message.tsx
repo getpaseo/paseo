@@ -440,6 +440,18 @@ interface UserMessageAttachmentContent {
   subtitle: string;
 }
 
+const CHAT_HISTORY_ATTACHMENT_TITLE = "Chat history";
+
+function getTextAttachmentSubtitle(
+  attachment: Extract<AgentAttachment, { type: "text" }>,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  if (attachment.title === CHAT_HISTORY_ATTACHMENT_TITLE) {
+    return CHAT_HISTORY_ATTACHMENT_TITLE;
+  }
+  return t("message.attachments.text");
+}
+
 function getUserMessageAttachmentContent(
   attachment: AgentAttachment,
   t: ReturnType<typeof useTranslation>["t"],
@@ -472,7 +484,7 @@ function getUserMessageAttachmentContent(
       return {
         icon: attachmentFileIcon,
         title: attachment.title ?? t("message.attachments.textAttachment"),
-        subtitle: t("message.attachments.text"),
+        subtitle: getTextAttachmentSubtitle(attachment, t),
       };
     case "uploaded_file":
       return {
