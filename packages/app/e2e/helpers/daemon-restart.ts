@@ -5,15 +5,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { getE2EDaemonPort } from "./daemon-port";
-
-const LOCAL_SPEECH_ENV_KEYS = [
-  "PASEO_LOCAL_MODELS_DIR",
-  "PASEO_DICTATION_LOCAL_STT_MODEL",
-  "PASEO_VOICE_LOCAL_STT_MODEL",
-  "PASEO_VOICE_LOCAL_TTS_MODEL",
-  "PASEO_VOICE_LOCAL_TTS_SPEAKER_ID",
-  "PASEO_VOICE_LOCAL_TTS_SPEED",
-] as const;
+import { withDisabledE2ESpeechEnv } from "./speech-env";
 
 /**
  * Restarts the isolated E2E daemon against the SAME PASEO_HOME and SAME port so
@@ -102,7 +94,7 @@ function spawnSupervisor(args: {
   // inside the Playwright worker (the shim is a .mjs symlink, not an executable),
   // so resolve the CLI module and load it with node.
   const tsxCli = createRequire(path.join(serverDir, "package.json")).resolve("tsx/cli");
-  const env: NodeJS.ProcessEnv = {
+  const env = withDisabledE2ESpeechEnv({
     ...process.env,
     PASEO_HOME: args.paseoHome,
     PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
@@ -110,19 +102,9 @@ function spawnSupervisor(args: {
     PASEO_LISTEN: `0.0.0.0:${args.port}`,
     PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
     PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
-    PASEO_DICTATION_ENABLED: "0",
-    PASEO_VOICE_MODE_ENABLED: "0",
-    PASEO_DICTATION_STT_PROVIDER: "openai",
-    PASEO_VOICE_TURN_DETECTION_PROVIDER: "openai",
-    PASEO_VOICE_STT_PROVIDER: "openai",
-    PASEO_VOICE_TTS_PROVIDER: "openai",
     PASEO_NODE_ENV: "development",
     NODE_ENV: "development",
-  };
-
-  for (const key of LOCAL_SPEECH_ENV_KEYS) {
-    delete env[key];
-  }
+  });
 
   const child = spawn(process.execPath, [tsxCli, "scripts/supervisor-entrypoint.ts", "--dev"], {
     cwd: serverDir,
