@@ -41,6 +41,7 @@ import {
   writeCopilotProviderMode,
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
@@ -161,6 +162,35 @@ function createSessionWithConfig(
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+    },
+  );
+}
+
+function createKiroSession(
+  options: { waitForInitialCommands?: boolean; initialCommandsWaitTimeoutMs?: number } = {},
+  logger: ReturnType<typeof createTestLogger> = createTestLogger(),
+): ACPAgentSession {
+  return new ACPAgentSession(
+    {
+      provider: "kiro",
+      cwd: "/tmp/paseo-acp-test",
+    },
+    {
+      provider: "kiro",
+      logger,
+      defaultCommand: ["kiro-cli", "acp"],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      extensionCommandsParser: parseKiroExtensionCommands,
+      waitForInitialCommands: options.waitForInitialCommands ?? false,
+      initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
     },
   );
 }
@@ -1903,28 +1933,10 @@ describe("ACPAgentSession", () => {
   });
 
   test("maps the Kiro _kiro.dev/commands/available notification into slash commands and skills", async () => {
-    const session = new ACPAgentSession(
-      {
-        provider: "kiro",
-        cwd: "/tmp/paseo-acp-test",
-      },
-      {
-        provider: "kiro",
-        logger: createTestLogger(),
-        defaultCommand: ["kiro-cli", "acp"],
-        defaultModes: [],
-        capabilities: {
-          supportsStreaming: true,
-          supportsSessionPersistence: true,
-          supportsDynamicModes: true,
-          supportsMcpServers: true,
-          supportsReasoningStream: true,
-          supportsToolInvocations: true,
-        },
-        waitForInitialCommands: true,
-        initialCommandsWaitTimeoutMs: 1500,
-      },
-    );
+    const session = createKiroSession({
+      waitForInitialCommands: true,
+      initialCommandsWaitTimeoutMs: 1500,
+    });
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
 
     const listCommandsPromise = session.listCommands();
@@ -1967,8 +1979,7 @@ describe("ACPAgentSession", () => {
   });
 
   test("ignores Kiro _kiro.dev/commands/available for a different session", async () => {
-    const logger = createTestLogger();
-    const session = createSessionWithConfig({ provider: "kiro" }, logger);
+    const session = createKiroSession();
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
 
     await session.extNotification("_kiro.dev/commands/available", {
@@ -1978,6 +1989,27 @@ describe("ACPAgentSession", () => {
     });
 
     expect(await session.listCommands()).toEqual([]);
+  });
+
+  test("settles listCommands() immediately on an empty Kiro commands batch", async () => {
+    // A long timeout means a resolution can only come from settleCommandsReady()
+    // firing — not from the wait timer — so this test would hang if the empty
+    // batch failed to unblock listCommands() (the P1 regression).
+    const session = createKiroSession({
+      waitForInitialCommands: true,
+      initialCommandsWaitTimeoutMs: 60_000,
+    });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+
+    const listCommandsPromise = session.listCommands();
+
+    await session.extNotification("_kiro.dev/commands/available", {
+      sessionId: "session-1",
+      commands: [],
+      prompts: [],
+    });
+
+    expect(await listCommandsPromise).toEqual([]);
   });
 
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {

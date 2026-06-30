@@ -80,7 +80,6 @@ import {
   type AgentSession,
   type AgentSessionConfig,
   type AgentSlashCommand,
-  type AgentSlashCommandKind,
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
@@ -121,53 +120,6 @@ function assertChildWithPipes(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-// ACP extension method (per the `_`-prefixed vendor namespace convention) that
-// Kiro CLI uses to publish its slash commands and skills after session/new.
-const KIRO_COMMANDS_AVAILABLE_METHOD = "_kiro.dev/commands/available";
-
-// Maps a `_kiro.dev/commands/available` payload onto Paseo slash commands.
-// Kiro reports built-in slash commands under `commands` (names arrive with a
-// leading "/", e.g. "/agent") and skills/prompts under `prompts` (names without
-// a slash, tagged with a `skill:` serverName). Paseo stores command names
-// without the leading slash — the composer prepends it on insertion.
-function mapKiroAvailableCommands(params: Record<string, unknown>): AgentSlashCommand[] {
-  const result: AgentSlashCommand[] = [];
-  const seen = new Set<string>();
-
-  const pushEntry = (entry: unknown): void => {
-    if (!isRecord(entry)) {
-      return;
-    }
-    const rawName = typeof entry.name === "string" ? entry.name.trim() : "";
-    const name = rawName.replace(/^\/+/, "");
-    if (!name || seen.has(name)) {
-      return;
-    }
-    seen.add(name);
-
-    const description = typeof entry.description === "string" ? entry.description : "";
-    const meta = isRecord(entry.meta) ? entry.meta : null;
-    const argumentHint = meta && typeof meta.hint === "string" ? meta.hint : "";
-    const serverName = typeof entry.serverName === "string" ? entry.serverName : "";
-    const kind: AgentSlashCommandKind = serverName.startsWith("skill:") ? "skill" : "command";
-
-    result.push({ name, description, argumentHint, kind });
-  };
-
-  if (Array.isArray(params.commands)) {
-    for (const entry of params.commands) {
-      pushEntry(entry);
-    }
-  }
-  if (Array.isArray(params.prompts)) {
-    for (const entry of params.prompts) {
-      pushEntry(entry);
-    }
-  }
-
-  return result;
 }
 
 function isACPError(value: unknown): value is ACPError {
@@ -382,6 +334,17 @@ export function createLoggedNdJsonStream(
   return { readable, writable };
 }
 
+// Lets a provider that publishes its slash commands through a vendor-specific
+// ACP extension notification (rather than the standard
+// `available_commands_update` session update) translate that payload into Paseo
+// slash commands, without the generic ACP session/client carrying any vendor
+// knowledge. Return the parsed commands (possibly empty) for a notification this
+// provider owns, or null to ignore notifications it does not handle.
+export type ACPExtensionCommandsParser = (
+  method: string,
+  params: Record<string, unknown>,
+) => AgentSlashCommand[] | null;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
@@ -404,6 +367,7 @@ interface ACPAgentClientOptions {
     thinkingOptionId: string,
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
+  extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -431,6 +395,7 @@ interface ACPAgentSessionOptions {
     thinkingOptionId: string,
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
+  extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -740,6 +705,7 @@ export class ACPAgentClient implements AgentClient {
   ) => Promise<void>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
+  private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -764,6 +730,7 @@ export class ACPAgentClient implements AgentClient {
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
   async createSession(
@@ -791,6 +758,7 @@ export class ACPAgentClient implements AgentClient {
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
+        extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -839,6 +807,7 @@ export class ACPAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1321,6 +1290,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
+  private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private closed = false;
@@ -1357,6 +1327,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentTitle = config.title ?? null;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
   get id(): string | null {
@@ -2131,31 +2102,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.extension_notification",
     );
 
-    if (method === KIRO_COMMANDS_AVAILABLE_METHOD) {
-      this.applyKiroAvailableCommands(params);
+    const parsedCommands = this.extensionCommandsParser?.(method, params);
+    if (parsedCommands) {
+      this.applyResolvedCommands(parsedCommands, {
+        sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
+      });
     }
   }
 
-  // Kiro CLI advertises its slash commands and skills through the
-  // `_kiro.dev/commands/available` extension notification instead of the
-  // standard `available_commands_update` session update. Map both lists onto
-  // the shared slash-command cache so they surface in the composer like any
-  // other provider's commands.
-  private applyKiroAvailableCommands(params: Record<string, unknown>): void {
+  // Cache an asynchronously-delivered slash-command batch and unblock any
+  // listCommands() call that is waiting on the initial batch. Used when a
+  // provider supplies an extensionCommandsParser whose result arrives after
+  // session/new (e.g. via a vendor extension notification). The ready gate is
+  // always settled — even for an empty batch — so a provider that legitimately
+  // reports no commands does not leave listCommands() blocked for the full
+  // initial-commands timeout. An optional sessionId scopes the batch to this
+  // session; notifications addressed to a different session are ignored.
+  private applyResolvedCommands(
+    commands: AgentSlashCommand[],
+    options?: { sessionId?: string },
+  ): void {
     if (
-      typeof params.sessionId === "string" &&
+      options?.sessionId !== undefined &&
       this.sessionId !== null &&
-      params.sessionId !== this.sessionId
+      options.sessionId !== this.sessionId
     ) {
       return;
     }
 
-    const commands = mapKiroAvailableCommands(params);
-    if (commands.length === 0) {
-      return;
+    if (commands.length > 0) {
+      this.cachedCommands = commands;
     }
-
-    this.cachedCommands = commands;
     this.settleCommandsReady();
   }
 
