@@ -8,8 +8,8 @@ const ORIGIN_WHITELIST = ["*"];
 // Navigation policy for the previewed content. The injected HTML loads with an
 // empty baseUrl, so the document and all in-page navigation live on
 // `about:blank`:
-//   - the initial load and in-page anchor / fragment jumps (`#section`) stay on
-//     about:blank → allowed, so in-page links work.
+//   - the initial load and in-page anchor / fragment jumps (which resolve to
+//     `about:blank#section`) → allowed, so in-page links work.
 //   - external links (http/https/mailto/…) are opened in the system browser
 //     instead of letting the preview navigate the WebView pane away to an
 //     external page (which would break the sandboxed-preview guarantee).
@@ -18,7 +18,7 @@ const handleWebViewNavigation: NonNullable<
   ComponentProps<typeof WebView>["onShouldStartLoadWithRequest"]
 > = (request) => {
   const url = request.url;
-  if (url === "" || url.startsWith("about:blank") || url.startsWith("#")) {
+  if (url === "" || url.startsWith("about:blank")) {
     return true;
   }
   void Linking.openURL(url).catch(() => {
