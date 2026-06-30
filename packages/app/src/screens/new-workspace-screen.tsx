@@ -1379,6 +1379,12 @@ interface NewWorkspaceProjectPickerState {
   handleSelectProjectOption: (id: string) => void;
 }
 
+interface NewWorkspaceProjectSelection {
+  contextKey: string;
+  projectKey: string | null;
+  isManual: boolean;
+}
+
 function useNewWorkspaceProjectPicker({
   selectedServerId,
   projects,
@@ -1387,7 +1393,6 @@ function useNewWorkspaceProjectPicker({
   displayName: displayNameProp,
   allowAllProjects,
 }: NewWorkspaceProjectPickerInput): NewWorkspaceProjectPickerState {
-  const [manualProjectKey, setManualProjectKey] = useState<string | null>(null);
   const displayName = displayNameProp?.trim() ?? "";
   const selectableProjects = useMemo(
     () =>
@@ -1407,32 +1412,59 @@ function useNewWorkspaceProjectPicker({
   );
 
   const routeProjectKey = routeProject?.projectKey ?? null;
-  useEffect(() => {
-    setManualProjectKey(null);
-  }, [routeProjectKey]);
+  const selectionContextKey = `${selectedServerId}:${routeProjectKey ?? ""}`;
+  const [projectSelection, setProjectSelection] = useState<NewWorkspaceProjectSelection>(() => ({
+    contextKey: selectionContextKey,
+    projectKey: initialProject?.projectKey ?? null,
+    isManual: false,
+  }));
 
-  const selectedProjectKey = useMemo(() => {
-    if (manualProjectKey) {
-      const manual = resolveSelectedHostProject({
-        selectedProjectKey: manualProjectKey,
+  useEffect(() => {
+    setProjectSelection((current) => {
+      const initialProjectKey = initialProject?.projectKey ?? null;
+      if (current.contextKey !== selectionContextKey) {
+        return { contextKey: selectionContextKey, projectKey: initialProjectKey, isManual: false };
+      }
+
+      if (!current.projectKey) {
+        if (current.projectKey === initialProjectKey && !current.isManual) return current;
+        return { contextKey: selectionContextKey, projectKey: initialProjectKey, isManual: false };
+      }
+
+      const selectedProject = resolveSelectedHostProject({
+        selectedProjectKey: current.projectKey,
         projects: selectableProjects,
-        routeProject: null,
-        lastActiveProject: null,
+        routeProject: current.isManual ? null : routeProject,
+        lastActiveProject: current.isManual ? null : lastActiveProject,
       });
-      if (manual) return manual.projectKey;
-    }
-    return initialProject?.projectKey ?? null;
-  }, [initialProject, manualProjectKey, selectableProjects]);
+      if (selectedProject) return current;
+
+      return { contextKey: selectionContextKey, projectKey: initialProjectKey, isManual: false };
+    });
+  }, [initialProject, lastActiveProject, routeProject, selectableProjects, selectionContextKey]);
+
+  const selectedProjectKey =
+    projectSelection.contextKey === selectionContextKey
+      ? projectSelection.projectKey
+      : (initialProject?.projectKey ?? null);
+  const selectedProjectIsManual =
+    projectSelection.contextKey === selectionContextKey ? projectSelection.isManual : false;
 
   const selectedProject = useMemo(
     () =>
       resolveSelectedHostProject({
         selectedProjectKey,
         projects: selectableProjects,
-        routeProject,
-        lastActiveProject,
+        routeProject: selectedProjectIsManual ? null : routeProject,
+        lastActiveProject: selectedProjectIsManual ? null : lastActiveProject,
       }),
-    [lastActiveProject, routeProject, selectableProjects, selectedProjectKey],
+    [
+      lastActiveProject,
+      routeProject,
+      selectableProjects,
+      selectedProjectIsManual,
+      selectedProjectKey,
+    ],
   );
   const { options: projectPickerOptions, projectByOptionId } = useMemo(
     () => computeProjectOptionData(selectableProjects),
@@ -1443,9 +1475,13 @@ function useNewWorkspaceProjectPicker({
       const project = projectByOptionId.get(id);
       if (!project) return;
       if (!allowAllProjects && !project.hosts.some((host) => host.canCreateWorktree)) return;
-      setManualProjectKey(project.projectKey);
+      setProjectSelection({
+        contextKey: selectionContextKey,
+        projectKey: project.projectKey,
+        isManual: true,
+      });
     },
-    [allowAllProjects, projectByOptionId],
+    [allowAllProjects, projectByOptionId, selectionContextKey],
   );
 
   return {
