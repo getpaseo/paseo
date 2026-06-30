@@ -241,6 +241,11 @@ jobs:
         run: npm run typecheck:examples --workspace=@getpaseo/client
 
   playwright:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    name: playwright (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -280,7 +285,7 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
       - name: Run Playwright E2E tests
-        run: npm run test:e2e --workspace=@getpaseo/app
+        run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ matrix.shard }}/4
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
@@ -288,7 +293,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-results
+          name: playwright-results-${{ matrix.shard }}
           path: |
             packages/app/test-results/
             packages/app/playwright-report/
