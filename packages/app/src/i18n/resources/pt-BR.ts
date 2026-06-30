@@ -40,9 +40,9 @@ export const ptBR: TranslationResources = {
       unexpectedDictationError: "Ocorreu um erro inesperado ao processar o ditado.",
     },
     connectionStatus: {
-      online: "Em linha",
+      online: "Online",
       connecting: "Conectando",
-      offline: "Fora de linha",
+      offline: "Offline",
       error: "Erro",
       idle: "Ocioso",
     },
@@ -238,7 +238,7 @@ export const ptBR: TranslationResources = {
       attention: "Atenção",
     },
     archiveSheet: {
-      hostOffline: "Host fora de linha",
+      hostOffline: "Host offline",
       runningAgent: "Este agente ainda está em execução. Arquivá-lo interromperá o agente.",
       archive: "Arquivar",
     },
@@ -446,10 +446,10 @@ export const ptBR: TranslationResources = {
         newAgent: "Novo agente",
         setup: "Configuração",
         workspaceSetup: "Configuração do workspace",
-        terminal: "Terminal integrado",
+        terminal: "Terminal",
         browser: "Navegador",
         agent: "Agente",
-        workspace: "Área de trabalho",
+        workspace: "Workspace",
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
@@ -551,7 +551,7 @@ export const ptBR: TranslationResources = {
       },
     },
     scripts: {
-      title: "Os scripts",
+      title: "Scripts",
       actions: {
         run: "Executar",
         view: "Ver",
@@ -573,17 +573,17 @@ export const ptBR: TranslationResources = {
         moreOptions: "Mais opções",
         moreActions: "Mais ações",
         commit: {
-          label: "Cometer",
+          label: "Commit",
           pending: "Fazendo commit...",
           success: "Commit concluído",
         },
         pull: {
-          label: "Puxar",
+          label: "Pull",
           pending: "Fazendo pull...",
           success: "Pull concluído",
         },
         push: {
-          label: "Enviar",
+          label: "Push",
           pending: "Fazendo push...",
           success: "Push concluído",
         },
@@ -749,7 +749,7 @@ export const ptBR: TranslationResources = {
           reviews: "Revisões",
         },
         accessibility: {
-          pullRequest: "PR #{{number}}",
+          pullRequest: "Pull request #{{number}}",
         },
         states: {
           draft: "Rascunho",
@@ -871,7 +871,7 @@ export const ptBR: TranslationResources = {
     },
     fields: {
       project: "Projeto",
-      base: "Base de referência",
+      base: "Base",
       baseNotApplicable: "Não aplicável",
     },
     titlePlaceholder: "Título (opcional)",
@@ -900,9 +900,9 @@ export const ptBR: TranslationResources = {
       detail: "Parando o daemon local.",
     },
     daemon: {
-      title: "Serviço",
+      title: "Daemon",
       status: {
-        title: "Estado",
+        title: "Status",
         builtInOnly: "Apenas o daemon desktop integrado é exibido aqui",
         running: "em execução",
         notRunning: "não está em execução",
@@ -1381,7 +1381,7 @@ export const ptBR: TranslationResources = {
   contextWindow: {
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
-    tokens: "{{used}} / {{max}} de tokens",
+    tokens: "{{used}} / {{max}} tokens",
     sessionCost: "Custo da sessão {{cost}}",
     accessibility: "Janela de contexto {{percentage}}% usada",
   },
@@ -1402,7 +1402,7 @@ export const ptBR: TranslationResources = {
     title: "Configurações",
     loading: "Carregando configurações...",
     groups: {
-      app: "Aplicativo",
+      app: "App",
       host: "Host",
     },
     hostPicker: {
@@ -1419,7 +1419,7 @@ export const ptBR: TranslationResources = {
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",
-      daemon: "Serviço",
+      daemon: "Daemon",
       appearance: "Aparência",
       shortcuts: "Atalhos",
       integrations: "Integrações",
@@ -1430,7 +1430,7 @@ export const ptBR: TranslationResources = {
     hostSections: {
       connections: "Conexões",
       agents: "Agentes",
-      workspaces: "Áreas de trabalho",
+      workspaces: "Workspaces",
       providers: "Provedores",
       usage: "Uso",
       terminals: "Terminais",
@@ -1487,18 +1487,18 @@ export const ptBR: TranslationResources = {
       playing: "Reproduzindo...",
       playbackFailed: "Falha na reprodução: {{message}}",
       app: {
-        title: "Diagnóstico do app",
-        rowTitle: "Diagnóstico do app",
-        rowHint: "Coletar detalhes de conexão, daemon, provedor, desktop e logs",
-        run: "Executar",
-        running: "Executando diagnóstico...",
-        copyLabel: "diagnóstico",
-        copyAccessibility: "Copiar diagnóstico",
-        copyFailed: "Falha ao copiar diagnóstico",
-        refreshAccessibility: "Atualizar diagnóstico",
-        refreshingAccessibility: "Atualizando diagnóstico",
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
         progress: {
-          client: "Cliente",
+          client: "Client",
           desktop: "Desktop",
         },
       },
@@ -1508,12 +1508,12 @@ export const ptBR: TranslationResources = {
       appVersion: "Versão do app",
       thisDevice: "Este dispositivo",
       connectedHosts: "Hosts conectados",
-      offline: "Fora de linha",
+      offline: "Offline",
       versionDiffers: "A versão é diferente da deste dispositivo",
       releaseChannel: {
         label: "Canal de lançamento",
         description: "Troque para Beta para receber atualizações antes e ajudar a moldá-las",
-        stable: "Estável",
+        stable: "Stable",
         beta: "Beta",
       },
       updates: {
@@ -1681,13 +1681,13 @@ export const ptBR: TranslationResources = {
         granted: "Concedida",
         request: "Solicitar",
         requesting: "Solicitando...",
-        busySuffix: "{{label}}…",
+        busySuffix: "{{label}}...",
       },
     },
     host: {
       notFound: "Host não encontrado",
       badges: {
-        relay: "Retransmissão",
+        relay: "Relay",
         local: "Local",
       },
       connections: {
@@ -1697,7 +1697,7 @@ export const ptBR: TranslationResources = {
         removeAction: "Remover",
         removeErrorTitle: "Erro",
         removeErrorMessage: "Não foi possível remover a conexão",
-        timeout: "Tempo esgotado",
+        timeout: "Timeout",
       },
       pairDevices: {
         title: "Parear dispositivos",
@@ -1776,7 +1776,7 @@ export const ptBR: TranslationResources = {
           unavailableTitle: "Host indisponível",
           unavailableMessage:
             "Este host não está conectado. Aguarde até ele ficar online antes de reiniciar.",
-          offlineTitle: "Host fora de linha",
+          offlineTitle: "Host offline",
           offlineMessage:
             "Este host está offline. O Paseo reconecta automaticamente. Aguarde ele voltar a ficar online antes de reiniciar.",
           requestFailedTitle: "Erro",
@@ -1802,7 +1802,7 @@ export const ptBR: TranslationResources = {
           unavailableTitle: "Host indisponível",
           unavailableMessage:
             "Este host não está conectado. Aguarde até ele ficar online antes de atualizar.",
-          offlineTitle: "Host fora de linha",
+          offlineTitle: "Host offline",
           offlineMessage:
             "Este host está offline. Aguarde até ele voltar a ficar online antes de atualizar.",
           requestFailedTitle: "Falha na atualização",
@@ -1847,7 +1847,7 @@ export const ptBR: TranslationResources = {
         addModel: "Adicionar modelo",
         addCustomTitle: "Adicionar modelo personalizado",
         modelId: "ID do modelo",
-        modelIdPlaceholder: "ex. openai/gpt-5",
+        modelIdPlaceholder: "e.g. openai/gpt-5",
         add: "Adicionar",
         adding: "Adicionando...",
         failedToSave: "Falha ao salvar modelo",
@@ -1906,7 +1906,7 @@ export const ptBR: TranslationResources = {
       worktree: {
         title: "Hooks de ciclo de vida do worktree",
         info: "Comandos executados quando um worktree é criado ou desmontado para este projeto",
-        docs: "Documentação",
+        docs: "Docs",
         docsTooltip:
           "Veja a documentação para mais detalhes e as variáveis de ambiente disponíveis para estes comandos",
         setup: "Configuração",
@@ -1915,7 +1915,7 @@ export const ptBR: TranslationResources = {
         teardownAccessibility: "Comandos de desmontagem do worktree",
       },
       scripts: {
-        title: "Os scripts",
+        title: "Scripts",
         info: "Serviços contínuos e comandos avulsos que você pode iniciar de qualquer agente neste projeto",
         empty: "Nenhum script ainda.",
         untitled: "Script sem título",
@@ -1947,7 +1947,7 @@ export const ptBR: TranslationResources = {
         branchNamePlaceholder: "Prefixe branches com feat/ ou fix/, mb/ para branches pessoais",
         commitMessage: "Mensagens de commit",
         commitMessagePlaceholder: "Use Conventional Commits com escopo",
-        pullRequest: "PRs",
+        pullRequest: "Pull requests",
         pullRequestPlaceholder: "Comece com um resumo de um parágrafo e inclua uma seção Test plan",
       },
       writeFailures: {
