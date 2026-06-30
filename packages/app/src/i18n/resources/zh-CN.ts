@@ -57,7 +57,7 @@ export const zhCN: TranslationResources = {
       placeholder: "输入命令或搜索 Agent...",
       noMatches: "没有匹配项",
       actions: "操作",
-      agents: "Agent",
+      agents: "Agents",
       newAgent: "新建 Agent",
       openProject: "打开项目",
       home: "首页",
@@ -142,7 +142,7 @@ export const zhCN: TranslationResources = {
       select: "选择 Agent Provider",
     },
     thinking: {
-      title: "思考",
+      title: "Thinking",
       unknown: "未知",
       extraHigh: "极高",
       select: "选择 thinking 选项",
@@ -163,7 +163,7 @@ export const zhCN: TranslationResources = {
       selectWithValue: "选择 Agent mode（{{value}}）",
     },
     hints: {
-      thinking: "思考模式",
+      thinking: "Thinking模式",
       model: "切换 Model",
       mode: "更改模式",
     },
@@ -444,7 +444,7 @@ export const zhCN: TranslationResources = {
         workspaceSetup: "Workspace 设置",
         terminal: "终端",
         browser: "浏览器",
-        agent: "智能体",
+        agent: "Agent",
         workspace: "工作区",
       },
       switcher: {
@@ -491,7 +491,7 @@ export const zhCN: TranslationResources = {
       },
       toasts: {
         copyFailed: "复制失败",
-        agentIdCopiedLabel: "智能体 ID",
+        agentIdCopiedLabel: "Agent ID",
         resumeCommandCopiedLabel: "恢复命令",
         filePathCopiedLabel: "文件路径",
         resumeIdUnavailable: "恢复 ID 不可用",
@@ -873,7 +873,7 @@ export const zhCN: TranslationResources = {
       detail: "正在停止本地 daemon。",
     },
     daemon: {
-      title: "守护进程",
+      title: "Daemon",
       status: {
         title: "状态",
         builtInOnly: "这里只显示内置桌面 daemon",
@@ -1181,7 +1181,7 @@ export const zhCN: TranslationResources = {
       title: "直接连接",
       helper: "输入 Paseo server 的地址。",
       fields: {
-        host: "主机",
+        host: "Host",
         port: "端口",
         password: "密码",
         optional: "可选",
@@ -1339,7 +1339,7 @@ export const zhCN: TranslationResources = {
   contextWindow: {
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
-    tokens: "{{used}} / {{max}} token",
+    tokens: "{{used}} / {{max}} tokens",
     sessionCost: "会话费用 {{cost}}",
     accessibility: "上下文窗口已使用 {{percentage}}%",
   },
@@ -1387,7 +1387,7 @@ export const zhCN: TranslationResources = {
     },
     hostSections: {
       connections: "连接",
-      agents: "智能体",
+      agents: "Agents",
       workspaces: "工作区",
       providers: "提供商",
       usage: "使用情况",
@@ -1427,7 +1427,7 @@ export const zhCN: TranslationResources = {
         options: {
           system: "系统",
           ar: "العربية",
-          en: "英语",
+          en: "English",
           es: "Español",
           fr: "Français",
           ja: "日本語",
@@ -1471,7 +1471,7 @@ export const zhCN: TranslationResources = {
         label: "发布通道",
         description: "切换到 Beta 可更早获取更新并参与改进",
         stable: "稳定版",
-        beta: "测试版",
+        beta: "Beta",
       },
       updates: {
         label: "应用更新",
@@ -1498,7 +1498,7 @@ export const zhCN: TranslationResources = {
           zinc: "锌色",
           midnight: "午夜",
           claude: "Claude",
-          ghostty: "Ghostty 终端",
+          ghostty: "Ghostty",
           auto: "系统",
         },
       },
@@ -1635,13 +1635,13 @@ export const zhCN: TranslationResources = {
         granted: "已授权",
         request: "请求",
         requesting: "正在请求...",
-        busySuffix: "{{label}}中...",
+        busySuffix: "{{label}}...",
       },
     },
     host: {
       notFound: "Host 未找到",
       badges: {
-        relay: "中继",
+        relay: "Relay",
         local: "本地",
       },
       connections: {
@@ -1690,7 +1690,7 @@ export const zhCN: TranslationResources = {
         editProfile: "编辑配置",
         addProfileTitle: "添加 terminal 配置",
         editProfileTitle: "编辑 terminal 配置",
-        namePlaceholder: "Claude 代码助手",
+        namePlaceholder: "Claude Code",
         commandPlaceholder: "claude",
         argsPlaceholder: "--dangerously-skip-permissions",
         nameLabel: "名称",
@@ -1890,7 +1890,7 @@ export const zhCN: TranslationResources = {
         branchNamePlaceholder: "分支以 feat/ 或 fix/ 开头，个人分支使用 mb/",
         commitMessage: "提交消息",
         commitMessagePlaceholder: "使用带 scope 的 Conventional Commits",
-        pullRequest: "Pull Request",
+        pullRequest: "Pull requests",
         pullRequestPlaceholder: "先写一段摘要，并包含 Test plan 部分",
       },
       writeFailures: {
