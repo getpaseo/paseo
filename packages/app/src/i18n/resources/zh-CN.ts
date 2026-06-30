@@ -1702,7 +1702,7 @@ export const zhCN: TranslationResources = {
         saving: "保存中...",
         remove: "移除",
         removeConfirmTitle: "移除配置？",
-        removeConfirmMessage: '移除 "{{name}}"?',
+        removeConfirmMessage: '移除 "{{name}}"？',
         moveUp: "上移",
         moveDown: "下移",
         save: "保存",
