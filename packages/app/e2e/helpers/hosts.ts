@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { buildSeededHost } from "./daemon-registry";
 
 const REGISTRY_KEY = "@paseo:daemon-registry";
@@ -33,4 +33,25 @@ export async function appendOfflineHost(
     },
     { host: offlineHost, registryKey: REGISTRY_KEY, primaryLabel: input.primaryLabel },
   );
+}
+
+export async function openSidebarDisplayPreferences(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-display-preferences-menu").click();
+  await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible({
+    timeout: 10_000,
+  });
+}
+
+// A host's filter row carries a status dot on the left next to its label.
+export async function expectHostFilterRow(page: Page, serverId: string): Promise<void> {
+  await expect(page.getByTestId(`sidebar-host-filter-${serverId}`)).toBeVisible();
+  await expect(page.getByTestId(`sidebar-host-filter-status-${serverId}`)).toBeVisible();
+}
+
+export async function toggleHostFilter(page: Page, serverId: string): Promise<void> {
+  await page.getByTestId(`sidebar-host-filter-${serverId}`).click();
+}
+
+export async function selectAllHostsFilter(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-host-filter-all").click();
 }
