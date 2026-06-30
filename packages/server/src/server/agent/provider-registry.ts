@@ -399,6 +399,7 @@ function wrapClientProvider(
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
+  const forkSession = inner.forkSession?.bind(inner);
 
   return {
     provider,
@@ -431,6 +432,26 @@ function wrapClientProvider(
           launchContext,
         ),
       ),
+    forkSession: forkSession
+      ? async (handle, options, overrides, launchContext) =>
+          wrapSessionProvider(
+            provider,
+            await forkSession(
+              {
+                ...handle,
+                provider: inner.provider,
+              },
+              options,
+              overrides
+                ? {
+                    ...overrides,
+                    provider: inner.provider,
+                  }
+                : undefined,
+              launchContext,
+            ),
+          )
+      : undefined,
     fetchCatalog: async (options) => {
       const catalog = await inner.fetchCatalog(options);
       return {

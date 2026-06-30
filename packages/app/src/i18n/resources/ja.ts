@@ -1339,6 +1339,8 @@ export const ja: TranslationResources = {
   },
   fork: {
     tooltip: "ここから分岐",
+    pending: "会話を分岐中…",
+    success: "会話を分岐しました",
     errors: {
       failed: "会話の分岐に失敗しました",
     },

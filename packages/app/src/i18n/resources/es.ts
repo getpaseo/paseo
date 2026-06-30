@@ -1361,6 +1361,8 @@ export const es: TranslationResources = {
   },
   fork: {
     tooltip: "Bifurcar desde aquí",
+    pending: "Bifurcando la conversación…",
+    success: "Conversación bifurcada",
     errors: {
       failed: "No se pudo bifurcar la conversación",
     },

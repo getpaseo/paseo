@@ -2820,6 +2820,10 @@ export class Session {
         },
       });
     } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId, messageId: msg.messageId ?? null },
+        "Failed to fork agent",
+      );
       this.emit({
         type: "agent.fork.response",
         payload: {

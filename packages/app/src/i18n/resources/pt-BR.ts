@@ -1347,6 +1347,8 @@ export const ptBR: TranslationResources = {
   },
   fork: {
     tooltip: "Bifurcar a partir daqui",
+    pending: "Bifurcando a conversa…",
+    success: "Conversa bifurcada",
     errors: {
       failed: "Falha ao bifurcar a conversa",
     },

@@ -1305,6 +1305,8 @@ export const zhCN: TranslationResources = {
   },
   fork: {
     tooltip: "从这里分叉",
+    pending: "正在分叉会话…",
+    success: "已分叉会话",
     errors: {
       failed: "分叉会话失败",
     },

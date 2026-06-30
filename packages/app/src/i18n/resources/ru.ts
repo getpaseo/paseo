@@ -1353,6 +1353,8 @@ export const ru: TranslationResources = {
   },
   fork: {
     tooltip: "Разветвить отсюда",
+    pending: "Разветвление разговора…",
+    success: "Разговор разветвлён",
     errors: {
       failed: "Не удалось разветвить разговор",
     },

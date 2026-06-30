@@ -1322,6 +1322,8 @@ export const ar: TranslationResources = {
   },
   fork: {
     tooltip: "تفريع من هنا",
+    pending: "جارٍ تفريع المحادثة…",
+    success: "تم تفريع المحادثة",
     errors: {
       failed: "فشل تفريع المحادثة",
     },

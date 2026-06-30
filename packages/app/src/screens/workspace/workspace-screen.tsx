@@ -2630,10 +2630,15 @@ function WorkspaceScreenContent({
         toast.error(t("common.errors.daemonClientUnavailable"));
         return;
       }
+      // Forking duplicates the whole provider session and can take a moment;
+      // show a persistent in-progress toast so it doesn't feel like a freeze,
+      // then replace it with a success/failure toast when it settles.
+      toast.show(t("fork.pending"), { durationMs: null });
       try {
         // Forks the whole conversation into a new, independent parallel agent;
         // the daemon broadcasts the new agent so it appears in the workspace.
         await client.forkAgent(agentId);
+        toast.show(t("fork.success"), { variant: "success" });
       } catch {
         toast.error(t("fork.errors.failed"));
       }

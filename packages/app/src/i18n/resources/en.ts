@@ -1330,6 +1330,8 @@ export const en = {
   },
   fork: {
     tooltip: "Fork from here",
+    pending: "Forking conversation…",
+    success: "Conversation forked",
     errors: {
       failed: "Failed to fork conversation",
     },

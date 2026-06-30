@@ -1078,6 +1078,10 @@ export class AgentManager {
       timelineRows: forkRows,
       timelineNextSeq: forkRows.length + 1,
       historyPrimed: true,
+      // Derive the fork's title from the seeded source timeline (its first user
+      // message), mirroring the import path — otherwise the forked tab shows a
+      // blank title until the first new turn.
+      initialTitle: resolveImportedAgentTitle(mergedConfig, forkRows),
     });
 
     this.logger.info(
