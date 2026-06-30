@@ -29,11 +29,11 @@ export interface SpeechServices {
 function resolveOpenAiCredentials(
   openaiConfig: OpenAiSpeechProviderConfig | undefined,
 ): OpenAiCredentialState {
-  const openaiApiKey = openaiConfig?.apiKey;
+  const sttApiKey = openaiConfig?.stt?.apiKey;
   return {
-    openaiSttApiKey: openaiConfig?.stt?.apiKey ?? openaiApiKey,
-    openaiTtsApiKey: openaiConfig?.tts?.apiKey ?? openaiApiKey,
-    openaiDictationApiKey: openaiApiKey,
+    openaiSttApiKey: sttApiKey,
+    openaiTtsApiKey: openaiConfig?.tts?.apiKey,
+    openaiDictationApiKey: sttApiKey,
   };
 }
 

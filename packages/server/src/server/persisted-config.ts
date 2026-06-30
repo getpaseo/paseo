@@ -45,7 +45,7 @@ const LogConfigSchema = z
   })
   .strict();
 
-const OpenAiVoiceProviderSchema = z
+const OpenAiSpeechEndpointSchema = z
   .object({
     apiKey: z.string().trim().min(1).optional(),
     baseUrl: z.string().trim().min(1).optional(),
@@ -55,8 +55,9 @@ const OpenAiVoiceProviderSchema = z
 const OpenAiProviderSchema = z
   .object({
     apiKey: z.string().min(1).optional(),
-    voice: OpenAiVoiceProviderSchema.optional(),
     baseUrl: z.string().trim().min(1).optional(),
+    stt: OpenAiSpeechEndpointSchema.optional(),
+    tts: OpenAiSpeechEndpointSchema.optional(),
   })
   .strict();
 

@@ -8,8 +8,6 @@ import type { TTSConfig } from "./tts.js";
 export const DEFAULT_OPENAI_TTS_MODEL = "tts-1";
 
 export interface OpenAiSpeechProviderConfig {
-  apiKey?: string;
-  baseUrl?: string;
   stt?: Partial<STTConfig> & { apiKey?: string };
   tts?: Partial<TTSConfig> & { apiKey?: string };
 }
@@ -31,8 +29,10 @@ const OptionalTrimmedStringSchema = z
   .transform((value) => (value && value.length > 0 ? value : undefined));
 
 const OpenAiSpeechResolutionSchema = z.object({
-  apiKey: OptionalTrimmedStringSchema,
-  baseUrl: OptionalTrimmedStringSchema,
+  sttApiKey: OptionalTrimmedStringSchema,
+  sttBaseUrl: OptionalTrimmedStringSchema,
+  ttsApiKey: OptionalTrimmedStringSchema,
+  ttsBaseUrl: OptionalTrimmedStringSchema,
   sttConfidenceThreshold: OptionalFiniteNumberSchema,
   sttModel: OptionalTrimmedStringSchema,
   ttsVoice: z.string().trim().toLowerCase().pipe(OpenAiTtsVoiceSchema).default("alloy"),
@@ -108,18 +108,32 @@ function buildOpenAiResolutionInput(params: {
   persisted: PersistedConfig;
   providers: RequestedSpeechProviders;
 }): Record<string, unknown> {
+  const { env } = params;
+  const openai = params.persisted.providers?.openai;
   return {
-    apiKey: firstDefined<string>([
-      params.persisted.providers?.openai?.voice?.apiKey,
-      params.env.OPENAI_VOICE_API_KEY,
-      params.persisted.providers?.openai?.apiKey,
-      params.env.OPENAI_API_KEY,
+    sttApiKey: firstDefined<string>([
+      openai?.stt?.apiKey,
+      env.OPENAI_STT_API_KEY,
+      openai?.apiKey,
+      env.OPENAI_API_KEY,
     ]),
-    baseUrl: firstDefined<string>([
-      params.persisted.providers?.openai?.voice?.baseUrl,
-      params.env.OPENAI_VOICE_BASE_URL,
-      params.persisted.providers?.openai?.baseUrl,
-      params.env.OPENAI_BASE_URL,
+    sttBaseUrl: firstDefined<string>([
+      openai?.stt?.baseUrl,
+      env.OPENAI_STT_BASE_URL,
+      openai?.baseUrl,
+      env.OPENAI_BASE_URL,
+    ]),
+    ttsApiKey: firstDefined<string>([
+      openai?.tts?.apiKey,
+      env.OPENAI_TTS_API_KEY,
+      openai?.apiKey,
+      env.OPENAI_API_KEY,
+    ]),
+    ttsBaseUrl: firstDefined<string>([
+      openai?.tts?.baseUrl,
+      env.OPENAI_TTS_BASE_URL,
+      openai?.baseUrl,
+      env.OPENAI_BASE_URL,
     ]),
     ...buildOpenAiSttInput(params),
     ...buildOpenAiTtsInput(params),
@@ -133,27 +147,33 @@ export function resolveOpenAiSpeechConfig(params: {
 }): OpenAiSpeechProviderConfig | undefined {
   const parsed = OpenAiSpeechResolutionSchema.parse(buildOpenAiResolutionInput(params));
 
-  if (!parsed.apiKey) {
+  if (!parsed.sttApiKey && !parsed.ttsApiKey) {
     return undefined;
   }
 
   return {
-    apiKey: parsed.apiKey,
-    ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
-    stt: {
-      apiKey: parsed.apiKey,
-      ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
-      ...(parsed.sttConfidenceThreshold !== undefined
-        ? { confidenceThreshold: parsed.sttConfidenceThreshold }
-        : {}),
-      ...(parsed.sttModel ? { model: parsed.sttModel } : {}),
-    },
-    tts: {
-      apiKey: parsed.apiKey,
-      ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
-      voice: parsed.ttsVoice,
-      model: parsed.ttsModel,
-      responseFormat: "pcm",
-    },
+    ...(parsed.sttApiKey
+      ? {
+          stt: {
+            apiKey: parsed.sttApiKey,
+            ...(parsed.sttBaseUrl ? { baseUrl: parsed.sttBaseUrl } : {}),
+            ...(parsed.sttConfidenceThreshold !== undefined
+              ? { confidenceThreshold: parsed.sttConfidenceThreshold }
+              : {}),
+            ...(parsed.sttModel ? { model: parsed.sttModel } : {}),
+          },
+        }
+      : {}),
+    ...(parsed.ttsApiKey
+      ? {
+          tts: {
+            apiKey: parsed.ttsApiKey,
+            ...(parsed.ttsBaseUrl ? { baseUrl: parsed.ttsBaseUrl } : {}),
+            voice: parsed.ttsVoice,
+            model: parsed.ttsModel,
+            responseFormat: "pcm",
+          },
+        }
+      : {}),
   };
 }

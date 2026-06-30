@@ -116,20 +116,26 @@ describe("PersistedConfigSchema worktrees config", () => {
 });
 
 describe("PersistedConfigSchema provider credentials", () => {
-  test("accepts OpenAI voice credentials", () => {
+  test("accepts separate OpenAI STT and TTS credentials", () => {
     const parsed = PersistedConfigSchema.parse({
       providers: {
         openai: {
-          voice: {
-            apiKey: " voice-secret ",
-            baseUrl: " https://voice.example.com/v1 ",
+          stt: {
+            apiKey: " stt-secret ",
+            baseUrl: " https://stt.example.com/v1 ",
+          },
+          tts: {
+            apiKey: " tts-secret ",
+            baseUrl: " https://tts.example.com/v1 ",
           },
         },
       },
     });
 
-    expect(parsed.providers?.openai?.voice?.apiKey).toBe("voice-secret");
-    expect(parsed.providers?.openai?.voice?.baseUrl).toBe("https://voice.example.com/v1");
+    expect(parsed.providers?.openai?.stt?.apiKey).toBe("stt-secret");
+    expect(parsed.providers?.openai?.stt?.baseUrl).toBe("https://stt.example.com/v1");
+    expect(parsed.providers?.openai?.tts?.apiKey).toBe("tts-secret");
+    expect(parsed.providers?.openai?.tts?.baseUrl).toBe("https://tts.example.com/v1");
   });
 });
 
