@@ -35,6 +35,13 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
   },
   {
     provider: "claude",
+    id: "claude-sonnet-5",
+    label: "Sonnet 5",
+    description: "The best combination of speed and intelligence — fast with adaptive thinking",
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
     id: "claude-opus-4-8[1m]",
     label: "Opus 4.8 1M",
     description: "Opus 4.8 with 1M context window",
@@ -225,6 +232,15 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   const fableMatch = trimmed.match(/(?:claude-)?fable[-_ ]+(\d+)/i);
   if (fableMatch) {
     return `claude-fable-${fableMatch[1]}`;
+  }
+
+  // Sonnet 5 also uses a single-segment version (claude-sonnet-5), not the {major}-{minor}
+  // scheme. This maps dated runtime strings (e.g. claude-sonnet-5-20260601) back to the
+  // catalog ID. No [1m] variant. The negative lookahead ensures we don't match sonnet-5-0
+  // style versioned IDs (those are handled by the generic runtimeMatch below).
+  const sonnet5Match = trimmed.match(/(?:claude-)?sonnet[-_ ]+5(?:-\d{8})?$/i);
+  if (sonnet5Match) {
+    return "claude-sonnet-5";
   }
 
   // Match: claude-{family}-{major}-{minor}[1m]? possibly followed by a date suffix
