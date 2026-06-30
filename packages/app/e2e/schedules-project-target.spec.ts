@@ -213,7 +213,7 @@ async function addFakeHostAndReload(input: {
 }
 
 async function selectModelByLabel(page: Page, label: string): Promise<void> {
-  await page.getByTestId("combined-model-selector").click();
+  await page.getByRole("button", { name: /select model/i }).click();
   const popup = page.getByTestId("combobox-desktop-container");
   await expect(popup).toBeVisible({ timeout: 30_000 });
   await popup.getByText(label, { exact: true }).click();
@@ -260,25 +260,25 @@ test.describe("Schedules project target", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
 
-      await page.getByTestId("sidebar-schedules").click();
+      await page.getByRole("button", { name: "Schedules" }).click();
       await expect(page).toHaveURL(/\/schedules$/);
       await expect(page).not.toHaveURL(/\/h\//);
       await expect(page.getByTestId(`schedules-section-${getServerId()}`)).toBeVisible();
 
-      await page.getByTestId("schedules-new").click();
+      await page.getByRole("button", { name: "New schedule" }).click();
       await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
       await expect(page.getByTestId("schedule-cwd-trigger")).toHaveCount(0);
 
-      await page.getByTestId("schedule-project-trigger").click();
+      await page.getByRole("button", { name: /select project/i }).click();
       await page.getByTestId(`schedule-project-option-${workspace.projectId}`).click();
-      await expect(page.getByTestId("schedule-project-trigger")).toContainText(
+      await expect(page.getByRole("button", { name: /select project/i })).toContainText(
         workspace.projectDisplayName,
       );
 
-      await page.getByTestId("schedule-name-input").fill(scheduleName);
-      await page.getByTestId("schedule-prompt-input").fill("Summarize the project status.");
-      await page.getByText("Cron", { exact: true }).click();
-      await page.getByTestId("schedule-form-submit").click();
+      await page.getByLabel("Schedule name").fill(scheduleName);
+      await page.getByLabel("Prompt").fill("Summarize the project status.");
+      await page.getByRole("button", { name: "Cron" }).click();
+      await page.getByRole("button", { name: "Create schedule" }).click();
 
       await expect(page.getByTestId("schedule-form-sheet")).toHaveCount(0, { timeout: 30_000 });
       await expectScheduleCreatedForProject({ workspace, name: scheduleName });
@@ -337,26 +337,28 @@ test.describe("Schedules project target", () => {
       await expect(page.getByTestId(`schedules-section-${fakeServerId}`)).toBeVisible({
         timeout: 30_000,
       });
-      await page.getByTestId("schedules-new").click();
+      await page.getByRole("button", { name: "New schedule" }).click();
       await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
 
-      await page.getByTestId("schedule-project-trigger").click();
+      await page.getByRole("button", { name: /select project/i }).click();
       await page.getByTestId(`schedule-project-option-${workspace.projectId}`).click();
-      await expect(page.getByTestId("schedule-project-trigger")).toContainText(
+      await expect(page.getByRole("button", { name: /select project/i })).toContainText(
         workspace.projectDisplayName,
       );
 
       await selectModelByLabel(page, "Ten second stream");
-      await expect(page.getByTestId("schedule-model-trigger")).toContainText("Ten second stream");
+      await expect(page.getByRole("button", { name: /ten second stream/i })).toBeVisible();
 
-      await page.getByTestId("schedule-project-trigger").click();
+      await page.getByRole("button", { name: /select project/i }).click();
       await page.getByTestId(`schedule-project-option-${fakeProjectId}`).click();
-      await expect(page.getByTestId("schedule-project-trigger")).toContainText("Fake host project");
-      await expect(page.getByTestId("schedule-model-trigger")).toContainText("Select model");
+      await expect(page.getByRole("button", { name: /select project/i })).toContainText(
+        "Fake host project",
+      );
+      await expect(page.getByRole("button", { name: /select model/i })).toBeVisible();
 
-      await page.getByTestId("schedule-name-input").fill(`Cross host model ${Date.now()}`);
-      await page.getByTestId("schedule-prompt-input").fill("Run on the fake host project.");
-      await expect(page.getByTestId("schedule-form-submit")).toBeDisabled();
+      await page.getByLabel("Schedule name").fill(`Cross host model ${Date.now()}`);
+      await page.getByLabel("Prompt").fill("Run on the fake host project.");
+      await expect(page.getByRole("button", { name: "Create schedule" })).toBeDisabled();
     } finally {
       await workspace.cleanup();
     }

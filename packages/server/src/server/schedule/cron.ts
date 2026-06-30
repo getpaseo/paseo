@@ -16,6 +16,26 @@ function createRange(start: number, end: number, step: number): number[] {
   return values;
 }
 
+function parseStepPart(part: string, bounds: { name: string }): { base: string; step: number } {
+  const stepParts = part.split("/");
+  if (stepParts.length > 2) {
+    throw new Error(`Invalid cron ${bounds.name} step`);
+  }
+
+  const [base, stepSource] = stepParts;
+  const normalizedStep = stepSource?.trim();
+  const step = normalizedStep === undefined ? 1 : Number.parseInt(normalizedStep, 10);
+  if (
+    !Number.isInteger(step) ||
+    step <= 0 ||
+    (normalizedStep !== undefined && String(step) !== normalizedStep)
+  ) {
+    throw new Error(`Invalid cron ${bounds.name} step`);
+  }
+
+  return { base, step };
+}
+
 function parseField(
   source: string,
   bounds: { min: number; max: number; name: string },
@@ -32,11 +52,7 @@ function parseField(
       throw new Error(`Invalid cron ${bounds.name} field`);
     }
 
-    const [base, stepSource] = part.split("/");
-    const step = stepSource === undefined ? 1 : Number.parseInt(stepSource, 10);
-    if (!Number.isInteger(step) || step <= 0) {
-      throw new Error(`Invalid cron ${bounds.name} step`);
-    }
+    const { base, step } = parseStepPart(part, bounds);
 
     if (base === "*") {
       for (const value of createRange(bounds.min, bounds.max, step)) {

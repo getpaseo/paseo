@@ -178,10 +178,15 @@ function validateCronField(source: string, bounds: CronFieldBounds): string | nu
       return `Invalid ${bounds.name} field`;
     }
 
-    const [base, stepSource] = part.split("/");
+    const stepParts = part.split("/");
+    if (stepParts.length > 2) {
+      return `Invalid ${bounds.name} step`;
+    }
+    const [base, stepSource] = stepParts;
     if (stepSource !== undefined) {
-      const step = Number.parseInt(stepSource, 10);
-      if (!Number.isInteger(step) || step <= 0 || String(step) !== stepSource.trim()) {
+      const normalizedStep = stepSource.trim();
+      const step = Number.parseInt(normalizedStep, 10);
+      if (!Number.isInteger(step) || step <= 0 || String(step) !== normalizedStep) {
         return `Invalid ${bounds.name} step`;
       }
     }
