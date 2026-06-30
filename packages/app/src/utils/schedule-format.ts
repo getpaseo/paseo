@@ -1,13 +1,5 @@
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-
-/**
- * Pure, dependency-free helpers for presenting schedules.
- *
- * Cron is a 5-field expression (minute hour day-of-month month day-of-week),
- * evaluated by the daemon in UTC. The validation here mirrors the daemon's
- * structural parser in packages/server/src/server/schedule/cron.ts so the
- * client preview rejects exactly what the server would reject.
- */
+import { validateCronExpression } from "@getpaseo/protocol/schedule/cron-expression";
 
 export type IntervalUnit = "minutes" | "hours" | "days";
 
@@ -148,98 +140,18 @@ export function describeCron(expr: string): string | null {
   return null;
 }
 
-function pad2(value: number): string {
-  return value < 10 ? `0${value}` : String(value);
-}
-
-interface CronFieldBounds {
-  min: number;
-  max: number;
-  name: string;
-}
-
-const CRON_FIELD_BOUNDS: CronFieldBounds[] = [
-  { min: 0, max: 59, name: "minute" },
-  { min: 0, max: 23, name: "hour" },
-  { min: 1, max: 31, name: "day-of-month" },
-  { min: 1, max: 12, name: "month" },
-  { min: 0, max: 6, name: "day-of-week" },
-];
-
-function validateCronField(source: string, bounds: CronFieldBounds): string | null {
-  const trimmed = source.trim();
-  if (!trimmed) {
-    return `Invalid ${bounds.name} field`;
-  }
-
-  for (const rawPart of trimmed.split(",")) {
-    const part = rawPart.trim();
-    if (!part) {
-      return `Invalid ${bounds.name} field`;
-    }
-
-    const stepParts = part.split("/");
-    if (stepParts.length > 2) {
-      return `Invalid ${bounds.name} step`;
-    }
-    const [base, stepSource] = stepParts;
-    if (stepSource !== undefined) {
-      const normalizedStep = stepSource.trim();
-      const step = Number.parseInt(normalizedStep, 10);
-      if (!Number.isInteger(step) || step <= 0 || String(step) !== normalizedStep) {
-        return `Invalid ${bounds.name} step`;
-      }
-    }
-
-    if (base === "*") {
-      continue;
-    }
-
-    const rangeMatch = base.match(/^(\d+)-(\d+)$/);
-    if (rangeMatch) {
-      const start = Number.parseInt(rangeMatch[1], 10);
-      const end = Number.parseInt(rangeMatch[2], 10);
-      if (start > end || start < bounds.min || end > bounds.max) {
-        return `Invalid ${bounds.name} range`;
-      }
-      continue;
-    }
-
-    if (!/^\d+$/.test(base)) {
-      return `Invalid ${bounds.name} value`;
-    }
-    const value = Number.parseInt(base, 10);
-    if (!Number.isInteger(value) || value < bounds.min || value > bounds.max) {
-      return `Invalid ${bounds.name} value`;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Returns null when the expression is a structurally valid 5-field cron the
- * daemon would accept, otherwise a human-readable error message.
- */
 export function validateCron(expr: string): string | null {
   const trimmed = expr.trim();
   if (!trimmed) {
     return "Enter a cron expression";
   }
 
-  const fields = trimmed.split(/\s+/);
-  if (fields.length !== 5) {
-    return "Cron expressions must have 5 fields";
-  }
+  const error = validateCronExpression(trimmed);
+  return error?.replace(/^Invalid cron /, "Invalid ") ?? null;
+}
 
-  for (let index = 0; index < CRON_FIELD_BOUNDS.length; index += 1) {
-    const error = validateCronField(fields[index], CRON_FIELD_BOUNDS[index]);
-    if (error) {
-      return error;
-    }
-  }
-
-  return null;
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
 }
 
 /**
