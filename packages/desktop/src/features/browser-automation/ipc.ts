@@ -16,6 +16,7 @@ import {
   getPaseoBrowserWebContents,
   getWorkspaceActivePaseoBrowserWebContents,
   getWorkspaceActivePaseoBrowserId,
+  getAgentActivePaseoBrowserId,
   getPaseoBrowserWorkspaceId,
 } from "../browser-webviews.js";
 
@@ -150,6 +151,7 @@ function createRegistry(): BrowserRegistry {
       return contents ? adaptWebContents(contents) : null;
     },
     getWorkspaceActiveBrowserId: getWorkspaceActivePaseoBrowserId,
+    getAgentActiveBrowserId: getAgentActivePaseoBrowserId,
   };
 }
 

@@ -25,7 +25,11 @@ import {
 } from "@/desktop/host";
 import { isDev } from "@/constants/platform";
 import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/stores/browser-store";
-import { parkBrowserWebview, takeParkedBrowserWebview } from "./browser-webview-parking.electron";
+import {
+  prepareBrowserWebview,
+  releaseResidentBrowserWebview,
+  takeResidentBrowserWebview,
+} from "./browser-webview-resident";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -405,19 +409,15 @@ export function BrowserPane({
       initialUrlRef.current,
       browserErrorLabelsRef.current,
     );
-    const parkedWebview = takeParkedBrowserWebview(browserId) as ElectronWebview | null;
-    const webview = parkedWebview ?? (document.createElement("webview") as ElectronWebview);
+    const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
+    const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
     void getDesktopHost()?.browser?.registerWorkspaceBrowser?.({ browserId, workspaceId });
-    if (!parkedWebview) {
-      webview.setAttribute("partition", `persist:paseo-browser-${browserId}`);
-      webview.setAttribute("allowpopups", "true");
-      webview.setAttribute("spellcheck", "false");
-      webview.setAttribute("autosize", "on");
-      webview.setAttribute(
-        "src",
-        initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
-      );
+    if (!residentWebview) {
+      prepareBrowserWebview(webview, {
+        browserId,
+        initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+      });
     }
     webview.style.display = "flex";
     webview.style.flex = "1";
@@ -537,7 +537,7 @@ export function BrowserPane({
           useBrowserStore.getState().browsersById[browserIdRef.current],
         );
         if (browserStillExists) {
-          parkBrowserWebview(browserIdRef.current, webview);
+          releaseResidentBrowserWebview(browserIdRef.current, webview);
         } else {
           host.removeChild(webview);
         }

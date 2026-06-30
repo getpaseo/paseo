@@ -69,6 +69,7 @@ function browserNewTabRequest(): BrowserAutomationExecuteRequest {
   return {
     type: "browser.automation.execute.request",
     requestId: "req-new",
+    agentId: "agent-1",
     workspaceId: "/repo",
     command: { command: "new_tab", args: { workspaceId: "/repo", url: "https://example.com" } },
   };
@@ -121,15 +122,35 @@ describe("mountBrowserAutomationHandler", () => {
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
   });
 
-  test("creates and focuses a workspace browser tab for browser_new_tab", async () => {
+  test("creates an unfocused workspace browser tab for browser_new_tab", async () => {
     const client = new FakeDaemonClient();
-    const navigateToWorkspace = vi.fn();
+    const setWorkspaceActiveBrowser = vi.fn(async () => undefined);
+    const setAgentActiveBrowser = vi.fn(async () => undefined);
+    const registerWorkspaceBrowser = vi.fn(async () => undefined);
+    const ensureResidentBrowserWebview = vi.fn();
     const executeAutomationCommand = vi.fn(async () => currentListTabsPayload());
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: "server-1",
+      workspaceId: "/repo",
+    });
+    if (!workspaceKey) throw new Error("expected workspace key");
+    const focusedTabId = useWorkspaceLayoutStore
+      .getState()
+      .openTabFocused(workspaceKey, { kind: "draft", draftId: "human-draft" });
+    if (!focusedTabId) throw new Error("expected focused tab");
     mountBrowserAutomationHandler({
       client,
       serverId: "server-1",
-      getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
-      navigateToWorkspace,
+      getHost: () =>
+        ({
+          browser: {
+            executeAutomationCommand,
+            registerWorkspaceBrowser,
+            setWorkspaceActiveBrowser,
+            setAgentActiveBrowser,
+          },
+        }) satisfies DesktopHostBridge,
+      ensureResidentBrowserWebview,
     });
 
     client.receive(browserNewTabRequest());
@@ -141,52 +162,38 @@ describe("mountBrowserAutomationHandler", () => {
     expect(payload.result.command).toBe("new_tab");
     if (payload.result.command !== "new_tab") throw new Error("expected new_tab result");
     expect(payload.result.url).toBe("https://example.com");
-    const workspaceKey = buildWorkspaceTabPersistenceKey({
-      serverId: "server-1",
-      workspaceId: "/repo",
-    });
-    if (!workspaceKey) throw new Error("expected workspace key");
     expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).toContainEqual(
       expect.objectContaining({ target: { kind: "browser", browserId: payload.result.browserId } }),
     );
-    expect(navigateToWorkspace).toHaveBeenCalledWith("server-1", "/repo");
+    const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    expect(layout?.root.kind).toBe("pane");
+    if (layout?.root.kind !== "pane") throw new Error("expected root pane");
+    expect(layout.root.pane.focusedTabId).toBe(focusedTabId);
+    expect(registerWorkspaceBrowser).toHaveBeenCalledWith({
+      browserId: payload.result.browserId,
+      workspaceId: "/repo",
+    });
+    expect(setAgentActiveBrowser).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      browserId: payload.result.browserId,
+    });
+    expect(setWorkspaceActiveBrowser).not.toHaveBeenCalled();
+    expect(ensureResidentBrowserWebview).toHaveBeenCalledWith({
+      browserId: payload.result.browserId,
+      url: "https://example.com",
+    });
     expect(executeAutomationCommand).toHaveBeenCalledTimes(1);
   });
 
-  test("returns success when fallback webview registration succeeds", async () => {
+  test("returns browser_timeout when the resident webview does not register", async () => {
     const client = new FakeDaemonClient();
-    const executeAutomationCommand = vi
-      .fn()
-      .mockResolvedValueOnce(emptyListTabsPayload())
-      .mockImplementation(async () => currentListTabsPayload());
-    mountBrowserAutomationHandler({
-      client,
-      serverId: "server-1",
-      getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
-      navigateToWorkspace: vi.fn(),
-      registrationWaitTimeoutMs: 1,
-      registrationPollIntervalMs: 1,
-    });
-
-    client.receive(browserNewTabRequest());
-    await waitForAsyncWork();
-
-    expect(client.sentResponses[0]?.payload).toMatchObject({
-      requestId: "req-new",
-      ok: true,
-      result: { command: "new_tab", workspaceId: "/repo", url: "https://example.com" },
-    });
-    expect(executeAutomationCommand).toHaveBeenCalledTimes(2);
-  });
-
-  test("returns browser_timeout when fallback registration also fails", async () => {
-    const client = new FakeDaemonClient();
+    const ensureResidentBrowserWebview = vi.fn();
     const executeAutomationCommand = vi.fn(async () => emptyListTabsPayload());
     mountBrowserAutomationHandler({
       client,
       serverId: "server-1",
       getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
-      navigateToWorkspace: vi.fn(),
+      ensureResidentBrowserWebview,
       registrationWaitTimeoutMs: 1,
       registrationPollIntervalMs: 1,
     });
@@ -202,6 +209,9 @@ describe("mountBrowserAutomationHandler", () => {
         retryable: true,
       },
     });
+    expect(ensureResidentBrowserWebview).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://example.com" }),
+    );
     expect(client.sentResponses[0]?.payload).not.toMatchObject({
       ok: true,
       result: { command: "new_tab" },
@@ -217,7 +227,6 @@ describe("mountBrowserAutomationHandler", () => {
       client,
       serverId: "server-1",
       getHost: () => ({ browser: { executeAutomationCommand } }) satisfies DesktopHostBridge,
-      navigateToWorkspace: vi.fn(),
     });
 
     client.receive(browserNewTabRequest());

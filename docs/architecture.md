@@ -138,7 +138,7 @@ Electron wrapper for macOS, Linux, and Windows.
 
 > **Window-state v1 limitation:** only the _first_ window of a session restores and persists saved geometry (size/position/maximized). Windows opened via ⌘⇧N / second-instance / "Open in new window" open at the default size, OS-cascaded, and do not persist — this avoids every window stacking on the same restored bounds and fighting over the single window-state store. Lifting this needs per-window state keys.
 >
-> **In-app browser panes are not yet per-window.** The active-browser id (`features/browser-webviews.ts`) and the webview registration queue (`pendingBrowserWebviewIds` in `main.ts`) are process-global. With browser panes open in two windows, a menu Reload can target the other window's webview, and near-simultaneous webview attach across windows can register under the wrong browser id. Multi-window v1 ships windows; making the browser-webview subsystem window-scoped is a follow-up.
+> **In-app browser panes are not yet per-window.** Browser webviews are tracked by one process-global registry that keeps a single current `WebContents` per browser id. Human focus and agent automation targets are intentionally separate: the workspace-active browser follows the user's focused tab, while the agent-active browser is the default target for browser MCP commands. The webview registration queue (`pendingBrowserWebviewIds` in `main.ts`) is still process-global. With browser panes open in two windows, a menu Reload can target the other window's webview, and near-simultaneous webview attach across windows can register under the wrong browser id. Multi-window v1 ships windows; making the browser-webview subsystem window-scoped is a follow-up.
 
 ### `packages/website` — Marketing site
 

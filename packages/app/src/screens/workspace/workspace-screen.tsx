@@ -105,6 +105,7 @@ import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { removeResidentBrowserWebview } from "@/components/browser-webview-resident";
 import { createWorkspaceBrowser, useBrowserStore } from "@/stores/browser-store";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
@@ -1928,6 +1929,7 @@ function WorkspaceScreenContent({
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;
         useBrowserStore.getState().removeBrowser(browserId);
+        removeResidentBrowserWebview(browserId);
         void getDesktopHost()?.browser?.clearPartition?.(browserId);
       }
       closeWorkspaceTab(persistenceKey, normalizedTabId);

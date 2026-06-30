@@ -49,6 +49,7 @@ export interface BrowserRegistry {
   getBrowserWorkspaceId(browserId: string): string | null;
   getWorkspaceActiveTabContents(workspaceId: string): TabContents | null;
   getWorkspaceActiveBrowserId(workspaceId: string): string | null;
+  getAgentActiveBrowserId(agentId: string): string | null;
 }
 
 export type AutomationCommandPayload = BrowserAutomationExecuteResponse["payload"];
@@ -87,10 +88,11 @@ function tabInfoFromContents(
 }
 
 export function executeAutomationCommand(
-  request: BrowserAutomationExecuteRequest,
+  rawRequest: BrowserAutomationExecuteRequest,
   registry: BrowserRegistry,
   options?: { snapshotEngine?: BrowserSnapshotEngine },
 ): AutomationCommandPayload | Promise<AutomationCommandPayload> {
+  const request = resolveAgentBrowserTarget(rawRequest, registry);
   const { requestId, command } = request;
   const workspaceId = request.workspaceId ?? command.args.workspaceId;
   const snapshotEngine = options?.snapshotEngine ?? defaultSnapshotEngine;
@@ -105,6 +107,32 @@ export function executeAutomationCommand(
   }
 
   return handler({ request, command, requestId, workspaceId, registry, snapshotEngine });
+}
+
+function resolveAgentBrowserTarget(
+  request: BrowserAutomationExecuteRequest,
+  registry: BrowserRegistry,
+): BrowserAutomationExecuteRequest {
+  if (request.browserId || readCommandBrowserId(request.command)) {
+    return request;
+  }
+  if (!request.agentId) {
+    return request;
+  }
+
+  const agentBrowserId = registry.getAgentActiveBrowserId(request.agentId);
+  if (!agentBrowserId) {
+    return request;
+  }
+
+  return { ...request, browserId: agentBrowserId };
+}
+
+function readCommandBrowserId(command: BrowserAutomationCommand): string | undefined {
+  const args = command.args as { browserId?: unknown };
+  return typeof args.browserId === "string" && args.browserId.length > 0
+    ? args.browserId
+    : undefined;
 }
 
 interface CommandHandlerContext {

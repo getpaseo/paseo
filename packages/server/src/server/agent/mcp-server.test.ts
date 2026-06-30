@@ -581,10 +581,18 @@ function createPaseoWorktreeForMcpTest(options: {
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
 
-  it("omits browser tools when browser tools are disabled", async () => {
+  it("keeps browser tools registered when browser tools are disabled", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD });
-    const execute = vi.fn();
+    const execute = vi.fn().mockResolvedValue({
+      requestId: "req-browser-disabled",
+      ok: false,
+      error: {
+        code: "browser_disabled",
+        message: "Browser tools are disabled.",
+        retryable: false,
+      },
+    });
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -594,10 +602,26 @@ describe("browser MCP tools", () => {
       callerAgentId: "agent-1",
       logger,
     });
+    const tool = registeredTool(server, "browser_list_tabs");
 
-    expect(lookupTool(server, "browser_list_tabs")).toBeUndefined();
-    expect(lookupTool(server, "browser_page_info")).toBeUndefined();
-    expect(execute).not.toHaveBeenCalled();
+    const response = await tool.handler({});
+
+    expect(lookupTool(server, "browser_page_info")).not.toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: REPO_CWD,
+      command: { command: "list_tabs", args: { workspaceId: REPO_CWD } },
+    });
+    expect(response.structuredContent).toEqual({
+      ok: false,
+      error: {
+        code: "browser_disabled",
+        message: "Browser tools are disabled.",
+        retryable: false,
+      },
+      context: { agentId: "agent-1", cwd: REPO_CWD, workspaceId: REPO_CWD },
+    });
   });
 
   it("wires browser tools through the browser tools broker", async () => {

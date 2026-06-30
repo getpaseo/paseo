@@ -1,12 +1,11 @@
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
+import { ensureResidentBrowserWebview as ensureResidentBrowserWebviewDefault } from "@/components/browser-webview-resident";
 import { createWorkspaceBrowser } from "@/stores/browser-store";
 import {
   buildWorkspaceTabPersistenceKey,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
-import { navigateToWorkspace as navigateToWorkspaceRoute } from "@/stores/navigation-active-workspace-store";
-import { isWeb } from "@/constants/platform";
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -28,15 +27,11 @@ interface BrowserAutomationClient {
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void;
 }
 
-interface AutomationWebviewElement extends HTMLElement {
-  src: string;
-}
-
 export interface BrowserAutomationHandlerOptions {
   client: BrowserAutomationClient;
   serverId?: string;
   getHost?: () => DesktopHostBridge | null;
-  navigateToWorkspace?: (serverId: string, workspaceId: string) => void;
+  ensureResidentBrowserWebview?: typeof ensureResidentBrowserWebviewDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }
@@ -51,7 +46,8 @@ export function mountBrowserAutomationHandler(
       getHost,
       request,
       serverId: options.serverId,
-      navigateToWorkspace: options.navigateToWorkspace ?? navigateToWorkspaceRoute,
+      ensureResidentBrowserWebview:
+        options.ensureResidentBrowserWebview ?? ensureResidentBrowserWebviewDefault,
       ...(options.registrationWaitTimeoutMs !== undefined
         ? { registrationWaitTimeoutMs: options.registrationWaitTimeoutMs }
         : {}),
@@ -77,7 +73,7 @@ async function handleBrowserAutomationRequest(params: {
   getHost: () => DesktopHostBridge | null;
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
-  navigateToWorkspace: (serverId: string, workspaceId: string) => void;
+  ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<void> {
@@ -86,11 +82,12 @@ async function handleBrowserAutomationRequest(params: {
     getHost,
     request,
     serverId,
-    navigateToWorkspace,
+    ensureResidentBrowserWebview,
     registrationWaitTimeoutMs,
     registrationPollIntervalMs,
   } = params;
-  const executeAutomationCommand = getHost()?.browser?.executeAutomationCommand;
+  const browserHost = getHost()?.browser;
+  const executeAutomationCommand = browserHost?.executeAutomationCommand;
 
   if (request.command.command === "new_tab") {
     try {
@@ -99,8 +96,8 @@ async function handleBrowserAutomationRequest(params: {
         payload: await openBrowserTabForRequest({
           request,
           serverId,
-          executeAutomationCommand,
-          navigateToWorkspace,
+          browserHost,
+          ensureResidentBrowserWebview,
           ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
           ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
         }),
@@ -113,6 +110,8 @@ async function handleBrowserAutomationRequest(params: {
     }
     return;
   }
+
+  await rememberAgentBrowserTarget({ request, browserHost });
 
   if (!executeAutomationCommand) {
     client.sendBrowserAutomationExecuteResponse({
@@ -143,18 +142,16 @@ async function handleBrowserAutomationRequest(params: {
 async function openBrowserTabForRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
-  executeAutomationCommand?: (
-    request: BrowserAutomationExecuteRequest,
-  ) => Promise<BrowserAutomationResponsePayload>;
-  navigateToWorkspace: (serverId: string, workspaceId: string) => void;
+  browserHost: DesktopHostBridge["browser"] | undefined;
+  ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<BrowserAutomationResponsePayload> {
   const {
     request,
     serverId,
-    executeAutomationCommand,
-    navigateToWorkspace,
+    browserHost,
+    ensureResidentBrowserWebview,
     registrationWaitTimeoutMs,
     registrationPollIntervalMs,
   } = params;
@@ -181,35 +178,28 @@ async function openBrowserTabForRequest(params: {
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, { kind: "browser", browserId });
-  navigateToWorkspace(serverId, workspaceId);
+  useWorkspaceLayoutStore.getState().openTabInBackground(workspaceKey, {
+    kind: "browser",
+    browserId,
+  });
 
-  if (executeAutomationCommand) {
-    let registered = await waitForBrowserRegistration({
+  await browserHost?.registerWorkspaceBrowser?.({ browserId, workspaceId });
+  if (request.agentId) {
+    await browserHost?.setAgentActiveBrowser?.({ agentId: request.agentId, browserId });
+  }
+
+  if (browserHost?.executeAutomationCommand) {
+    ensureResidentBrowserWebview({ browserId, url: normalizedUrl });
+    const registered = await waitForBrowserRegistration({
       request,
       browserId,
       workspaceId,
-      executeAutomationCommand,
+      executeAutomationCommand: browserHost.executeAutomationCommand,
       ...(registrationWaitTimeoutMs !== undefined ? { timeoutMs: registrationWaitTimeoutMs } : {}),
       ...(registrationPollIntervalMs !== undefined
         ? { pollIntervalMs: registrationPollIntervalMs }
         : {}),
     });
-    if (!registered) {
-      await mountFallbackAutomationWebview({ browserId, workspaceId, url: normalizedUrl });
-      registered = await waitForBrowserRegistration({
-        request,
-        browserId,
-        workspaceId,
-        executeAutomationCommand,
-        ...(registrationWaitTimeoutMs !== undefined
-          ? { timeoutMs: registrationWaitTimeoutMs }
-          : {}),
-        ...(registrationPollIntervalMs !== undefined
-          ? { pollIntervalMs: registrationPollIntervalMs }
-          : {}),
-      });
-    }
     if (!registered) {
       return browserAutomationFailure({
         requestId: request.requestId,
@@ -257,45 +247,30 @@ async function waitForBrowserRegistration(params: {
   return false;
 }
 
-async function mountFallbackAutomationWebview(input: {
-  browserId: string;
-  workspaceId: string;
-  url: string;
-}): Promise<void> {
-  if (!isWeb || typeof document === "undefined") {
-    return;
-  }
-  if (document.querySelector(`[data-paseo-automation-browser-id="${input.browserId}"]`)) {
-    return;
-  }
-
-  const webview = document.createElement("webview") as AutomationWebviewElement;
-  webview.dataset.paseoAutomationBrowserId = input.browserId;
-  webview.setAttribute("partition", `persist:paseo-browser-${input.browserId}`);
-  webview.setAttribute("allowpopups", "true");
-  webview.setAttribute("spellcheck", "false");
-  webview.src = input.url;
-  webview.style.position = "fixed";
-  webview.style.left = "-10000px";
-  webview.style.top = "0";
-  webview.style.width = "1px";
-  webview.style.height = "1px";
-  webview.style.opacity = "0";
-  webview.style.pointerEvents = "none";
-  document.body.appendChild(webview);
-
-  await getDesktopHost()?.browser?.registerWorkspaceBrowser?.({
-    browserId: input.browserId,
-    workspaceId: input.workspaceId,
-  });
-  await getDesktopHost()?.browser?.setWorkspaceActiveBrowser?.({
-    workspaceId: input.workspaceId,
-    browserId: input.browserId,
-  });
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function rememberAgentBrowserTarget(input: {
+  request: BrowserAutomationExecuteRequest;
+  browserHost: DesktopHostBridge["browser"] | undefined;
+}): Promise<void> {
+  if (!input.request.agentId) {
+    return;
+  }
+  const browserId = readRequestBrowserId(input.request);
+  if (!browserId) {
+    return;
+  }
+  await input.browserHost?.setAgentActiveBrowser?.({ agentId: input.request.agentId, browserId });
+}
+
+function readRequestBrowserId(request: BrowserAutomationExecuteRequest): string | null {
+  if (request.browserId) {
+    return request.browserId;
+  }
+  const args = request.command.args as { browserId?: unknown };
+  return typeof args.browserId === "string" && args.browserId.length > 0 ? args.browserId : null;
 }
 
 function normalizeBridgePayload(

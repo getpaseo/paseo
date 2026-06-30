@@ -34,6 +34,7 @@ function createRegistry(overrides: Partial<BrowserRegistry> = {}): BrowserRegist
     getBrowserWorkspaceId: () => null,
     getWorkspaceActiveTabContents: () => null,
     getWorkspaceActiveBrowserId: () => null,
+    getAgentActiveBrowserId: () => null,
     ...overrides,
   };
 }
@@ -285,6 +286,52 @@ describe("executeAutomationCommand", () => {
             url: "https://a.com",
             title: "Tab A",
             isActive: true,
+            isLoading: false,
+            canGoBack: false,
+            canGoForward: false,
+          },
+        },
+      });
+    });
+
+    it("uses the agent active browser before the human-focused workspace browser", () => {
+      const registry = createRegistry({
+        getTabContents: (id) => {
+          if (id === "agent-browser") return TAB_B;
+          if (id === "human-browser") return TAB_A;
+          return null;
+        },
+        getBrowserWorkspaceId: (id) =>
+          id === "agent-browser" || id === "human-browser" ? "workspace-a" : null,
+        getWorkspaceActiveTabContents: (workspaceId) =>
+          workspaceId === "workspace-a" ? TAB_A : null,
+        getWorkspaceActiveBrowserId: (workspaceId) =>
+          workspaceId === "workspace-a" ? "human-browser" : null,
+        getAgentActiveBrowserId: (agentId) => (agentId === "agent-1" ? "agent-browser" : null),
+      });
+
+      const result = executeAutomationCommand(
+        {
+          type: "browser.automation.execute.request",
+          requestId: "r-agent-active",
+          agentId: "agent-1",
+          workspaceId: "workspace-a",
+          command: { command: "page_info", args: { workspaceId: "workspace-a" } },
+        },
+        registry,
+      );
+
+      expect(result).toEqual({
+        requestId: "r-agent-active",
+        ok: true,
+        result: {
+          command: "page_info",
+          tab: {
+            browserId: "agent-browser",
+            workspaceId: "workspace-a",
+            url: "https://b.com",
+            title: "Tab B",
+            isActive: false,
             isLoading: false,
             canGoBack: false,
             canGoForward: false,
