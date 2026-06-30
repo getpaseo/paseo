@@ -18,7 +18,7 @@ export type FlatListItem =
       type: "agent";
       key: string;
       agent: AggregatedAgent;
-      depth: 0 | 1;
+      depth: number;
       hasChildren: boolean;
       expanded: boolean;
       childCount: number;
@@ -67,22 +67,13 @@ export function formatDateSectionLabel(t: TFunction, section: DateSectionKey): s
   }
 }
 
-/**
- * Pure function — exported for unit testing.
- * Builds the flat item list for the FlatList, grouping children under parents.
- * - Children are agents whose derived parentAgentId matches another agent.id on the same serverId.
- * - Orphan children (parent absent from `agents`) render as normal top-level rows.
- * - Date-section headers apply to top-level rows only.
- * - Children of an expanded parent appear immediately after the parent, sorted by createdAt asc.
- */
-// Build the parent -> children grouping for one level of nesting.
-// ponytail: Phase 1 nests exactly one level — a child only nests under a
-// TOP-LEVEL parent. Deeper chains (a child whose parent is itself a child) stay
-// top-level so they are never silently dropped; recursive nesting is deferred
-// until the feature actually needs it.
-function groupChildrenByParent(agents: AggregatedAgent[]): {
+// Group agents into a parent -> children forest. A child is an agent whose
+// parent label resolves to another agent on the same server; everything else
+// (no label, or parent absent from the list) is a root. Nesting depth is
+// unbounded — the render walks the forest recursively.
+function groupAgentsByParent(agents: AggregatedAgent[]): {
   childrenByParentKey: Map<string, AggregatedAgent[]>;
-  childAgentKeys: Set<string>;
+  rootAgents: AggregatedAgent[];
 } {
   // Fast lookup of agent ids present per server.
   const agentIdsByServer = new Map<string, Set<string>>();
@@ -92,89 +83,109 @@ function groupChildrenByParent(agents: AggregatedAgent[]): {
     agentIdsByServer.set(agent.serverId, serverSet);
   }
 
-  // Resolve each agent's in-list parent key (orphans resolve to undefined).
-  const resolvedParentKeyByChildKey = new Map<string, string>();
+  const childrenByParentKey = new Map<string, AggregatedAgent[]>();
+  const rootAgents: AggregatedAgent[] = [];
   for (const agent of agents) {
     const parentId = getParentAgentIdFromLabels(agent.labels);
-    if (parentId === null) continue;
-    if (!agentIdsByServer.get(agent.serverId)?.has(parentId)) continue;
-    resolvedParentKeyByChildKey.set(
-      `${agent.serverId}:${agent.id}`,
-      `${agent.serverId}:${parentId}`,
-    );
-  }
-
-  const childrenByParentKey = new Map<string, AggregatedAgent[]>();
-  const childAgentKeys = new Set<string>();
-  for (const agent of agents) {
-    const childKey = `${agent.serverId}:${agent.id}`;
-    const parentKey = resolvedParentKeyByChildKey.get(childKey);
-    if (parentKey === undefined) continue;
-    // Parent is itself a child → keep this agent top-level (no grandchild drop).
-    if (resolvedParentKeyByChildKey.has(parentKey)) continue;
-    childAgentKeys.add(childKey);
+    const hasParentInList =
+      parentId !== null && agentIdsByServer.get(agent.serverId)?.has(parentId) === true;
+    if (!hasParentInList) {
+      rootAgents.push(agent);
+      continue;
+    }
+    const parentKey = `${agent.serverId}:${parentId}`;
     const siblings = childrenByParentKey.get(parentKey) ?? [];
     siblings.push(agent);
     childrenByParentKey.set(parentKey, siblings);
   }
 
-  // Sort children by createdAt asc (mirrors selectSubagentsForParent ordering).
+  // Sort siblings by createdAt asc (mirrors selectSubagentsForParent ordering).
   for (const siblings of childrenByParentKey.values()) {
     siblings.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
-  return { childrenByParentKey, childAgentKeys };
+  return { childrenByParentKey, rootAgents };
+}
+
+// Keys reachable from any root by walking the children map (expand-independent).
+// Agents outside this set are only reachable via a parent-label cycle.
+function collectReachableKeys(
+  rootAgents: AggregatedAgent[],
+  childrenByParentKey: Map<string, AggregatedAgent[]>,
+): Set<string> {
+  const reachable = new Set<string>();
+  const stack = rootAgents.map((agent) => `${agent.serverId}:${agent.id}`);
+  while (stack.length > 0) {
+    const key = stack.pop();
+    if (key === undefined || reachable.has(key)) continue;
+    reachable.add(key);
+    for (const child of childrenByParentKey.get(key) ?? []) {
+      stack.push(`${child.serverId}:${child.id}`);
+    }
+  }
+  return reachable;
 }
 
 export function buildFlatItems(
   agents: AggregatedAgent[],
   expandedParents: ReadonlySet<string>,
 ): FlatListItem[] {
-  const { childrenByParentKey, childAgentKeys } = groupChildrenByParent(agents);
+  const { childrenByParentKey, rootAgents } = groupAgentsByParent(agents);
+  const reachable = collectReachableKeys(rootAgents, childrenByParentKey);
 
-  // Bucket top-level agents by date section
+  const result: FlatListItem[] = [];
+  const emitted = new Set<string>();
+
+  // Emit an agent and, when expanded, its descendants at increasing depth.
+  // `emitted` guards against duplicates and parent-label cycles (A <- B <- A),
+  // so the walk always terminates and never renders an agent twice.
+  const emitAgent = (agent: AggregatedAgent, depth: number): void => {
+    const key = `${agent.serverId}:${agent.id}`;
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    const children = childrenByParentKey.get(key) ?? [];
+    const hasChildren = children.length > 0;
+    const expanded = hasChildren && expandedParents.has(key);
+    result.push({
+      type: "agent",
+      key,
+      agent,
+      depth,
+      hasChildren,
+      expanded,
+      childCount: children.length,
+    });
+    if (!expanded) return;
+    for (const child of children) {
+      emitAgent(child, depth + 1);
+    }
+  };
+
+  // Date-section headers apply to roots only; descendants nest under their root.
   const buckets = new Map<DateSectionKey, AggregatedAgent[]>();
-  for (const agent of agents) {
-    if (childAgentKeys.has(`${agent.serverId}:${agent.id}`)) continue;
+  for (const agent of rootAgents) {
     const section = deriveDateSectionKey(agent.lastActivityAt);
     const existing = buckets.get(section) ?? [];
     existing.push(agent);
     buckets.set(section, existing);
   }
 
-  const result: FlatListItem[] = [];
   for (const section of DATE_SECTION_ORDER) {
     const data = buckets.get(section);
     if (!data || data.length === 0) continue;
     result.push({ type: "header", key: `header:${section}`, section });
     for (const agent of data) {
-      const agentKey = `${agent.serverId}:${agent.id}`;
-      const children = childrenByParentKey.get(agentKey) ?? [];
-      const hasChildren = children.length > 0;
-      const expanded = hasChildren && expandedParents.has(agentKey);
-      result.push({
-        type: "agent",
-        key: agentKey,
-        agent,
-        depth: 0,
-        hasChildren,
-        expanded,
-        childCount: children.length,
-      });
-      if (expanded) {
-        for (const child of children) {
-          result.push({
-            type: "agent",
-            key: `${child.serverId}:${child.id}`,
-            agent: child,
-            depth: 1,
-            hasChildren: false,
-            expanded: false,
-            childCount: 0,
-          });
-        }
-      }
+      emitAgent(agent, 0);
     }
   }
+
+  // Safety net: an agent unreachable from any root (only possible via a
+  // parent-label cycle) still renders top-level so it is never silently dropped.
+  // Reachable descendants of a collapsed parent stay hidden — they are reachable.
+  for (const agent of agents) {
+    if (reachable.has(`${agent.serverId}:${agent.id}`)) continue;
+    emitAgent(agent, 0);
+  }
+
   return result;
 }

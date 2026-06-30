@@ -105,9 +105,8 @@ describe("buildFlatItems", () => {
     expect(item.childCount).toBe(0);
   });
 
-  it("never drops a grandchild: deeper-than-one-level agents stay top-level", () => {
-    // A (top) <- B (child of A) <- C (child of B). Phase 1 nests one level, so
-    // B nests under A and C must remain visible as a top-level row, not vanish.
+  it("nests several levels deep, increasing depth, only under expanded ancestors", () => {
+    // A <- B <- C: a three-level chain.
     const a = makeAgent("a", "server-1");
     const b = makeAgent("b", "server-1", {
       labels: { [PARENT_AGENT_ID_LABEL]: "a" },
@@ -116,20 +115,46 @@ describe("buildFlatItems", () => {
       labels: { [PARENT_AGENT_ID_LABEL]: "b" },
     });
 
-    // Collapsed: A (with 1 child) and C are top-level; B is hidden under A.
-    const collapsed = buildFlatItems([a, b, c], new Set())
-      .filter((i) => i.type === "agent")
-      .map((i) => (i.type === "agent" ? i : null))
-      .filter((i) => i !== null);
-    expect(collapsed.map((i) => i.agent.id).sort()).toEqual(["a", "c"]);
-    const cRow = collapsed.find((i) => i.agent.id === "c");
-    expect(cRow?.depth).toBe(0);
-    expect(cRow?.hasChildren).toBe(false);
+    // Nothing expanded: only the root A shows.
+    const collapsed = buildFlatItems([a, b, c], new Set()).filter((i) => i.type === "agent");
+    expect(collapsed).toHaveLength(1);
+    const root = collapsed[0];
+    if (root?.type !== "agent") throw new Error("expected agent item");
+    expect(root.agent.id).toBe("a");
+    expect(root.depth).toBe(0);
+    expect(root.hasChildren).toBe(true);
 
-    // Every agent renders exactly once across collapsed + expanded states.
-    const expanded = buildFlatItems([a, b, c], new Set(["server-1:a"])).filter(
+    // Expand A only: A (0) + B (1); C stays hidden under collapsed B.
+    const oneLevel = buildFlatItems([a, b, c], new Set(["server-1:a"])).filter(
       (i) => i.type === "agent",
     );
-    expect(expanded).toHaveLength(3);
+    expect(oneLevel.map((i) => (i.type === "agent" ? i.agent.id : ""))).toEqual(["a", "b"]);
+
+    // Expand A and B: the full chain renders at increasing depth.
+    const full = buildFlatItems([a, b, c], new Set(["server-1:a", "server-1:b"])).filter(
+      (i) => i.type === "agent",
+    );
+    expect(full.map((i) => (i.type === "agent" ? [i.agent.id, i.depth] : null))).toEqual([
+      ["a", 0],
+      ["b", 1],
+      ["c", 2],
+    ]);
+  });
+
+  it("renders every agent exactly once even when parent labels form a cycle", () => {
+    // A <- B and B <- A: neither is a root. The walk must still emit both
+    // exactly once (no infinite loop, no silent drop).
+    const a = makeAgent("a", "server-1", {
+      labels: { [PARENT_AGENT_ID_LABEL]: "b" },
+    });
+    const b = makeAgent("b", "server-1", {
+      labels: { [PARENT_AGENT_ID_LABEL]: "a" },
+    });
+
+    const items = buildFlatItems([a, b], new Set(["server-1:a", "server-1:b"])).filter(
+      (i) => i.type === "agent",
+    );
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => (i.type === "agent" ? i.agent.id : "")).sort()).toEqual(["a", "b"]);
   });
 });

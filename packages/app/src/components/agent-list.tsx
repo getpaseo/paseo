@@ -156,7 +156,7 @@ function RowLeadingControl({
   testID,
 }: {
   hasChildren: boolean;
-  depth: 0 | 1;
+  depth: number;
   expanded: boolean;
   onToggle: () => void;
   testID: string;
@@ -183,7 +183,7 @@ function RowLeadingControl({
       </Pressable>
     );
   }
-  if (depth === 1) {
+  if (depth >= 1) {
     return <View style={styles.childIndent} />;
   }
   return null;
@@ -269,7 +269,7 @@ function SessionRow({
   showHostColumn: boolean;
   onPress: (agent: AggregatedAgent) => void;
   onLongPress: (agent: AggregatedAgent) => void;
-  depth?: 0 | 1;
+  depth?: number;
   hasChildren?: boolean;
   expanded?: boolean;
   childCount?: number;
@@ -286,14 +286,20 @@ function SessionRow({
   const ProviderIcon = getProviderIcon(agent.provider);
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
 
+  const rowIndentStyle = useMemo(
+    () => (depth > 0 ? { paddingLeft: theme.spacing[3] + depth * theme.spacing[4] } : null),
+    [depth, theme.spacing],
+  );
+
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
+      rowIndentStyle,
       isSelected && styles.rowSelected,
       Boolean(hovered) && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [isSelected],
+    [isSelected, rowIndentStyle],
   );
 
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
