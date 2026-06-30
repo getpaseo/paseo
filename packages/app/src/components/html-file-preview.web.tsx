@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useRef, type CSSProperties } from "react";
+import { createElement, useCallback, useLayoutEffect, useRef, type CSSProperties } from "react";
 
 const IFRAME_STYLE: CSSProperties = {
   border: "none",
@@ -32,7 +32,10 @@ export function HtmlFilePreview({ content }: { content: string }) {
   const initialLoadDoneRef = useRef(false);
 
   // Treat the load triggered by a new file's content as a fresh initial load.
-  useEffect(() => {
+  // useLayoutEffect runs synchronously after the DOM commit, before the browser
+  // can dispatch the iframe's `load` event — so the flag is reset before the
+  // new content's initial load fires (a plain useEffect could race it).
+  useLayoutEffect(() => {
     initialLoadDoneRef.current = false;
   }, [content]);
 
