@@ -48,6 +48,7 @@ export function useProjects(): UseProjectsResult {
   const projectsQuery = useQuery({
     queryKey: [...projectsQueryKey, projectsQueryRuntimeKey(hostInputs), runtimeVersion] as const,
     queryFn: () => fetchAggregatedProjects({ hosts: hostInputs, runtime }),
+    staleTime: 5_000,
   });
 
   return {
