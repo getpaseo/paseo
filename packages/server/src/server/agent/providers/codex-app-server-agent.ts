@@ -6043,6 +6043,10 @@ export class CodexAppServerAgentClient implements AgentClient {
           cwd,
           options.upToMessageId,
         );
+        this.logger.info(
+          { threadId: newThreadId, upToMessageId: options.upToMessageId, numTurns },
+          "codex.fork.rollback",
+        );
         if (numTurns > 0) {
           await rollbackCodexThread(client, { threadId: newThreadId, numTurns });
         }
@@ -6060,10 +6064,12 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   /**
-   * Number of trailing user turns to roll back so a forked thread ends at
-   * `upToMessageId`. Reads the forked thread's own history (self-contained, no
-   * source session needed). Returns 0 when the boundary is the last turn or
-   * cannot be located (→ keep the full copy).
+   * Number of trailing turns to roll back so a forked thread ends at the turn
+   * containing `upToMessageId`. The fork boundary is the assistant message id of
+   * the selected turn, so we locate the THREAD TURN whose items include that
+   * message (assistant or user) and roll back every turn after it. Reads the
+   * forked thread's own history (self-contained). Returns 0 when the boundary is
+   * the last turn or cannot be located (→ keep the full copy).
    */
   private async resolveCodexForkRollbackTurns(
     client: CodexAppServerClientLike,
@@ -6071,19 +6077,27 @@ export class CodexAppServerAgentClient implements AgentClient {
     cwd: string | null,
     upToMessageId: string,
   ): Promise<number> {
-    const timeline = await loadCodexThreadHistoryTimeline({
-      threadId,
-      cwd,
-      requestThread: (id) => readCodexThread(client, id),
-    });
-    const userTurnIds = timeline
-      .filter((entry) => entry.item.type === "user_message")
-      .map((entry) => (entry.item as { messageId: string }).messageId);
-    const targetIndex = userTurnIds.indexOf(upToMessageId);
-    if (targetIndex < 0) {
+    const response = await requestCodexThreadHistory((id) => readCodexThread(client, id), threadId);
+    const turns = response.thread.turns;
+    let boundaryTurnIndex = -1;
+    for (let t = 0; t < turns.length; t += 1) {
+      const rawItems = (turns[t] as { items?: unknown[] }).items ?? [];
+      const containsBoundary = rawItems.some((raw) => {
+        const item = threadItemToTimeline(raw, { cwd });
+        return (
+          (item?.type === "assistant_message" || item?.type === "user_message") &&
+          item.messageId === upToMessageId
+        );
+      });
+      if (containsBoundary) {
+        boundaryTurnIndex = t;
+        break;
+      }
+    }
+    if (boundaryTurnIndex < 0) {
       return 0;
     }
-    return userTurnIds.length - (targetIndex + 1);
+    return turns.length - (boundaryTurnIndex + 1);
   }
 
   async listImportableSessions(
