@@ -28,13 +28,23 @@ const OptionalTrimmedStringSchema = z
   .optional()
   .transform((value) => (value && value.length > 0 ? value : undefined));
 
-const OpenAiSpeechResolutionSchema = z.object({
+// Endpoint credentials only — plain trimmed strings, so this never throws on a
+// malformed value. The STT/TTS option groups parse separately and only for the
+// endpoint that is actually configured, so a stale env var for an unused endpoint
+// (e.g. a leftover TTS_VOICE in an STT-only setup) can't break the other one.
+const OpenAiEndpointKeysSchema = z.object({
   sttApiKey: OptionalTrimmedStringSchema,
   sttBaseUrl: OptionalTrimmedStringSchema,
   ttsApiKey: OptionalTrimmedStringSchema,
   ttsBaseUrl: OptionalTrimmedStringSchema,
+});
+
+const OpenAiSttOptionsSchema = z.object({
   sttConfidenceThreshold: OptionalFiniteNumberSchema,
   sttModel: OptionalTrimmedStringSchema,
+});
+
+const OpenAiTtsOptionsSchema = z.object({
   ttsVoice: z.string().trim().toLowerCase().pipe(OpenAiTtsVoiceSchema).default("alloy"),
   ttsModel: z
     .string()
@@ -151,35 +161,46 @@ export function resolveOpenAiSpeechConfig(params: {
   persisted: PersistedConfig;
   providers: RequestedSpeechProviders;
 }): OpenAiSpeechProviderConfig | undefined {
-  const parsed = OpenAiSpeechResolutionSchema.parse(buildOpenAiResolutionInput(params));
+  const input = buildOpenAiResolutionInput(params);
+  const keys = OpenAiEndpointKeysSchema.parse(input);
 
-  if (!parsed.sttApiKey && !parsed.ttsApiKey) {
+  if (!keys.sttApiKey && !keys.ttsApiKey) {
     return undefined;
   }
 
   return {
-    ...(parsed.sttApiKey
-      ? {
-          stt: {
-            apiKey: parsed.sttApiKey,
-            ...(parsed.sttBaseUrl ? { baseUrl: parsed.sttBaseUrl } : {}),
-            ...(parsed.sttConfidenceThreshold !== undefined
-              ? { confidenceThreshold: parsed.sttConfidenceThreshold }
-              : {}),
-            ...(parsed.sttModel ? { model: parsed.sttModel } : {}),
-          },
-        }
+    ...(keys.sttApiKey ? { stt: buildSttConfig(keys.sttApiKey, keys.sttBaseUrl, input) } : {}),
+    ...(keys.ttsApiKey ? { tts: buildTtsConfig(keys.ttsApiKey, keys.ttsBaseUrl, input) } : {}),
+  };
+}
+
+function buildSttConfig(
+  apiKey: string,
+  baseUrl: string | undefined,
+  input: Record<string, unknown>,
+): OpenAiSpeechProviderConfig["stt"] {
+  const options = OpenAiSttOptionsSchema.parse(input);
+  return {
+    apiKey,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(options.sttConfidenceThreshold !== undefined
+      ? { confidenceThreshold: options.sttConfidenceThreshold }
       : {}),
-    ...(parsed.ttsApiKey
-      ? {
-          tts: {
-            apiKey: parsed.ttsApiKey,
-            ...(parsed.ttsBaseUrl ? { baseUrl: parsed.ttsBaseUrl } : {}),
-            voice: parsed.ttsVoice,
-            model: parsed.ttsModel,
-            responseFormat: "pcm",
-          },
-        }
-      : {}),
+    ...(options.sttModel ? { model: options.sttModel } : {}),
+  };
+}
+
+function buildTtsConfig(
+  apiKey: string,
+  baseUrl: string | undefined,
+  input: Record<string, unknown>,
+): OpenAiSpeechProviderConfig["tts"] {
+  const options = OpenAiTtsOptionsSchema.parse(input);
+  return {
+    apiKey,
+    ...(baseUrl ? { baseUrl } : {}),
+    voice: options.ttsVoice,
+    model: options.ttsModel,
+    responseFormat: "pcm",
   };
 }

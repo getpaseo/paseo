@@ -187,4 +187,20 @@ describe("resolveOpenAiSpeechConfig", () => {
     expect(resolved?.stt?.apiKey).toBe("stt-only-key");
     expect(resolved?.tts).toBeUndefined();
   });
+
+  test("resolves STT even when an unused TTS env var is invalid", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: {
+        openai: {
+          stt: { apiKey: "stt-only-key" },
+        },
+      },
+    });
+    const env = { TTS_VOICE: "not-a-real-voice", TTS_MODEL: "bogus-model" } as NodeJS.ProcessEnv;
+
+    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
+
+    expect(resolved?.stt?.apiKey).toBe("stt-only-key");
+    expect(resolved?.tts).toBeUndefined();
+  });
 });
