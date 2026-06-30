@@ -282,9 +282,9 @@ test.describe("Projects settings — error UX", () => {
     page,
     editableProject,
   }) => {
-    // Drop the WS connection the moment a read_project_config_request is sent.
-    // Subsequent connections are proxied transparently so Reload can succeed.
-    await installReadTransportFailure(page);
+    // Reject read_project_config_request calls until the user clicks Reload.
+    // This keeps automatic reconnect refetches from racing past the callout.
+    const transportFailure = await installReadTransportFailure(page);
 
     await openProjects(page);
     await navigateToProjectSettings(page, editableProject.name);
@@ -292,7 +292,8 @@ test.describe("Projects settings — error UX", () => {
     await expectProjectSettingsError(page, "transport");
     await expectProjectSettingsFormHidden(page);
 
-    // The client reconnects after a ~1.5 s backoff; retry Reload until refetch succeeds.
+    // Retry Reload until the refetch wins any in-flight error-state rendering.
+    transportFailure.allowRecovery();
     await expect(async () => {
       await clickReloadProjectSettings(page);
       await expectNoProjectSettingsError(page, "transport", 3_000);
