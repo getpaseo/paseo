@@ -57,9 +57,15 @@ function pickIfOpenAi<T>(
 
 function firstDefined<T>(values: Array<T | null | undefined>): T | undefined {
   for (const value of values) {
-    if (value !== undefined && value !== null) {
-      return value;
+    if (value === undefined || value === null) {
+      continue;
     }
+    // Empty/whitespace env vars (e.g. a copied .env.example with OPENAI_STT_API_KEY=)
+    // must not shadow a later fallback such as OPENAI_API_KEY.
+    if (typeof value === "string" && value.trim().length === 0) {
+      continue;
+    }
+    return value;
   }
   return undefined;
 }

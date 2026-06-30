@@ -153,6 +153,22 @@ describe("resolveOpenAiSpeechConfig", () => {
     expect(resolved?.tts?.baseUrl).toBe("https://env.example.com/v1");
   });
 
+  test("ignores empty endpoint env vars and falls back to OPENAI_API_KEY", () => {
+    const persisted = PersistedConfigSchema.parse({});
+    const env = {
+      OPENAI_API_KEY: "global-key",
+      OPENAI_STT_API_KEY: "",
+      OPENAI_STT_BASE_URL: "  ",
+      OPENAI_TTS_API_KEY: "",
+      OPENAI_TTS_BASE_URL: "",
+    } as NodeJS.ProcessEnv;
+
+    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
+
+    expect(resolved?.stt?.apiKey).toBe("global-key");
+    expect(resolved?.tts?.apiKey).toBe("global-key");
+  });
+
   test("omits TTS when only an STT key is configured", () => {
     const persisted = PersistedConfigSchema.parse({
       providers: {

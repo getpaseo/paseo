@@ -656,6 +656,38 @@ describe("loadPersistedConfig", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test("loads a config that still uses the removed providers.openai.voice block", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            providers: {
+              openai: {
+                apiKey: "global-key",
+                voice: { apiKey: "voice-key", baseUrl: "https://voice.example.com/v1" },
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.providers?.openai?.apiKey).toBe("global-key");
+      expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
+      expect(config.providers?.openai?.stt).toBeUndefined();
+      expect(config.providers?.openai?.tts).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {
