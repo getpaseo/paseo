@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { copyFile, cp, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -29,14 +30,16 @@ export function resolveKiroSessionsDir(): string {
  * an opaque model-side blob that cannot be safely truncated, so the fork
  * duplicates the whole conversation and the branch continues from its end.
  *
- * Throws if the source metadata file does not exist.
+ * All file I/O is async (`fs/promises`) so the copy never blocks the daemon's
+ * event loop while other sessions are mid-IPC. Throws if the source metadata
+ * file does not exist.
  */
-export function forkKiroSessionFiles(input: {
+export async function forkKiroSessionFiles(input: {
   sessionsDir: string;
   sourceId: string;
   newId?: string;
   titleSuffix?: string;
-}): string {
+}): Promise<string> {
   const { sessionsDir, sourceId } = input;
   const newId = input.newId ?? randomUUID();
 
@@ -47,25 +50,25 @@ export function forkKiroSessionFiles(input: {
 
   // Metadata: rewrite session_id (filename and internal id must agree) and
   // optionally annotate the title so the fork is recognizable.
-  const metadata = JSON.parse(readFileSync(sourceJsonPath, "utf8")) as Record<string, unknown>;
+  const metadata = JSON.parse(await readFile(sourceJsonPath, "utf8")) as Record<string, unknown>;
   metadata.session_id = newId;
   if (input.titleSuffix && typeof metadata.title === "string") {
     metadata.title = `${metadata.title}${input.titleSuffix}`;
   }
-  writeFileSync(path.join(sessionsDir, `${newId}.json`), JSON.stringify(metadata), "utf8");
+  await writeFile(path.join(sessionsDir, `${newId}.json`), JSON.stringify(metadata), "utf8");
 
   // Event log + readline history: verbatim copy when present.
   for (const ext of [".jsonl", ".history"]) {
     const src = path.join(sessionsDir, `${sourceId}${ext}`);
     if (existsSync(src)) {
-      copyFileSync(src, path.join(sessionsDir, `${newId}${ext}`));
+      await copyFile(src, path.join(sessionsDir, `${newId}${ext}`));
     }
   }
 
   // Some sessions carry a sidecar directory (`<id>/`); copy it recursively.
   const sidecar = path.join(sessionsDir, sourceId);
   if (existsSync(sidecar)) {
-    cpSync(sidecar, path.join(sessionsDir, newId), { recursive: true });
+    await cp(sidecar, path.join(sessionsDir, newId), { recursive: true });
   }
 
   return newId;

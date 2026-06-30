@@ -56,7 +56,7 @@ export class TraeACPAgentClient extends GenericACPAgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const newId = forkTraeSessionFiles({
+    const newId = await forkTraeSessionFiles({
       sessionsDir: resolveTraeSessionsDir(),
       sourceId: handle.sessionId,
       titleSuffix: " (fork)",

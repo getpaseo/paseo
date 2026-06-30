@@ -52,8 +52,12 @@ describe("forkKiroSessionFiles", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("duplicates all session files into a new id, rewriting session_id", () => {
-    const newId = forkKiroSessionFiles({ sessionsDir: dir, sourceId, titleSuffix: " (fork)" });
+  it("duplicates all session files into a new id, rewriting session_id", async () => {
+    const newId = await forkKiroSessionFiles({
+      sessionsDir: dir,
+      sourceId,
+      titleSuffix: " (fork)",
+    });
 
     expect(newId).not.toBe(sourceId);
 
@@ -79,15 +83,15 @@ describe("forkKiroSessionFiles", () => {
     expect(source.title).toBe("Original");
   });
 
-  it("uses the provided new id when given", () => {
+  it("uses the provided new id when given", async () => {
     const newId = "22222222-2222-4222-8222-222222222222";
-    expect(forkKiroSessionFiles({ sessionsDir: dir, sourceId, newId })).toBe(newId);
+    expect(await forkKiroSessionFiles({ sessionsDir: dir, sourceId, newId })).toBe(newId);
     expect(existsSync(path.join(dir, `${newId}.json`))).toBe(true);
   });
 
-  it("throws when the source session metadata is missing", () => {
-    expect(() => forkKiroSessionFiles({ sessionsDir: dir, sourceId: "does-not-exist" })).toThrow(
-      /not found/,
-    );
+  it("throws when the source session metadata is missing", async () => {
+    await expect(
+      forkKiroSessionFiles({ sessionsDir: dir, sourceId: "does-not-exist" }),
+    ).rejects.toThrow(/not found/);
   });
 });

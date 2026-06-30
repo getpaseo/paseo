@@ -97,8 +97,12 @@ describe("forkTraeSessionFiles", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("duplicates session directory into a new id, rewriting internal references", () => {
-    const newId = forkTraeSessionFiles({ sessionsDir: dir, sourceId, titleSuffix: " (fork)" });
+  it("duplicates session directory into a new id, rewriting internal references", async () => {
+    const newId = await forkTraeSessionFiles({
+      sessionsDir: dir,
+      sourceId,
+      titleSuffix: " (fork)",
+    });
 
     expect(newId).not.toBe(sourceId);
 
@@ -128,25 +132,25 @@ describe("forkTraeSessionFiles", () => {
     expect(source.metadata.title).toBe("Original Session");
   });
 
-  it("uses the provided new id when given", () => {
+  it("uses the provided new id when given", async () => {
     const newId = "22222222-2222-4222-8222-222222222222";
-    expect(forkTraeSessionFiles({ sessionsDir: dir, sourceId, newId })).toBe(newId);
+    expect(await forkTraeSessionFiles({ sessionsDir: dir, sourceId, newId })).toBe(newId);
     expect(existsSync(path.join(dir, newId))).toBe(true);
     expect(existsSync(path.join(dir, newId, "session.json"))).toBe(true);
   });
 
-  it("throws when the source session directory is missing", () => {
-    expect(() => forkTraeSessionFiles({ sessionsDir: dir, sourceId: "does-not-exist" })).toThrow(
-      /not found/,
-    );
+  it("throws when the source session directory is missing", async () => {
+    await expect(
+      forkTraeSessionFiles({ sessionsDir: dir, sourceId: "does-not-exist" }),
+    ).rejects.toThrow(/not found/);
   });
 
-  it("works without optional files (traces.jsonl missing)", () => {
+  it("works without optional files (traces.jsonl missing)", async () => {
     // Remove traces.jsonl from source
     const sourceDir = path.join(dir, sourceId);
     rmSync(path.join(sourceDir, "traces.jsonl"));
 
-    const newId = forkTraeSessionFiles({ sessionsDir: dir, sourceId });
+    const newId = await forkTraeSessionFiles({ sessionsDir: dir, sourceId });
     const destDir = path.join(dir, newId);
     expect(existsSync(path.join(destDir, "session.json"))).toBe(true);
     expect(existsSync(path.join(destDir, "events.jsonl"))).toBe(true);

@@ -129,7 +129,7 @@ export class KiroACPAgentClient extends GenericACPAgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const newId = forkKiroSessionFiles({
+    const newId = await forkKiroSessionFiles({
       sessionsDir: resolveKiroSessionsDir(),
       sourceId: handle.sessionId,
       titleSuffix: " (fork)",
