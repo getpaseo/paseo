@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import {
   ProviderCatalogSession,
@@ -8,7 +8,7 @@ import { createStub } from "../../test-utils/class-mocks.js";
 import { findByType } from "../../test-utils/session-stubs.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import {
-  resolveSnapshotCwd,
+  GLOBAL_PROVIDER_SNAPSHOT_KEY,
   type ProviderSnapshotManager,
 } from "../../agent/provider-snapshot-manager.js";
 import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
@@ -66,7 +66,10 @@ function makeSubsystem(options: MakeOptions = {}) {
     providerUsageService: createStub<ProviderUsageService>(options.usage ?? {}),
     logger: pino({ level: "silent" }),
   });
-  function pushSnapshotChange(entries: ProviderSnapshotEntry[], cwd = resolveSnapshotCwd()): void {
+  function pushSnapshotChange(
+    entries: ProviderSnapshotEntry[],
+    cwd = GLOBAL_PROVIDER_SNAPSHOT_KEY,
+  ): void {
     if (!changeHandler) throw new Error("start() must run before a snapshot change");
     changeHandler(entries, cwd);
   }
@@ -140,6 +143,26 @@ describe("ProviderCatalogSession", () => {
 
     const res = findByType(emitted, "list_provider_models_response");
     expect(res?.payload.error).toBe("Provider codex is disabled");
+  });
+
+  it("preserves missing cwd as the semantic global snapshot for model list reads", async () => {
+    const getSnapshot = vi.fn(() => [{ provider: "codex", status: "loading", enabled: true }]);
+    const warmUpSnapshotForCwd = vi.fn(async () => {});
+    const { subsystem } = makeSubsystem({
+      snapshot: { getSnapshot, warmUpSnapshotForCwd },
+    });
+
+    await subsystem.handleListProviderModelsRequest({
+      type: "list_provider_models_request",
+      provider: "codex",
+      requestId: "m-global",
+    });
+
+    expect(getSnapshot).toHaveBeenCalledWith(undefined);
+    expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
+      cwd: undefined,
+      providers: ["codex"],
+    });
   });
 
   it("surfaces a usage-list failure as an rpc_error envelope", async () => {

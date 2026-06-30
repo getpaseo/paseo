@@ -861,7 +861,11 @@ describe("PiRpcAgentClient", () => {
   test("discovers models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
-    const catalogPromise = client.fetchCatalog({ cwd: "/workspace/with-extension", force: false });
+    const catalogPromise = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+    });
     pi.latestSession().models = [
       {
         provider: "openrouter",
@@ -883,6 +887,17 @@ describe("PiRpcAgentClient", () => {
       modes: [],
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+  });
+
+  test("lists no draft features without starting a Pi session", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await expect(
+      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
+    ).resolves.toEqual([]);
+
+    expect(pi.recordedLaunches).toHaveLength(0);
   });
 
   test("maps extension, prompt, and skill commands to Paseo slash commands", async () => {

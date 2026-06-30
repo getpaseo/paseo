@@ -19,6 +19,21 @@ export interface OpenProjectFailure {
 }
 
 export type OpenProjectResult = OpenProjectSuccess | OpenProjectFailure;
+export type OpenProjectFailureReason = "directory_not_found" | "open_failed";
+
+export function getOpenProjectFailureReason(
+  result: OpenProjectResult,
+): OpenProjectFailureReason | null {
+  if (result.ok) {
+    return null;
+  }
+
+  if (result.errorCode === "directory_not_found") {
+    return "directory_not_found";
+  }
+
+  return "open_failed";
+}
 
 export interface OpenProjectDirectlyInput {
   serverId: string;

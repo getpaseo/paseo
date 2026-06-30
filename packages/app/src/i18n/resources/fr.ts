@@ -166,7 +166,7 @@ export const fr: TranslationResources = {
     hints: {
       thinking: "Mode réflexion",
       model: "Changer de modèle",
-      mode: "Changer le mode d'autorisation",
+      mode: "Changer de mode",
     },
   },
   agentStream: {
@@ -248,6 +248,12 @@ export const fr: TranslationResources = {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",
       copyMessage: "Copier le message",
+      forkMenu: "Dupliquer le message",
+      forkInNewTab: "Dupliquer dans un nouvel onglet",
+      forkInNewWorkspace: "Dupliquer dans un nouvel espace de travail",
+      forkUnavailable: "Mettez l'hôte à jour pour utiliser ceci.",
+      forkMissingWorkspace: "Cet agent n'est pas dans un espace de travail.",
+      forkFailed: "Impossible de dupliquer le chat",
       openFile: "Ouvrir le fichier",
       copied: "Copié",
     },
@@ -958,8 +964,14 @@ export const fr: TranslationResources = {
         upToDate: "L'application est à jour.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Nous vous informerons lorsque la mise à jour sera prête.",
+        pendingWithLastChecked:
+          "Nous vous informerons lorsque la mise à jour sera prête. Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête:{{version}}",
+        availableWithVersionAndLastChecked:
+          "Mise à jour prête:{{version}}. Dernière vérification à {{time}}.",
         available: "Une mise à jour de l'application est prête à être installée.",
+        availableWithLastChecked:
+          "Une mise à jour de l'application est prête à être installée. Dernière vérification à {{time}}.",
         installed: "Mise à jour de l'application installée. Redémarrage requis.",
         failed: "Échec de la mise à jour de l'application.",
         idle: "L'état de la mise à jour n'a pas encore été vérifié.",
@@ -1089,6 +1101,7 @@ export const fr: TranslationResources = {
   projectPicker: {
     placeholder: "Tapez un chemin de répertoire...",
     opening: "Projet d'ouverture...",
+    searching: "Recherche en cours...",
     empty: "Commencez à taper un chemin",
     errors: {
       directory_not_found: "Répertoire introuvable.",
@@ -1478,6 +1491,8 @@ export const fr: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1489,6 +1504,22 @@ export const fr: TranslationResources = {
       playTest: "Jouer à l'essai",
       playing: "Jouant...",
       playbackFailed: "Échec de la lecture:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "À propos",
@@ -1609,6 +1640,7 @@ export const fr: TranslationResources = {
         toggleFocusMode: "Basculer le mode de mise au point",
         cycleTheme: "Thème du cycle",
         focusMessageInput: "Saisie du message de focus",
+        cycleAgentMode: "Parcourir les modes de l'agent",
         toggleVoiceMode: "Changer le mode vocal",
         startStopDictation: "Démarrer la dictée/stop",
         interruptAgent: "Agent d'interruption",
@@ -1771,6 +1803,30 @@ export const fr: TranslationResources = {
             "Échec de l'envoi de la demande de redémarrage.Paseose reconnecte automatiquement - réessayez une fois que l'hôte apparaît comme en ligne.",
           dialogFailedMessage:
             "Impossible d'ouvrir la boîte de dialogue de confirmation de redémarrage.",
+        },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
         },
         dangerZone: "Zone dangereuse",
         remove: {

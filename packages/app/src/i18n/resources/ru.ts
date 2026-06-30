@@ -165,7 +165,7 @@ export const ru: TranslationResources = {
     hints: {
       thinking: "Режим мышления",
       model: "Изменить модель",
-      mode: "Изменить режим разрешений",
+      mode: "Изменить режим",
     },
   },
   agentStream: {
@@ -247,6 +247,12 @@ export const ru: TranslationResources = {
       copyCode: "Скопировать код",
       copyTurn: "Копировать ход",
       copyMessage: "Копировать сообщение",
+      forkMenu: "Форкнуть сообщение",
+      forkInNewTab: "Форкнуть в новой вкладке",
+      forkInNewWorkspace: "Форкнуть в новом рабочем пространстве",
+      forkUnavailable: "Обновите хост, чтобы использовать это.",
+      forkMissingWorkspace: "Этот агент не находится в рабочем пространстве.",
+      forkFailed: "Не удалось форкнуть чат",
       openFile: "Открыть файл",
       copied: "Скопировано",
     },
@@ -951,8 +957,14 @@ export const ru: TranslationResources = {
         upToDate: "Приложение актуально.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Мы сообщим вам, когда обновление будет готово.",
+        pendingWithLastChecked:
+          "Мы сообщим вам, когда обновление будет готово. Последняя проверка в {{time}}.",
         availableWithVersion: "Обновление готово:{{version}}",
+        availableWithVersionAndLastChecked:
+          "Обновление готово:{{version}}. Последняя проверка в {{time}}.",
         available: "Обновление приложения готово к установке.",
+        availableWithLastChecked:
+          "Обновление приложения готово к установке. Последняя проверка в {{time}}.",
         installed: "Обновление приложения установлено. Требуется перезагрузка.",
         failed: "Не удалось обновить приложение.",
         idle: "Статус обновления еще не проверен.",
@@ -1077,6 +1089,7 @@ export const ru: TranslationResources = {
   projectPicker: {
     placeholder: "Введите путь к каталогу...",
     opening: "Открытие проекта...",
+    searching: "Идет поиск...",
     empty: "Начните вводить путь",
     errors: {
       directory_not_found: "Каталог не найден.",
@@ -1465,6 +1478,8 @@ export const ru: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1476,6 +1491,22 @@ export const ru: TranslationResources = {
       playTest: "Игровой тест",
       playing: "Игра...",
       playbackFailed: "Ошибка воспроизведения:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "О",
@@ -1597,6 +1628,7 @@ export const ru: TranslationResources = {
         toggleFocusMode: "Переключить режим фокусировки",
         cycleTheme: "Циклическая тема",
         focusMessageInput: "Фокус ввода сообщения",
+        cycleAgentMode: "Переключить режим агента",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать диктовку /stop",
         interruptAgent: "Агент прерываний",
@@ -1757,6 +1789,30 @@ export const ru: TranslationResources = {
           requestFailedMessage:
             "Не удалось отправить запрос на перезапуск.Paseo автоматически повторно подключается. Повторите попытку, как только хост окажется в сети.",
           dialogFailedMessage: "Невозможно открыть диалоговое окно подтверждения перезапуска.",
+        },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
         },
         dangerZone: "Опасная зона",
         remove: {

@@ -3,6 +3,9 @@ import { mkdtemp, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+const TEMP_CLEANUP_RETRIES = 5;
+const TEMP_CLEANUP_RETRY_DELAY_MS = 100;
+
 interface TempRepo {
   path: string;
   branchHeads: Record<string, string>;
@@ -126,7 +129,12 @@ export const createTempGitRepo = async (
     path: repoPath,
     branchHeads,
     cleanup: async () => {
-      await rm(repoPath, { recursive: true, force: true });
+      await rm(repoPath, {
+        recursive: true,
+        force: true,
+        maxRetries: TEMP_CLEANUP_RETRIES,
+        retryDelay: TEMP_CLEANUP_RETRY_DELAY_MS,
+      });
     },
   };
 };
@@ -141,7 +149,12 @@ export async function createTempDirectory(prefix = "paseo-e2e-dir-"): Promise<Te
   return {
     path: dirPath,
     cleanup: async () => {
-      await rm(dirPath, { recursive: true, force: true });
+      await rm(dirPath, {
+        recursive: true,
+        force: true,
+        maxRetries: TEMP_CLEANUP_RETRIES,
+        retryDelay: TEMP_CLEANUP_RETRY_DELAY_MS,
+      });
     },
   };
 }

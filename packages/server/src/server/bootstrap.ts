@@ -105,6 +105,11 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import {
+  createPaseoToolCatalog,
+  type PaseoToolHostDependencies,
+} from "./agent/tools/paseo-tools.js";
+import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
@@ -154,6 +159,7 @@ import {
   isAgentMcpRequestAuthorized,
   type DaemonAuthConfig,
 } from "./auth.js";
+import { createWebUiMiddleware } from "./web-ui.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
@@ -305,12 +311,13 @@ export type DaemonLifecycleIntent =
       type: "shutdown";
       clientId: string;
       requestId: string;
+      reason: string;
     }
   | {
       type: "restart";
       clientId: string;
       requestId: string;
-      reason?: string;
+      reason: string;
     };
 
 export interface PaseoDaemonConfig {
@@ -320,6 +327,7 @@ export interface PaseoDaemonConfig {
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
+  trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   autoArchiveAfterMerge?: boolean;
@@ -339,6 +347,10 @@ export interface PaseoDaemonConfig {
   serviceProxy?: {
     publicBaseUrl: string | null;
     standaloneListen: string | null;
+  };
+  webUi?: {
+    enabled: boolean;
+    distDir: string | null;
   };
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
@@ -400,6 +412,21 @@ async function reconcileManagedProcessLedger(
   if (reapResult.checked > 0 || reapResult.errors.length > 0) {
     logger.info(reapResult, "Managed helper process ledger reconciled");
   }
+}
+
+function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger: Logger): void {
+  app.use(
+    createWebUiMiddleware({
+      enabled: config.webUi?.enabled ?? false,
+      distDir: config.webUi?.distDir ?? null,
+      label: getHostname(),
+      logger,
+    }),
+  );
+}
+
+function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | string[] {
+  return config.trustedProxies ?? ["loopback"];
 }
 
 export async function createPaseoDaemon(
@@ -466,6 +493,7 @@ export async function createPaseoDaemon(
   const listenTarget = parseListenString(config.listen);
 
   const app = express();
+  app.set("trust proxy", resolveExpressTrustProxySetting(config));
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
   const terminalManager = createConfiguredTerminalManager({
@@ -562,6 +590,12 @@ export async function createPaseoDaemon(
     express.json(),
     createTerminalActivityRouteHandler(terminalManager),
   );
+
+  // Serve the bundled browser web UI when enabled. Mounted after service-proxy
+  // classification and host/CORS handling, but before daemon bearer auth, so
+  // static app files load without the daemon password while API/WebSocket calls
+  // remain protected.
+  mountWebUi(app, config, logger);
 
   app.use(
     createRequireBearerMiddleware(config.auth, (context) => {
@@ -858,82 +892,96 @@ export async function createPaseoDaemon(
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
   });
 
+  const createPaseoWorktreeForTools = async (
+    input: Parameters<typeof createPaseoWorktreeWorkflow>[1],
+    serviceOptions?: Parameters<typeof createPaseoWorktreeWorkflow>[2],
+  ) => {
+    return createPaseoWorktreeWorkflow(
+      {
+        paseoHome: config.paseoHome,
+        worktreesRoot: config.worktreesRoot,
+        createPaseoWorktree: async (workflowInput, workflowOptions) => {
+          return createRegisteredPaseoWorktree(workflowInput, {
+            github,
+            ...(workflowOptions?.resolveDefaultBranch
+              ? {
+                  resolveDefaultBranch: workflowOptions.resolveDefaultBranch,
+                }
+              : {}),
+            projectRegistry,
+            workspaceRegistry,
+            workspaceGitService,
+          });
+        },
+        warmWorkspaceGitData: async (workspace) => {
+          await Promise.all(
+            wsServer
+              ?.listActiveSessions()
+              .map((session) => session.warmWorkspaceGitDataForWorkspace(workspace)) ?? [],
+          );
+        },
+        emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+          await emitWorkspaceUpdatesExternal([workspaceId]);
+        },
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: emitExternalSessionMessage,
+        sessionLogger: logger,
+        terminalManager,
+        archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+        serviceProxy,
+        scriptRuntimeStore,
+        getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+        getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
+        serviceProxyPublicBaseUrl,
+        onScriptsChanged: null,
+      },
+      input,
+      serviceOptions,
+    );
+  };
+
+  const createAgentToolHostDependencies = (
+    runtime: PaseoToolRuntimeContext,
+  ): PaseoToolHostDependencies => ({
+    agentManager,
+    agentStorage,
+    terminalManager,
+    getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+    scheduleService,
+    providerSnapshotManager,
+    github,
+    workspaceGitService,
+    findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+    listActiveWorkspaces: listActiveWorkspacesExternal,
+    archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+    emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+    markWorkspaceArchiving: markWorkspaceArchivingExternal,
+    clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
+    createPaseoWorktree: createPaseoWorktreeForTools,
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    callerAgentId: runtime.callerAgentId,
+    enableVoiceTools: runtime.enableVoiceTools,
+    voiceOnly: runtime.voiceOnly,
+    resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
+    resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
+    logger,
+  });
+  const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
+    createPaseoToolCatalog(createAgentToolHostDependencies(runtime));
+  agentManager.setPaseoToolCatalogFactory(createAgentToolCatalog);
+  agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
+
   const mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
 
     const createAgentMcpSession = async (callerAgentId?: string) => {
-      const agentMcpServer = await createAgentMcpServer({
-        agentManager,
-        agentStorage,
-        terminalManager,
-        getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
-        scheduleService,
-        providerSnapshotManager,
-        github,
-        workspaceGitService,
-        findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
-        listActiveWorkspaces: listActiveWorkspacesExternal,
-        archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
-        emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
-        markWorkspaceArchiving: markWorkspaceArchivingExternal,
-        clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
-        ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
-        createPaseoWorktree: async (input, serviceOptions) => {
-          return createPaseoWorktreeWorkflow(
-            {
-              paseoHome: config.paseoHome,
-              worktreesRoot: config.worktreesRoot,
-              createPaseoWorktree: async (workflowInput, workflowOptions) => {
-                return createRegisteredPaseoWorktree(workflowInput, {
-                  github,
-                  ...(workflowOptions?.resolveDefaultBranch
-                    ? {
-                        resolveDefaultBranch: workflowOptions.resolveDefaultBranch,
-                      }
-                    : {}),
-                  projectRegistry,
-                  workspaceRegistry,
-                  workspaceGitService,
-                });
-              },
-              warmWorkspaceGitData: async (workspace) => {
-                await Promise.all(
-                  wsServer
-                    ?.listActiveSessions()
-                    .map((session) => session.warmWorkspaceGitDataForWorkspace(workspace)) ?? [],
-                );
-              },
-              emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
-                await emitWorkspaceUpdatesExternal([workspaceId]);
-              },
-              cacheWorkspaceSetupSnapshot: () => {},
-              emit: emitExternalSessionMessage,
-              sessionLogger: logger,
-              terminalManager,
-              archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
-              serviceProxy,
-              scriptRuntimeStore,
-              getDaemonTcpPort: () =>
-                boundListenTarget?.type === "tcp" ? boundListenTarget.port : null,
-              getDaemonTcpHost: () =>
-                boundListenTarget?.type === "tcp" ? boundListenTarget.host : null,
-              serviceProxyPublicBaseUrl,
-              onScriptsChanged: null,
-            },
-            input,
-            serviceOptions,
-          );
-        },
-        paseoHome: config.paseoHome,
-        worktreesRoot: config.worktreesRoot,
-        callerAgentId,
-        enableVoiceTools: false,
-        resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
-        resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
-        logger,
-      });
+      const agentMcpServer = await createAgentMcpServer(
+        createAgentToolHostDependencies({ callerAgentId }),
+      );
 
       // Stateless mode: each HTTP request builds a fresh server + transport that is
       // torn down when the response closes, so no per-session state is retained between
@@ -1087,8 +1135,10 @@ export async function createPaseoDaemon(
             const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
             agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
             agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+            agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
             daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
               agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
+              agentManager.setPaseoToolsEnabled(value !== false);
             });
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
               agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");

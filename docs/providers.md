@@ -10,11 +10,15 @@ Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-age
 
 The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
 
+Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
+
 ### Direct
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
 Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (a Pi-compatible built-in backed by the Pi adapter). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
+
+Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
 
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
@@ -26,6 +30,8 @@ Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does
 
 OMP is a built-in Pi-compatible provider, disabled by default. It uses the `omp` command and imports terminal-started sessions from `~/.omp/agent/sessions` when enabled. Other Pi-compatible forks can still be custom providers that extend `pi`, override `command`, and set `params.sessionDir` to their JSONL session directory.
 
+Pi and OMP currently use different RPC names for slash-command discovery. The Pi package accepts `get_commands`; OMP accepts `get_available_commands`. Keep this as an explicit adapter setting for the built-in provider instead of probing with a fallback, because both packages return unknown-command errors without the request `id`, which otherwise turns a fast mismatch into the normal RPC timeout.
+
 Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
 
 OpenCode MCP injection is dynamic and session-scoped. Call OpenCode's `mcp.add` endpoint with the MCP server config and do not follow it with `mcp.connect`; `connect` only toggles MCP servers already present in OpenCode's own config. New OpenCode versions return `McpServerNotFoundError`/404 for `connect` after a dynamic add because the server is not config-backed, while older versions silently swallowed the same missing-config path.
@@ -34,7 +40,7 @@ OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prom
 
 Every provider adapter owns its canonical user-message timeline rows. When a foreground prompt is accepted, the adapter must emit exactly one `user_message` timeline item for that submitted prompt, using the same message ID it gives to or receives from the provider runtime. Optimistic client messages are UI-only and provider transcript echoes are optional; neither is allowed to be the only source of truth. If the provider later echoes the same submitted user message, dedupe it only within the active turn. Prefer provider-visible message IDs, but ACP runtimes may omit that ID or replace it with a provider-owned one; in that case suppress only echo chunks whose accumulated text is a prefix of the active submitted prompt. Do not perform global transcript text dedupe.
 
-Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes.
+Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft feature and command listing must use the explicit draft model only; if no model is selected yet, return no metadata instead of resolving a default model through catalog discovery.
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
 
@@ -42,21 +48,23 @@ Provider session import has its own contract. The picker calls `listImportableSe
 
 Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
 
+If a helper process has a readiness phase, the provider's lifecycle model must own the process immediately after `spawn`, before readiness succeeds. Startup timeout, startup exit, and daemon shutdown must all clean up through that owned generation. Do not keep a spawned helper only inside a readiness promise; that creates a live process outside the manager/reaper contract.
+
 Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in place for the next reconcile rather than deleted. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
 
 ---
 
 ## Provider Snapshot Refresh Contract
 
-The daemon keeps provider snapshots per resolved working directory. Missing or blank cwd resolves to the user's home directory. Workspace selectors and old model/mode list requests should pass the cwd that will launch the provider so providers with project-specific models or modes are probed in the right context. Settings/provider management intentionally uses the home-directory snapshot.
+The daemon keeps provider snapshots per resolved working directory, with a separate semantic global scope for settings/provider management and requests that do not carry a cwd. Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` for project-scoped refreshes. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
 
 Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
 
-Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the home-directory snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
+Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the global snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
 
 Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.
 
-Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery for that cwd; warm reads and registry replacement must not; explicit workspace refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only home.
+Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery for that scope; warm reads and registry replacement must not; explicit workspace refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only global.
 
 ---
 

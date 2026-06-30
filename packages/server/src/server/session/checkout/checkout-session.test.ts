@@ -5,6 +5,7 @@ import {
   CheckoutSession,
   type CheckoutSessionHost,
 } from "./checkout-session.js";
+import type { GitMutationService } from "../git-mutation/git-mutation-service.js";
 import { createGitHubService, type GitHubService } from "../../../services/github-service.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
@@ -20,6 +21,7 @@ import {
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
 import { expandTilde } from "../../../utils/path.js";
+import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 interface FakeDiffSubscription {
   cwd: string;
@@ -55,15 +57,23 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
 }
 
 interface RecordedHostCalls {
+  emitWorkspaceUpdateForCwd: string[];
+  handleWorkspaceGitBranchSnapshot: Array<{ cwd: string; branchName: string | null }>;
+  renameCurrentBranch: Array<{ cwd: string; branch: string }>;
+}
+
+type GitMutationFake = Pick<GitMutationService, "checkoutExistingBranch" | "notifyGitMutation">;
+
+interface RecordedGitMutationCalls {
   notifyGitMutation: Array<{
     cwd: string;
     reason: string;
     options?: { invalidateGithub?: boolean };
   }>;
-  emitWorkspaceUpdateForCwd: string[];
-  handleWorkspaceGitBranchSnapshot: Array<{ cwd: string; branchName: string | null }>;
-  renameCurrentBranch: Array<{ cwd: string; branch: string }>;
   checkoutExistingBranch: Array<{ cwd: string; branch: string }>;
+}
+
+interface RecordedGeneratorCalls {
   generateCommitMessage: string[];
   generatePullRequestText: Array<{ cwd: string; baseRef?: string }>;
 }
@@ -73,22 +83,25 @@ function makeCheckoutSession(options?: {
   diff?: CheckoutDiffSubscriber;
   github?: Partial<GitHubService>;
   host?: Partial<CheckoutSessionHost>;
+  gitMutation?: Partial<GitMutationFake>;
+  gitMetadataGenerator?: Partial<GitMetadataGenerator>;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
-    notifyGitMutation: [],
     emitWorkspaceUpdateForCwd: [],
     handleWorkspaceGitBranchSnapshot: [],
     renameCurrentBranch: [],
+  };
+  const gitMutationCalls: RecordedGitMutationCalls = {
+    notifyGitMutation: [],
     checkoutExistingBranch: [],
+  };
+  const generatorCalls: RecordedGeneratorCalls = {
     generateCommitMessage: [],
     generatePullRequestText: [],
   };
   const host: CheckoutSessionHost = {
     emit: (msg) => emitted.push(msg),
-    notifyGitMutation: async (cwd, reason, opts) => {
-      hostCalls.notifyGitMutation.push({ cwd, reason, options: opts });
-    },
     emitWorkspaceUpdateForCwd: async (cwd) => {
       hostCalls.emitWorkspaceUpdateForCwd.push(cwd);
     },
@@ -99,32 +112,43 @@ function makeCheckoutSession(options?: {
       hostCalls.renameCurrentBranch.push({ cwd, branch });
       return { previousBranch: null, currentBranch: branch };
     },
+    ...options?.host,
+  };
+  const gitMutation: GitMutationFake = {
+    notifyGitMutation: async (cwd, reason, opts) => {
+      gitMutationCalls.notifyGitMutation.push({ cwd, reason, options: opts });
+    },
     checkoutExistingBranch: async (cwd, branch) => {
-      hostCalls.checkoutExistingBranch.push({ cwd, branch });
+      gitMutationCalls.checkoutExistingBranch.push({ cwd, branch });
       return { source: "local" };
     },
+    ...options?.gitMutation,
+  };
+  const gitMetadataGenerator: GitMetadataGenerator = {
     generateCommitMessage: async (cwd) => {
-      hostCalls.generateCommitMessage.push(cwd);
+      generatorCalls.generateCommitMessage.push(cwd);
       return "";
     },
     generatePullRequestText: async (cwd, baseRef) => {
-      hostCalls.generatePullRequestText.push({ cwd, baseRef });
+      generatorCalls.generatePullRequestText.push({ cwd, baseRef });
       return { title: "", body: "" };
     },
-    ...options?.host,
+    ...options?.gitMetadataGenerator,
   };
   const github: GitHubService = { ...createGitHubService(), ...options?.github };
   const checkout = new CheckoutSession({
     host,
+    gitMutation,
     workspaceGitService: createNoopWorkspaceGitService(options?.git),
     github,
     checkoutDiffManager:
       options?.diff ?? createFakeDiffSubscriber({ cwd: "", files: [], error: null }).subscriber,
+    gitMetadataGenerator,
     paseoHome: "/tmp/paseo-home",
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
-  return { checkout, emitted, hostCalls };
+  return { checkout, emitted, hostCalls, gitMutationCalls, generatorCalls };
 }
 
 function createGitSnapshot(
@@ -523,7 +547,9 @@ describe("CheckoutSession", () => {
         files: [],
         error: null,
       });
-      const { checkout, emitted, hostCalls } = makeCheckoutSession({ diff: subscriber });
+      const { checkout, emitted, hostCalls, gitMutationCalls } = makeCheckoutSession({
+        diff: subscriber,
+      });
 
       await checkout.handleCheckoutSwitchBranchRequest({
         type: "checkout_switch_branch_request",
@@ -532,7 +558,9 @@ describe("CheckoutSession", () => {
         requestId: "sw1",
       });
 
-      expect(hostCalls.checkoutExistingBranch).toEqual([{ cwd: "/repo", branch: "feature" }]);
+      expect(gitMutationCalls.checkoutExistingBranch).toEqual([
+        { cwd: "/repo", branch: "feature" },
+      ]);
       expect(refreshedCwds).toEqual(["/repo"]);
       expect(hostCalls.emitWorkspaceUpdateForCwd).toEqual(["/repo"]);
       expect(emitted).toEqual([
@@ -552,7 +580,7 @@ describe("CheckoutSession", () => {
 
     it("emits an error response when the checkout fails", async () => {
       const { checkout, emitted } = makeCheckoutSession({
-        host: {
+        gitMutation: {
           checkoutExistingBranch: async () => {
             throw new Error("branch missing");
           },
@@ -606,7 +634,9 @@ describe("CheckoutSession", () => {
         files: [],
         error: null,
       });
-      const { checkout, emitted, hostCalls } = makeCheckoutSession({ diff: subscriber });
+      const { checkout, emitted, hostCalls, gitMutationCalls } = makeCheckoutSession({
+        diff: subscriber,
+      });
 
       await checkout.handleCheckoutRenameBranchRequest({
         type: "checkout.rename_branch.request",
@@ -616,7 +646,7 @@ describe("CheckoutSession", () => {
       });
 
       expect(hostCalls.renameCurrentBranch).toEqual([{ cwd: "/repo", branch: "feature-renamed" }]);
-      expect(hostCalls.notifyGitMutation).toEqual([
+      expect(gitMutationCalls.notifyGitMutation).toEqual([
         { cwd: "/repo", reason: "rename-branch", options: { invalidateGithub: true } },
       ]);
       expect(refreshedCwds).toEqual(["/repo"]);
@@ -641,7 +671,7 @@ describe("CheckoutSession", () => {
 
   describe("commit", () => {
     it("fails when no message is supplied and none can be generated", async () => {
-      const { checkout, emitted, hostCalls } = makeCheckoutSession();
+      const { checkout, emitted, generatorCalls } = makeCheckoutSession();
 
       await checkout.handleCheckoutCommitRequest({
         type: "checkout_commit_request",
@@ -651,7 +681,7 @@ describe("CheckoutSession", () => {
         requestId: "c1",
       });
 
-      expect(hostCalls.generateCommitMessage).toEqual(["/repo"]);
+      expect(generatorCalls.generateCommitMessage).toEqual(["/repo"]);
       expect(emitted).toEqual([
         {
           type: "checkout_commit_response",

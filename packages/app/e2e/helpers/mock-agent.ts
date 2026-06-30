@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
-import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 import { seedWorkspace, type SeedDaemonClient } from "./seed-client";
 import { getServerId } from "./server-id";
+import { buildHostAgentDetailRoute } from "../../src/utils/host-routes";
 
 export interface MockAgentWorkspace {
   agentId: string;
@@ -54,9 +54,7 @@ export async function seedMockAgentWorkspace(
 }
 
 export function buildAgentRoute(workspaceId: string, agentId: string): string {
-  return `${buildHostWorkspaceRoute(getServerId(), workspaceId)}?open=${encodeURIComponent(
-    `agent:${agentId}`,
-  )}`;
+  return buildHostAgentDetailRoute(getServerId(), agentId, workspaceId);
 }
 
 /** Boots the app directly at the agent's workspace route and waits for the open intent to settle. */

@@ -9,7 +9,13 @@ import {
   collectAssistantTurnContentForStreamRenderStrategy,
   type StreamStrategy,
 } from "./strategy";
-import { AssistantTurnFooter, LiveElapsed, STREAM_METADATA_FONT_SIZE } from "@/components/message";
+import { resolveAssistantTurnBoundaryMessageId } from "./turn-boundary";
+import {
+  AssistantTurnFooter,
+  LiveElapsed,
+  STREAM_METADATA_FONT_SIZE,
+  type AssistantForkTarget,
+} from "@/components/message";
 import type { TurnFooterHost } from "./layout";
 import { SyncedLoader } from "@/components/synced-loader";
 
@@ -22,17 +28,23 @@ const workingIndicatorColorMapping = (theme: Theme) => ({
 });
 
 export type TurnContentStrategy = StreamStrategy;
+export type AssistantTurnForkHandler = (input: {
+  target: AssistantForkTarget;
+  boundaryMessageId?: string;
+}) => Promise<void> | void;
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
   inFlightTurnStartedAt,
   host,
   strategy,
+  onForkAssistantTurn,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   if (isRunning) {
     return (
@@ -50,6 +62,7 @@ export const TurnFooter = memo(function TurnFooter({
       items={host.items}
       timing={host.timing}
       startIndex={host.startIndex}
+      onForkAssistantTurn={onForkAssistantTurn}
     />
   );
 });
@@ -59,11 +72,13 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   items,
   timing,
   startIndex,
+  onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   return (
     <TurnFooterRow>
@@ -72,6 +87,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         items={items}
         timing={timing}
         startIndex={startIndex}
+        onForkAssistantTurn={onForkAssistantTurn}
       />
     </TurnFooterRow>
   );
@@ -111,11 +127,13 @@ function CompletedTurnFooter({
   items,
   timing,
   startIndex,
+  onForkAssistantTurn,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
   startIndex: number;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   const getContent = useCallback(
     () =>
@@ -126,12 +144,18 @@ function CompletedTurnFooter({
       }),
     [strategy, items, startIndex],
   );
+  const boundaryMessageId = resolveAssistantTurnBoundaryMessageId({
+    items,
+    startIndex,
+  });
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
         getContent={getContent}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
+        forkBoundaryMessageId={boundaryMessageId}
+        onFork={onForkAssistantTurn}
       />
     </View>
   );

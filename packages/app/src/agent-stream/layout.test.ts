@@ -289,4 +289,85 @@ describe("layoutStream", () => {
     expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
     expect(footerOwners(layout)).toEqual([assistant.id]);
   });
+
+  it.each(["web", "android"] as const)(
+    "keeps inline footer on an assistant turn with trailing tool rows before the next user on %s",
+    (platform) => {
+      const assistant = assistantMessage("a1", 2);
+      const tool = toolCall("tool-1", 3);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), assistant, tool, userMessage("u2", 4)],
+        timingIds: [assistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      expect(findLayoutItem(layout, assistant.id).completedFooter?.itemId).toBe(assistant.id);
+      expect(footerOwners(layout)).toEqual([assistant.id]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "uses the latest assistant for an inline footer when a turn has multiple assistant blocks on %s",
+    (platform) => {
+      const firstAssistant = assistantMessage("a1", 2);
+      const firstTool = toolCall("tool-1", 3);
+      const latestAssistant = assistantMessage("a2", 4);
+      const latestTool = toolCall("tool-2", 5);
+      const layout = layoutFor({
+        platform,
+        tail: [
+          userMessage("u1", 1),
+          firstAssistant,
+          firstTool,
+          latestAssistant,
+          latestTool,
+          userMessage("u2", 6),
+        ],
+        timingIds: [firstAssistant.id, latestAssistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      expect(findLayoutItem(layout, firstAssistant.id).completedFooter).toBeNull();
+      expect(findLayoutItem(layout, latestAssistant.id).completedFooter?.itemId).toBe(
+        latestAssistant.id,
+      );
+      expect(footerOwners(layout)).toEqual([latestAssistant.id]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "keeps bottom footer on the latest assistant turn when trailing tool rows end the turn on %s",
+    (platform) => {
+      const assistant = assistantMessage("a1", 2);
+      const tool = toolCall("tool-1", 3);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), assistant, tool],
+        timingIds: [assistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter?.itemId).toBe(assistant.id);
+      expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
+      expect(footerOwners(layout)).toEqual([assistant.id]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "does not render a completed footer before tool rows while the turn is running on %s",
+    (platform) => {
+      const assistant = assistantMessage("a1", 2);
+      const tool = toolCall("tool-1", 3);
+      const layout = layoutFor({
+        platform,
+        agentStatus: "running",
+        tail: [userMessage("u1", 1), assistant, tool],
+        timingIds: [assistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
+      expect(footerOwners(layout)).toEqual([]);
+    },
+  );
 });

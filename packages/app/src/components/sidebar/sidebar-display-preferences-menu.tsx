@@ -5,14 +5,16 @@ import { Settings2 } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import {
   DropdownMenu,
-  DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useAppSettings, type WorkspaceTitleSource } from "@/hooks/use-settings";
+import { useHosts, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
+import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { formatConnectionStatus } from "@/utils/daemons";
 
 const ThemedSettings2 = withUnistyles(Settings2);
 const filterColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -32,22 +34,29 @@ interface DisplayPreferenceOption<Value extends string> {
   label: string;
 }
 
-export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string | null }) {
-  const groupMode = useSidebarViewStore((state) =>
-    serverId ? state.getGroupMode(serverId) : "project",
-  );
+export function SidebarDisplayPreferencesMenu() {
+  const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const hostFilter = useSidebarViewStore((state) => state.hostFilter);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
+  const setHostFilter = useSidebarViewStore((state) => state.setHostFilter);
+  const hosts = useHosts();
   const {
     settings: { workspaceTitleSource },
     updateSettings,
   } = useAppSettings();
 
-  const handleSelect = useCallback(
+  const handleSelectMode = useCallback(
     (mode: SidebarGroupMode) => {
-      if (!serverId) return;
-      setGroupMode(serverId, mode);
+      setGroupMode(mode);
     },
-    [serverId, setGroupMode],
+    [setGroupMode],
+  );
+
+  const handleSelectHost = useCallback(
+    (serverId: string | null) => {
+      setHostFilter(serverId);
+    },
+    [setHostFilter],
   );
 
   const handleWorkspaceTitleSourceSelect = useCallback(
@@ -65,6 +74,8 @@ export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string |
     [],
   );
 
+  const showHostFilter = hosts.length > 1;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -75,7 +86,7 @@ export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string |
       >
         <ThemedSettings2 size={14} uniProps={filterColorMapping} />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={180} testID="sidebar-display-preferences-content">
+      <DropdownMenuContent align="end" width={220} testID="sidebar-display-preferences-content">
         <View style={styles.menuHeader}>
           <Text style={styles.menuHeaderLabel}>Group by</Text>
         </View>
@@ -85,9 +96,33 @@ export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string |
             item={item}
             isSelected={groupMode === item.value}
             testIDPrefix="sidebar-grouping"
-            onSelect={handleSelect}
+            onSelect={handleSelectMode}
           />
         ))}
+        {showHostFilter ? (
+          <>
+            <DropdownMenuSeparator />
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuHeaderLabel}>Filter</Text>
+            </View>
+            <HostFilterItem
+              label="All hosts"
+              value={null}
+              hostFilter={hostFilter}
+              onSelect={handleSelectHost}
+            />
+            {hosts.map((host) => (
+              <HostFilterItem
+                key={host.serverId}
+                label={host.label?.trim() || host.serverId}
+                serverId={host.serverId}
+                value={host.serverId}
+                hostFilter={hostFilter}
+                onSelect={handleSelectHost}
+              />
+            ))}
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <View style={styles.menuHeader}>
           <Text style={styles.menuHeaderLabel}>Workspace title</Text>
@@ -125,6 +160,33 @@ function DisplayPreferenceMenuItem<Value extends string>({
       onSelect={handleSelect}
     >
       <Text style={styles.optionLabel}>{item.label}</Text>
+    </DropdownMenuItem>
+  );
+}
+
+function HostFilterItem({
+  label,
+  serverId,
+  value,
+  hostFilter,
+  onSelect,
+}: {
+  label: string;
+  serverId?: string;
+  value: string | null;
+  hostFilter: string | null;
+  onSelect: (serverId: string | null) => void;
+}) {
+  const isSelected = hostFilter === value;
+  const handleSelect = useCallback(() => onSelect(value), [value, onSelect]);
+  const status = useHostRuntimeSnapshot(serverId ?? "");
+  const subtitle = serverId
+    ? formatConnectionStatus(status?.connectionStatus ?? "idle")
+    : undefined;
+
+  return (
+    <DropdownMenuItem selected={isSelected} description={subtitle} onSelect={handleSelect}>
+      {label}
     </DropdownMenuItem>
   );
 }

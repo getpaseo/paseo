@@ -137,13 +137,30 @@ export function formatStatusText(input: {
   }
 
   if (status === "pending") {
+    if (lastCheckedAt != null) {
+      return i18n.t("desktop.updates.status.pendingWithLastChecked", {
+        time: formatLastCheckedAt(lastCheckedAt),
+      });
+    }
     return i18n.t("desktop.updates.status.pending");
   }
 
   if (status === "available") {
     if (availableUpdate?.latestVersion) {
-      return i18n.t("desktop.updates.status.availableWithVersion", {
-        version: formatVersion(availableUpdate.latestVersion),
+      return i18n.t(
+        lastCheckedAt != null
+          ? "desktop.updates.status.availableWithVersionAndLastChecked"
+          : "desktop.updates.status.availableWithVersion",
+        {
+          version: formatVersion(availableUpdate.latestVersion),
+          time: lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined,
+        },
+      );
+    }
+
+    if (lastCheckedAt != null) {
+      return i18n.t("desktop.updates.status.availableWithLastChecked", {
+        time: formatLastCheckedAt(lastCheckedAt),
       });
     }
     return i18n.t("desktop.updates.status.available");
@@ -182,13 +199,17 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       return null;
     }
     const { releaseChannel, intent = "manual", silent = false } = options;
+    if (silent && state.status === "checking") {
+      return null;
+    }
+
     const requestVersion = state.requestVersion + 1;
 
     commit({
       ...state,
       requestVersion,
       status: silent ? state.status : "checking",
-      errorMessage: null,
+      errorMessage: silent ? state.errorMessage : null,
     });
 
     try {
@@ -197,7 +218,24 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         return result;
       }
 
-      const nextLastCheckedAt = deps.now();
+      const nextLastCheckedAt = intent === "manual" ? deps.now() : state.lastCheckedAt;
+      if (result.errorMessage) {
+        if (silent && !result.hasUpdate) {
+          console.warn("[DesktopUpdater] Silent update check failed", result.errorMessage);
+          return result;
+        }
+
+        commit({
+          ...state,
+          status: "error",
+          availableUpdate: null,
+          errorMessage: result.errorMessage,
+          installMessage: null,
+          lastCheckedAt: nextLastCheckedAt,
+        });
+        return result;
+      }
+
       let nextStatus: DesktopAppUpdateStatus;
       let nextAvailable: DesktopAppUpdateCheckResult | null;
 
@@ -216,6 +254,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         ...state,
         status: nextStatus,
         availableUpdate: nextAvailable,
+        errorMessage: null,
         installMessage: null,
         lastCheckedAt: nextLastCheckedAt,
       });
@@ -229,12 +268,12 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       const message = getErrorMessage(error);
       if (silent) {
         console.warn("[DesktopUpdater] Silent update check failed", message);
-        commit({ ...state });
       } else {
         commit({
           ...state,
           status: "error",
           errorMessage: message,
+          lastCheckedAt: intent === "manual" ? deps.now() : state.lastCheckedAt,
         });
       }
       return null;

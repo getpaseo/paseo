@@ -63,6 +63,18 @@ export type PullRequestContextAttachment =
   | ({ kind: "github.pull_request_review" } & PullRequestContextAttachmentFields)
   | ({ kind: "github.pull_request_check" } & PullRequestContextAttachmentFields);
 
+export interface ChatHistoryContextAttachment {
+  kind: "chat_history";
+  id: string;
+  attachment: Extract<AgentAttachment, { type: "text" }>;
+  source: {
+    serverId: string;
+    agentId: string;
+    boundaryMessageId?: string | null;
+    itemCount?: number;
+  };
+}
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
@@ -75,6 +87,7 @@ export type WorkspaceComposerAttachment =
       attachment: BrowserElementAttachment;
     }
   | PullRequestContextAttachment
+  | ChatHistoryContextAttachment
   | {
       kind: "review";
       attachment: Extract<AgentAttachment, { type: "review" }>;

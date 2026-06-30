@@ -243,7 +243,7 @@ export async function runInspectCommand(
   }
 
   try {
-    const fetchResult = await client.fetchAgent(agentIdArg);
+    const fetchResult = await client.fetchAgent({ agentId: agentIdArg });
     if (!fetchResult) {
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",

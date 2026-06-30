@@ -67,7 +67,7 @@ describe("codex agent commands E2E", () => {
     expect(agent.provider).toBe("codex");
     expect(agent.status).toBe("idle");
 
-    const result = await ctx.client.listCommands(agent.id);
+    const result = await ctx.client.listCommands({ agentId: agent.id });
 
     expect(result.error).toBeNull();
     expect(result.commands.length).toBeGreaterThan(0);
@@ -177,7 +177,7 @@ describe("codex agent commands E2E", () => {
   }, 30_000);
 
   test("returns error for non-existent agent", async () => {
-    const result = await ctx.client.listCommands("non-existent-agent-id");
+    const result = await ctx.client.listCommands({ agentId: "non-existent-agent-id" });
 
     expect(result.error).toBeTruthy();
     expect(result.error).toContain("Agent not found");

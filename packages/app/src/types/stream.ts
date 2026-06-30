@@ -888,6 +888,13 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
   }
 }
 
+function getIncomingAssistantMessageId(event: AgentStreamEventPayload): string | undefined {
+  if (event.type !== "timeline" || event.item.type !== "assistant_message") {
+    return undefined;
+  }
+  return event.item.messageId;
+}
+
 /**
  * Finalize head items before flushing to tail.
  * Marks thoughts as "ready" since they're no longer being streamed.
@@ -939,10 +946,7 @@ function getTailAssistantToResume(params: {
   if (params.tailAssistant?.kind !== "assistant_message") {
     return null;
   }
-  const incomingMessageId =
-    params.event.type === "timeline" && params.event.item.type === "assistant_message"
-      ? params.event.item.messageId
-      : undefined;
+  const incomingMessageId = getIncomingAssistantMessageId(params.event);
   if (incomingMessageId !== undefined && params.tailAssistant.messageId !== incomingMessageId) {
     return null;
   }
@@ -986,6 +990,7 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
       groupId: blockGroupId,
       blockIndex: firstBlockIndex + offset,
     }),
+    ...(activeItem.messageId ? { messageId: activeItem.messageId } : {}),
     blockGroupId,
     blockIndex: firstBlockIndex + offset,
     text: block,
@@ -1035,9 +1040,14 @@ export function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamI
 
 /**
  * Determine if the head should be flushed based on incoming event kind.
- * Flush when a different kind arrives or when the incoming kind is not streamable.
+ * Flush when a different streamable lane starts, including a new identified assistant message.
  */
-function shouldFlushHead(head: StreamItem[], incomingKind: StreamItem["kind"] | null): boolean {
+function shouldFlushHead(input: {
+  head: StreamItem[];
+  incomingKind: StreamItem["kind"] | null;
+  event: AgentStreamEventPayload;
+}): boolean {
+  const { head, incomingKind, event } = input;
   if (head.length === 0) {
     return false;
   }
@@ -1069,6 +1079,11 @@ function shouldFlushHead(head: StreamItem[], incomingKind: StreamItem["kind"] | 
   // If incoming kind is different from current head's streamable kind, flush
   if (lastStreamable.kind !== incomingKind) {
     return true;
+  }
+
+  if (incomingKind === "assistant_message" && lastStreamable.kind === "assistant_message") {
+    const incomingMessageId = getIncomingAssistantMessageId(event);
+    return incomingMessageId !== undefined && lastStreamable.messageId !== incomingMessageId;
   }
 
   return false;
@@ -1133,7 +1148,13 @@ export function applyStreamEvent(params: {
   const incomingKind = getEventItemKind(event);
 
   // Check if we need to flush head before processing this event
-  if (shouldFlushHead(nextHead, incomingKind)) {
+  if (
+    shouldFlushHead({
+      head: nextHead,
+      incomingKind,
+      event,
+    })
+  ) {
     flushHead();
   }
 

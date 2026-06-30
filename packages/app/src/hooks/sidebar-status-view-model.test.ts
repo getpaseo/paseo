@@ -15,6 +15,7 @@ function ws(
     serverId: input.serverId ?? "srv",
     workspaceId: input.workspaceId ?? input.workspaceKey.split(":")[1] ?? "ws",
     projectKey: input.projectKey ?? "proj",
+    projectName: input.projectName ?? "Project",
     projectRootPath: input.projectRootPath,
     workspaceDirectory: input.workspaceDirectory,
     projectKind: input.projectKind ?? "git",

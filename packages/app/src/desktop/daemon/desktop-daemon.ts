@@ -2,6 +2,14 @@ import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
+export type DesktopDaemonStopReason =
+  | "manual_ipc"
+  | "settings"
+  | "host_remove"
+  | "quit"
+  | "app_update"
+  | "version_mismatch"
+  | "restart";
 
 export interface DesktopDaemonStatus {
   serverId: string;
@@ -122,8 +130,10 @@ export async function startDesktopDaemon(): Promise<DesktopDaemonStatus> {
   return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
 }
 
-export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {
-  return parseDesktopDaemonStatus(await invokeDesktopCommand("stop_desktop_daemon"));
+export async function stopDesktopDaemon(
+  reason: DesktopDaemonStopReason = "manual_ipc",
+): Promise<DesktopDaemonStatus> {
+  return parseDesktopDaemonStatus(await invokeDesktopCommand("stop_desktop_daemon", { reason }));
 }
 
 export async function restartDesktopDaemon(): Promise<DesktopDaemonStatus> {

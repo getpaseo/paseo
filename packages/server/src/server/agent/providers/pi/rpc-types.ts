@@ -110,6 +110,8 @@ export interface PiRpcSlashCommand {
   sourceInfo?: Record<string, unknown>;
 }
 
+export type PiCommandsRpcType = "get_commands" | "get_available_commands";
+
 export type PiRpcCommand =
   | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "compact"; customInstructions?: string }
@@ -121,7 +123,7 @@ export type PiRpcCommand =
   | { id?: string; type: "set_model"; provider: string; modelId: string }
   | { id?: string; type: "set_thinking_level"; level: PiThinkingLevel }
   | { id?: string; type: "get_session_stats" }
-  | { id?: string; type: "get_commands" };
+  | { id?: string; type: PiCommandsRpcType };
 
 export interface PiRpcResponse {
   id?: string;

@@ -16,6 +16,7 @@ import {
   expectComposerEditable,
   expectAttachButtonDisabled,
   fillComposerDraft,
+  dropFileOnComposer,
   sendDraftToQueue,
   expectQueuedMessageButton,
   startRunningMockAgent,
@@ -36,6 +37,11 @@ const MINIMAL_PNG = Buffer.from(
 );
 
 const TEST_IMAGE = { name: "test.png", mimeType: "image/png", buffer: MINIMAL_PNG };
+const TEST_JSON = {
+  name: "config.json",
+  mimeType: "application/json",
+  buffer: Buffer.from(JSON.stringify({ composer: "drop" })),
+};
 
 test.describe("Composer attachments", () => {
   test("Plus menu shows image and GitHub options", async ({ page, withWorkspace }) => {
@@ -170,6 +176,47 @@ test.describe("Composer attachments", () => {
     await attachImageFromMenu(page, TEST_IMAGE);
 
     await expectAttachmentPill(page, "composer-image-attachment-pill");
+  });
+
+  test("dropped JSON file renders as a file attachment in active chat", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(60_000);
+    const workspace = await withWorkspace({ prefix: "attach-drop-json-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    await dropFileOnComposer(page, TEST_JSON);
+
+    await expectAttachmentPill(page, "composer-file-attachment-pill");
+  });
+
+  test("dropped JSON file renders as a file attachment in New Workspace", async ({ page }) => {
+    test.setTimeout(120_000);
+    const workspace = await seedWorkspace({ repoPrefix: "attach-drop-new-workspace-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: workspace.workspaceId,
+      });
+
+      await openNewWorkspaceComposer(page, {
+        projectKey: workspace.projectId,
+        projectDisplayName: workspace.projectDisplayName,
+      });
+
+      await dropFileOnComposer(page, TEST_JSON);
+
+      await expectAttachmentPill(page, "composer-file-attachment-pill");
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   test("clicking the X on an image pill removes it", async ({ page, withWorkspace }) => {

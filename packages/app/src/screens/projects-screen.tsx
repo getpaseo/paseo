@@ -36,7 +36,6 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
     [projects],
   );
   const iconDataByProjectKey = useProjectIconDataByProjectKey({
-    serverId: null,
     projects: iconTargets,
   });
 

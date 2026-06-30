@@ -12,6 +12,7 @@ export interface AppUpdateCheckResult {
   latestVersion: string;
   body: string | null;
   date: string | null;
+  errorMessage: string | null;
 }
 
 export interface AppUpdateInstallResult {
@@ -78,8 +79,9 @@ function buildCheckResult(input: {
   hasUpdate: boolean;
   readyToInstall: boolean;
   info?: RuntimeUpdateInfo | null;
+  errorMessage?: string | null;
 }): AppUpdateCheckResult {
-  const { currentVersion, hasUpdate, readyToInstall, info } = input;
+  const { currentVersion, hasUpdate, readyToInstall, info, errorMessage = null } = input;
 
   return {
     hasUpdate,
@@ -88,6 +90,7 @@ function buildCheckResult(input: {
     latestVersion: info?.version ?? currentVersion,
     body: typeof info?.releaseNotes === "string" ? info.releaseNotes : null,
     date: typeof info?.releaseDate === "string" ? info.releaseDate : null,
+    errorMessage,
   };
 }
 
@@ -99,11 +102,20 @@ async function performQuitAndInstall(
   runtime.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && typeof error.message === "string") {
+    return error.message;
+  }
+  return String(error);
+}
+
 export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateService {
   let cachedUpdateInfo: RuntimeUpdateInfo | null = null;
   let downloadedUpdateVersion: string | null = null;
   let downloading = false;
   let configuredReleaseChannel: AppReleaseChannel | null = null;
+  let runtimeErrorMessage: string | null = null;
+  let inFlightUpdateCheckCount = 0;
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -113,6 +125,22 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     cachedUpdateInfo = null;
     downloadedUpdateVersion = null;
     downloading = false;
+    runtimeErrorMessage = null;
+  }
+
+  function buildRuntimeErrorResult(currentVersion: string): AppUpdateCheckResult | null {
+    if (!runtimeErrorMessage) {
+      return null;
+    }
+
+    const info = cachedUpdateInfo;
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: info?.version !== undefined && info.version !== currentVersion,
+      readyToInstall: false,
+      info,
+      errorMessage: runtimeErrorMessage,
+    });
   }
 
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
@@ -138,17 +166,22 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         cachedUpdateInfo = info;
         downloadedUpdateVersion = null;
         downloading = true;
+        runtimeErrorMessage = null;
       },
       onUpdateDownloaded(info) {
         cachedUpdateInfo = info;
         downloadedUpdateVersion = info.version;
         downloading = false;
+        runtimeErrorMessage = null;
       },
       onUpdateNotAvailable() {
         clearUpdateState();
       },
       onError(error) {
         downloading = false;
+        if (inFlightUpdateCheckCount === 0 || cachedUpdateInfo) {
+          runtimeErrorMessage = getErrorMessage(error);
+        }
         deps.reportRuntimeError?.(error);
       },
     });
@@ -173,8 +206,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     configureRuntime(releaseChannel, intent);
 
+    const runtimeErrorResult = buildRuntimeErrorResult(currentVersion);
+    if (runtimeErrorResult && intent === "automatic") {
+      return runtimeErrorResult;
+    }
+
     const cachedVersion = cachedUpdateInfo?.version ?? null;
-    if (cachedVersion && cachedVersion !== currentVersion) {
+    if (!runtimeErrorResult && cachedVersion && cachedVersion !== currentVersion) {
       return buildCheckResult({
         currentVersion,
         hasUpdate: true,
@@ -184,6 +222,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     try {
+      inFlightUpdateCheckCount += 1;
       const result = await deps.runtime.checkForUpdates();
       if (!result || !result.updateInfo || !result.isUpdateAvailable) {
         clearUpdateState();
@@ -201,6 +240,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       if (hasUpdate) {
         cachedUpdateInfo = info;
         downloading = !isReadyToInstallVersion(latestVersion);
+        runtimeErrorMessage = null;
         return buildCheckResult({
           currentVersion,
           hasUpdate: true,
@@ -221,7 +261,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         currentVersion,
         hasUpdate: false,
         readyToInstall: false,
+        errorMessage: getErrorMessage(error),
       });
+    } finally {
+      inFlightUpdateCheckCount -= 1;
     }
   }
 

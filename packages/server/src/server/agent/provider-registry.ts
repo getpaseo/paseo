@@ -156,6 +156,7 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       providerParams: options?.providerParams ?? {
         sessionDir: "~/.omp/agent/sessions",
       },
+      commandsRpcType: "get_available_commands",
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
   "mock-slow": () => new MockSlowProviderClient(),

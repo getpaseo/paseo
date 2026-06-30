@@ -5,6 +5,7 @@ import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import { PiCliRuntime } from "./cli-runtime.js";
+import type { PiCommandsRpcType } from "./rpc-types.js";
 import type { PiRuntimeLaunch } from "./runtime.js";
 
 type PiChild = ChildProcessWithoutNullStreams & {
@@ -31,10 +32,15 @@ function createPiChild(): PiChild {
   return child;
 }
 
-function createRuntime(child: PiChild, launches: PiRuntimeLaunch[] = []): PiCliRuntime {
+function createRuntime(
+  child: PiChild,
+  launches: PiRuntimeLaunch[] = [],
+  options?: { commandsRpcType?: PiCommandsRpcType },
+): PiCliRuntime {
   return new PiCliRuntime({
     logger: pino({ level: "silent" }),
     command: ["pi"],
+    commandsRpcType: options?.commandsRpcType,
     spawnProcess: (launch) => {
       launches.push(launch);
       return child;
@@ -182,6 +188,42 @@ describe("PiCliRuntime", () => {
     await session.getAvailableModels();
 
     expect(events).toEqual([{ type: "turn_start" }]);
+  });
+
+  test("lists commands through the default Pi get_commands RPC", async () => {
+    const child = createPiChild();
+    const commandTypes: string[] = [];
+    replyToCommands(child, (command) => {
+      commandTypes.push(String(command.type));
+      return {
+        commands: [{ name: "review", description: "Review changes", source: "extension" }],
+      };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getCommands()).resolves.toEqual([
+      { name: "review", description: "Review changes", source: "extension" },
+    ]);
+    expect(commandTypes).toEqual(["get_commands"]);
+  });
+
+  test("lists commands through the OMP-compatible get_available_commands RPC", async () => {
+    const child = createPiChild();
+    const commandTypes: string[] = [];
+    replyToCommands(child, (command) => {
+      commandTypes.push(String(command.type));
+      return {
+        commands: [{ name: "skill:ctx-stats", description: "Show context stats", source: "skill" }],
+      };
+    });
+    const session = await createRuntime(child, [], {
+      commandsRpcType: "get_available_commands",
+    }).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getCommands()).resolves.toEqual([
+      { name: "skill:ctx-stats", description: "Show context stats", source: "skill" },
+    ]);
+    expect(commandTypes).toEqual(["get_available_commands"]);
   });
 
   test("keeps unicode line separators inside one JSONL record", async () => {

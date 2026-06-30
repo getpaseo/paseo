@@ -5,11 +5,11 @@ import { OpenCodeAgentClient } from "./opencode-agent.js";
 import {
   idleEvent,
   TestOpenCodeClient,
-  TestOpenCodeRuntime,
-} from "./opencode/test-utils/test-opencode-runtime.js";
+  TestOpenCodeHarness,
+} from "./opencode/test-utils/test-opencode-harness.js";
 
 function mockOpenCodeClient(events: unknown[]) {
-  const runtime = new TestOpenCodeRuntime();
+  const runtime = new TestOpenCodeHarness();
   const openCodeClient = new TestOpenCodeClient();
   openCodeClient.sessionPromptAsyncEvents = events;
   runtime.enqueueClient(openCodeClient);
@@ -35,7 +35,10 @@ function toolPermissionEvent(): unknown {
 describe("OpenCode permission actions", () => {
   test("allow always sends OpenCode's always reply", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient([toolPermissionEvent(), idleEvent()]);
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
@@ -63,7 +66,10 @@ describe("OpenCode permission actions", () => {
 
   test("plain allow keeps the backward-compatible once reply", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient([toolPermissionEvent(), idleEvent()]);
-    const client = new OpenCodeAgentClient(createTestLogger(), undefined, { runtime });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",

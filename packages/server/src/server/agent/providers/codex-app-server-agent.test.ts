@@ -6,6 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
@@ -111,7 +112,8 @@ function markdownImageSource(markdown: string): string {
   if (!match) {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
-  return match[1].replace(/\\\)/g, ")");
+  const source = match[1].replace(/\\\)/g, ")");
+  return source.startsWith("file://") ? fileURLToPath(source) : source;
 }
 
 function emitCodexUserMessage(

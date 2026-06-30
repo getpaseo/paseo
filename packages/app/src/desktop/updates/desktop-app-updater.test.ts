@@ -57,6 +57,18 @@ describe("desktop app updater — check", () => {
     expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "automatic" }]);
   });
 
+  it("does not add manual last-checked feedback for automatic checks", async () => {
+    const { updater, port } = createUpdater({ now: () => 42 });
+    port.nextCheckResult(buildFakeCheckResult({ hasUpdate: true, readyToInstall: false }));
+
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "pending",
+      lastCheckedAt: null,
+    });
+  });
+
   it("moves to 'checking' during a non-silent check", async () => {
     const { updater, port } = createUpdater();
     const deferred = port.deferNextCheck();
@@ -132,6 +144,134 @@ describe("desktop app updater — check", () => {
     expect(updater.getSnapshot()).toMatchObject({
       status: "error",
       errorMessage: "network down",
+    });
+  });
+
+  it("reports service-returned check errors", async () => {
+    const { updater, port } = createUpdater({ now: () => 42 });
+    port.nextCheckResult(buildFakeCheckResult({ errorMessage: "sha512 checksum mismatch" }));
+
+    await updater.checkForUpdates({ releaseChannel: "stable" });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "error",
+      errorMessage: "sha512 checksum mismatch",
+      lastCheckedAt: 42,
+    });
+  });
+
+  it("keeps no-update silent check errors quiet", async () => {
+    const { updater, port } = createUpdater({ now: () => 42 });
+    port.nextCheckResult(
+      buildFakeCheckResult({ hasUpdate: true, readyToInstall: true, latestVersion: "1.2.3" }),
+    );
+    await updater.checkForUpdates({ releaseChannel: "stable" });
+
+    port.nextCheckResult(buildFakeCheckResult({ errorMessage: "network down" }));
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      errorMessage: null,
+      lastCheckedAt: 42,
+    });
+  });
+
+  it("shows silent update preparation errors when an update is involved", async () => {
+    const { updater, port } = createUpdater();
+    port.nextCheckResult(
+      buildFakeCheckResult({
+        hasUpdate: true,
+        readyToInstall: false,
+        latestVersion: "1.2.3",
+        errorMessage: "sha512 checksum mismatch",
+      }),
+    );
+
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "error",
+      errorMessage: "sha512 checksum mismatch",
+      lastCheckedAt: null,
+    });
+  });
+
+  it("does not let a silent check supersede an in-flight manual check", async () => {
+    const { updater, port } = createUpdater();
+    const deferred = port.deferNextCheck();
+
+    const manualCheck = updater.checkForUpdates({ releaseChannel: "stable" });
+    port.nextCheckResult(buildFakeCheckResult({ errorMessage: "network down" }));
+    await updater.checkForUpdates({ releaseChannel: "stable", intent: "automatic", silent: true });
+
+    deferred.resolve(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
+    await manualCheck;
+
+    expect(port.recordedChecks).toEqual([{ releaseChannel: "stable", intent: "manual" }]);
+    expect(updater.getSnapshot().status).toBe("up-to-date");
+  });
+
+  it("does not let an older silent check supersede a newer silent check", async () => {
+    const { updater, port } = createUpdater();
+    const olderCheck = port.deferNextCheck();
+    const olderPending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+    const newerCheck = port.deferNextCheck();
+    const newerPending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+
+    newerCheck.resolve(
+      buildFakeCheckResult({ hasUpdate: true, readyToInstall: true, latestVersion: "2.0.0" }),
+    );
+    await newerPending;
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      availableUpdate: { latestVersion: "2.0.0" },
+    });
+
+    olderCheck.resolve(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
+    await olderPending;
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      availableUpdate: { latestVersion: "2.0.0" },
+    });
+  });
+
+  it("lets a newer silent check win after an older silent check resolves first", async () => {
+    const { updater, port } = createUpdater();
+    const olderCheck = port.deferNextCheck();
+    const olderPending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+    const newerCheck = port.deferNextCheck();
+    const newerPending = updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+
+    olderCheck.resolve(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
+    await olderPending;
+    expect(updater.getSnapshot().status).toBe("idle");
+
+    newerCheck.resolve(
+      buildFakeCheckResult({ hasUpdate: true, readyToInstall: true, latestVersion: "2.0.0" }),
+    );
+    await newerPending;
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      availableUpdate: { latestVersion: "2.0.0" },
     });
   });
 
@@ -266,6 +406,32 @@ describe("formatStatusText", () => {
         formatLastCheckedAt,
       }),
     ).toBe("Update ready: v1.2.3");
+  });
+
+  it("keeps manual check feedback visible while an update is pending", () => {
+    expect(
+      formatStatusText({
+        status: "pending",
+        availableUpdate: null,
+        installMessage: null,
+        lastCheckedAt: 42,
+        formatVersion,
+        formatLastCheckedAt,
+      }),
+    ).toBe("We'll let you know when the update is ready. Last checked at time-42.");
+  });
+
+  it("keeps manual check feedback visible when an update is available", () => {
+    expect(
+      formatStatusText({
+        status: "available",
+        availableUpdate: buildFakeCheckResult({ latestVersion: "1.2.3" }),
+        installMessage: null,
+        lastCheckedAt: 42,
+        formatVersion,
+        formatLastCheckedAt,
+      }),
+    ).toBe("Update ready: v1.2.3. Last checked at time-42.");
   });
 
   it("falls back to a generic 'available' message when no version is reported", () => {

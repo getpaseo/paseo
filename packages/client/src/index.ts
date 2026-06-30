@@ -472,7 +472,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       latest: () => latest,
       refetch: async (requestId) => {
-        const result = await daemonClient.fetchAgent(id, requestId);
+        const result = await daemonClient.fetchAgent({ agentId: id, requestId });
         latest = result?.agent ?? null;
         return result;
       },

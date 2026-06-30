@@ -152,6 +152,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
+  "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
@@ -908,6 +909,20 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "agent-input",
       label: "Focus message input",
       keys: ["mod", "L"],
+    },
+  },
+  {
+    id: "message-input-mode-cycle-shift-tab",
+    action: "message-input.action",
+    combo: "Shift+Tab",
+    repeat: false,
+    when: { commandCenter: false, focusScope: "message-input" },
+    payload: { type: "message-input", kind: "mode-cycle" },
+    help: {
+      id: "cycle-agent-mode",
+      section: "agent-input",
+      label: "Cycle agent mode",
+      keys: ["shift", "Tab"],
     },
   },
   {

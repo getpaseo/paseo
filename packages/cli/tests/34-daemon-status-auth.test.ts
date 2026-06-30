@@ -43,8 +43,8 @@ try {
 
     assert.strictEqual(status.localDaemon, "running");
     assert.strictEqual(status.connectedDaemon, "auth_required");
-    assert.strictEqual(status.runningAgents, null);
-    assert.strictEqual(status.idleAgents, null);
+    assert(!("runningAgents" in status), "status should not fetch agent counts");
+    assert(!("idleAgents" in status), "status should not fetch agent counts");
     assert.match(status.note, /requires a password/i);
     assert.doesNotMatch(status.note, /not reachable/i);
     console.log("✓ missing password reports auth_required\n");
@@ -81,8 +81,8 @@ try {
 
     assert.strictEqual(status.localDaemon, "running");
     assert.strictEqual(status.connectedDaemon, "reachable");
-    assert.strictEqual(status.runningAgents, 0);
-    assert.strictEqual(status.idleAgents, 0);
+    assert(!("runningAgents" in status), "status should not fetch agent counts");
+    assert(!("idleAgents" in status), "status should not fetch agent counts");
     console.log("✓ password-authenticated status remains reachable\n");
   }
 } finally {

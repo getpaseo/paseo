@@ -12,20 +12,10 @@ import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
+import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
-import { FileDropZone } from "@/components/file-drop-zone";
-import { uploadFileAttachments } from "@/composer/actions";
-import {
-  getMimeTypeFromPath,
-  isRasterImageFile,
-  isRasterImagePath,
-} from "@/attachments/file-types";
-import { readDesktopFileBytes } from "@/hooks/use-file-picker";
-import type { DroppedItem } from "@/hooks/use-file-drop-zone";
-import type { UserComposerAttachment } from "@/attachments/types";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
-import type { ImageAttachment } from "@/composer/types";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
   ToastViewport,
@@ -34,10 +24,7 @@ import {
   type ToastState,
 } from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
-import {
-  useWorkspaceAttachments,
-  useWorkspaceAttachmentScopeKey,
-} from "@/attachments/workspace-attachments-store";
+import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
@@ -96,10 +83,16 @@ import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-co
 interface ChatAgentStateShape {
   serverId: string | null;
   id: string | null;
+  provider?: Agent["provider"];
   status: Agent["status"] | null;
   cwd: string | null;
   workspaceId?: string;
   capabilities?: Agent["capabilities"];
+  currentModeId?: Agent["currentModeId"];
+  model?: Agent["model"];
+  thinkingOptionId?: Agent["thinkingOptionId"];
+  runtimeInfo?: Agent["runtimeInfo"];
+  features?: Agent["features"];
   lastError?: Agent["lastError"] | null;
 }
 
@@ -140,10 +133,16 @@ function selectChatAgentState(
   return {
     serverId: agent.serverId,
     id: agent.id,
+    provider: agent.provider,
     status: agent.status,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
     capabilities: agent.capabilities,
+    currentModeId: agent.currentModeId,
+    model: agent.model,
+    thinkingOptionId: agent.thinkingOptionId,
+    runtimeInfo: agent.runtimeInfo,
+    features: agent.features,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
@@ -161,10 +160,16 @@ function buildChatAgentFromState(
   return {
     serverId: state.serverId,
     id: state.id,
+    provider: state.provider,
     status: state.status,
     cwd: state.cwd,
     workspaceId: state.workspaceId,
     capabilities: state.capabilities,
+    currentModeId: state.currentModeId,
+    model: state.model,
+    thinkingOptionId: state.thinkingOptionId,
+    runtimeInfo: state.runtimeInfo,
+    features: state.features,
     lastError: state.lastError ?? null,
     projectPlacement,
   };
@@ -556,18 +561,7 @@ function AgentPanelBody({
     (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
   );
   const agentState = useSessionStore(
-    useShallow((state) => {
-      const agent = resolveChatAgentFromSession(state, serverId, agentId);
-      return {
-        serverId: agent?.serverId ?? null,
-        id: agent?.id ?? null,
-        status: agent?.status ?? null,
-        cwd: agent?.cwd ?? null,
-        workspaceId: agent?.workspaceId,
-        lastError: agent?.lastError ?? null,
-        archivedAt: agent?.archivedAt ?? null,
-      };
-    }),
+    useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
   const [lookupState, setLookupState] = useState<AgentLookupState>({ tag: "idle" });
   const lookupAttemptTokenRef = useRef(0);
@@ -598,7 +592,7 @@ function AgentPanelBody({
     const attemptToken = ++lookupAttemptTokenRef.current;
 
     client
-      .fetchAgent(agentId)
+      .fetchAgent({ agentId })
       .then((result) => {
         if (attemptToken !== lookupAttemptTokenRef.current) {
           return;
@@ -654,9 +648,16 @@ function AgentPanelBody({
       ? {
           serverId: agentState.serverId,
           id: agentState.id,
+          provider: agentState.provider,
           status: agentState.status,
           cwd: agentState.cwd,
           workspaceId: agentState.workspaceId,
+          capabilities: agentState.capabilities,
+          currentModeId: agentState.currentModeId,
+          model: agentState.model,
+          thinkingOptionId: agentState.thinkingOptionId,
+          runtimeInfo: agentState.runtimeInfo,
+          features: agentState.features,
           lastError: agentState.lastError ?? null,
           projectPlacement,
         }
@@ -706,8 +707,6 @@ function ChatAgentContent({
   const { api: toastApi, toast: toastState, dismiss: dismissToast } = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
   const streamViewRef = useRef<AgentStreamViewHandle>(null);
-  const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
-  const addFilesRef = useRef<((files: UserComposerAttachment[]) => void) | null>(null);
   const clearOnAgentBlurRef = useRef<() => void>(() => {});
   const wasPaneFocusedRef = useRef(isPaneFocused);
   const reconnectToastArmedRef = useRef(false);
@@ -716,54 +715,6 @@ function ChatAgentContent({
     routeKey: string;
     reason: "initial-entry" | "resume";
   } | null>(null);
-  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
-    addImagesRef.current?.(files);
-  }, []);
-
-  const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
-    addImagesRef.current = addImages;
-  }, []);
-
-  const handleAddFilesCallback = useCallback(
-    (addFiles: (files: UserComposerAttachment[]) => void) => {
-      addFilesRef.current = addFiles;
-    },
-    [],
-  );
-
-  const handleGenericFilesDropped = useCallback(
-    async (items: DroppedItem[]) => {
-      if (!client || !isConnected) return;
-      const nonImageItems = items.filter((item) => {
-        if (item.kind === "web-file") return !isRasterImageFile(item.file);
-        return !isRasterImagePath(item.path);
-      });
-      if (nonImageItems.length === 0) return;
-      try {
-        const files = await Promise.all(
-          nonImageItems.map(async (item) => {
-            if (item.kind === "web-file") {
-              return {
-                fileName: item.file.name,
-                mimeType: item.file.type || getMimeTypeFromPath(item.file.name),
-                bytes: new Uint8Array(await item.file.arrayBuffer()),
-              };
-            }
-            const fileName = item.path.split("/").pop() ?? item.path.split("\\").pop() ?? item.path;
-            const bytes = await readDesktopFileBytes(item.path);
-            return { fileName, mimeType: getMimeTypeFromPath(item.path), bytes };
-          }),
-        );
-        const uploaded = await uploadFileAttachments({ client, files });
-        addFilesRef.current?.(uploaded);
-      } catch (error) {
-        console.error("[AgentPanel] Failed to upload dropped files:", error);
-        toastApi.error(error instanceof Error ? error.message : "Failed to upload file");
-      }
-    },
-    [client, isConnected, toastApi],
-  );
-
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
@@ -1045,7 +996,7 @@ function ChatAgentContent({
         const currentAgent =
           currentSession?.agents.get(agentId) ?? currentSession?.agentDetails.get(agentId);
         if (!currentAgent) {
-          const result = await client.fetchAgent(agentId);
+          const result = await client.fetchAgent({ agentId });
           if (attemptToken !== initAttemptTokenRef.current) {
             return;
           }
@@ -1121,10 +1072,6 @@ function ChatAgentContent({
       dismiss={dismissToast}
       streamViewRef={streamViewRef}
       animatedContentStyle={animatedContentStyle}
-      handleFilesDropped={handleFilesDropped}
-      handleGenericFilesDropped={handleGenericFilesDropped}
-      handleAddImagesCallback={handleAddImagesCallback}
-      handleAddFilesCallback={handleAddFilesCallback}
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
       showHistorySyncOverlay={showHistorySyncOverlay}
@@ -1150,10 +1097,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   dismiss,
   streamViewRef,
   animatedContentStyle,
-  handleFilesDropped,
-  handleGenericFilesDropped,
-  handleAddImagesCallback,
-  handleAddFilesCallback,
   handleComposerHeightChange,
   handleMessageSent,
   showHistorySyncOverlay,
@@ -1175,10 +1118,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   dismiss: () => void;
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   animatedContentStyle: object[];
-  handleFilesDropped: (files: ImageAttachment[]) => void;
-  handleGenericFilesDropped: (items: DroppedItem[]) => void;
-  handleAddImagesCallback: (addImages: (images: ImageAttachment[]) => void) => void;
-  handleAddFilesCallback: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
   showHistorySyncOverlay: boolean;
@@ -1237,8 +1176,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         agentInputDraft={agentInputDraft}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
-        onAddImages={handleAddImagesCallback}
-        onAddFiles={handleAddFilesCallback}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
       />
@@ -1252,24 +1189,18 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
       <View style={styles.root}>
-        <FileDropZone
-          onFilesDropped={handleFilesDropped}
-          onGenericFilesDropped={handleGenericFilesDropped}
-          disabled={isArchivingCurrentAgent}
-        >
-          <View style={styles.container}>
-            {contentContainer}
+        <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
+          {contentContainer}
 
-            {composerSection}
+          {composerSection}
 
-            {showHistorySyncOverlay ? (
-              <View style={styles.historySyncOverlay} testID="agent-history-overlay">
-                <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
-              </View>
-            ) : null}
+          {showHistorySyncOverlay ? (
+            <View style={styles.historySyncOverlay} testID="agent-history-overlay">
+              <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
+            </View>
+          ) : null}
 
-            <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
-          </View>
+          <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
         </FileDropZone>
 
         {isArchivingCurrentAgent ? (
@@ -1361,8 +1292,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
   agentInputDraft,
   onAttentionInputFocus,
   onAttentionPromptSend,
-  onAddImages,
-  onAddFiles,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1376,8 +1305,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
   agentInputDraft: AgentInputDraft;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
-  onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
-  onAddFiles: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1401,8 +1328,6 @@ const AgentComposerSection = memo(function AgentComposerSection({
       agentInputDraft={agentInputDraft}
       onAttentionInputFocus={onAttentionInputFocus}
       onAttentionPromptSend={onAttentionPromptSend}
-      onAddImages={onAddImages}
-      onAddFiles={onAddFiles}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
     />
@@ -1418,8 +1343,6 @@ function ActiveAgentComposer({
   agentInputDraft,
   onAttentionInputFocus,
   onAttentionPromptSend,
-  onAddImages,
-  onAddFiles,
   onComposerHeightChange,
   onMessageSent,
 }: {
@@ -1431,8 +1354,6 @@ function ActiveAgentComposer({
   agentInputDraft: AgentInputDraft;
   onAttentionInputFocus: () => void;
   onAttentionPromptSend: () => void;
-  onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
-  onAddFiles: (addFiles: (files: UserComposerAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
 }) {
@@ -1468,7 +1389,10 @@ function ActiveAgentComposer({
     cwd,
     workspaceId,
   });
-  const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey);
+  const attachmentScopeKeys = useMemo(
+    () => [workspaceAttachmentScopeKey],
+    [workspaceAttachmentScopeKey],
+  );
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
   const handleOpenWorkspaceAttachment = useCallback(
@@ -1569,7 +1493,7 @@ function ActiveAgentComposer({
         value={agentInputDraft.text}
         onChangeText={agentInputDraft.setText}
         attachments={agentInputDraft.attachments}
-        workspaceAttachments={workspaceAttachments}
+        attachmentScopeKeys={attachmentScopeKeys}
         onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
         onChangeAttachments={agentInputDraft.setAttachments}
         cwd={cwd}
@@ -1578,8 +1502,6 @@ function ActiveAgentComposer({
         isSubmitLoading={isSubmitLoading}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
-        onAddImages={onAddImages}
-        onAddFiles={onAddFiles}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
