@@ -5993,7 +5993,7 @@ export class CodexAppServerAgentClient implements AgentClient {
    */
   async forkSession(
     handle: AgentPersistenceHandle,
-    _options: AgentForkOptions,
+    options: AgentForkOptions,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
@@ -6030,6 +6030,23 @@ export class CodexAppServerAgentClient implements AgentClient {
         persistExtendedHistory: true,
       });
       newThreadId = forked.thread.id;
+
+      // Per-message fork: truncate the copy so it ends at the requested message
+      // (mirrors the rewind path — fork copies the whole thread, then rollback
+      // removes the user turns after the boundary). Whole-conversation fork (no
+      // upToMessageId) keeps the full copy. Done on the forked thread only, so
+      // the source is never mutated.
+      if (options.upToMessageId) {
+        const numTurns = await this.resolveCodexForkRollbackTurns(
+          client,
+          newThreadId,
+          cwd,
+          options.upToMessageId,
+        );
+        if (numTurns > 0) {
+          await rollbackCodexThread(client, { threadId: newThreadId, numTurns });
+        }
+      }
     } finally {
       await client.dispose();
     }
@@ -6040,6 +6057,33 @@ export class CodexAppServerAgentClient implements AgentClient {
       nativeHandle: newThreadId,
     };
     return this.resumeSession(forkedHandle, overrides, launchContext);
+  }
+
+  /**
+   * Number of trailing user turns to roll back so a forked thread ends at
+   * `upToMessageId`. Reads the forked thread's own history (self-contained, no
+   * source session needed). Returns 0 when the boundary is the last turn or
+   * cannot be located (→ keep the full copy).
+   */
+  private async resolveCodexForkRollbackTurns(
+    client: CodexAppServerClientLike,
+    threadId: string,
+    cwd: string | null,
+    upToMessageId: string,
+  ): Promise<number> {
+    const timeline = await loadCodexThreadHistoryTimeline({
+      threadId,
+      cwd,
+      requestThread: (id) => readCodexThread(client, id),
+    });
+    const userTurnIds = timeline
+      .filter((entry) => entry.item.type === "user_message")
+      .map((entry) => (entry.item as { messageId: string }).messageId);
+    const targetIndex = userTurnIds.indexOf(upToMessageId);
+    if (targetIndex < 0) {
+      return 0;
+    }
+    return userTurnIds.length - (targetIndex + 1);
   }
 
   async listImportableSessions(

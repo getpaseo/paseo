@@ -95,7 +95,7 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
-import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
@@ -295,13 +295,6 @@ function buildForkDraftSetup(agent: AgentScreenAgent): WorkspaceDraftTabSetup | 
   };
 }
 
-function buildForkDraftTabTarget(
-  setup: WorkspaceDraftTabSetup | undefined,
-  draftId: string,
-): WorkspaceTabTarget {
-  return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
-}
-
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -435,73 +428,86 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
 
+    // Fork into a NEW TAB → real provider-native session fork: duplicate the
+    // actual provider session (truncated at this message for providers that
+    // support it, e.g. Claude/Codex) into an independent agent that opens as a
+    // tab in this workspace, with native scrollable history — not a chat-history
+    // attachment. Shares the daemon path used by the tab ⋮ "Fork agent" action
+    // (agent.fork.request → forkSession).
+    const forkAssistantTurnIntoTab = useStableEvent(async (boundaryMessageId?: string) => {
+      if (!client) {
+        toast?.error(t("workspace.terminal.hostDisconnected"));
+        return;
+      }
+      toast?.show(t("fork.pending"), { durationMs: null });
+      try {
+        await client.forkAgent(agentId, boundaryMessageId);
+        toast?.show(t("fork.success"), { variant: "success" });
+      } catch {
+        toast?.error(t("fork.errors.failed"));
+      }
+    });
+
+    // Fork into a NEW WORKSPACE/worktree/host → keep the chat-history attachment
+    // flow: a native provider session is bound to its provider and working
+    // directory and can't be relocated, so the prior context is carried as an
+    // attachment into a fresh draft instead.
+    const forkAssistantTurnIntoWorkspace = useStableEvent(async (boundaryMessageId?: string) => {
+      try {
+        if (!supportsAgentForkContext) {
+          toast?.error(t("message.actions.forkUnavailable"));
+          return;
+        }
+        if (!client) {
+          throw new Error(t("workspace.terminal.hostDisconnected"));
+        }
+        const draftSetup = buildForkDraftSetup(agent);
+        const draftId = generateDraftId();
+        const payload = await client.buildAgentForkContext(
+          agentId,
+          boundaryMessageId ? { boundaryMessageId } : {},
+        );
+        const attachment = buildChatHistoryAttachment({
+          draftId,
+          serverId: resolvedServerId,
+          agentId,
+          payload,
+          missingAttachmentMessage: t("message.actions.forkFailed"),
+        });
+        useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+          scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+          attachments: [attachment],
+        });
+        const sourceDirectory =
+          agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
+        if (draftSetup) {
+          useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+            draftId,
+            setup: draftSetup,
+            sourceDirectory,
+          });
+        }
+        router.push(
+          buildNewWorkspaceRoute({
+            serverId: resolvedServerId,
+            sourceDirectory,
+            displayName: agent.projectPlacement?.projectName,
+            projectId: agent.projectPlacement?.projectKey,
+            draftId,
+          }),
+        );
+      } catch (error) {
+        toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+      }
+    });
+
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
       async ({ target, boundaryMessageId }) => {
-        try {
-          if (!supportsAgentForkContext) {
-            toast?.error(t("message.actions.forkUnavailable"));
-            return;
-          }
-          if (!client) {
-            throw new Error(t("workspace.terminal.hostDisconnected"));
-          }
-          const draftSetup = buildForkDraftSetup(agent);
-          const prepareForkDraft = async () => {
-            const draftId = generateDraftId();
-            const payload = await client.buildAgentForkContext(
-              agentId,
-              boundaryMessageId ? { boundaryMessageId } : {},
-            );
-            const attachment = buildChatHistoryAttachment({
-              draftId,
-              serverId: resolvedServerId,
-              agentId,
-              payload,
-              missingAttachmentMessage: t("message.actions.forkFailed"),
-            });
-            useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
-              scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
-              attachments: [attachment],
-            });
-            return draftId;
-          };
-
-          if (target === "tab") {
-            const workspaceId = agent.workspaceId;
-            if (!workspaceId) {
-              throw new Error(t("message.actions.forkMissingWorkspace"));
-            }
-            const draftId = await prepareForkDraft();
-            navigateToPreparedWorkspaceTab({
-              serverId: resolvedServerId,
-              workspaceId,
-              target: buildForkDraftTabTarget(draftSetup, draftId),
-            });
-            return;
-          }
-
-          const draftId = await prepareForkDraft();
-          const sourceDirectory =
-            agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
-          if (draftSetup) {
-            useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
-              draftId,
-              setup: draftSetup,
-              sourceDirectory,
-            });
-          }
-          router.push(
-            buildNewWorkspaceRoute({
-              serverId: resolvedServerId,
-              sourceDirectory,
-              displayName: agent.projectPlacement?.projectName,
-              projectId: agent.projectPlacement?.projectKey,
-              draftId,
-            }),
-          );
-        } catch (error) {
-          toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+        if (target === "tab") {
+          await forkAssistantTurnIntoTab(boundaryMessageId);
+          return;
         }
+        await forkAssistantTurnIntoWorkspace(boundaryMessageId);
       },
     );
 
