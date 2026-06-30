@@ -5,6 +5,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentForkOptions,
   type AgentLaunchContext,
   type AgentMode,
   type AgentModelDefinition,
@@ -197,6 +198,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsFork: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -5983,6 +5985,61 @@ export class CodexAppServerAgentClient implements AgentClient {
     );
     await session.connect();
     return session;
+  }
+
+  /**
+   * Fork a persisted Codex thread into a new independent thread (whole-
+   * conversation copy). The original thread is never mutated.
+   */
+  async forkSession(
+    handle: AgentPersistenceHandle,
+    _options: AgentForkOptions,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    const sourceThreadId = handle.sessionId ?? handle.nativeHandle;
+    if (!sourceThreadId) {
+      throw new Error("Cannot fork Codex session: no thread id available");
+    }
+
+    const metadata = (handle.metadata ?? {}) as Record<string, unknown>;
+    const cwd = (typeof metadata.cwd === "string" ? metadata.cwd : null) ?? overrides?.cwd ?? null;
+    const model =
+      (typeof metadata.model === "string" ? metadata.model : null) ?? overrides?.model ?? null;
+    const serviceTier: string | null = null;
+
+    // Spawn a transient app-server client for the fork RPC (same pattern as
+    // listImportableSessions). The forked thread will be loaded by resumeSession
+    // via a separate long-lived connection.
+    const child = await this.spawnAppServer();
+    const client =
+      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
+      new CodexAppServerClient(child, this.logger);
+
+    let newThreadId: string;
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+
+      const forked = await forkCodexThread(client, {
+        threadId: sourceThreadId,
+        cwd,
+        model,
+        serviceTier,
+        excludeTurns: false,
+        persistExtendedHistory: true,
+      });
+      newThreadId = forked.thread.id;
+    } finally {
+      await client.dispose();
+    }
+
+    const forkedHandle: AgentPersistenceHandle = {
+      ...handle,
+      sessionId: newThreadId,
+      nativeHandle: newThreadId,
+    };
+    return this.resumeSession(forkedHandle, overrides, launchContext);
   }
 
   async listImportableSessions(
