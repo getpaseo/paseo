@@ -1,17 +1,14 @@
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
-import { buildSeededHost } from "./helpers/daemon-registry";
-import { wsRoutePatternForPort } from "./helpers/daemon-port";
+import {
+  addFakeScheduleHostAndReload,
+  buildFakeScheduleHostWorkspace,
+  installFakeScheduleHost,
+} from "./helpers/schedule-fake-host";
 import { getServerId } from "./helpers/server-id";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 import { buildSchedulesRoute } from "../src/utils/host-routes";
-
-const REGISTRY_KEY = "@paseo:daemon-registry";
-const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
-const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
-const FAKE_HOST_MODEL_ID = "fake-host-model";
-const FAKE_HOST_MODEL_LABEL = "Fake host model";
 
 interface ScheduleListItem {
   id: string;
@@ -22,194 +19,6 @@ interface ScheduleListItem {
 interface ScheduleSeedClient {
   scheduleList(): Promise<{ schedules: ScheduleListItem[]; error: string | null }>;
   scheduleDelete(input: { id: string }): Promise<{ error: string | null }>;
-}
-
-type WebSocketMessage = string | Buffer;
-type SessionRequest = Record<string, unknown> & { type?: string; requestId?: string };
-
-function parseJson(message: WebSocketMessage): unknown {
-  const raw = typeof message === "string" ? message : message.toString("utf8");
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function buildSessionMessage(type: string, payload: Record<string, unknown>) {
-  return JSON.stringify({
-    type: "session",
-    message: {
-      type,
-      payload,
-    },
-  });
-}
-
-function buildFakeProviderEntries(nowIso: string) {
-  return [
-    {
-      provider: "mock",
-      label: "Mock",
-      status: "ready",
-      enabled: true,
-      fetchedAt: nowIso,
-      models: [
-        {
-          provider: "mock",
-          id: FAKE_HOST_MODEL_ID,
-          label: FAKE_HOST_MODEL_LABEL,
-          isDefault: true,
-        },
-      ],
-      modes: [{ id: "load-test", label: "Load test" }],
-      defaultModeId: "load-test",
-    },
-  ];
-}
-
-async function installFakeScheduleHost(input: {
-  page: Page;
-  port: string;
-  serverId: string;
-  workspace: Record<string, unknown>;
-}): Promise<void> {
-  await input.page.routeWebSocket(wsRoutePatternForPort(input.port), (ws) => {
-    ws.onMessage((message) => {
-      const parsed = parseJson(message);
-      if (!parsed || typeof parsed !== "object") {
-        return;
-      }
-      const envelope = parsed as { type?: string; message?: SessionRequest };
-      const now = Date.now();
-      const nowIso = new Date(now).toISOString();
-
-      if (envelope.type === "hello") {
-        ws.send(
-          buildSessionMessage("status", {
-            status: "server_info",
-            serverId: input.serverId,
-            hostname: "fake-schedule-host",
-            version: "0.0.0-e2e",
-            features: {
-              providersSnapshot: true,
-              workspaceMultiplicity: true,
-              projectAdd: true,
-              projectRemove: true,
-              worktreeRestore: true,
-            },
-          }),
-        );
-        return;
-      }
-
-      if (envelope.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
-        return;
-      }
-
-      if (envelope.type !== "session" || !envelope.message) {
-        return;
-      }
-
-      const request = envelope.message;
-      const requestId = typeof request.requestId === "string" ? request.requestId : "fake-request";
-      switch (request.type) {
-        case "ping":
-          ws.send(
-            buildSessionMessage("pong", {
-              requestId,
-              clientSentAt: typeof request.clientSentAt === "number" ? request.clientSentAt : now,
-              serverReceivedAt: now,
-              serverSentAt: now,
-            }),
-          );
-          return;
-        case "fetch_workspaces_request":
-          ws.send(
-            buildSessionMessage("fetch_workspaces_response", {
-              requestId,
-              entries: [input.workspace],
-              emptyProjects: [],
-              pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-            }),
-          );
-          return;
-        case "fetch_agents_request":
-          ws.send(
-            buildSessionMessage("fetch_agents_response", {
-              requestId,
-              entries: [],
-              pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-            }),
-          );
-          return;
-        case "get_providers_snapshot_request":
-          ws.send(
-            buildSessionMessage("get_providers_snapshot_response", {
-              requestId,
-              entries: buildFakeProviderEntries(nowIso),
-              generatedAt: nowIso,
-            }),
-          );
-          return;
-        case "refresh_providers_snapshot_request":
-          ws.send(
-            buildSessionMessage("refresh_providers_snapshot_response", {
-              requestId,
-              acknowledged: true,
-            }),
-          );
-          return;
-        case "schedule/list":
-          ws.send(
-            buildSessionMessage("schedule/list/response", {
-              requestId,
-              schedules: [],
-              error: null,
-            }),
-          );
-          return;
-      }
-    });
-  });
-}
-
-async function addFakeHostAndReload(input: {
-  page: Page;
-  serverId: string;
-  label: string;
-  port: string;
-}): Promise<void> {
-  const host = buildSeededHost({
-    serverId: input.serverId,
-    label: input.label,
-    endpoint: `127.0.0.1:${input.port}`,
-    nowIso: new Date().toISOString(),
-  });
-
-  await input.page.evaluate(
-    ({ seededHost, keys }) => {
-      const nonce = localStorage.getItem(keys.nonce);
-      if (!nonce) {
-        throw new Error("Expected the e2e seed nonce before overriding the host registry.");
-      }
-      const raw = localStorage.getItem(keys.registry);
-      const registry: Array<{ serverId: string }> = raw ? JSON.parse(raw) : [];
-      localStorage.setItem(keys.registry, JSON.stringify([...registry, seededHost]));
-      localStorage.setItem(keys.disableSeedOnce, nonce);
-    },
-    {
-      seededHost: host,
-      keys: {
-        registry: REGISTRY_KEY,
-        nonce: SEED_NONCE_KEY,
-        disableSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY,
-      },
-    },
-  );
-
-  await input.page.reload();
 }
 
 async function selectModelByLabel(page: Page, label: string): Promise<void> {
@@ -299,48 +108,26 @@ test.describe("Schedules project target", () => {
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-project-host-model-" });
     cleanupTasks.push(() => workspace.cleanup());
-    const workspaceList = await workspace.client.fetchWorkspaces({
-      filter: { projectId: workspace.projectId },
-    });
-    const workspaceTemplate = workspaceList.entries.find(
-      (entry) => entry.id === workspace.workspaceId,
-    );
-    if (!workspaceTemplate) {
-      throw new Error(`Failed to load seeded workspace descriptor ${workspace.workspaceId}`);
-    }
-
-    const fakeServerId = "schedule-fake-host";
-    const fakeProjectId = `${workspace.projectId}-fake-host`;
-    const fakeCwd = `${workspace.repoPath}-fake-host`;
-    const fakeWorkspace = {
-      ...workspaceTemplate,
-      id: `${workspaceTemplate.id}-fake-host`,
-      projectId: fakeProjectId,
-      projectDisplayName: "Fake host project",
-      projectRootPath: fakeCwd,
-      workspaceDirectory: fakeCwd,
-      name: "Fake host project",
-      project: undefined,
-    };
+    const fakeHost = await buildFakeScheduleHostWorkspace(workspace);
     const fakePort = String(59_000 + Math.floor(Math.random() * 900));
 
     await installFakeScheduleHost({
       page,
       port: fakePort,
-      serverId: fakeServerId,
-      workspace: fakeWorkspace,
+      serverId: fakeHost.serverId,
+      workspace: fakeHost.workspace,
     });
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
     await page.goto(buildSchedulesRoute());
-    await addFakeHostAndReload({
+    await addFakeScheduleHostAndReload({
       page,
-      serverId: fakeServerId,
+      serverId: fakeHost.serverId,
       label: "Fake host",
       port: fakePort,
     });
-    await expect(page.getByTestId(`schedules-section-${fakeServerId}`)).toBeVisible({
+    await expect(page.getByTestId(`schedules-section-${fakeHost.serverId}`)).toBeVisible({
       timeout: 30_000,
     });
     await page.getByRole("button", { name: "New schedule" }).click();
@@ -356,9 +143,9 @@ test.describe("Schedules project target", () => {
     await expect(page.getByRole("button", { name: /ten second stream/i })).toBeVisible();
 
     await page.getByRole("button", { name: /select project/i }).click();
-    await page.getByTestId(`schedule-project-option-${fakeProjectId}`).click();
+    await page.getByTestId(`schedule-project-option-${fakeHost.projectId}`).click();
     await expect(page.getByRole("button", { name: /select project/i })).toContainText(
-      "Fake host project",
+      fakeHost.projectDisplayName,
     );
     await expect(page.getByRole("button", { name: /select model/i })).toBeVisible();
 
