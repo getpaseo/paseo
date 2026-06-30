@@ -61,7 +61,6 @@ import {
   hostProjectFromRoute,
   hostProjectFromWorkspace,
   resolveInitialWorkspaceProject,
-  resolveSelectedHostProject,
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
@@ -88,6 +87,13 @@ import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
+import {
+  createInitialNewWorkspaceProjectSelection,
+  reconcileNewWorkspaceProjectSelection,
+  resolveNewWorkspaceProjectSelection,
+  type NewWorkspaceProjectSelection,
+  type NewWorkspaceProjectSelectionContext,
+} from "./new-workspace-project-selection";
 
 function resolveCheckoutRequest(
   selectedItem: PickerItem | null,
@@ -1379,12 +1385,6 @@ interface NewWorkspaceProjectPickerState {
   handleSelectProjectOption: (id: string) => void;
 }
 
-interface NewWorkspaceProjectSelection {
-  contextKey: string;
-  projectKey: string | null;
-  isManual: boolean;
-}
-
 function useNewWorkspaceProjectPicker({
   selectedServerId,
   projects,
@@ -1413,58 +1413,34 @@ function useNewWorkspaceProjectPicker({
 
   const routeProjectKey = routeProject?.projectKey ?? null;
   const selectionContextKey = `${selectedServerId}:${routeProjectKey ?? ""}`;
-  const [projectSelection, setProjectSelection] = useState<NewWorkspaceProjectSelection>(() => ({
-    contextKey: selectionContextKey,
-    projectKey: initialProject?.projectKey ?? null,
-    isManual: false,
-  }));
+  const projectSelectionContext = useMemo<NewWorkspaceProjectSelectionContext>(
+    () => ({
+      contextKey: selectionContextKey,
+      initialProject,
+      projects: selectableProjects,
+      routeProject,
+      lastActiveProject,
+    }),
+    [initialProject, lastActiveProject, routeProject, selectableProjects, selectionContextKey],
+  );
+  const [projectSelection, setProjectSelection] = useState<NewWorkspaceProjectSelection>(() =>
+    createInitialNewWorkspaceProjectSelection(projectSelectionContext),
+  );
 
   useEffect(() => {
-    setProjectSelection((current) => {
-      const initialProjectKey = initialProject?.projectKey ?? null;
-      if (current.contextKey !== selectionContextKey) {
-        return { contextKey: selectionContextKey, projectKey: initialProjectKey, isManual: false };
-      }
+    setProjectSelection((current) =>
+      reconcileNewWorkspaceProjectSelection(current, projectSelectionContext),
+    );
+  }, [projectSelectionContext]);
 
-      if (!current.projectKey) {
-        if (current.projectKey === initialProjectKey && !current.isManual) return current;
-        return { contextKey: selectionContextKey, projectKey: initialProjectKey, isManual: false };
-      }
-
-      const selectedProject = resolveSelectedHostProject({
-        selectedProjectKey: current.projectKey,
-        projects: selectableProjects,
-        routeProject: current.isManual ? null : routeProject,
-        lastActiveProject: current.isManual ? null : lastActiveProject,
-      });
-      if (selectedProject) return current;
-
-      return { contextKey: selectionContextKey, projectKey: initialProjectKey, isManual: false };
-    });
-  }, [initialProject, lastActiveProject, routeProject, selectableProjects, selectionContextKey]);
-
-  const selectedProjectKey =
-    projectSelection.contextKey === selectionContextKey
-      ? projectSelection.projectKey
-      : (initialProject?.projectKey ?? null);
-  const selectedProjectIsManual =
-    projectSelection.contextKey === selectionContextKey ? projectSelection.isManual : false;
+  const selectedProjectSelection = reconcileNewWorkspaceProjectSelection(
+    projectSelection,
+    projectSelectionContext,
+  );
 
   const selectedProject = useMemo(
-    () =>
-      resolveSelectedHostProject({
-        selectedProjectKey,
-        projects: selectableProjects,
-        routeProject: selectedProjectIsManual ? null : routeProject,
-        lastActiveProject: selectedProjectIsManual ? null : lastActiveProject,
-      }),
-    [
-      lastActiveProject,
-      routeProject,
-      selectableProjects,
-      selectedProjectIsManual,
-      selectedProjectKey,
-    ],
+    () => resolveNewWorkspaceProjectSelection(selectedProjectSelection, projectSelectionContext),
+    [projectSelectionContext, selectedProjectSelection],
   );
   const { options: projectPickerOptions, projectByOptionId } = useMemo(
     () => computeProjectOptionData(selectableProjects),
@@ -1478,7 +1454,7 @@ function useNewWorkspaceProjectPicker({
       setProjectSelection({
         contextKey: selectionContextKey,
         projectKey: project.projectKey,
-        isManual: true,
+        source: "manual",
       });
     },
     [allowAllProjects, projectByOptionId, selectionContextKey],
