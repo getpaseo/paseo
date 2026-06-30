@@ -90,6 +90,7 @@ import { runPinnedTabTarget, type TabTargetHandlers } from "@/workspace-pins/run
 import type { PinnedTabTarget } from "@/workspace-pins/target";
 import { PinnedTargetsRow } from "@/workspace-pins/pinned-targets-row";
 import { PinnableMenuItem } from "@/workspace-pins/pinnable-menu-item";
+import { useSessionStore } from "@/stores/session-store";
 
 const DROPDOWN_WIDTH = 220;
 const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
@@ -1091,6 +1092,12 @@ function ResolvedDesktopTabChip({
   showDropIndicatorAfter: boolean;
 }) {
   const { t } = useTranslation();
+  const canForkAgent = useSessionStore((state) =>
+    item.tab.target.kind === "agent"
+      ? (state.sessions[normalizedServerId]?.agents?.get(item.tab.target.agentId)?.capabilities
+          ?.supportsFork ?? false)
+      : false,
+  );
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
@@ -1100,6 +1107,7 @@ function ResolvedDesktopTabChip({
         onCopyResumeCommand,
         onCopyAgentId,
         onForkAgent,
+        canForkAgent,
         onCopyFilePath,
         onReloadAgent,
         onRenameTab,
@@ -1112,6 +1120,7 @@ function ResolvedDesktopTabChip({
     [
       index,
       item.tab,
+      canForkAgent,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,

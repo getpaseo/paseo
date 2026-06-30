@@ -630,6 +630,12 @@ function MobileWorkspaceTabOption({
     }),
     [t],
   );
+  const canForkAgent = useSessionStore((state) =>
+    tab.target.kind === "agent"
+      ? (state.sessions[normalizedServerId]?.agents?.get(tab.target.agentId)?.capabilities
+          ?.supportsFork ?? false)
+      : false,
+  );
   const menuTestIDBase = `workspace-tab-menu-${buildDeterministicWorkspaceTabId(tab.target)}`;
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
@@ -640,6 +646,7 @@ function MobileWorkspaceTabOption({
     onCopyResumeCommand,
     onCopyAgentId,
     onForkAgent,
+    canForkAgent,
     onCopyFilePath,
     onReloadAgent,
     onRenameTab,

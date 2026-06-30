@@ -72,6 +72,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onForkAgent: (agentId: string) => Promise<void> | void;
+  canForkAgent?: boolean;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -89,6 +90,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onForkAgent: (agentId: string) => Promise<void> | void;
+  canForkAgent?: boolean;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
@@ -166,6 +168,7 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsAfter,
     onCloseOtherTabs,
   } = input;
+  const canForkAgent = input.canForkAgent ?? false;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
   const isLastTab = index === tabCount - 1;
@@ -195,16 +198,18 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyAgentId(agentId);
       },
     });
-    entries.push({
-      kind: "item",
-      key: "fork-agent",
-      label: labels.forkAgent,
-      icon: "git-branch",
-      testID: `${menuTestIDBase}-fork-agent`,
-      onSelect: () => {
-        void onForkAgent(agentId);
-      },
-    });
+    if (canForkAgent) {
+      entries.push({
+        kind: "item",
+        key: "fork-agent",
+        label: labels.forkAgent,
+        icon: "git-branch",
+        testID: `${menuTestIDBase}-fork-agent`,
+        onSelect: () => {
+          void onForkAgent(agentId);
+        },
+      });
+    }
   }
 
   if (tab.target.kind === "file") {
@@ -314,6 +319,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onForkAgent: input.onForkAgent,
+      canForkAgent: input.canForkAgent,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
       onRenameTab: input.onRenameTab,

@@ -33,6 +33,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand,
       onCopyAgentId,
       onForkAgent,
+      canForkAgent: true,
       onCopyFilePath,
       onReloadAgent,
       onRenameTab,
@@ -65,6 +66,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
@@ -102,6 +104,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
@@ -131,6 +134,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
@@ -161,6 +165,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent,
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
@@ -182,6 +187,31 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onForkAgent).toHaveBeenCalledWith("agent-123");
   });
 
+  it("omits the fork entry when the provider does not support fork", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onForkAgent: vi.fn(),
+      canForkAgent: false,
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries.some((entry) => entry.kind === "item" && entry.label === "Fork agent")).toBe(
+      false,
+    );
+  });
+
   it("invokes onRenameTab when the rename entry is selected for agent tabs", () => {
     const onRenameTab = vi.fn();
     const tab = createAgentTab();
@@ -194,6 +224,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
@@ -229,6 +260,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab,
@@ -270,6 +302,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath,
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
@@ -312,6 +345,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onForkAgent: vi.fn(),
+      canForkAgent: true,
       onCopyFilePath: vi.fn(),
       onReloadAgent: vi.fn(),
       onRenameTab: vi.fn(),
