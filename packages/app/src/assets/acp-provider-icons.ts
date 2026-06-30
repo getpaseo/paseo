@@ -71,7 +71,7 @@ export const ACP_PROVIDER_ICON_SVGS = {
   stakpak:
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">\n  <path fill="currentColor" d="M6.53 4.412h5.883v3.587H9.471v3.588H3.588V7.999H6.53Z"/>\n</svg>\n',
   traecli:
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">\n  <path d="M2.75 2.5h10.5a.75.75 0 0 1 0 1.5H8.75v9.25a.75.75 0 0 1-1.5 0V4H2.75a.75.75 0 0 1 0-1.5Z"/>\n  <rect x="11" y="10.5" width="3" height="3" rx="0.6"/>\n</svg>\n',
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">\n  <path fill-rule="evenodd" d="M2.4 4.8H21.6V19.2H2.4Z M5.92 7.52H19.2V15.36H5.92Z M10.08 9.6 11.92 11.44 10.08 13.28 8.24 11.44Z M15.04 9.6 16.88 11.44 15.04 13.28 13.2 11.44Z"/>\n</svg>\n',
   vtcode:
     '<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">\n  <path d="M0.5 5.5L2.5 8 0.5 10.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>\n  <text x="3.2" y="11.5" font-family="\'SF Mono\', \'Fira Code\', \'Consolas\', monospace" font-size="10" font-weight="600" letter-spacing="-0.5" fill="currentColor">VT</text>\n</svg>\n',
 } as const;
