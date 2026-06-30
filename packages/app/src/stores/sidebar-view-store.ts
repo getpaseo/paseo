@@ -49,6 +49,8 @@ function readHostFilters(persistedState: Record<string, unknown>): string[] {
   if (Array.isArray(hostFilters)) {
     return hostFilters.filter((value): value is string => typeof value === "string");
   }
+  // COMPAT(sidebarHostFilters): added in v0.1.102, remove after 2026-12-30 once pre-v2 persisted
+  // sidebar state (a single `hostFilter` string) has aged out.
   const legacyHostFilter = persistedState.hostFilter;
   return typeof legacyHostFilter === "string" ? [legacyHostFilter] : [];
 }

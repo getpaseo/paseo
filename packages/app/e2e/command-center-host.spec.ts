@@ -4,7 +4,7 @@ import { test } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import { createIdleAgent } from "./helpers/archive-tab";
 import { openCommandCenter } from "./helpers/command-center";
-import { appendOfflineHost } from "./helpers/hosts";
+import { addOfflineHostAndReload } from "./helpers/hosts";
 import { seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 
@@ -28,12 +28,12 @@ test.describe("Command center host labels", () => {
       });
 
       // A second (offline) host makes the view multi-host, which is when the host label earns its space.
-      await appendOfflineHost(page, {
+      await gotoAppShell(page);
+      await addOfflineHostAndReload(page, {
         serverId: SECONDARY_HOST_ID,
         label: "Secondary Host",
         primaryLabel: PRIMARY_HOST_LABEL,
       });
-      await gotoAppShell(page);
 
       const panel = await openCommandCenter(page);
 
