@@ -89,7 +89,7 @@ export interface SidebarWorkspacesListResult {
 }
 
 export function useSidebarWorkspacesList(options?: {
-  hostFilter?: string | null;
+  hostFilters?: readonly string[];
   enabled?: boolean;
 }): SidebarWorkspacesListResult {
   const runtime = getHostRuntimeStore();
@@ -97,27 +97,31 @@ export function useSidebarWorkspacesList(options?: {
   const hostRegistryLoaded = useHostRegistryLoaded();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
 
-  const storeHostFilter = useSidebarViewStore((state) => state.hostFilter);
-  const hostFilter = options?.hostFilter ?? storeHostFilter;
-  const reconcileHostFilter = useSidebarViewStore((state) => state.reconcileHostFilter);
-  const hasHostFilterMatch = hostFilter ? allServerIds.includes(hostFilter) : false;
-  const effectiveHostFilter =
-    hostFilter && (!hostRegistryLoaded || hasHostFilterMatch) ? hostFilter : null;
+  const storeHostFilters = useSidebarViewStore((state) => state.hostFilters);
+  const hostFilters = options?.hostFilters ?? storeHostFilters;
+  const reconcileHostFilters = useSidebarViewStore((state) => state.reconcileHostFilters);
   const isActive = options?.enabled !== false;
 
   const serverIds = useMemo(() => {
-    if (effectiveHostFilter) {
-      return allServerIds.filter((id) => id === effectiveHostFilter);
+    if (hostFilters.length === 0) {
+      return allServerIds;
     }
-    return allServerIds;
-  }, [allServerIds, effectiveHostFilter]);
+    const selected = new Set(hostFilters);
+    const matched = allServerIds.filter((id) => selected.has(id));
+    // Registry has settled but none of the pinned hosts still exist — fall back to every
+    // host rather than leaving the sidebar empty.
+    if (hostRegistryLoaded && matched.length === 0) {
+      return allServerIds;
+    }
+    return matched;
+  }, [allServerIds, hostFilters, hostRegistryLoaded]);
 
   useEffect(() => {
     if (!hostRegistryLoaded) {
       return;
     }
-    reconcileHostFilter(allServerIds);
-  }, [allServerIds, hostRegistryLoaded, reconcileHostFilter]);
+    reconcileHostFilters(allServerIds);
+  }, [allServerIds, hostRegistryLoaded, reconcileHostFilters]);
 
   const persistedProjectOrder = useSidebarOrderStore((state) => state.projectOrder ?? EMPTY_ORDER);
 
