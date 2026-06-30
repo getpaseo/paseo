@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -21,6 +21,8 @@ export interface AdaptiveRenameModalProps {
   validate?: (value: string) => string | null;
   maxLength?: number;
   testID?: string;
+  children?: ReactNode;
+  submitDisabled?: boolean;
 }
 
 export function AdaptiveRenameModal({
@@ -34,6 +36,8 @@ export function AdaptiveRenameModal({
   validate,
   maxLength,
   testID,
+  children,
+  submitDisabled: submitDisabledProp,
 }: AdaptiveRenameModalProps) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(initialValue);
@@ -72,15 +76,22 @@ export function AdaptiveRenameModal({
     [validate, t],
   );
 
-  const handleChange = useCallback((value: string) => {
-    setDraft(value);
-    setError(null);
-  }, []);
+  const handleChange = useCallback(
+    (value: string) => {
+      setDraft(value);
+      setError(computeError(value));
+    },
+    [computeError],
+  );
+
+  const submitDisabled =
+    isPending ||
+    ((submitDisabledProp ?? true) && draft === initialValue) ||
+    computeError(draft) !== null;
 
   const handleSubmit = useCallback(async () => {
-    if (isPending) return;
+    if (isPending || submitDisabled) return;
     const value = draft;
-    if (value === initialValue) return;
     const validationError = computeError(value);
     if (validationError) {
       setError(validationError);
@@ -97,7 +108,7 @@ export function AdaptiveRenameModal({
         err instanceof Error && err.message ? err.message : t("common.errors.unableToSave");
       setError(message);
     }
-  }, [isPending, draft, initialValue, computeError, onSubmit, onClose, t]);
+  }, [isPending, submitDisabled, draft, computeError, onSubmit, onClose, t]);
 
   const handleCancel = useCallback(() => {
     if (isPending) return;
@@ -108,7 +119,6 @@ export function AdaptiveRenameModal({
     void handleSubmit();
   }, [handleSubmit]);
 
-  const submitDisabled = isPending || draft === initialValue || computeError(draft) !== null;
   const inputTestID = testID ? `${testID}-input` : undefined;
   const errorTestID = testID ? `${testID}-error` : undefined;
   const submitTestID = testID ? `${testID}-submit` : undefined;
@@ -141,6 +151,7 @@ export function AdaptiveRenameModal({
             {error}
           </Text>
         ) : null}
+        {children ? <View style={styles.children}>{children}</View> : null}
         <View style={styles.actions}>
           <Button
             variant="secondary"
@@ -186,6 +197,9 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.sm,
+  },
+  children: {
+    marginTop: -theme.spacing[1],
   },
   actions: {
     flexDirection: "row",

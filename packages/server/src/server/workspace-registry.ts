@@ -53,6 +53,9 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Whether the workspace name may be updated asynchronously from conversation
+  // context. Defaults to false for existing workspaces and true for new ones.
+  autoUpdateTitle: z.boolean().optional().default(false),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -254,6 +257,7 @@ export function createPersistedWorkspaceRecord(input: {
   title?: string | null;
   branch?: string | null;
   baseBranch?: string | null;
+  autoUpdateTitle?: boolean;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -263,6 +267,7 @@ export function createPersistedWorkspaceRecord(input: {
     title: input.title ?? null,
     branch: input.branch ?? null,
     baseBranch: input.baseBranch ?? null,
+    autoUpdateTitle: input.autoUpdateTitle ?? false,
     archivedAt: input.archivedAt ?? null,
   });
 }

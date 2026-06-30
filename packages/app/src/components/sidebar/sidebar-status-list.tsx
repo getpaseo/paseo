@@ -40,7 +40,9 @@ import {
 import { useToast } from "@/contexts/toast-context";
 import { useMutation } from "@tanstack/react-query";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { WorkspaceAutoTitleToggle } from "@/components/workspace-auto-title-toggle";
 import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
@@ -437,22 +439,61 @@ function StatusWorkspaceRowWithMenu({
     toast.copied("Branch name copied");
   }, [toast, workspace.name]);
 
+  const [draftAutoUpdateTitle, setDraftAutoUpdateTitle] = useState(
+    workspace.autoUpdateTitle ?? false,
+  );
+
+  const supportsWorkspaceAutoTitle = useHostFeature(workspace.serverId, "workspaceAutoTitle");
+
   const renameMutation = useMutation({
-    mutationFn: async (title: string) => {
+    mutationFn: async (input: { title: string | null; autoUpdateTitle: boolean }) => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
       if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
-      await client.setWorkspaceTitle(workspace.workspaceId, title.length === 0 ? null : title);
+      await client.setWorkspaceTitle(workspace.workspaceId, input.title, {
+        autoUpdateTitle: input.autoUpdateTitle,
+      });
     },
   });
 
-  const handleOpenRename = useCallback(() => setIsRenameOpen(true), []);
+  const handleOpenRename = useCallback(() => {
+    setDraftAutoUpdateTitle(workspace.autoUpdateTitle ?? false);
+    setIsRenameOpen(true);
+  }, [workspace.autoUpdateTitle]);
   const handleCloseRename = useCallback(() => setIsRenameOpen(false), []);
   const handleSubmitRename = useCallback(
     async (value: string) => {
-      await renameMutation.mutateAsync(value.trim());
+      const trimmed = value.trim();
+      const titleChanged = trimmed !== (workspace.title ?? workspace.name);
+      const autoUpdateChanged = draftAutoUpdateTitle !== (workspace.autoUpdateTitle ?? false);
+
+      if (!titleChanged && !autoUpdateChanged) {
+        return;
+      }
+
+      let nextTitle: string | null;
+      if (titleChanged) {
+        nextTitle = trimmed.length === 0 ? null : trimmed;
+      } else {
+        nextTitle = workspace.title;
+      }
+
+      await renameMutation.mutateAsync({
+        title: nextTitle,
+        autoUpdateTitle: draftAutoUpdateTitle,
+      });
     },
-    [renameMutation],
+    [
+      workspace.title,
+      workspace.name,
+      workspace.autoUpdateTitle,
+      draftAutoUpdateTitle,
+      renameMutation,
+    ],
   );
+
+  const handleAutoUpdateTitleChange = useCallback((value: boolean) => {
+    setDraftAutoUpdateTitle(value);
+  }, []);
 
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
@@ -512,7 +553,17 @@ function StatusWorkspaceRowWithMenu({
         onClose={handleCloseRename}
         onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
-      />
+        submitDisabled={draftAutoUpdateTitle === (workspace.autoUpdateTitle ?? false)}
+      >
+        {supportsWorkspaceAutoTitle ? (
+          <WorkspaceAutoTitleToggle
+            value={draftAutoUpdateTitle}
+            onValueChange={handleAutoUpdateTitleChange}
+            disabled={renameMutation.isPending}
+            testID={`sidebar-workspace-auto-update-title-${workspace.workspaceKey}`}
+          />
+        ) : null}
+      </AdaptiveRenameModal>
     </>
   );
 }

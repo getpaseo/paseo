@@ -780,6 +780,11 @@ export const en = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "Auto-name from conversation",
+      hint: "Update this workspace name as the conversation progresses.",
+    },
   },
   sidebar: {
     host: {
@@ -884,6 +889,10 @@ export const en = {
       baseNotApplicable: "Not applicable",
     },
     titlePlaceholder: "Title (optional)",
+    autoUpdateTitle: {
+      label: "Auto-name from conversation",
+      hint: "Update this workspace name as the conversation progresses.",
+    },
     errors: {
       hostDisconnected: "Host is not connected",
       createWorktreeFailed: "Failed to create worktree",

@@ -263,6 +263,64 @@ describe("normalizeWorkspaceDescriptor", () => {
       },
     });
   });
+
+  it("normalizes autoUpdateTitle from workspace descriptor payloads", () => {
+    const enabled = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      autoUpdateTitle: true,
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    expect(enabled.autoUpdateTitle).toBe(true);
+
+    const disabled = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      autoUpdateTitle: false,
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    expect(disabled.autoUpdateTitle).toBe(false);
+
+    const missing = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    expect(missing.autoUpdateTitle).toBeUndefined();
+  });
 });
 
 describe("mergeWorkspaces", () => {

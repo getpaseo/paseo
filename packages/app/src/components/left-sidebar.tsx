@@ -1,4 +1,4 @@
-import { router, usePathname } from "expo-router";
+import { router, usePathname, type Href } from "expo-router";
 import {
   CalendarClock,
   FolderPlus,
@@ -236,7 +236,7 @@ export const LeftSidebar = memo(function LeftSidebar({
   }, []);
 
   const handleViewSchedulesNavigate = useCallback(() => {
-    router.push(buildSchedulesRoute());
+    router.push(buildSchedulesRoute() as Href);
   }, []);
 
   const newWorkspaceKeys = useShortcutKeys("new-workspace");

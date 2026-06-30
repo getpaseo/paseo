@@ -677,6 +677,7 @@ export class Session {
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.generateWorkspaceName = generateWorkspaceName ?? generateBranchNameFromFirstAgentContext;
     this.workspaceGitService = workspaceGitService;
+    this.providerSnapshotManager = providerSnapshotManager;
     this.gitMutation = createGitMutationService({
       workspaceGitService: this.workspaceGitService,
       github: this.github,
@@ -846,7 +847,6 @@ export class Session {
         this.terminalController.killTerminalsForWorkspace(workspaceId),
       logger: this.sessionLogger,
     });
-    this.providerSnapshotManager = providerSnapshotManager;
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -1629,7 +1629,12 @@ export class Session {
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.title.set.request":
-        return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+        return this.handleWorkspaceTitleSetRequest(
+          msg.workspaceId,
+          msg.title,
+          msg.autoUpdateTitle,
+          msg.requestId,
+        );
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg);
       case "project_icon_request":
@@ -2242,6 +2247,7 @@ export class Session {
   private async handleWorkspaceTitleSetRequest(
     workspaceId: string,
     title: string | null,
+    autoUpdateTitle: boolean | undefined,
     requestId: string,
   ): Promise<void> {
     this.sessionLogger.info(
@@ -2259,6 +2265,7 @@ export class Session {
             workspaceId,
             accepted: false,
             title: null,
+            autoUpdateTitle: null,
             error: "Workspace not found",
           },
         });
@@ -2267,10 +2274,12 @@ export class Session {
 
       const trimmed = title?.trim() ?? "";
       const nextTitle = trimmed.length === 0 ? null : trimmed;
+      const nextAutoUpdateTitle = autoUpdateTitle ?? existing.autoUpdateTitle;
 
       await this.workspaceRegistry.upsert({
         ...existing,
         title: nextTitle,
+        autoUpdateTitle: nextAutoUpdateTitle,
         updatedAt: new Date().toISOString(),
       });
 
@@ -2281,6 +2290,7 @@ export class Session {
           workspaceId,
           accepted: true,
           title: nextTitle,
+          autoUpdateTitle: nextAutoUpdateTitle,
           error: null,
         },
       });
@@ -2309,6 +2319,7 @@ export class Session {
           workspaceId,
           accepted: false,
           title: null,
+          autoUpdateTitle: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
         },
       });
@@ -3660,6 +3671,7 @@ export class Session {
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
+      autoUpdateTitle: workspace.autoUpdateTitle,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -4545,8 +4557,14 @@ export class Session {
         workspaceGitService: this.workspaceGitService,
       },
     );
-    await this.syncWorkspaceGitObserverForWorkspace(workspace);
-    const descriptor = await this.describeWorkspaceRecord(workspace);
+    const nextWorkspace: PersistedWorkspaceRecord = {
+      ...workspace,
+      autoUpdateTitle: request.autoUpdateTitle ?? true,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.workspaceRegistry.upsert(nextWorkspace);
+    await this.syncWorkspaceGitObserverForWorkspace(nextWorkspace);
+    const descriptor = await this.describeWorkspaceRecord(nextWorkspace);
     this.emit({
       type: "workspace.create.response",
       payload: {
@@ -4556,12 +4574,12 @@ export class Session {
         error: null,
       },
     });
-    await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+    await this.emitWorkspaceUpdateForWorkspaceId(nextWorkspace.workspaceId);
     void this.workspaceGitService
-      .getSnapshot(workspace.cwd, { force: true, includeGitHub: true, reason: "open_project" })
+      .getSnapshot(nextWorkspace.cwd, { force: true, includeGitHub: true, reason: "open_project" })
       .catch((error) => {
         this.sessionLogger.warn(
-          { err: error, cwd: workspace.cwd },
+          { err: error, cwd: nextWorkspace.cwd },
           "Background snapshot refresh failed after workspace.create",
         );
       });
@@ -4570,11 +4588,11 @@ export class Session {
       this.scheduleWorkspaceNaming(
         () =>
           this.maybeAutoNameDirectoryWorkspaceTitle({
-            workspaceId: workspace.workspaceId,
-            cwd: workspace.cwd,
+            workspaceId: nextWorkspace.workspaceId,
+            cwd: nextWorkspace.cwd,
             firstAgentContext,
           }),
-        { cwd: workspace.cwd, message: "Failed to auto-name directory workspace title" },
+        { cwd: nextWorkspace.cwd, message: "Failed to auto-name directory workspace title" },
       );
     }
   }
@@ -4635,13 +4653,19 @@ export class Session {
         : undefined,
     );
 
-    if (request.title?.trim()) {
+    const explicitTitle = request.title?.trim() ?? null;
+    const nextAutoUpdateTitle = request.autoUpdateTitle ?? true;
+    if (explicitTitle || nextAutoUpdateTitle !== result.workspace.autoUpdateTitle) {
       await this.workspaceRegistry.upsert({
         ...result.workspace,
-        title: request.title.trim(),
+        ...(explicitTitle ? { title: explicitTitle } : {}),
+        autoUpdateTitle: nextAutoUpdateTitle,
         updatedAt: new Date().toISOString(),
       });
-      result.workspace.title = request.title.trim();
+      if (explicitTitle) {
+        result.workspace.title = explicitTitle;
+      }
+      result.workspace.autoUpdateTitle = nextAutoUpdateTitle;
     }
 
     const descriptor = await this.describeCreatedWorktreeWorkspace(result);

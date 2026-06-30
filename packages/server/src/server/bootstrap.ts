@@ -90,6 +90,7 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 }
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { WorkspaceAutoTitleUpdateScheduler } from "./workspace-auto-title-scheduler.js";
 import { createGitHubService } from "../services/github-service.js";
 import {
   createPaseoWorktree as createRegisteredPaseoWorktree,
@@ -532,6 +533,7 @@ export async function createPaseoDaemon(
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
   const configuredHostnames = config.hostnames ?? config.allowedHosts;
   let wsServer: VoiceAssistantWebSocketServer | null = null;
+  let workspaceAutoTitleScheduler: WorkspaceAutoTitleUpdateScheduler | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
@@ -1253,6 +1255,24 @@ export async function createPaseoDaemon(
               browserToolsBroker,
             );
 
+            workspaceAutoTitleScheduler = new WorkspaceAutoTitleUpdateScheduler({
+              agentManager,
+              workspaceRegistry,
+              workspaceGitService,
+              logger,
+              onTitleGenerated: (workspaceId) => {
+                const sessions = wsServer?.listActiveSessions() ?? [];
+                void Promise.all(
+                  sessions.map((session) => session.emitWorkspaceUpdateForWorkspaceId(workspaceId)),
+                ).catch((error) => {
+                  logger.warn(
+                    { err: error, workspaceId },
+                    "Failed to broadcast workspace update after auto-title",
+                  );
+                });
+              },
+            });
+
             if (relayEnabled) {
               const offer = await createConnectionOfferV2({
                 serverId,
@@ -1322,6 +1342,8 @@ export async function createPaseoDaemon(
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayTransport?.stop().catch(() => undefined);
+    workspaceAutoTitleScheduler?.destroy();
+    workspaceAutoTitleScheduler = null;
     if (wsServer) {
       await wsServer.close();
     }

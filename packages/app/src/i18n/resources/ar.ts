@@ -773,6 +773,11 @@ export const ar: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "تسمية تلقائية من المحادثة",
+      hint: "تحديث اسم مساحة العمل هذه مع تقدم المحادثة.",
+    },
   },
   sidebar: {
     host: {
@@ -877,6 +882,10 @@ export const ar: TranslationResources = {
       baseNotApplicable: "غير قابل للتطبيق",
     },
     titlePlaceholder: "العنوان (اختياري)",
+    autoUpdateTitle: {
+      label: "تسمية تلقائية من المحادثة",
+      hint: "تحديث اسم مساحة العمل هذه مع تقدم المحادثة.",
+    },
     errors: {
       hostDisconnected: "Host غير متصل",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",

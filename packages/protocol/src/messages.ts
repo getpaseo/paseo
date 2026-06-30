@@ -825,6 +825,9 @@ export const WorkspaceTitleSetRequestSchema = z.object({
   workspaceId: z.string(),
   // Null or empty string clears the title and reverts to the derived name.
   title: z.string().nullable(),
+  // Whether the workspace name may continue to be updated from conversation
+  // context. When omitted, the existing flag is preserved.
+  autoUpdateTitle: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -1423,6 +1426,8 @@ export const WorkspaceTitleSetResponsePayloadSchema = z.object({
   workspaceId: z.string(),
   accepted: z.boolean(),
   title: z.string().nullable(),
+  // Whether the workspace name may continue to be updated from conversation context.
+  autoUpdateTitle: z.boolean().nullable().optional(),
   error: z.string().nullable(),
 });
 
@@ -1718,6 +1723,8 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   githubPrNumber: z.number().int().positive().optional(),
+  // Whether the workspace name may be updated asynchronously from conversation context.
+  autoUpdateTitle: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -1771,6 +1778,8 @@ export const WorkspaceCreateRequestSchema = z.object({
   title: z.string().optional(),
   // Optional prompt context for workspace-level name/branch generation.
   firstAgentContext: FirstAgentContextSchema.optional(),
+  // Whether the workspace name may be updated asynchronously from conversation context.
+  autoUpdateTitle: z.boolean().optional(),
   source: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("directory"),
@@ -2364,6 +2373,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonSelfUpdate: z.boolean().optional(),
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: z.boolean().optional(),
+        // COMPAT(workspaceAutoTitle): added in v0.1.103, remove gate after 2027-01-05 once daemon floor >= v0.1.103.
+        workspaceAutoTitle: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2642,6 +2653,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     // its input and offer a "reset to branch name" action. Null means the name
     // is derived from the branch/directory.
     title: z.string().nullable().optional(),
+    // COMPAT(workspaceAutoTitle): added in v0.1.103, drop the gate when floor >= v0.1.103.
+    // Whether the workspace name may be updated asynchronously from conversation context.
+    autoUpdateTitle: z.boolean().nullable().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the

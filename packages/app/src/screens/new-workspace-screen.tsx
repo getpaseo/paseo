@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Folder, GitBranch, GitPullRequest, X } from "lucide-react-native";
+import { WorkspaceAutoTitleToggle } from "@/components/workspace-auto-title-toggle";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
@@ -838,6 +839,7 @@ async function createMultiplicityWorkspace(input: {
   withInitialAgent: boolean;
   prompt: string;
   attachments: AgentAttachment[];
+  autoUpdateTitle: boolean;
   mergeWorkspaces: (
     serverId: string,
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
@@ -868,6 +870,7 @@ async function createMultiplicityWorkspace(input: {
           projectId: input.project.projectKey,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
+    autoUpdateTitle: input.autoUpdateTitle,
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -1350,6 +1353,9 @@ interface FormPickerControl {
 interface NewWorkspaceFormStackInput {
   isCompact: boolean;
   isPending: boolean;
+  autoUpdateTitle: boolean;
+  onAutoUpdateTitleChange: (value: boolean) => void;
+  supportsAutoTitle: boolean;
   project: FormPickerControl & {
     options: ComboboxOptionType[];
     triggerLabel: string;
@@ -1388,7 +1394,17 @@ interface NewWorkspaceFormStackInput {
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base } = input;
+  const {
+    isCompact,
+    isPending,
+    autoUpdateTitle,
+    onAutoUpdateTitleChange,
+    supportsAutoTitle,
+    project,
+    host,
+    isolation,
+    base,
+  } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
@@ -1528,6 +1544,17 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
+  const autoUpdateTitleControl = supportsAutoTitle ? (
+    <WorkspaceAutoTitleToggle
+      value={autoUpdateTitle}
+      onValueChange={onAutoUpdateTitleChange}
+      disabled={isPending}
+      testID="new-workspace-auto-update-title"
+      labelKey="newWorkspace.autoUpdateTitle.label"
+      hintKey="newWorkspace.autoUpdateTitle.hint"
+    />
+  ) : null;
+
   return isCompact ? (
     <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
       <FormRow>{projectControl}</FormRow>
@@ -1539,13 +1566,17 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         <View style={styles.baseSpacer} />
       )}
       {baseControl ? <FormRow>{baseControl}</FormRow> : <View style={styles.baseSpacer} />}
+      {autoUpdateTitleControl ? <FormRow>{autoUpdateTitleControl}</FormRow> : null}
     </View>
   ) : (
     <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
-      {projectControl}
-      {hostControl}
-      {isolationControl}
-      {baseControl}
+      <View style={styles.formStackDesktopLeft}>
+        {projectControl}
+        {hostControl}
+        {isolationControl}
+        {baseControl}
+      </View>
+      {autoUpdateTitleControl}
     </View>
   );
 }
@@ -1581,12 +1612,15 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  // COMPAT(workspaceAutoTitle): added in v0.1.103, drop the gate when floor >= v0.1.103
+  const supportsWorkspaceAutoTitle = useHostFeature(selectedServerId, "workspaceAutoTitle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | null>(null);
   const [manualPickerSelection, setManualPickerSelection] = useState<PickerSelection | null>(null);
+  const [autoUpdateTitle, setAutoUpdateTitle] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
@@ -1918,10 +1952,11 @@ export function NewWorkspaceScreen({
         projectId: selectedProject.projectKey,
         worktreeSlug: createNameId(),
         ...(firstAgentContext ? { firstAgentContext } : {}),
+        autoUpdateTitle,
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
+    [autoUpdateTitle, currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(
@@ -1951,6 +1986,7 @@ export function NewWorkspaceScreen({
             withInitialAgent: input.withInitialAgent,
             prompt: input.prompt,
             attachments: input.attachments,
+            autoUpdateTitle,
             mergeWorkspaces,
             serverId: selectedServerId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
@@ -1966,6 +2002,7 @@ export function NewWorkspaceScreen({
       return normalizedWorkspace;
     },
     [
+      autoUpdateTitle,
       buildCreateWorktreeInput,
       createdWorkspace,
       currentBranch,
@@ -2087,9 +2124,16 @@ export function NewWorkspaceScreen({
       ? t("newWorkspace.refPicker.searching")
       : t("newWorkspace.refPicker.noMatchingRefs");
 
+  const handleAutoUpdateTitleChange = useCallback((value: boolean) => {
+    setAutoUpdateTitle(value);
+  }, []);
+
   const formStack = useNewWorkspaceFormStack({
     isCompact,
     isPending,
+    autoUpdateTitle,
+    onAutoUpdateTitleChange: handleAutoUpdateTitleChange,
+    supportsAutoTitle: supportsWorkspaceAutoTitle,
     project: {
       anchorRef: projectPickerAnchorRef,
       open: openProjectPicker,
@@ -2264,10 +2308,16 @@ const styles = StyleSheet.create((theme) => ({
   formStackDesktop: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: theme.spacing[8],
     // The badge adds its own left padding; offset it so the project icon's left
     // edge lands exactly on the "New workspace" title's left edge.
     paddingLeft: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
+  formStackDesktopLeft: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: theme.spacing[2],
   },
   // The row's left inset matches the heading's text x (composerTitleContainer

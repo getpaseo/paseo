@@ -800,6 +800,11 @@ export const es: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "Nombrar automáticamente desde la conversación",
+      hint: "Actualizar el nombre de este espacio de trabajo a medida que avance la conversación.",
+    },
   },
   sidebar: {
     host: {
@@ -904,6 +909,10 @@ export const es: TranslationResources = {
       baseNotApplicable: "No aplicable",
     },
     titlePlaceholder: "Título (opcional)",
+    autoUpdateTitle: {
+      label: "Nombrar automáticamente desde la conversación",
+      hint: "Actualizar el nombre de este espacio de trabajo a medida que avance la conversación.",
+    },
     errors: {
       hostDisconnected: "Hostno está conectado",
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",

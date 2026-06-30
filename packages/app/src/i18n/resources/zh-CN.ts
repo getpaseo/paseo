@@ -767,6 +767,11 @@ export const zhCN: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "根据对话自动命名",
+      hint: "随着对话进展自动更新此工作区名称。",
+    },
   },
   sidebar: {
     host: {
@@ -868,6 +873,10 @@ export const zhCN: TranslationResources = {
       baseNotApplicable: "不适用",
     },
     titlePlaceholder: "标题（可选）",
+    autoUpdateTitle: {
+      label: "根据对话自动命名",
+      hint: "随着对话进展自动更新此工作区名称。",
+    },
     errors: {
       hostDisconnected: "Host 未连接",
       createWorktreeFailed: "创建 worktree 失败",

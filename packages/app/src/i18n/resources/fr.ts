@@ -799,6 +799,11 @@ export const fr: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "Nommer automatiquement depuis la conversation",
+      hint: "Mettre à jour le nom de cet espace de travail au fur et à mesure de la conversation.",
+    },
   },
   sidebar: {
     host: {
@@ -903,6 +908,10 @@ export const fr: TranslationResources = {
       baseNotApplicable: "Non applicable",
     },
     titlePlaceholder: "Titre (facultatif)",
+    autoUpdateTitle: {
+      label: "Nommer automatiquement depuis la conversation",
+      hint: "Mettre à jour le nom de cet espace de travail au fur et à mesure de la conversation.",
+    },
     errors: {
       hostDisconnected: "Hostn'est pas connecté",
       createWorktreeFailed: "Échec de la création de l'arbre de travail",

@@ -792,6 +792,11 @@ export const ru: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "Автоматическое название из разговора",
+      hint: "Обновлять название этого рабочего пространства по мере развития разговора.",
+    },
   },
   sidebar: {
     host: {
@@ -896,6 +901,10 @@ export const ru: TranslationResources = {
       baseNotApplicable: "Неприменимо",
     },
     titlePlaceholder: "Название (необязательно)",
+    autoUpdateTitle: {
+      label: "Автоматическое название из разговора",
+      hint: "Обновлять название этого рабочего пространства по мере развития разговора.",
+    },
     errors: {
       hostDisconnected: "Host не подключен",
       createWorktreeFailed: "Не удалось создать рабочее дерево.",

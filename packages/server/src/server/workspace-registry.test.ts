@@ -176,6 +176,43 @@ describe("workspace registries", () => {
     expect(record?.displayName).toBe("acme/repo");
   });
 
+  test("workspace record schema defaults autoUpdateTitle to false", async () => {
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "/tmp/repo",
+        projectId: "remote:github.com/acme/repo",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await workspaceRegistry.get("/tmp/repo");
+    expect(record?.autoUpdateTitle).toBe(false);
+  });
+
+  test("workspace record persists autoUpdateTitle", async () => {
+    await workspaceRegistry.initialize();
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId: "/tmp/repo",
+        projectId: "remote:github.com/acme/repo",
+        cwd: "/tmp/repo",
+        kind: "local_checkout",
+        displayName: "main",
+        autoUpdateTitle: true,
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await workspaceRegistry.get("/tmp/repo");
+    expect(record?.autoUpdateTitle).toBe(true);
+  });
+
   test("creates, updates, archives, deletes, and lists workspace records", async () => {
     await workspaceRegistry.initialize();
     await workspaceRegistry.upsert(

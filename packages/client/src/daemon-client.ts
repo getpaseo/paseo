@@ -291,6 +291,7 @@ export interface CreatePaseoWorktreeInput extends Pick<
   | "refName"
   | "action"
   | "githubPrNumber"
+  | "autoUpdateTitle"
 > {}
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
@@ -2267,21 +2268,25 @@ export class DaemonClient {
   async setWorkspaceTitle(
     workspaceId: string,
     title: string | null,
+    options?: { autoUpdateTitle?: boolean },
     requestId?: string,
-  ): Promise<{ title: string | null }> {
+  ): Promise<{ title: string | null; autoUpdateTitle?: boolean }> {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "workspace.title.set.request",
         workspaceId,
         title,
+        ...(options?.autoUpdateTitle !== undefined
+          ? { autoUpdateTitle: options.autoUpdateTitle }
+          : {}),
       },
       responseType: "workspace.title.set.response",
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setWorkspaceTitle rejected");
     }
-    return { title: payload.title };
+    return { title: payload.title, autoUpdateTitle: payload.autoUpdateTitle ?? undefined };
   }
 
   async resumeAgent(
@@ -3469,6 +3474,7 @@ export class DaemonClient {
         ...(input.refName !== undefined ? { refName: input.refName } : {}),
         ...(input.action !== undefined ? { action: input.action } : {}),
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
+        ...(input.autoUpdateTitle !== undefined ? { autoUpdateTitle: input.autoUpdateTitle } : {}),
       },
       responseType: "create_paseo_worktree_response",
     });
@@ -3479,6 +3485,7 @@ export class DaemonClient {
       source: WorkspaceCreateRequest["source"];
       title?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
+      autoUpdateTitle?: boolean;
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
@@ -3491,6 +3498,7 @@ export class DaemonClient {
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
           : {}),
+        ...(input.autoUpdateTitle !== undefined ? { autoUpdateTitle: input.autoUpdateTitle } : {}),
       },
       responseType: "workspace.create.response",
     });

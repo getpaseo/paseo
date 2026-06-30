@@ -791,6 +791,11 @@ export const ptBR: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "Nomear automaticamente a partir da conversa",
+      hint: "Atualizar o nome deste workspace à medida que a conversa progride.",
+    },
   },
   sidebar: {
     host: {
@@ -895,6 +900,10 @@ export const ptBR: TranslationResources = {
       baseNotApplicable: "Não aplicável",
     },
     titlePlaceholder: "Título (opcional)",
+    autoUpdateTitle: {
+      label: "Nomear automaticamente a partir da conversa",
+      hint: "Atualizar o nome deste workspace à medida que a conversa progride.",
+    },
     errors: {
       hostDisconnected: "Host não está conectado",
       createWorktreeFailed: "Falha ao criar worktree",

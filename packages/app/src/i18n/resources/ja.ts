@@ -785,6 +785,11 @@ export const ja: TranslationResources = {
         },
       },
     },
+
+    autoUpdateTitle: {
+      label: "会話から自動的に名前を付ける",
+      hint: "会話が進むにつれて、このワークスペース名を自動的に更新します。",
+    },
   },
   sidebar: {
     host: {
@@ -889,6 +894,10 @@ export const ja: TranslationResources = {
       baseNotApplicable: "該当なし",
     },
     titlePlaceholder: "タイトル（任意）",
+    autoUpdateTitle: {
+      label: "会話から自動的に名前を付ける",
+      hint: "会話が進むにつれて、このワークスペース名を自動的に更新します。",
+    },
     errors: {
       hostDisconnected: "ホストが接続されていません",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",

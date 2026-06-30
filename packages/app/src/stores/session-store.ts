@@ -131,6 +131,9 @@ export interface WorkspaceDescriptor {
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   title?: string | null;
+  // COMPAT(workspaceAutoTitle): added in v0.1.103, drop the gate when floor >= v0.1.103.
+  // Whether the workspace name may be updated asynchronously from conversation context.
+  autoUpdateTitle?: boolean | null;
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -163,6 +166,8 @@ export function normalizeWorkspaceDescriptor(
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     title: payload.title ?? null,
+    // COMPAT(workspaceAutoTitle): added in v0.1.103, drop the gate when floor >= v0.1.103.
+    autoUpdateTitle: payload.autoUpdateTitle ?? undefined,
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
