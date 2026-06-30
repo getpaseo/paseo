@@ -29,6 +29,7 @@ import { validateCron } from "@/utils/schedule-format";
 import { toErrorMessage } from "@/utils/error-messages";
 import { shortenPath } from "@/utils/shorten-path";
 import type { ProjectSummary } from "@/utils/projects";
+import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 
 const DEFAULT_CADENCE: ScheduleCadence = { type: "every", everyMs: 60 * 60 * 1000 };
 const PROJECT_OPTION_PREFIX = "project:";
@@ -133,6 +134,25 @@ function resolveSelectedScheduleProjectTarget(input: {
   );
 }
 
+function isSelectedModelValidForProviders(input: {
+  providers: ProviderSelectorProvider[];
+  selectedProvider: AgentProvider | null;
+  selectedModel: string;
+}): boolean {
+  if (!input.selectedProvider) {
+    return false;
+  }
+  const provider = input.providers.find((entry) => entry.id === input.selectedProvider);
+  if (!provider || provider.modelSelection.kind !== "models") {
+    return false;
+  }
+  const selectedModel = input.selectedModel.trim();
+  if (!selectedModel) {
+    return true;
+  }
+  return provider.modelSelection.rows.some((row) => row.modelId === selectedModel);
+}
+
 export function ScheduleFormSheet({
   serverId,
   visible,
@@ -175,6 +195,7 @@ export function ScheduleFormSheet({
     selectedThinkingOptionId,
     workingDir,
     setProviderAndModelFromUser,
+    clearProviderSelectionFromUser,
     setModeFromUser,
     setSelectedServerIdFromUser,
     setWorkingDirFromUser,
@@ -198,10 +219,18 @@ export function ScheduleFormSheet({
 
   const handleSelectProject = useCallback(
     (target: ScheduleProjectTarget) => {
+      if (selectedProjectTarget && selectedProjectTarget.serverId !== target.serverId) {
+        clearProviderSelectionFromUser();
+      }
       setSelectedServerIdFromUser(target.serverId);
       setWorkingDirFromUser(target.cwd);
     },
-    [setSelectedServerIdFromUser, setWorkingDirFromUser],
+    [
+      clearProviderSelectionFromUser,
+      selectedProjectTarget,
+      setSelectedServerIdFromUser,
+      setWorkingDirFromUser,
+    ],
   );
 
   // One nested control selects provider -> model (the draft screen's selector).
@@ -270,9 +299,14 @@ export function ScheduleFormSheet({
 
   const promptTrimmed = prompt.trim();
   const cadenceError = cadence.type === "cron" ? validateCron(cadence.expression) : null;
+  const selectedModelIsValid = isSelectedModelValidForProviders({
+    providers: modelSelectorProviders,
+    selectedProvider,
+    selectedModel,
+  });
   const canSubmit =
     promptTrimmed.length > 0 &&
-    Boolean(selectedProvider) &&
+    selectedModelIsValid &&
     Boolean(selectedProjectTarget) &&
     cadenceError === null &&
     !isSubmitting;

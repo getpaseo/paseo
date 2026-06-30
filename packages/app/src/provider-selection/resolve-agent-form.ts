@@ -90,6 +90,7 @@ export type AgentFormAction =
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
     }
+  | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
   | { type: "SET_WORKING_DIR"; value: string }
   | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
@@ -564,6 +565,24 @@ export function resolveAgentForm(
         userModified: { ...state.userModified, model: true },
       };
     }
+
+    case "CLEAR_PROVIDER_SELECTION_FROM_USER":
+      return {
+        form: {
+          ...state.form,
+          provider: null,
+          model: "",
+          modeId: "",
+          thinkingOptionId: "",
+        },
+        userModified: {
+          ...state.userModified,
+          provider: true,
+          model: true,
+          modeId: true,
+          thinkingOptionId: true,
+        },
+      };
 
     case "SET_THINKING_OPTION_FROM_USER":
       return {
