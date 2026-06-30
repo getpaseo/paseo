@@ -1,6 +1,7 @@
 import React, { useCallback } from "react";
 import { Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -12,6 +13,7 @@ import {
 } from "./browser-tools-config";
 
 export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const state = getBrowserToolsCardState({ isConnected, config });
@@ -19,7 +21,7 @@ export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
     mutationFn: async (next: boolean) => {
       const result = await patchConfig(createBrowserToolsPatch(next));
       if (!result) {
-        throw new Error("Host is not connected");
+        throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       return result;
     },
