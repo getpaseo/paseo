@@ -14,11 +14,15 @@ describe("resolveTraeSessionsDir", () => {
     }
   });
 
-  it("defaults to ~/Library/Caches/trae-cli/sessions and honors the override", () => {
+  it("defaults to a platform-specific cache dir and honors the override", () => {
     delete process.env.TRAE_SESSIONS_DIR;
-    expect(
-      resolveTraeSessionsDir().endsWith(path.join("Library", "Caches", "trae-cli", "sessions")),
-    ).toBe(true);
+    const defaultDir = resolveTraeSessionsDir();
+    expect(defaultDir.endsWith(path.join("trae-cli", "sessions"))).toBe(true);
+    if (process.platform === "darwin") {
+      expect(defaultDir.endsWith(path.join("Library", "Caches", "trae-cli", "sessions"))).toBe(
+        true,
+      );
+    }
     process.env.TRAE_SESSIONS_DIR = "/tmp/custom-trae";
     expect(resolveTraeSessionsDir()).toBe("/tmp/custom-trae");
   });
