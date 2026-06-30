@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   createLoopGuardState,
   DEFAULT_LOOP_GUARD_THRESHOLD,
@@ -31,6 +31,11 @@ function shellCall(
 }
 
 describe("agent-loop-guard", () => {
+  // Reset per test so generated callId uniqueness never depends on execution order.
+  beforeEach(() => {
+    callSeq = 0;
+  });
+
   it("does not trip on productive (exit 0) repeated commands", () => {
     const state = createLoopGuardState();
     for (let i = 0; i < DEFAULT_LOOP_GUARD_THRESHOLD * 2; i++) {
