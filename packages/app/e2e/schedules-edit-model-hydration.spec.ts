@@ -48,37 +48,45 @@ async function seedMockSchedule(workspace: SeededWorkspace, name: string): Promi
   return result.schedule.id;
 }
 
+function ignoreScheduleDeleteError(): void {}
+
+async function deleteSeededSchedule(workspace: SeededWorkspace, id: string): Promise<void> {
+  await (workspace.client as unknown as ScheduleSeedClient)
+    .scheduleDelete({ id })
+    .catch(ignoreScheduleDeleteError);
+}
+
 test.describe("Schedules", () => {
+  const cleanupTasks: Array<() => Promise<void>> = [];
+
+  test.afterEach(async () => {
+    for (const cleanup of cleanupTasks.toReversed()) {
+      await cleanup();
+    }
+    cleanupTasks.length = 0;
+  });
+
   test("edit form hydrates the scheduled model selection", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-model-hydration-" });
+    cleanupTasks.push(() => workspace.cleanup());
     const scheduleName = `Hydrate model ${Date.now()}`;
-    let scheduleId: string | null = null;
+    const scheduleId = await seedMockSchedule(workspace, scheduleName);
+    cleanupTasks.push(() => deleteSeededSchedule(workspace, scheduleId));
 
-    try {
-      scheduleId = await seedMockSchedule(workspace, scheduleName);
+    await page.goto(buildSchedulesRoute());
+    const row = page.getByTestId(`schedule-row-${scheduleId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await expect(row).toContainText("ten-second-stream");
 
-      await page.goto(buildSchedulesRoute());
-      const row = page.getByTestId(`schedule-row-${scheduleId}`);
-      await expect(row).toBeVisible({ timeout: 30_000 });
-      await expect(row).toContainText("ten-second-stream");
-
-      await row.click();
-      await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByTestId("schedule-cwd-trigger")).toHaveCount(0);
-      await expect(page.getByTestId("schedule-project-trigger")).toContainText(
-        workspace.projectDisplayName,
-        { timeout: 30_000 },
-      );
-      await expect(page.getByTestId("schedule-model-trigger")).toContainText("Ten second stream", {
-        timeout: 30_000,
-      });
-    } finally {
-      if (scheduleId) {
-        await (workspace.client as unknown as ScheduleSeedClient)
-          .scheduleDelete({ id: scheduleId })
-          .catch(() => undefined);
-      }
-      await workspace.cleanup();
-    }
+    await row.click();
+    await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("schedule-cwd-trigger")).toHaveCount(0);
+    await expect(page.getByTestId("schedule-project-trigger")).toContainText(
+      workspace.projectDisplayName,
+      { timeout: 30_000 },
+    );
+    await expect(page.getByTestId("schedule-model-trigger")).toContainText("Ten second stream", {
+      timeout: 30_000,
+    });
   });
 });

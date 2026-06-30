@@ -1,6 +1,7 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { isNewAgentSchedule } from "@/utils/schedule-format";
+import { toErrorMessage } from "@/utils/error-messages";
 
 export interface ScheduleHostInput {
   serverId: string;
@@ -31,10 +32,6 @@ export interface FetchAggregatedSchedulesInput {
 
 export interface FetchAggregatedSchedulesResult {
   sections: ScheduleHostSection[];
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export async function fetchAggregatedSchedules(
