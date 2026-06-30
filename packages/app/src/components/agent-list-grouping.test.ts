@@ -104,4 +104,32 @@ describe("buildFlatItems", () => {
     expect(item.hasChildren).toBe(false);
     expect(item.childCount).toBe(0);
   });
+
+  it("never drops a grandchild: deeper-than-one-level agents stay top-level", () => {
+    // A (top) <- B (child of A) <- C (child of B). Phase 1 nests one level, so
+    // B nests under A and C must remain visible as a top-level row, not vanish.
+    const a = makeAgent("a", "server-1");
+    const b = makeAgent("b", "server-1", {
+      labels: { [PARENT_AGENT_ID_LABEL]: "a" },
+    });
+    const c = makeAgent("c", "server-1", {
+      labels: { [PARENT_AGENT_ID_LABEL]: "b" },
+    });
+
+    // Collapsed: A (with 1 child) and C are top-level; B is hidden under A.
+    const collapsed = buildFlatItems([a, b, c], new Set())
+      .filter((i) => i.type === "agent")
+      .map((i) => (i.type === "agent" ? i : null))
+      .filter((i) => i !== null);
+    expect(collapsed.map((i) => i.agent.id).sort()).toEqual(["a", "c"]);
+    const cRow = collapsed.find((i) => i.agent.id === "c");
+    expect(cRow?.depth).toBe(0);
+    expect(cRow?.hasChildren).toBe(false);
+
+    // Every agent renders exactly once across collapsed + expanded states.
+    const expanded = buildFlatItems([a, b, c], new Set(["server-1:a"])).filter(
+      (i) => i.type === "agent",
+    );
+    expect(expanded).toHaveLength(3);
+  });
 });

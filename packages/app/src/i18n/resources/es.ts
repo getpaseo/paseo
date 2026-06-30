@@ -1363,6 +1363,7 @@ export const es: TranslationResources = {
     detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
+    toggle: "Expandir o contraer subagentes",
   },
   panels: {
     draft: {

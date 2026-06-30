@@ -1332,6 +1332,7 @@ export const en = {
     detachTooltip: "Detach subagent",
     archiveAction: "Archive {{label}}",
     archiveTooltip: "Archive subagent",
+    toggle: "Expand or collapse subagents",
   },
   panels: {
     draft: {

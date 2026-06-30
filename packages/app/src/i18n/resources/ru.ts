@@ -1355,6 +1355,7 @@ export const ru: TranslationResources = {
     detachTooltip: "Отсоединить субагент",
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
+    toggle: "Развернуть или свернуть подагенты",
   },
   panels: {
     draft: {

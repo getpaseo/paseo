@@ -162,6 +162,8 @@ function RowLeadingControl({
   testID: string;
 }) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   if (hasChildren) {
     return (
       <Pressable
@@ -169,6 +171,9 @@ function RowLeadingControl({
         hitSlop={DISCLOSURE_HIT_SLOP}
         style={styles.disclosureButton}
         testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={t("subagents.toggle")}
+        accessibilityState={accessibilityState}
       >
         {expanded ? (
           <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />

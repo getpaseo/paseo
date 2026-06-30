@@ -1341,6 +1341,7 @@ export const ja: TranslationResources = {
     detachTooltip: "サブエージェントを切り離す",
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
+    toggle: "サブエージェントを展開または折りたたむ",
   },
   panels: {
     draft: {

@@ -1307,6 +1307,7 @@ export const zhCN: TranslationResources = {
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
+    toggle: "展开或折叠子代理",
   },
   panels: {
     draft: {

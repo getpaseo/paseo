@@ -1366,6 +1366,7 @@ export const fr: TranslationResources = {
     detachTooltip: "Detacher le sous-agent",
     archiveAction: "Archiver{{label}}",
     archiveTooltip: "Sous-agent d'archivage",
+    toggle: "Développer ou réduire les sous-agents",
   },
   panels: {
     draft: {
