@@ -374,6 +374,10 @@ function stripRemovedConfigFields(parsed: unknown): unknown {
   const openai = providersRecord.openai;
   if (openai && typeof openai === "object" && !Array.isArray(openai)) {
     const openaiRecord = { ...(openai as Record<string, unknown>) };
+    // COMPAT(openaiVoiceConfig): added 2026-06-30, remove after 2026-12-30.
+    // Drop a `providers.openai.voice` block left by an older release so the strict
+    // schema doesn't reject it. The value is discarded, not migrated — there is no
+    // back-compat; configure `providers.openai.stt` / `providers.openai.tts` instead.
     delete openaiRecord.voice;
     providersRecord.openai = openaiRecord;
   }
