@@ -249,7 +249,7 @@ describe("deriveAgentScreenViewState", () => {
     expectSyncErrorSync(ready);
   });
 
-  it("shows the owner error when the first timeline load fails", () => {
+  it("keeps the timeline rendered when the first timeline sync fails", () => {
     const result = deriveAgentScreenViewState({
       input: {
         ...createBaseInput(),
@@ -260,10 +260,9 @@ describe("deriveAgentScreenViewState", () => {
       memory: createBaseMemory(),
     });
 
-    expect(result.state).toEqual({
-      tag: "error",
-      message: "already has an active writer",
-    });
+    const ready = expectReadyState(result.state);
+    expectSyncErrorSync(ready);
+    expect(ready.agent.id).toBe("agent-1");
     expect(result.memory.hadInitialSyncFailure).toBe(true);
   });
 

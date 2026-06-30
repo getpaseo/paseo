@@ -62,11 +62,15 @@ function hasOptimisticCreateContinuity(input: AgentScreenMachineInput): boolean 
   return input.continuity.kind === "optimistic-create";
 }
 
-function shouldBlockInitialAuthoritativeReadyState(input: AgentScreenMachineInput): boolean {
+function shouldBlockInitialAuthoritativeReadyState(
+  input: AgentScreenMachineInput,
+  hadInitialSyncFailure: boolean,
+): boolean {
   return (
     !input.isArchived &&
     !hasOptimisticCreateContinuity(input) &&
     !input.hasHydratedHistoryBefore &&
+    !hadInitialSyncFailure &&
     (input.needsAuthoritativeSync || input.isHistorySyncing)
   );
 }
@@ -222,7 +226,10 @@ export function deriveAgentScreenViewState({
 
   const useOptimisticCreateFlowAgent = shouldUseOptimisticCreateFlowAgent(input);
   const candidateAgent = resolveCandidateAgent({ input, useOptimisticCreateFlowAgent });
-  const shouldBlockReadyState = shouldBlockInitialAuthoritativeReadyState(input);
+  const shouldBlockReadyState = shouldBlockInitialAuthoritativeReadyState(
+    input,
+    nextMemory.hadInitialSyncFailure,
+  );
 
   if (input.missingAgentState.kind === "not_found") {
     return {
@@ -234,7 +241,9 @@ export function deriveAgentScreenViewState({
     };
   }
 
-  if (input.missingAgentState.kind === "error" && !nextMemory.hasRenderedReady) {
+  // A failed refresh must not replace a renderable timeline with a full-screen
+  // error. Keep the agent visible and surface the failure through sync_error.
+  if (input.missingAgentState.kind === "error" && !nextMemory.hasRenderedReady && !candidateAgent) {
     return {
       state: {
         tag: "error",
@@ -248,7 +257,8 @@ export function deriveAgentScreenViewState({
     input.visibilityCatchUpStatus === "error" &&
     input.visibilityCatchUpError &&
     !input.hasHydratedHistoryBefore &&
-    !nextMemory.hasRenderedReady
+    !nextMemory.hasRenderedReady &&
+    !candidateAgent
   ) {
     return {
       state: {
