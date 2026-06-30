@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Server, Settings2 } from "lucide-react-native";
+import { Settings2 } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import {
   DropdownMenu,
@@ -17,10 +17,7 @@ import { useHosts } from "@/runtime/host-runtime";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 
 const ThemedSettings2 = withUnistyles(Settings2);
-const ThemedServer = withUnistyles(Server);
 const filterColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-const ALL_HOSTS_LEADING = <ThemedServer size={16} uniProps={filterColorMapping} />;
 
 const GROUP_MODE_ITEMS: Array<{ value: SidebarGroupMode; label: string }> = [
   { value: "project", label: "Project" },
@@ -107,7 +104,6 @@ export function SidebarDisplayPreferencesMenu() {
               testID="sidebar-host-filter-all"
               selected={allHostsSelected}
               closeOnSelect={false}
-              leading={ALL_HOSTS_LEADING}
               onSelect={clearHostFilters}
             >
               All hosts
