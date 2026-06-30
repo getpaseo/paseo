@@ -298,7 +298,6 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
     // and .kind are stable across text-only flushes (text growth doesn't change what kind of
     // item borders history), so cached layout stays valid between flushes.
     const historyCacheKey = [
-      input.agentStatus,
       frameOrder,
       historyBoundaryIndex ?? "null",
       liveHeadBoundaryItem?.id ?? "null",

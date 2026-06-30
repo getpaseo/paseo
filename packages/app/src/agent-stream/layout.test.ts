@@ -330,6 +330,27 @@ describe("layoutStream", () => {
   );
 
   it.each(["web", "android"] as const)(
+    "places split live-head tool footer using the assistant from history on %s",
+    (platform) => {
+      const assistant = assistantMessage("a1", 2);
+      const tool = toolCall("tool-1", 3);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), assistant],
+        head: [tool, userMessage("u2", 4)],
+        timingIds: [assistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter).toBeNull();
+      expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
+      expect(findLayoutItem(layout, tool.id).completedFooter?.itemId).toBe(assistant.id);
+      expect(inlineFooterPlacementByItemId(layout)).toEqual({
+        [tool.id]: assistant.id,
+      });
+    },
+  );
+
+  it.each(["web", "android"] as const)(
     "uses the latest assistant for footer content while placing after the visible turn end on %s",
     (platform) => {
       const firstAssistant = assistantMessage("a1", 2);
