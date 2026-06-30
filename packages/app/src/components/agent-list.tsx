@@ -11,18 +11,18 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
-import { Archive, ChevronRight } from "lucide-react-native";
+import { Archive, ChevronDown, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useQueryClient } from "@tanstack/react-query";
 import { agentHistoryQueryKey } from "@/hooks/agent-history-query-key";
+import { buildFlatItems, formatDateSectionLabel, type FlatListItem } from "./agent-list-grouping";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -34,63 +34,6 @@ interface AgentListProps {
   listFooterComponent?: ReactElement | null;
   showAttentionIndicator?: boolean;
   showHostColumn?: boolean;
-}
-
-type DateSectionKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
-
-const DATE_SECTION_ORDER = [
-  "today",
-  "yesterday",
-  "thisWeek",
-  "thisMonth",
-  "older",
-] as const satisfies readonly DateSectionKey[];
-
-type FlatListItem =
-  | { type: "header"; key: string; section: DateSectionKey }
-  | { type: "agent"; key: string; agent: AggregatedAgent };
-
-function deriveDateSectionKey(lastActivityAt: Date): DateSectionKey {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
-  const activityStart = new Date(
-    lastActivityAt.getFullYear(),
-    lastActivityAt.getMonth(),
-    lastActivityAt.getDate(),
-  );
-
-  if (activityStart.getTime() >= todayStart.getTime()) {
-    return "today";
-  }
-  if (activityStart.getTime() >= yesterdayStart.getTime()) {
-    return "yesterday";
-  }
-
-  const diffTime = todayStart.getTime() - activityStart.getTime();
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  if (diffDays <= 7) {
-    return "thisWeek";
-  }
-  if (diffDays <= 30) {
-    return "thisMonth";
-  }
-  return "older";
-}
-
-function formatDateSectionLabel(t: TFunction, section: DateSectionKey): string {
-  switch (section) {
-    case "today":
-      return t("agentList.dateSections.today");
-    case "yesterday":
-      return t("agentList.dateSections.yesterday");
-    case "thisWeek":
-      return t("agentList.dateSections.thisWeek");
-    case "thisMonth":
-      return t("agentList.dateSections.thisMonth");
-    case "older":
-      return t("agentList.dateSections.older");
-  }
 }
 
 function SessionBadge({
@@ -203,6 +146,103 @@ function SessionRowTrailingAttention({
   );
 }
 
+const DISCLOSURE_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
+
+function RowLeadingControl({
+  hasChildren,
+  depth,
+  expanded,
+  onToggle,
+  testID,
+}: {
+  hasChildren: boolean;
+  depth: 0 | 1;
+  expanded: boolean;
+  onToggle: () => void;
+  testID: string;
+}) {
+  const { theme } = useUnistyles();
+  if (hasChildren) {
+    return (
+      <Pressable
+        onPress={onToggle}
+        hitSlop={DISCLOSURE_HIT_SLOP}
+        style={styles.disclosureButton}
+        testID={testID}
+      >
+        {expanded ? (
+          <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        ) : (
+          <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        )}
+      </Pressable>
+    );
+  }
+  if (depth === 1) {
+    return <View style={styles.childIndent} />;
+  }
+  return null;
+}
+
+function SessionRowMobileMeta({
+  agent,
+  isMobile,
+  projectName,
+  branch,
+  workspaceName,
+  timeAgo,
+  showHostColumn,
+}: {
+  agent: AggregatedAgent;
+  isMobile: boolean;
+  projectName: string;
+  branch: string;
+  workspaceName: string;
+  timeAgo: string;
+  showHostColumn: boolean;
+}) {
+  if (!isMobile) {
+    return null;
+  }
+  return (
+    <View style={styles.rowMetaRow}>
+      <Text
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={`agent-row-project-${agent.serverId}-${agent.id}`}
+      >
+        {projectName}
+      </Text>
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <Text
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
+      >
+        {branch}
+      </Text>
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <Text
+        style={styles.sessionMetaText}
+        numberOfLines={1}
+        testID={`agent-row-workspace-${agent.serverId}-${agent.id}`}
+      >
+        {workspaceName}
+      </Text>
+      <Text style={styles.sessionMetaSeparator}>·</Text>
+      <Text style={styles.sessionMetaText}>{timeAgo}</Text>
+      {showHostColumn && agent.serverLabel ? (
+        <>
+          <Text style={styles.sessionMetaSeparator}>·</Text>
+          <Text style={styles.sessionMetaText} numberOfLines={1}>
+            {agent.serverLabel}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   isMobile,
@@ -211,6 +251,11 @@ function SessionRow({
   showHostColumn,
   onPress,
   onLongPress,
+  depth = 0,
+  hasChildren = false,
+  expanded = false,
+  childCount = 0,
+  onToggleExpand,
 }: {
   agent: AggregatedAgent;
   isMobile: boolean;
@@ -219,6 +264,11 @@ function SessionRow({
   showHostColumn: boolean;
   onPress: (agent: AggregatedAgent) => void;
   onLongPress: (agent: AggregatedAgent) => void;
+  depth?: 0 | 1;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  childCount?: number;
+  onToggleExpand?: (agentKey: string) => void;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -243,6 +293,9 @@ function SessionRow({
 
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
   const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
+  const handleToggleExpand = useCallback(() => {
+    onToggleExpand?.(agentKey);
+  }, [onToggleExpand, agentKey]);
 
   const sessionTitleStyle = useMemo(
     () => [styles.sessionTitle, isSelected && styles.sessionTitleHighlighted],
@@ -263,6 +316,13 @@ function SessionRow({
       onLongPress={handleLongPress}
       testID={`agent-row-${agent.serverId}-${agent.id}`}
     >
+      <RowLeadingControl
+        hasChildren={hasChildren}
+        depth={depth}
+        expanded={expanded}
+        onToggle={handleToggleExpand}
+        testID={`agent-row-disclosure-${agent.serverId}-${agent.id}`}
+      />
       <View style={styles.rowContent}>
         <View style={styles.rowTitleRow}>
           <WorkspaceTitlePrefix
@@ -284,44 +344,17 @@ function SessionRow({
             pendingPermissionCount={pendingPermissionCount}
             showDesktopAttention={showDesktopAttention}
           />
+          {hasChildren ? <SessionBadge label={String(childCount)} /> : null}
         </View>
-        {isMobile ? (
-          <View style={styles.rowMetaRow}>
-            <Text
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-project-${agent.serverId}-${agent.id}`}
-            >
-              {projectName}
-            </Text>
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
-            >
-              {branch}
-            </Text>
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text
-              style={styles.sessionMetaText}
-              numberOfLines={1}
-              testID={`agent-row-workspace-${agent.serverId}-${agent.id}`}
-            >
-              {workspaceName}
-            </Text>
-            <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text style={styles.sessionMetaText}>{timeAgo}</Text>
-            {showHostColumn && agent.serverLabel ? (
-              <>
-                <Text style={styles.sessionMetaSeparator}>·</Text>
-                <Text style={styles.sessionMetaText} numberOfLines={1}>
-                  {agent.serverLabel}
-                </Text>
-              </>
-            ) : null}
-          </View>
-        ) : null}
+        <SessionRowMobileMeta
+          agent={agent}
+          isMobile={isMobile}
+          projectName={projectName}
+          branch={branch}
+          workspaceName={workspaceName}
+          timeAgo={timeAgo}
+          showHostColumn={showHostColumn}
+        />
       </View>
       {!isMobile ? (
         <View style={styles.rowColumns}>
@@ -372,6 +405,7 @@ export function AgentList({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
+  const [expandedParents, setExpandedParents] = useState<ReadonlySet<string>>(new Set());
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
   const queryClient = useQueryClient();
@@ -453,28 +487,22 @@ export function AgentList({
     setActionAgent(null);
   }, [actionAgent, actionClient, archiveAgent]);
 
-  const flatItems = useMemo((): FlatListItem[] => {
-    const buckets = new Map<DateSectionKey, AggregatedAgent[]>();
-    for (const agent of agents) {
-      const section = deriveDateSectionKey(agent.lastActivityAt);
-      const existing = buckets.get(section) ?? [];
-      existing.push(agent);
-      buckets.set(section, existing);
-    }
+  const handleToggleExpand = useCallback((agentKey: string) => {
+    setExpandedParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentKey)) {
+        next.delete(agentKey);
+      } else {
+        next.add(agentKey);
+      }
+      return next;
+    });
+  }, []);
 
-    const result: FlatListItem[] = [];
-    for (const section of DATE_SECTION_ORDER) {
-      const data = buckets.get(section);
-      if (!data || data.length === 0) {
-        continue;
-      }
-      result.push({ type: "header", key: `header:${section}`, section });
-      for (const agent of data) {
-        result.push({ type: "agent", key: `${agent.serverId}:${agent.id}`, agent });
-      }
-    }
-    return result;
-  }, [agents]);
+  const flatItems = useMemo(
+    () => buildFlatItems(agents, expandedParents),
+    [agents, expandedParents],
+  );
 
   const renderItem: ListRenderItem<FlatListItem> = useCallback(
     ({ item }) => {
@@ -494,12 +522,18 @@ export function AgentList({
           showHostColumn={showHostColumn}
           onPress={handleAgentPress}
           onLongPress={handleAgentLongPress}
+          depth={item.depth}
+          hasChildren={item.hasChildren}
+          expanded={item.expanded}
+          childCount={item.childCount}
+          onToggleExpand={handleToggleExpand}
         />
       );
     },
     [
       handleAgentLongPress,
       handleAgentPress,
+      handleToggleExpand,
       isMobile,
       selectedAgentId,
       showAttentionIndicator,
@@ -810,6 +844,14 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.base,
+  },
+  disclosureButton: {
+    width: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  childIndent: {
+    width: 28,
   },
 }));
 
