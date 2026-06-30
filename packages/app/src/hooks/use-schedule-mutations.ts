@@ -1,5 +1,10 @@
 import { useCallback } from "react";
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   CreateScheduleOptions,
@@ -7,8 +12,9 @@ import type {
   UpdateScheduleOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
+import { schedulesQueryBaseKey } from "@/hooks/use-schedules";
+import type { FetchAggregatedSchedulesResult } from "@/schedules/aggregated-schedules";
 import { useSessionStore } from "@/stores/session-store";
-import { schedulesQueryKey } from "@/hooks/use-schedules";
 
 export type CreateScheduleInput = Omit<CreateScheduleOptions, "requestId">;
 export type UpdateScheduleInput = Omit<UpdateScheduleOptions, "requestId">;
@@ -28,6 +34,10 @@ export interface UseScheduleMutationsResult {
   isRunningNow: boolean;
 }
 
+interface ScheduleListSnapshot {
+  previous: Array<[QueryKey, FetchAggregatedSchedulesResult | undefined]>;
+}
+
 function requireClient(serverId: string, unavailableMessage: string): DaemonClient {
   const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
   if (!client) {
@@ -36,25 +46,35 @@ function requireClient(serverId: string, unavailableMessage: string): DaemonClie
   return client;
 }
 
-interface ScheduleListSnapshot {
-  previous: ScheduleSummary[] | undefined;
-}
-
-function snapshotSchedules(queryClient: QueryClient, serverId: string): ScheduleListSnapshot {
+function snapshotSchedules(queryClient: QueryClient): ScheduleListSnapshot {
   return {
-    previous: queryClient.getQueryData<ScheduleSummary[]>(schedulesQueryKey(serverId)),
+    previous: queryClient.getQueriesData<FetchAggregatedSchedulesResult>({
+      queryKey: schedulesQueryBaseKey,
+    }),
   };
 }
 
-function restoreSchedules(
-  queryClient: QueryClient,
-  serverId: string,
-  snapshot: ScheduleListSnapshot,
-): void {
-  if (snapshot.previous === undefined) {
-    return;
+function restoreSchedules(queryClient: QueryClient, snapshot: ScheduleListSnapshot): void {
+  for (const [queryKey, previous] of snapshot.previous) {
+    queryClient.setQueryData(queryKey, previous);
   }
-  queryClient.setQueryData(schedulesQueryKey(serverId), snapshot.previous);
+}
+
+function updateScheduleSections(
+  queryClient: QueryClient,
+  updateSection: (
+    section: FetchAggregatedSchedulesResult["sections"][number],
+  ) => FetchAggregatedSchedulesResult["sections"][number],
+): void {
+  queryClient.setQueriesData<FetchAggregatedSchedulesResult>(
+    { queryKey: schedulesQueryBaseKey },
+    (current) => {
+      if (!current) {
+        return current;
+      }
+      return { sections: current.sections.map(updateSection) };
+    },
+  );
 }
 
 function optimisticallySetStatus(
@@ -63,24 +83,28 @@ function optimisticallySetStatus(
   id: string,
   status: ScheduleSummary["status"],
 ): void {
-  queryClient.setQueryData<ScheduleSummary[]>(schedulesQueryKey(serverId), (current) => {
-    if (!current) {
-      return current;
-    }
-    const pausedAt = status === "paused" ? new Date().toISOString() : null;
-    return current.map((schedule) =>
-      schedule.id === id ? { ...schedule, status, pausedAt } : schedule,
-    );
-  });
+  const pausedAt = status === "paused" ? new Date().toISOString() : null;
+  updateScheduleSections(queryClient, (section) =>
+    section.serverId === serverId
+      ? {
+          ...section,
+          schedules: section.schedules.map((schedule) =>
+            schedule.id === id ? { ...schedule, status, pausedAt } : schedule,
+          ),
+        }
+      : section,
+  );
 }
 
 function optimisticallyRemove(queryClient: QueryClient, serverId: string, id: string): void {
-  queryClient.setQueryData<ScheduleSummary[]>(schedulesQueryKey(serverId), (current) => {
-    if (!current) {
-      return current;
-    }
-    return current.filter((schedule) => schedule.id !== id);
-  });
+  updateScheduleSections(queryClient, (section) =>
+    section.serverId === serverId
+      ? {
+          ...section,
+          schedules: section.schedules.filter((schedule) => schedule.id !== id),
+        }
+      : section,
+  );
 }
 
 export function useScheduleMutations({
@@ -92,8 +116,8 @@ export function useScheduleMutations({
   const { t } = useTranslation();
 
   const invalidate = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: schedulesQueryKey(serverId) });
-  }, [queryClient, serverId]);
+    void queryClient.invalidateQueries({ queryKey: schedulesQueryBaseKey });
+  }, [queryClient]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateScheduleInput): Promise<void> => {
@@ -126,14 +150,14 @@ export function useScheduleMutations({
       }
     },
     onMutate: async (id): Promise<ScheduleListSnapshot> => {
-      await queryClient.cancelQueries({ queryKey: schedulesQueryKey(serverId) });
-      const snapshot = snapshotSchedules(queryClient, serverId);
+      await queryClient.cancelQueries({ queryKey: schedulesQueryBaseKey });
+      const snapshot = snapshotSchedules(queryClient);
       optimisticallySetStatus(queryClient, serverId, id, "paused");
       return snapshot;
     },
     onError: (_error, _id, context) => {
       if (context) {
-        restoreSchedules(queryClient, serverId, context);
+        restoreSchedules(queryClient, context);
       }
     },
     onSettled: invalidate,
@@ -148,14 +172,14 @@ export function useScheduleMutations({
       }
     },
     onMutate: async (id): Promise<ScheduleListSnapshot> => {
-      await queryClient.cancelQueries({ queryKey: schedulesQueryKey(serverId) });
-      const snapshot = snapshotSchedules(queryClient, serverId);
+      await queryClient.cancelQueries({ queryKey: schedulesQueryBaseKey });
+      const snapshot = snapshotSchedules(queryClient);
       optimisticallySetStatus(queryClient, serverId, id, "active");
       return snapshot;
     },
     onError: (_error, _id, context) => {
       if (context) {
-        restoreSchedules(queryClient, serverId, context);
+        restoreSchedules(queryClient, context);
       }
     },
     onSettled: invalidate,
@@ -170,14 +194,14 @@ export function useScheduleMutations({
       }
     },
     onMutate: async (id): Promise<ScheduleListSnapshot> => {
-      await queryClient.cancelQueries({ queryKey: schedulesQueryKey(serverId) });
-      const snapshot = snapshotSchedules(queryClient, serverId);
+      await queryClient.cancelQueries({ queryKey: schedulesQueryBaseKey });
+      const snapshot = snapshotSchedules(queryClient);
       optimisticallyRemove(queryClient, serverId, id);
       return snapshot;
     },
     onError: (_error, _id, context) => {
       if (context) {
-        restoreSchedules(queryClient, serverId, context);
+        restoreSchedules(queryClient, context);
       }
     },
     onSettled: invalidate,

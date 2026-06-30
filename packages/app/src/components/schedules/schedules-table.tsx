@@ -1,13 +1,9 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { FlatList, type ListRenderItem } from "react-native";
+import { useCallback, useState, type ReactElement } from "react";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  ScheduleRow,
-  SchedulesColumnHeader,
-  type ScheduleRowPending,
-} from "@/components/schedules/schedule-row";
+import { ScheduleRow, type ScheduleRowPending } from "@/components/schedules/schedule-row";
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { resolveScheduleTitle } from "@/utils/schedule-format";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
@@ -24,58 +20,37 @@ interface SchedulesTableProps {
 }
 
 /**
- * Borderless SaaS table of new-agent schedules. Owns row-level actions
- * (pause/resume/run/delete via the mutations hook + a destructive confirm for
- * delete) and delegates editing to the parent. Row chrome — the hairline
- * between rows, hover highlight, and the compact-vs-desktop layout — lives in
- * ScheduleRow; this component only arranges the rows and the column header.
+ * The schedules list: a single settings-style card of rows in a centered,
+ * width-constrained reading column, matching the projects list. Owns row-level
+ * actions (pause/resume/run/delete via the mutations hook + a destructive
+ * confirm for delete) and delegates editing to the parent.
  */
 export function SchedulesTable({
   serverId,
   schedules,
   onEditSchedule,
 }: SchedulesTableProps): ReactElement {
-  const isCompact = useIsCompactFormFactor();
   const mutations = useScheduleMutations({ serverId });
 
-  const renderItem: ListRenderItem<ScheduleSummary> = useCallback(
-    ({ item }) => (
-      <SchedulesTableRow schedule={item} mutations={mutations} onEditSchedule={onEditSchedule} />
-    ),
-    [mutations, onEditSchedule],
-  );
-
-  // The desktop column header aligns with the rows because both live inside the
-  // same horizontally padded, width-constrained content container and share the
-  // row's flex column weights. Compact rows are self-labeled, so no header.
-  const listHeader = useMemo(() => (isCompact ? null : <SchedulesColumnHeader />), [isCompact]);
-
-  const contentContainerStyle = useMemo(
-    () => [styles.listContent, isCompact ? styles.listContentCompact : styles.listContentDesktop],
-    [isCompact],
-  );
-
   return (
-    <FlatList
-      data={schedules}
-      style={styles.list}
-      contentContainerStyle={contentContainerStyle}
-      keyExtractor={keyExtractor}
-      renderItem={renderItem}
-      ListHeaderComponent={listHeader}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      testID="schedules-table"
-    />
+    <View style={styles.listContent} testID="schedules-table">
+      <View style={settingsStyles.card}>
+        {schedules.map((schedule, index) => (
+          <SchedulesTableRow
+            key={schedule.id}
+            schedule={schedule}
+            isFirst={index === 0}
+            mutations={mutations}
+            onEditSchedule={onEditSchedule}
+          />
+        ))}
+      </View>
+    </View>
   );
-}
-
-function keyExtractor(schedule: ScheduleSummary): string {
-  return schedule.id;
 }
 
 // ---------------------------------------------------------------------------
-// Per-row wrapper — owns local in-flight state and binds the table's mutation
+// Per-row wrapper owns local in-flight state and binds the table's mutation
 // callbacks to this schedule. Local state keeps pending precise to the acting
 // row even when several rows are acted on at once (the mutations hook exposes
 // only a single global pending flag per action).
@@ -87,10 +62,12 @@ const NO_PENDING: ScheduleRowPending = {};
 
 function SchedulesTableRow({
   schedule,
+  isFirst,
   mutations,
   onEditSchedule,
 }: {
   schedule: ScheduleSummary;
+  isFirst: boolean;
   mutations: ScheduleMutations;
   onEditSchedule: (schedule: ScheduleSummary) => void;
 }): ReactElement {
@@ -150,6 +127,7 @@ function SchedulesTableRow({
   return (
     <ScheduleRow
       schedule={schedule}
+      isFirst={isFirst}
       pending={pending}
       onEdit={handleEdit}
       onPause={handlePause}
@@ -160,27 +138,14 @@ function SchedulesTableRow({
   );
 }
 
-const DESKTOP_MAX_WIDTH = 1040;
+const CONTENT_MAX_WIDTH = 720;
 
 const styles = StyleSheet.create((theme) => ({
-  list: {
-    flex: 1,
-    minHeight: 0,
-  },
+  // Center the card in a readable column, matching settings and projects.
   listContent: {
-    paddingBottom: theme.spacing[6],
-  },
-  listContentCompact: {
-    paddingHorizontal: theme.spacing[3],
-    paddingTop: theme.spacing[2],
-  },
-  // Center the table in a width-constrained column on desktop, with horizontal
-  // page padding that matches the row's own padding so the columns line up.
-  listContentDesktop: {
     width: "100%",
-    maxWidth: DESKTOP_MAX_WIDTH,
+    maxWidth: CONTENT_MAX_WIDTH,
     alignSelf: "center",
-    paddingHorizontal: theme.spacing[6],
-    paddingTop: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
   },
 }));

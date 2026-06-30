@@ -1,19 +1,22 @@
+import { useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { useSessionStore } from "@/stores/session-store";
-import { isNewAgentSchedule } from "@/utils/schedule-format";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import {
+  fetchAggregatedSchedules,
+  type ScheduleHostInput,
+  type ScheduleHostSection,
+} from "@/schedules/aggregated-schedules";
 
-export function schedulesQueryKey(serverId: string) {
-  return ["schedules", serverId] as const;
-}
+export type { ScheduleHostSection } from "@/schedules/aggregated-schedules";
 
-export interface UseSchedulesInput {
-  serverId: string;
+export const schedulesQueryBaseKey = ["schedules"] as const;
+
+export function schedulesQueryKey(hosts: readonly ScheduleHostInput[]) {
+  return [...schedulesQueryBaseKey, hosts.map((host) => host.serverId).join("|")] as const;
 }
 
 export interface UseSchedulesResult {
-  schedules: ScheduleSummary[];
+  sections: ScheduleHostSection[];
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
@@ -21,36 +24,31 @@ export interface UseSchedulesResult {
   isRefetching: boolean;
 }
 
-async function fetchNewAgentSchedules(
-  serverId: string,
-  unavailableMessage: string,
-): Promise<ScheduleSummary[]> {
-  const client = useSessionStore.getState().sessions[serverId]?.client ?? null;
-  if (!client) {
-    throw new Error(unavailableMessage);
-  }
-
-  const payload = await client.scheduleList();
-  if (payload.error) {
-    throw new Error(payload.error);
-  }
-
-  return payload.schedules.filter(isNewAgentSchedule);
-}
-
-export function useSchedules({ serverId }: UseSchedulesInput): UseSchedulesResult {
-  const { t } = useTranslation();
-  const hasClient = useSessionStore((state) => (state.sessions[serverId]?.client ?? null) !== null);
+export function useSchedules(): UseSchedulesResult {
+  const hosts = useHosts();
+  const runtime = getHostRuntimeStore();
+  const runtimeVersion = useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () => runtime.getVersion(),
+    () => runtime.getVersion(),
+  );
+  const hostInputs = useMemo<ScheduleHostInput[]>(
+    () =>
+      hosts.map((host) => ({
+        serverId: host.serverId,
+        serverName: host.label,
+      })),
+    [hosts],
+  );
 
   const query = useQuery({
-    queryKey: schedulesQueryKey(serverId),
-    queryFn: () => fetchNewAgentSchedules(serverId, t("common.errors.daemonClientUnavailable")),
-    enabled: hasClient,
+    queryKey: [...schedulesQueryKey(hostInputs), runtimeVersion] as const,
+    queryFn: () => fetchAggregatedSchedules({ hosts: hostInputs, runtime }),
     staleTime: 5_000,
   });
 
   return {
-    schedules: query.data ?? [],
+    sections: query.data?.sections ?? [],
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,

@@ -8,9 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown, Folder } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useQuery } from "@tanstack/react-query";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import {
@@ -18,28 +17,43 @@ import {
   AdaptiveTextInput,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CadenceEditor } from "@/components/schedules/cadence-editor";
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import { useAgentFormState, type FormInitialValues } from "@/hooks/use-agent-form-state";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
-import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
+import { useProjects } from "@/hooks/use-projects";
 import { validateCron } from "@/utils/schedule-format";
 import { toErrorMessage } from "@/utils/error-messages";
 import { shortenPath } from "@/utils/shorten-path";
+import type { ProjectSummary } from "@/utils/projects";
 
 const DEFAULT_CADENCE: ScheduleCadence = { type: "every", everyMs: 60 * 60 * 1000 };
+const PROJECT_OPTION_PREFIX = "project:";
 
 export interface ScheduleFormSheetProps {
-  serverId: string;
+  serverId?: string;
   visible: boolean;
   onClose: () => void;
   mode: "create" | "edit";
   schedule?: ScheduleSummary;
+}
+
+interface ScheduleProjectTarget {
+  optionId: string;
+  serverId: string;
+  serverName: string;
+  projectKey: string;
+  projectName: string;
+  cwd: string;
+}
+
+interface ScheduleProjectOptions {
+  targets: ScheduleProjectTarget[];
+  options: ComboboxOption[];
+  targetByOptionId: Map<string, ScheduleProjectTarget>;
 }
 
 // The model/cwd config only exists on new-agent schedules; this screen filters
@@ -57,12 +71,66 @@ function buildInitialValues(schedule: ScheduleSummary | undefined): FormInitialV
     return undefined;
   }
   return {
-    serverId: null,
     provider: config.provider as AgentProvider,
     model: config.model ?? null,
     modeId: config.modeId ?? null,
     workingDir: config.cwd,
   };
+}
+
+function buildProjectOptionId(serverId: string, projectKey: string): string {
+  return `${PROJECT_OPTION_PREFIX}${serverId}:${projectKey}`;
+}
+
+function buildProjectOptionTestId(optionId: string): string {
+  const targetKey = optionId.slice(PROJECT_OPTION_PREFIX.length).replace(/^[^:]+:/, "");
+  return `schedule-project-option-${targetKey}`;
+}
+
+function buildScheduleProjectOptions(projects: readonly ProjectSummary[]): ScheduleProjectOptions {
+  const targets: ScheduleProjectTarget[] = [];
+  const targetByOptionId = new Map<string, ScheduleProjectTarget>();
+  const options: ComboboxOption[] = [];
+
+  for (const project of projects) {
+    for (const host of project.hosts) {
+      const cwd = host.repoRoot.trim();
+      if (!host.isOnline || !cwd) {
+        continue;
+      }
+      const target: ScheduleProjectTarget = {
+        optionId: buildProjectOptionId(host.serverId, project.projectKey),
+        serverId: host.serverId,
+        serverName: host.serverName,
+        projectKey: project.projectKey,
+        projectName: project.projectName,
+        cwd,
+      };
+      targets.push(target);
+      targetByOptionId.set(target.optionId, target);
+      options.push({
+        id: target.optionId,
+        label: target.projectName,
+        description: `${target.serverName} - ${shortenPath(cwd)}`,
+      });
+    }
+  }
+
+  return { targets, options, targetByOptionId };
+}
+
+function resolveSelectedScheduleProjectTarget(input: {
+  targets: readonly ScheduleProjectTarget[];
+  serverId: string | null;
+  cwd: string;
+}): ScheduleProjectTarget | null {
+  const cwd = input.cwd.trim();
+  if (!input.serverId || !cwd) {
+    return null;
+  }
+  return (
+    input.targets.find((target) => target.serverId === input.serverId && target.cwd === cwd) ?? null
+  );
 }
 
 export function ScheduleFormSheet({
@@ -74,8 +142,13 @@ export function ScheduleFormSheet({
 }: ScheduleFormSheetProps): ReactElement {
   const isEdit = mode === "edit";
   const editConfig = newAgentConfig(schedule);
+  const { projects } = useProjects();
+  const projectOptions = useMemo(() => buildScheduleProjectOptions(projects), [projects]);
 
-  const onlineServerIds = useMemo(() => [serverId], [serverId]);
+  const onlineServerIds = useMemo(
+    () => Array.from(new Set(projectOptions.targets.map((target) => target.serverId))),
+    [projectOptions.targets],
+  );
   const initialValues = useMemo(
     () => (isEdit ? buildInitialValues(schedule) : undefined),
     [isEdit, schedule],
@@ -83,11 +156,11 @@ export function ScheduleFormSheet({
 
   // isCreateFlow drives useAgentFormState's RESOLVE pass that applies
   // initialValues. We want that for edit too (to prefill the picker fields from
-  // the schedule's config), so this stays true in both modes — the form is
+  // the schedule's config), so this stays true in both modes: the form is
   // always a "fill these fields" flow, seeded either from preferences (create)
   // or from the schedule (edit).
   const form = useAgentFormState({
-    initialServerId: serverId,
+    initialServerId: serverId ?? null,
     initialValues,
     isVisible: visible,
     isCreateFlow: true,
@@ -95,6 +168,7 @@ export function ScheduleFormSheet({
   });
 
   const {
+    selectedServerId,
     selectedProvider,
     selectedModel,
     selectedMode,
@@ -102,6 +176,7 @@ export function ScheduleFormSheet({
     workingDir,
     setProviderAndModelFromUser,
     setModeFromUser,
+    setSelectedServerIdFromUser,
     setWorkingDirFromUser,
     modeOptions,
     modelSelectorProviders,
@@ -109,7 +184,27 @@ export function ScheduleFormSheet({
     persistFormPreferences,
   } = form;
 
-  // One nested control selects provider → model (the draft screen's selector).
+  const selectedProjectTarget = useMemo(
+    () =>
+      resolveSelectedScheduleProjectTarget({
+        targets: projectOptions.targets,
+        serverId: selectedServerId,
+        cwd: workingDir,
+      }),
+    [projectOptions.targets, selectedServerId, workingDir],
+  );
+  const selectedProjectOptionId = selectedProjectTarget?.optionId ?? "";
+  const mutationServerId = selectedProjectTarget?.serverId ?? selectedServerId ?? serverId ?? "";
+
+  const handleSelectProject = useCallback(
+    (target: ScheduleProjectTarget) => {
+      setSelectedServerIdFromUser(target.serverId);
+      setWorkingDirFromUser(target.cwd);
+    },
+    [setSelectedServerIdFromUser, setWorkingDirFromUser],
+  );
+
+  // One nested control selects provider -> model (the draft screen's selector).
   // Render it as a full-width field that leads with the provider glyph and mutes
   // its placeholder, matching the working-directory field.
   const renderModelTrigger = useCallback(
@@ -139,11 +234,11 @@ export function ScheduleFormSheet({
   );
 
   const { createSchedule, updateSchedule, isCreating, isUpdating } = useScheduleMutations({
-    serverId,
+    serverId: mutationServerId,
   });
   const isSubmitting = isCreating || isUpdating;
 
-  // Name / prompt / cadence / maxRuns are local to this form — not part of
+  // Name / prompt / cadence / maxRuns are local to this form, not part of
   // useAgentFormState. Seed once per open from the schedule being edited.
   const [name, setName] = useState(() => schedule?.name ?? "");
   const [prompt, setPrompt] = useState(() => schedule?.prompt ?? "");
@@ -178,12 +273,12 @@ export function ScheduleFormSheet({
   const canSubmit =
     promptTrimmed.length > 0 &&
     Boolean(selectedProvider) &&
-    workingDir.trim().length > 0 &&
+    Boolean(selectedProjectTarget) &&
     cadenceError === null &&
     !isSubmitting;
 
   const handleSubmit = useCallback(async () => {
-    if (!selectedProvider || !workingDir.trim() || !promptTrimmed) {
+    if (!selectedProvider || !selectedProjectTarget || !promptTrimmed) {
       return;
     }
     setSubmitError(null);
@@ -203,7 +298,7 @@ export function ScheduleFormSheet({
             provider: selectedProvider,
             model: selectedModel || null,
             modeId: selectedMode || null,
-            cwd: workingDir.trim(),
+            cwd: selectedProjectTarget.cwd,
           },
           maxRuns: maxRunsValue,
         });
@@ -216,7 +311,7 @@ export function ScheduleFormSheet({
             type: "new-agent",
             config: {
               provider: selectedProvider,
-              cwd: workingDir.trim(),
+              cwd: selectedProjectTarget.cwd,
               model: selectedModel || undefined,
               modeId: selectedMode || undefined,
               thinkingOptionId: selectedThinkingOptionId || undefined,
@@ -242,10 +337,10 @@ export function ScheduleFormSheet({
     schedule,
     selectedMode,
     selectedModel,
+    selectedProjectTarget,
     selectedProvider,
     selectedThinkingOptionId,
     updateSchedule,
-    workingDir,
   ]);
 
   const handleSubmitPress = useCallback(() => {
@@ -326,6 +421,17 @@ export function ScheduleFormSheet({
       </View>
 
       <View style={styles.field}>
+        <Text style={styles.label}>Project</Text>
+        <ProjectField
+          options={projectOptions.options}
+          targetByOptionId={projectOptions.targetByOptionId}
+          value={selectedProjectOptionId}
+          selectedTarget={selectedProjectTarget}
+          onSelect={handleSelectProject}
+        />
+      </View>
+
+      <View style={styles.field}>
         <Text style={styles.label}>Model</Text>
         <CombinedModelSelector
           providers={modelSelectorProviders}
@@ -335,20 +441,13 @@ export function ScheduleFormSheet({
           isLoading={isAllModelsLoading}
           renderTrigger={renderModelTrigger}
           triggerFill
-          serverId={serverId}
+          serverId={mutationServerId}
         />
       </View>
 
       {modeOptions.length > 0 ? (
         <ModeField options={modeOptions} selectedMode={selectedMode} onSelect={setModeFromUser} />
       ) : null}
-
-      <WorkingDirectoryField
-        serverId={serverId}
-        value={workingDir}
-        onSelect={setWorkingDirFromUser}
-        visible={visible}
-      />
 
       <View style={styles.field}>
         <Text style={styles.label}>Cadence</Text>
@@ -381,7 +480,7 @@ export function ScheduleFormSheet({
 }
 
 // ---------------------------------------------------------------------------
-// Mode field — Combobox over the selected provider's modes.
+// Mode field - Combobox over the selected provider's modes.
 // ---------------------------------------------------------------------------
 
 function ModeField({
@@ -456,64 +555,32 @@ function ModeField({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Working directory — searchable Combobox backed by directory suggestions,
-// allowing a custom path. Mirrors the project picker's query shape.
-// ---------------------------------------------------------------------------
-
-function WorkingDirectoryField({
-  serverId,
+function ProjectField({
+  options,
+  targetByOptionId,
   value,
+  selectedTarget,
   onSelect,
-  visible,
 }: {
-  serverId: string;
+  options: ComboboxOption[];
+  targetByOptionId: Map<string, ScheduleProjectTarget>;
   value: string;
-  onSelect: (value: string) => void;
-  visible: boolean;
+  selectedTarget: ScheduleProjectTarget | null;
+  onSelect: (target: ScheduleProjectTarget) => void;
 }): ReactElement {
   const anchorRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-
-  const client = useHostRuntimeClient(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const recommendedPaths = useRecommendedProjectPaths(serverId);
-
-  const directorySuggestionsQuery = useQuery({
-    queryKey: ["schedule-form-directory-suggestions", serverId, query],
-    queryFn: async () => {
-      if (!client) {
-        return [];
-      }
-      const result = await client.getDirectorySuggestions({
-        query,
-        includeDirectories: true,
-        includeFiles: false,
-        limit: 30,
-      });
-      return result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : []));
-    },
-    enabled: Boolean(client) && isConnected && visible && open,
-    staleTime: 15_000,
-    retry: false,
-  });
-
-  const options = useMemo<ComboboxOption[]>(() => {
-    const paths = buildWorkingDirectorySuggestions({
-      recommendedPaths,
-      serverPaths: directorySuggestionsQuery.data ?? [],
-      query,
-    });
-    return paths.map((path) => ({ id: path, label: shortenPath(path), kind: "directory" }));
-  }, [directorySuggestionsQuery.data, query, recommendedPaths]);
 
   const handleSelect = useCallback(
     (id: string) => {
-      onSelect(id);
+      const target = targetByOptionId.get(id);
+      if (!target) {
+        return;
+      }
+      onSelect(target);
       setOpen(false);
     },
-    [onSelect],
+    [onSelect, targetByOptionId],
   );
 
   const handlePress = useCallback(() => {
@@ -528,21 +595,40 @@ function WorkingDirectoryField({
     [open],
   );
 
-  const displayValue = value.trim() ? shortenPath(value.trim()) : "Select a directory";
+  const displayValue = selectedTarget?.projectName ?? "Select project";
+  const description = selectedTarget
+    ? `${selectedTarget.serverName} - ${shortenPath(selectedTarget.cwd)}`
+    : null;
+
+  const renderOption = useCallback(
+    ({
+      option,
+      selected,
+      active,
+      onPress,
+    }: {
+      option: ComboboxOption;
+      selected: boolean;
+      active: boolean;
+      onPress: () => void;
+    }) => (
+      <ProjectOptionItem option={option} selected={selected} active={active} onPress={onPress} />
+    ),
+    [],
+  );
 
   return (
-    <View style={styles.field}>
-      <Text style={styles.label}>Working directory</Text>
+    <>
       <View ref={anchorRef} collapsable={false}>
         <Pressable
           onPress={handlePress}
           style={triggerStyle}
           accessibilityRole="button"
-          accessibilityLabel={`Select working directory (${displayValue})`}
-          testID="schedule-cwd-trigger"
+          accessibilityLabel={`Select project (${displayValue})`}
+          testID="schedule-project-trigger"
         >
           <Text
-            style={value.trim() ? styles.selectTriggerText : styles.selectTriggerPlaceholder}
+            style={selectedTarget ? styles.selectTriggerText : styles.selectTriggerPlaceholder}
             numberOfLines={1}
           >
             {displayValue}
@@ -550,23 +636,55 @@ function WorkingDirectoryField({
           <ChevronDown size={16} color={styles.chevron.color} />
         </Pressable>
       </View>
+      {description ? <Text style={styles.hint}>{description}</Text> : null}
       <Combobox
         options={options}
         value={value}
         onSelect={handleSelect}
-        onSearchQueryChange={setQuery}
         searchable
-        searchPlaceholder="Type a directory path..."
-        emptyText="Start typing a path"
-        title="Working directory"
-        allowCustomValue
-        customValueKind="directory"
+        searchPlaceholder="Search projects..."
+        emptyText="No projects found"
+        title="Select project"
         open={open}
         onOpenChange={setOpen}
         anchorRef={anchorRef}
         desktopPlacement="bottom-start"
+        renderOption={renderOption}
       />
-    </View>
+    </>
+  );
+}
+
+function ProjectOptionItem({
+  option,
+  selected,
+  active,
+  onPress,
+}: {
+  option: ComboboxOption;
+  selected: boolean;
+  active: boolean;
+  onPress: () => void;
+}): ReactElement {
+  const leadingSlot = useMemo(
+    () => (
+      <View style={styles.optionIconBox}>
+        <Folder size={16} color={styles.chevron.color} />
+      </View>
+    ),
+    [],
+  );
+
+  return (
+    <ComboboxItem
+      testID={buildProjectOptionTestId(option.id)}
+      label={option.label}
+      description={option.description}
+      selected={selected}
+      active={active}
+      onPress={onPress}
+      leadingSlot={leadingSlot}
+    />
   );
 }
 
@@ -574,7 +692,7 @@ function WorkingDirectoryField({
 // Shared bits
 // ---------------------------------------------------------------------------
 
-/** Dynamic provider glyph — reads its color off a StyleSheet object so the
+/** Dynamic provider glyph - reads its color off a StyleSheet object so the
  * runtime-resolved component stays compliant without useUnistyles. */
 function ProviderGlyph({ provider }: { provider: string | null }): ReactElement | null {
   if (!provider) {
@@ -690,6 +808,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
+  optionIconBox: {
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   footer: {
     flex: 1,
     flexDirection: "row",
@@ -699,7 +823,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   // Static color holders read by the dynamic provider icon + chevron (compliant
-  // idiom — no useUnistyles in render).
+  // idiom - no useUnistyles in render).
   providerIcon: {
     color: theme.colors.foregroundMuted,
   },

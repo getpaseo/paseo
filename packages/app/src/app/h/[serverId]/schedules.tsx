@@ -1,6 +1,6 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import { SchedulesScreen } from "@/screens/schedules-screen";
+import { buildSchedulesRoute } from "@/utils/host-routes";
 
 export default function HostSchedulesRoute() {
   return (
@@ -11,8 +11,5 @@ export default function HostSchedulesRoute() {
 }
 
 function HostSchedulesRouteContent() {
-  const params = useLocalSearchParams<{ serverId?: string }>();
-  const serverId = typeof params.serverId === "string" ? params.serverId : "";
-
-  return <SchedulesScreen serverId={serverId} />;
+  return <Redirect href={buildSchedulesRoute()} />;
 }
