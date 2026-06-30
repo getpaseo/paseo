@@ -118,7 +118,7 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
-import { DaemonConfigStore } from "./daemon-config-store.js";
+import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -433,6 +433,39 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
+  const providers: MutableDaemonConfig["providers"] = Object.fromEntries(
+    Object.entries(config.providerOverrides ?? {}).map(([providerId, override]) => {
+      const providerConfig: MutableDaemonConfig["providers"][string] = {};
+      if (override.enabled !== undefined) {
+        providerConfig.enabled = override.enabled;
+      }
+      if (override.additionalModels) {
+        providerConfig.additionalModels = override.additionalModels;
+      }
+      return [providerId, providerConfig];
+    }),
+  );
+
+  const initialConfig: MutableDaemonConfig = {
+    mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+    browserTools: { enabled: config.browserToolsEnabled ?? false },
+    providers,
+    metadataGeneration: {
+      providers: config.metadataGeneration?.providers ?? [],
+    },
+    autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
+    enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
+    appendSystemPrompt: config.appendSystemPrompt ?? "",
+  };
+
+  if (config.terminalProfiles !== undefined) {
+    initialConfig.terminalProfiles = config.terminalProfiles;
+  }
+
+  return initialConfig;
+}
+
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger,
@@ -443,28 +476,7 @@ export async function createPaseoDaemon(
   const daemonVersion = resolveDaemonVersion(import.meta.url);
   const daemonConfigStore = new DaemonConfigStore(
     config.paseoHome,
-    {
-      mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
-      browserTools: { enabled: config.browserToolsEnabled ?? false },
-      providers: Object.fromEntries(
-        Object.entries(config.providerOverrides ?? {}).map(([providerId, override]) => [
-          providerId,
-          {
-            ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
-            ...(override.additionalModels ? { additionalModels: override.additionalModels } : {}),
-          },
-        ]),
-      ),
-      metadataGeneration: {
-        providers: config.metadataGeneration?.providers ?? [],
-      },
-      autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
-      enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
-      appendSystemPrompt: config.appendSystemPrompt ?? "",
-      ...(config.terminalProfiles !== undefined
-        ? { terminalProfiles: config.terminalProfiles }
-        : {}),
-    },
+    createInitialMutableDaemonConfig(config),
     logger,
   );
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
@@ -968,6 +980,7 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
     ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
     createPaseoWorktree: createPaseoWorktreeForTools,
+    browserToolsBroker,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,

@@ -1,8 +1,11 @@
 import { z } from "zod";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BrowserToolsBroker } from "./broker.js";
 import type { BrowserToolsResponsePayload } from "./errors.js";
+import type {
+  PaseoToolConfig,
+  PaseoToolExecutionContext,
+  PaseoToolResult,
+} from "../agent/tools/types.js";
 
 interface CallerAgentContext {
   id: string;
@@ -10,7 +13,15 @@ interface CallerAgentContext {
 }
 
 export interface RegisterBrowserToolsOptions {
-  registerTool: McpServer["registerTool"];
+  registerTool: (
+    name: string,
+    config: PaseoToolConfig,
+    handler: (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool inputs are validated by the catalog before execution.
+      input: any,
+      context: PaseoToolExecutionContext,
+    ) => Promise<PaseoToolResult>,
+  ) => void;
   broker: Pick<BrowserToolsBroker, "execute">;
   callerAgentId?: string;
   resolveCallerAgent: () => CallerAgentContext | null;
@@ -838,7 +849,7 @@ function resolveBrowserToolContext(options: RegisterBrowserToolsOptions): {
 function browserToolResult(params: {
   payload: BrowserToolsResponsePayload;
   context: { agentId?: string; cwd?: string; workspaceId?: string; browserId?: string };
-}): CallToolResult {
+}): PaseoToolResult {
   const { payload, context } = params;
   if (payload.ok) {
     return {
@@ -863,7 +874,7 @@ function browserToolResult(params: {
 
 function browserToolSuccessContent(
   payload: Extract<BrowserToolsResponsePayload, { ok: true }>,
-): CallToolResult["content"] {
+): PaseoToolResult["content"] {
   const textContent = { type: "text" as const, text: summarizeBrowserSuccess(payload) };
   const imageContent = browserToolImageContent(payload.result);
   return imageContent ? [textContent, imageContent] : [textContent];
@@ -871,7 +882,7 @@ function browserToolSuccessContent(
 
 function browserToolImageContent(
   result: Extract<BrowserToolsResponsePayload, { ok: true }>["result"],
-): CallToolResult["content"][number] | null {
+): PaseoToolResult["content"][number] | null {
   if (result.command !== "screenshot" && result.command !== "full_page_screenshot") {
     return null;
   }

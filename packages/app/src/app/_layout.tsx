@@ -87,6 +87,7 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
+  hasConfiguredLocalDaemonOverride,
   useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,

@@ -598,7 +598,6 @@ describe("browser MCP tools", () => {
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
       browserToolsBroker: { execute } as never,
-      browserToolsEnabled: false,
       callerAgentId: "agent-1",
       logger,
     });
@@ -637,7 +636,6 @@ describe("browser MCP tools", () => {
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
       browserToolsBroker: { execute } as never,
-      browserToolsEnabled: true,
       callerAgentId: "agent-1",
       logger,
     });

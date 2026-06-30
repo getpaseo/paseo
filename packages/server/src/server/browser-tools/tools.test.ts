@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BrowserToolsBroker } from "./broker.js";
 import type { BrowserToolsResponsePayload } from "./errors.js";
-import { registerBrowserTools } from "./mcp-tools.js";
+import { registerBrowserTools, type RegisterBrowserToolsOptions } from "./tools.js";
 
 interface RegisteredTool {
   config: { inputSchema: Record<string, unknown>; outputSchema: unknown };
@@ -39,7 +38,7 @@ function createHarness(options?: { brokerResponse?: BrowserToolsResponsePayload 
       config,
       handler: handler as RegisteredTool["handler"],
     });
-  }) as unknown as McpServer["registerTool"];
+  }) as unknown as RegisterBrowserToolsOptions["registerTool"];
 
   registerBrowserTools({
     registerTool,

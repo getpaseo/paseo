@@ -453,7 +453,6 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
-  private unsubscribeTerminalActivity: (() => void) | null = null;
 
   constructor(
     server: HTTPServer,
@@ -1150,7 +1149,6 @@ export class VoiceAssistantWebSocketServer {
       existing.sockets.add(ws);
       this.sessions.set(ws, existing);
       pending.identity.sessionId = existing.session.getSessionId();
-      pending.identity.sessionId = existing.session.getSessionId();
       this.syncBrowserToolsClientRegistration(existing);
       this.sendToClient(ws, this.createServerInfoMessage());
       pending.connectionLogger.info(
@@ -1175,9 +1173,8 @@ export class VoiceAssistantWebSocketServer {
     });
     this.sessions.set(ws, connection);
     this.externalSessionsByKey.set(clientId, connection);
-      pending.identity.sessionId = connection.session.getSessionId();
-      pending.identity.sessionId = connection.session.getSessionId();
-      this.syncBrowserToolsClientRegistration(connection);
+    pending.identity.sessionId = connection.session.getSessionId();
+    this.syncBrowserToolsClientRegistration(connection);
     this.sendToClient(ws, this.createServerInfoMessage());
     connection.connectionLogger.info(
       {

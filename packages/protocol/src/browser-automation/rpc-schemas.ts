@@ -133,7 +133,7 @@ export const BrowserAutomationPdfCommandSchema = z.object({
   args: BrowserAutomationTabTargetSchema.extend({
     landscape: z.boolean().optional(),
     printBackground: z.boolean().default(true),
-  }).default({}),
+  }).default({ printBackground: true }),
 });
 
 export const BrowserAutomationDownloadCommandSchema = z.object({
@@ -201,7 +201,7 @@ export const BrowserAutomationLogsCommandSchema = z.object({
   command: z.literal("logs"),
   args: BrowserAutomationTabTargetSchema.extend({
     maxEntries: z.number().int().positive().max(200).default(50),
-  }).default({}),
+  }).default({ maxEntries: 50 }),
 });
 
 export const BrowserAutomationStorageCommandSchema = z.object({
@@ -301,7 +301,7 @@ export const BrowserAutomationSnapshotElementSchema = z.object({
   tagName: z.string(),
   text: z.string(),
   selector: z.string(),
-  attributes: z.record(z.string()).default({}),
+  attributes: z.record(z.string(), z.string()).default({}),
 });
 
 export const BrowserAutomationSnapshotResultSchema = z.object({

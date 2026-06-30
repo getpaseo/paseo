@@ -73,6 +73,8 @@ import {
   type CreatePaseoWorktreeCommandInput,
   listPaseoWorktreesCommand,
 } from "../../worktree/commands.js";
+import { registerBrowserTools } from "../../browser-tools/tools.js";
+import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
 import type {
   PaseoToolCatalog,
   PaseoToolConfig,
@@ -102,6 +104,7 @@ export interface PaseoToolHostDependencies {
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
+  browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -1000,6 +1003,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   if (options.voiceOnly) {
     return toCatalog();
+  }
+
+  if (options.browserToolsBroker) {
+    registerBrowserTools({
+      registerTool,
+      broker: options.browserToolsBroker,
+      callerAgentId,
+      resolveCallerAgent,
+    });
   }
 
   registerTool(
