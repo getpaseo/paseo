@@ -119,6 +119,14 @@ test.describe("New workspace entry points", () => {
     const draftText = "keep this new workspace draft";
 
     try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId,
+          label: "localhost",
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+      ]);
+
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await page
