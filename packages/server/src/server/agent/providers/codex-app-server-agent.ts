@@ -243,6 +243,11 @@ interface CodexAppServerAgentDeps {
     logger: Logger,
     getTraceContext: () => CodexAppServerTraceContext,
   ) => CodexAppServerClientLike;
+  /** Test seam: override how the app-server child process is spawned. */
+  _spawnAppServer?: (
+    launchEnv?: Record<string, string>,
+    options?: { goalsEnabled?: boolean; agentId?: string },
+  ) => Promise<ChildProcessWithoutNullStreams>;
 }
 
 interface CodexModePreset {
@@ -5900,6 +5905,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
+    if (this.deps._spawnAppServer) {
+      return this.deps._spawnAppServer(launchEnv, options);
+    }
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
