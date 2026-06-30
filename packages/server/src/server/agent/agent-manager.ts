@@ -522,6 +522,31 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
   return null;
 }
 
+/**
+ * Truncate the seeded fork timeline so it ends at the chosen boundary message
+ * (a per-message fork). Keeps rows up to and including the row whose
+ * user/assistant message id matches `boundaryMessageId`; everything after is
+ * dropped so the forked tab's displayed history matches the truncated provider
+ * session. If the boundary isn't found, the full timeline is kept (the provider
+ * session wasn't truncated either).
+ */
+function truncateForkRowsAtBoundary(
+  rows: readonly AgentTimelineRow[],
+  boundaryMessageId: string,
+): AgentTimelineRow[] {
+  const index = rows.findIndex((row) => {
+    const item = row.item;
+    return (
+      (item.type === "assistant_message" || item.type === "user_message") &&
+      item.messageId === boundaryMessageId
+    );
+  });
+  if (index < 0) {
+    return [...rows];
+  }
+  return rows.slice(0, index + 1);
+}
+
 /** Lineage labels stamped onto a forked agent. */
 function buildForkLabels(
   sourceAgentId: string,
@@ -1059,9 +1084,14 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(newAgentId, client);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
-    // The forked provider session carries the full native context, so seed the
-    // new agent with the full source timeline (not a truncated view).
-    const forkRows = await this.getTimelineRows(sourceAgentId);
+    // Seed the new agent's displayed timeline from the source. For a
+    // whole-conversation fork that's the full timeline; for a per-message fork
+    // (messageId set) truncate it at the boundary so the forked tab's history
+    // matches the truncated provider session.
+    const allForkRows = await this.getTimelineRows(sourceAgentId);
+    const forkRows = options?.messageId
+      ? truncateForkRowsAtBoundary(allForkRows, options.messageId)
+      : allForkRows;
     const forkOptions: AgentForkOptions = options?.messageId
       ? { upToMessageId: options.messageId }
       : {};
