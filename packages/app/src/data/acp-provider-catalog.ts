@@ -336,6 +336,15 @@ const CATALOG_DATA = [
     command: ["stakpak", "acp"],
   },
   {
+    id: "traecli",
+    title: "TRAE CLI",
+    description: "ByteDance's official TRAE coding agent with native ACP support",
+    version: "manual",
+    iconId: "traecli",
+    installLink: "https://docs.trae.cn/cli",
+    command: ["traecli", "acp", "serve"],
+  },
+  {
     id: "vtcode",
     title: "VT Code",
     description:

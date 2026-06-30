@@ -4,6 +4,7 @@
 
 ### Added
 
+- **TRAE CLI in the ACP provider catalog** — ByteDance's official TRAE coding agent, launched over ACP via `traecli acp serve`
 - Fork chats into a new tab or new worktree ([#1788](https://github.com/getpaseo/paseo/pull/1788))
 - See workspaces from all connected hosts ([#1538](https://github.com/getpaseo/paseo/pull/1538), [#1775](https://github.com/getpaseo/paseo/pull/1775), [#1825](https://github.com/getpaseo/paseo/pull/1825))
 - Daemon can now serve the web UI ([#1635](https://github.com/getpaseo/paseo/pull/1635), [#1739](https://github.com/getpaseo/paseo/pull/1739))
