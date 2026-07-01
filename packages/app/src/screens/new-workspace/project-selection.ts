@@ -16,6 +16,7 @@ export interface ProjectSelectionContext {
   projects: HostProjectListItem[];
   routeProject: HostProjectListItem | null;
   lastActiveProject: HostProjectListItem | null;
+  shouldPreserveMissingProject: (project: HostProjectListItem) => boolean;
 }
 
 export function createProjectSelectionContextKey(input: {
@@ -72,7 +73,14 @@ export function resolveProjectSelection(
     return selectedProject;
   }
 
-  return selection.project?.projectKey === selection.projectKey ? selection.project : null;
+  if (
+    selection.project?.projectKey === selection.projectKey &&
+    context.shouldPreserveMissingProject(selection.project)
+  ) {
+    return selection.project;
+  }
+
+  return null;
 }
 
 export function reconcileProjectSelection(
@@ -87,10 +95,6 @@ export function reconcileProjectSelection(
   }
 
   if (resolveProjectSelection(current, context)) {
-    return current;
-  }
-
-  if (current.projectKey) {
     return current;
   }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
+import { isWorkspaceArchivePending } from "@/contexts/session-workspace-upserts";
 import {
   filterWorkspaceProjectsForHost,
   getHostProjectSourceDirectory,
@@ -50,6 +51,38 @@ function computeProjectOptionData(projects: readonly HostProjectListItem[]) {
   return { options, projectByOptionId };
 }
 
+function resolveWorkspaceIdFromProjectWorkspaceKey(input: {
+  selectedServerId: string;
+  workspaceKey: string;
+}): string | null {
+  const prefix = `${input.selectedServerId}:`;
+  return input.workspaceKey.startsWith(prefix) ? input.workspaceKey.slice(prefix.length) : null;
+}
+
+function hasPendingArchiveForProject(input: {
+  selectedServerId: string;
+  project: HostProjectListItem;
+}): boolean {
+  for (const workspaceKey of input.project.workspaceKeys) {
+    const workspaceId = resolveWorkspaceIdFromProjectWorkspaceKey({
+      selectedServerId: input.selectedServerId,
+      workspaceKey,
+    });
+    if (
+      workspaceId &&
+      isWorkspaceArchivePending({ serverId: input.selectedServerId, workspaceId })
+    ) {
+      return true;
+    }
+  }
+
+  const workspaceDirectory = getHostProjectSourceDirectory(input.project, input.selectedServerId);
+  return isWorkspaceArchivePending({
+    serverId: input.selectedServerId,
+    workspaceDirectory,
+  });
+}
+
 export function useNewWorkspaceProjectPicker({
   selectedServerId,
   projects,
@@ -84,6 +117,14 @@ export function useNewWorkspaceProjectPicker({
     selectedServerId,
     routeProjectKey,
   });
+  const shouldPreserveMissingProject = useCallback(
+    (project: HostProjectListItem) =>
+      hasPendingArchiveForProject({
+        selectedServerId,
+        project,
+      }),
+    [selectedServerId],
+  );
   const selectionContext = useMemo<ProjectSelectionContext>(
     () => ({
       contextKey: selectionContextKey,
@@ -92,6 +133,7 @@ export function useNewWorkspaceProjectPicker({
       projects: selectableProjects,
       routeProject,
       lastActiveProject,
+      shouldPreserveMissingProject,
     }),
     [
       initialProject,
@@ -100,6 +142,7 @@ export function useNewWorkspaceProjectPicker({
       routeProject,
       selectableProjects,
       selectionContextKey,
+      shouldPreserveMissingProject,
     ],
   );
   const [projectSelection, setProjectSelection] = useState<ProjectSelection>(() =>

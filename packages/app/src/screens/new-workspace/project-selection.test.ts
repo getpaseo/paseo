@@ -33,6 +33,7 @@ function context(
     manualContextKey: input.manualContextKey ?? contextKey,
     routeProject: null,
     lastActiveProject: null,
+    shouldPreserveMissingProject: () => false,
     ...input,
   };
 }
@@ -165,7 +166,25 @@ describe("reconcileProjectSelection", () => {
     expect(resolveProjectSelection(reconciled, afterCapabilityHydration)).toEqual(manual);
   });
 
-  it("keeps the selected project snapshot while the project is temporarily absent", () => {
+  it("keeps the selected project snapshot during a pending archive gap", () => {
+    const remembered = project("remembered");
+    const fallback = project("fallback");
+    const current = createProjectSelection(
+      context({ initialProject: remembered, projects: [remembered] }),
+    );
+    const withoutRemembered = context({
+      initialProject: fallback,
+      projects: [fallback],
+      shouldPreserveMissingProject: (candidate) => candidate.projectKey === remembered.projectKey,
+    });
+
+    const reconciled = reconcileProjectSelection(current, withoutRemembered);
+
+    expect(reconciled).toEqual(current);
+    expect(resolveProjectSelection(reconciled, withoutRemembered)).toEqual(remembered);
+  });
+
+  it("falls back when the selected project disappears without a pending archive", () => {
     const remembered = project("remembered");
     const fallback = project("fallback");
     const current = createProjectSelection(
@@ -176,10 +195,12 @@ describe("reconcileProjectSelection", () => {
       projects: [fallback],
     });
 
-    const reconciled = reconcileProjectSelection(current, withoutRemembered);
-
-    expect(reconciled).toEqual(current);
-    expect(resolveProjectSelection(reconciled, withoutRemembered)).toEqual(remembered);
+    expect(reconcileProjectSelection(current, withoutRemembered)).toEqual({
+      contextKey: "host:",
+      projectKey: fallback.projectKey,
+      project: fallback,
+      source: "initial",
+    });
   });
 
   it("resolves manual selections from selectable projects, not route or remembered projects", () => {
