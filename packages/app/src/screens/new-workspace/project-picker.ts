@@ -7,6 +7,7 @@ import {
   type HostProjectListItem,
 } from "@/projects/host-projects";
 import {
+  createProjectSelectionContextKey,
   createProjectSelection,
   reconcileProjectSelection,
   resolveProjectSelection,
@@ -73,7 +74,11 @@ export function useNewWorkspaceProjectPicker({
   );
 
   const routeProjectKey = routeProject?.projectKey ?? null;
-  const selectionContextKey = `${selectedServerId}:${routeProjectKey ?? ""}`;
+  const selectionContextKey = createProjectSelectionContextKey({
+    selectedServerId,
+    routeProjectKey,
+    allowAllProjects,
+  });
   const selectionContext = useMemo<ProjectSelectionContext>(
     () => ({
       contextKey: selectionContextKey,

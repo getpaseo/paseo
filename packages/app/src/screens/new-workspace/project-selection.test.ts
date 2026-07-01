@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HostProjectListItem } from "@/projects/host-projects";
 import {
+  createProjectSelectionContextKey,
   createProjectSelection,
   reconcileProjectSelection,
   resolveProjectSelection,
@@ -73,6 +74,37 @@ describe("reconcileProjectSelection", () => {
     expect(reconcileProjectSelection(current, nextContext)).toEqual({
       contextKey: "host:route-project",
       projectKey: routeProject.projectKey,
+      source: "initial",
+    });
+  });
+
+  it("resets fallback selection when host project capability changes", () => {
+    const fallback = project("git-fallback");
+    const remembered = project("remembered-directory");
+    const current = createProjectSelection(
+      context({
+        contextKey: createProjectSelectionContextKey({
+          selectedServerId: "host",
+          routeProjectKey: null,
+          allowAllProjects: false,
+        }),
+        initialProject: fallback,
+        projects: [fallback, remembered],
+      }),
+    );
+    const afterCapabilityHydration = context({
+      contextKey: createProjectSelectionContextKey({
+        selectedServerId: "host",
+        routeProjectKey: null,
+        allowAllProjects: true,
+      }),
+      initialProject: remembered,
+      projects: [fallback, remembered],
+    });
+
+    expect(reconcileProjectSelection(current, afterCapabilityHydration)).toEqual({
+      contextKey: "host:all-projects:",
+      projectKey: remembered.projectKey,
       source: "initial",
     });
   });

@@ -16,6 +16,15 @@ export interface ProjectSelectionContext {
   lastActiveProject: HostProjectListItem | null;
 }
 
+export function createProjectSelectionContextKey(input: {
+  selectedServerId: string;
+  routeProjectKey: string | null;
+  allowAllProjects: boolean;
+}): string {
+  const projectScope = input.allowAllProjects ? "all-projects" : "worktree-projects";
+  return `${input.selectedServerId}:${projectScope}:${input.routeProjectKey ?? ""}`;
+}
+
 export function createProjectSelection({
   contextKey,
   initialProject,
