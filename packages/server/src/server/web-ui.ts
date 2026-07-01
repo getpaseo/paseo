@@ -257,8 +257,13 @@ function injectConnectionHint(
 ): string {
   const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
+  // When behind a reverse proxy, the Host header may omit the standard port
+  // (e.g. "example.com" instead of "example.com:443"). The client-side
+  // connectionFromListen requires host:port format, so default to the
+  // protocol-appropriate port when none is present.
+  const listen = host.includes(":") ? host : `${host}:${useTls ? 443 : 80}`;
   const hint = {
-    listen: host,
+    listen,
     useTls,
     label,
   };
