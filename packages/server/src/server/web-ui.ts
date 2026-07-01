@@ -265,8 +265,7 @@ function injectConnectionHint(
   // A bare IPv6 address like "[::1]" contains colons inside brackets
   // but no port separator, so we check for either an explicit port after
   // closing bracket, or a colon in a non-IPv6 host string.
-  const hasPort =
-    host.includes("]:") || (!host.startsWith("[") && host.includes(":"));
+  const hasPort = host.includes("]:") || (!host.startsWith("[") && host.includes(":"));
   const listen = hasPort ? host : `${host}:${useTls ? 443 : 80}`;
   const hint = {
     listen,
