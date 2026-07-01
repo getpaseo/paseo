@@ -1,14 +1,14 @@
 import { resolveSelectedHostProject, type HostProjectListItem } from "@/projects/host-projects";
 
-export type NewWorkspaceProjectSelectionSource = "initial" | "manual";
+export type ProjectSelectionSource = "initial" | "manual";
 
-export interface NewWorkspaceProjectSelection {
+export interface ProjectSelection {
   contextKey: string;
   projectKey: string | null;
-  source: NewWorkspaceProjectSelectionSource;
+  source: ProjectSelectionSource;
 }
 
-export interface NewWorkspaceProjectSelectionContext {
+export interface ProjectSelectionContext {
   contextKey: string;
   initialProject: HostProjectListItem | null;
   projects: HostProjectListItem[];
@@ -16,10 +16,10 @@ export interface NewWorkspaceProjectSelectionContext {
   lastActiveProject: HostProjectListItem | null;
 }
 
-export function createInitialNewWorkspaceProjectSelection({
+export function createProjectSelection({
   contextKey,
   initialProject,
-}: NewWorkspaceProjectSelectionContext): NewWorkspaceProjectSelection {
+}: ProjectSelectionContext): ProjectSelection {
   return {
     contextKey,
     projectKey: initialProject?.projectKey ?? null,
@@ -27,10 +27,7 @@ export function createInitialNewWorkspaceProjectSelection({
   };
 }
 
-function projectSelectionsAreEqual(
-  left: NewWorkspaceProjectSelection,
-  right: NewWorkspaceProjectSelection,
-): boolean {
+function projectSelectionsAreEqual(left: ProjectSelection, right: ProjectSelection): boolean {
   return (
     left.contextKey === right.contextKey &&
     left.projectKey === right.projectKey &&
@@ -38,9 +35,9 @@ function projectSelectionsAreEqual(
   );
 }
 
-export function resolveNewWorkspaceProjectSelection(
-  selection: NewWorkspaceProjectSelection,
-  context: NewWorkspaceProjectSelectionContext,
+export function resolveProjectSelection(
+  selection: ProjectSelection,
+  context: ProjectSelectionContext,
 ): HostProjectListItem | null {
   const routeProject = selection.source === "manual" ? null : context.routeProject;
   const lastActiveProject = selection.source === "manual" ? null : context.lastActiveProject;
@@ -53,16 +50,16 @@ export function resolveNewWorkspaceProjectSelection(
   });
 }
 
-export function reconcileNewWorkspaceProjectSelection(
-  current: NewWorkspaceProjectSelection,
-  context: NewWorkspaceProjectSelectionContext,
-): NewWorkspaceProjectSelection {
-  const initialSelection = createInitialNewWorkspaceProjectSelection(context);
+export function reconcileProjectSelection(
+  current: ProjectSelection,
+  context: ProjectSelectionContext,
+): ProjectSelection {
+  const initialSelection = createProjectSelection(context);
   if (current.contextKey !== context.contextKey) {
     return initialSelection;
   }
 
-  if (resolveNewWorkspaceProjectSelection(current, context)) {
+  if (resolveProjectSelection(current, context)) {
     return current;
   }
 

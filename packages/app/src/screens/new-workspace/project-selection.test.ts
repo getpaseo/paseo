@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { HostProjectListItem } from "@/projects/host-projects";
 import {
-  createInitialNewWorkspaceProjectSelection,
-  reconcileNewWorkspaceProjectSelection,
-  resolveNewWorkspaceProjectSelection,
-  type NewWorkspaceProjectSelection,
-  type NewWorkspaceProjectSelectionContext,
-} from "./new-workspace-project-selection";
+  createProjectSelection,
+  reconcileProjectSelection,
+  resolveProjectSelection,
+  type ProjectSelection,
+  type ProjectSelectionContext,
+} from "./project-selection";
 
 function project(projectKey: string, serverId = "host"): HostProjectListItem {
   return {
@@ -20,11 +20,11 @@ function project(projectKey: string, serverId = "host"): HostProjectListItem {
 }
 
 function context(
-  input: Partial<NewWorkspaceProjectSelectionContext> & {
+  input: Partial<ProjectSelectionContext> & {
     initialProject: HostProjectListItem | null;
     projects: HostProjectListItem[];
   },
-): NewWorkspaceProjectSelectionContext {
+): ProjectSelectionContext {
   return {
     contextKey: "host:",
     routeProject: null,
@@ -33,11 +33,11 @@ function context(
   };
 }
 
-describe("reconcileNewWorkspaceProjectSelection", () => {
+describe("reconcileProjectSelection", () => {
   it("keeps a still-selectable project when the default moves after archive", () => {
     const remembered = project("remembered");
     const other = project("other");
-    const current = createInitialNewWorkspaceProjectSelection(
+    const current = createProjectSelection(
       context({ initialProject: remembered, projects: [remembered, other] }),
     );
     const afterArchive = context({
@@ -45,20 +45,20 @@ describe("reconcileNewWorkspaceProjectSelection", () => {
       projects: [other, remembered],
     });
 
-    const reconciled = reconcileNewWorkspaceProjectSelection(current, afterArchive);
+    const reconciled = reconcileProjectSelection(current, afterArchive);
 
     expect(reconciled).toEqual({
       contextKey: "host:",
       projectKey: remembered.projectKey,
       source: "initial",
     });
-    expect(resolveNewWorkspaceProjectSelection(reconciled, afterArchive)).toEqual(remembered);
+    expect(resolveProjectSelection(reconciled, afterArchive)).toEqual(remembered);
   });
 
   it("resets stale selection when the route project context changes", () => {
     const manual = project("manual");
     const routeProject = project("route-project");
-    const current: NewWorkspaceProjectSelection = {
+    const current: ProjectSelection = {
       contextKey: "host:previous-route",
       projectKey: manual.projectKey,
       source: "manual",
@@ -70,7 +70,7 @@ describe("reconcileNewWorkspaceProjectSelection", () => {
       routeProject,
     });
 
-    expect(reconcileNewWorkspaceProjectSelection(current, nextContext)).toEqual({
+    expect(reconcileProjectSelection(current, nextContext)).toEqual({
       contextKey: "host:route-project",
       projectKey: routeProject.projectKey,
       source: "initial",
@@ -80,7 +80,7 @@ describe("reconcileNewWorkspaceProjectSelection", () => {
   it("falls back only when the selected project disappears", () => {
     const remembered = project("remembered");
     const fallback = project("fallback");
-    const current = createInitialNewWorkspaceProjectSelection(
+    const current = createProjectSelection(
       context({ initialProject: remembered, projects: [remembered] }),
     );
     const withoutRemembered = context({
@@ -88,7 +88,7 @@ describe("reconcileNewWorkspaceProjectSelection", () => {
       projects: [fallback],
     });
 
-    expect(reconcileNewWorkspaceProjectSelection(current, withoutRemembered)).toEqual({
+    expect(reconcileProjectSelection(current, withoutRemembered)).toEqual({
       contextKey: "host:",
       projectKey: fallback.projectKey,
       source: "initial",
@@ -99,7 +99,7 @@ describe("reconcileNewWorkspaceProjectSelection", () => {
     const manual = project("manual");
     const routeProject = project("route-project");
     const remembered = project("remembered");
-    const current: NewWorkspaceProjectSelection = {
+    const current: ProjectSelection = {
       contextKey: "host:route-project",
       projectKey: manual.projectKey,
       source: "manual",
@@ -112,6 +112,6 @@ describe("reconcileNewWorkspaceProjectSelection", () => {
       lastActiveProject: remembered,
     });
 
-    expect(resolveNewWorkspaceProjectSelection(current, selectionContext)).toEqual(manual);
+    expect(resolveProjectSelection(current, selectionContext)).toEqual(manual);
   });
 });
