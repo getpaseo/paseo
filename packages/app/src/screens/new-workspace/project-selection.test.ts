@@ -54,6 +54,7 @@ describe("reconcileProjectSelection", () => {
     expect(reconciled).toEqual({
       contextKey: "host:",
       projectKey: remembered.projectKey,
+      project: remembered,
       source: "initial",
     });
     expect(resolveProjectSelection(reconciled, afterArchive)).toEqual(remembered);
@@ -65,6 +66,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "host:previous-route",
       projectKey: manual.projectKey,
+      project: manual,
       source: "manual",
     };
     const nextContext = context({
@@ -77,6 +79,23 @@ describe("reconcileProjectSelection", () => {
     expect(reconcileProjectSelection(current, nextContext)).toEqual({
       contextKey: "host:route-project",
       projectKey: routeProject.projectKey,
+      project: routeProject,
+      source: "initial",
+    });
+  });
+
+  it("hydrates an empty initial selection when projects arrive", () => {
+    const initialProject = project("hydrated");
+    const current = createProjectSelection(context({ initialProject: null, projects: [] }));
+    const hydratedContext = context({
+      initialProject,
+      projects: [initialProject],
+    });
+
+    expect(reconcileProjectSelection(current, hydratedContext)).toEqual({
+      contextKey: "host:",
+      projectKey: initialProject.projectKey,
+      project: initialProject,
       source: "initial",
     });
   });
@@ -108,6 +127,7 @@ describe("reconcileProjectSelection", () => {
     expect(reconcileProjectSelection(current, afterCapabilityHydration)).toEqual({
       contextKey: "host:all-projects:",
       projectKey: remembered.projectKey,
+      project: remembered,
       source: "initial",
     });
   });
@@ -122,6 +142,7 @@ describe("reconcileProjectSelection", () => {
         routeProjectKey: null,
       }),
       projectKey: manual.projectKey,
+      project: manual,
       source: "manual",
     };
     const afterCapabilityHydration = context({
@@ -144,7 +165,7 @@ describe("reconcileProjectSelection", () => {
     expect(resolveProjectSelection(reconciled, afterCapabilityHydration)).toEqual(manual);
   });
 
-  it("falls back only when the selected project disappears", () => {
+  it("keeps the selected project snapshot while the project is temporarily absent", () => {
     const remembered = project("remembered");
     const fallback = project("fallback");
     const current = createProjectSelection(
@@ -155,11 +176,10 @@ describe("reconcileProjectSelection", () => {
       projects: [fallback],
     });
 
-    expect(reconcileProjectSelection(current, withoutRemembered)).toEqual({
-      contextKey: "host:",
-      projectKey: fallback.projectKey,
-      source: "initial",
-    });
+    const reconciled = reconcileProjectSelection(current, withoutRemembered);
+
+    expect(reconciled).toEqual(current);
+    expect(resolveProjectSelection(reconciled, withoutRemembered)).toEqual(remembered);
   });
 
   it("resolves manual selections from selectable projects, not route or remembered projects", () => {
@@ -169,6 +189,7 @@ describe("reconcileProjectSelection", () => {
     const current: ProjectSelection = {
       contextKey: "host:route-project",
       projectKey: manual.projectKey,
+      project: manual,
       source: "manual",
     };
     const selectionContext = context({

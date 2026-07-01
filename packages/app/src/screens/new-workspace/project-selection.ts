@@ -5,6 +5,7 @@ export type ProjectSelectionSource = "initial" | "manual";
 export interface ProjectSelection {
   contextKey: string;
   projectKey: string | null;
+  project: HostProjectListItem | null;
   source: ProjectSelectionSource;
 }
 
@@ -40,6 +41,7 @@ export function createProjectSelection({
   return {
     contextKey,
     projectKey: initialProject?.projectKey ?? null,
+    project: initialProject,
     source: "initial",
   };
 }
@@ -48,6 +50,7 @@ function projectSelectionsAreEqual(left: ProjectSelection, right: ProjectSelecti
   return (
     left.contextKey === right.contextKey &&
     left.projectKey === right.projectKey &&
+    left.project?.projectKey === right.project?.projectKey &&
     left.source === right.source
   );
 }
@@ -59,12 +62,17 @@ export function resolveProjectSelection(
   const routeProject = selection.source === "manual" ? null : context.routeProject;
   const lastActiveProject = selection.source === "manual" ? null : context.lastActiveProject;
 
-  return resolveSelectedHostProject({
+  const selectedProject = resolveSelectedHostProject({
     selectedProjectKey: selection.projectKey,
     projects: context.projects,
     routeProject,
     lastActiveProject,
   });
+  if (selectedProject) {
+    return selectedProject;
+  }
+
+  return selection.project?.projectKey === selection.projectKey ? selection.project : null;
 }
 
 export function reconcileProjectSelection(
@@ -79,6 +87,10 @@ export function reconcileProjectSelection(
   }
 
   if (resolveProjectSelection(current, context)) {
+    return current;
+  }
+
+  if (current.projectKey) {
     return current;
   }
 

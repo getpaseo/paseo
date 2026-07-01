@@ -124,6 +124,7 @@ export function useNewWorkspaceProjectPicker({
       setProjectSelection({
         contextKey: manualSelectionContextKey,
         projectKey: project.projectKey,
+        project,
         source: "manual",
       });
     },
