@@ -48,6 +48,7 @@ function getTestSessionReferences() {
     sessions: state.sessions,
     session,
     workspaces: session.workspaces,
+    emptyProjects: session.emptyProjects,
   };
 }
 
@@ -445,6 +446,48 @@ describe("removeWorkspace", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
+  });
+});
+
+describe("removeEmptyProject", () => {
+  it("removes an empty project by project id", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setEmptyProjects("test-server", [
+      {
+        projectId: "project-empty",
+        projectDisplayName: "Empty",
+        projectCustomName: null,
+        projectRootPath: "/repo/empty",
+        projectKind: "git",
+      },
+    ]);
+
+    store.removeEmptyProject("test-server", "project-empty");
+
+    expect(getTestSessionReferences().emptyProjects.has("project-empty")).toBe(false);
+  });
+
+  it("preserves identity when removing a missing empty project", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setEmptyProjects("test-server", [
+      {
+        projectId: "project-empty",
+        projectDisplayName: "Empty",
+        projectCustomName: null,
+        projectRootPath: "/repo/empty",
+        projectKind: "git",
+      },
+    ]);
+    const before = getTestSessionReferences();
+
+    store.removeEmptyProject("test-server", "project-missing");
+    const after = getTestSessionReferences();
+
+    expect(after.sessions).toBe(before.sessions);
+    expect(after.session).toBe(before.session);
+    expect(after.emptyProjects).toBe(before.emptyProjects);
   });
 });
 

@@ -1,6 +1,7 @@
 import type {
   SidebarProjectEntry,
-  SidebarWorkspaceEntry,
+  SidebarStatusWorkspacePlacement,
+  SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 
@@ -14,7 +15,9 @@ export interface SidebarShortcutModel {
   shortcutIndexByWorkspaceKey: Map<string, number>;
 }
 
-function createShortcutTarget(workspace: SidebarWorkspaceEntry): SidebarShortcutWorkspaceTarget {
+function createShortcutTarget(
+  workspace: SidebarWorkspacePlacement,
+): SidebarShortcutWorkspaceTarget {
   return {
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
@@ -50,7 +53,7 @@ export function buildSidebarShortcutModel(input: {
 }
 
 export function buildStatusSidebarShortcutModel(input: {
-  workspaces: SidebarWorkspaceEntry[];
+  workspaces: SidebarStatusWorkspacePlacement[];
   projectNamesByKey: Map<string, string>;
   collapsedStatusGroupKeys?: ReadonlySet<string>;
   shortcutLimit?: number;

@@ -74,11 +74,23 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:menu:showContextMenu", input),
   },
   browser: {
-    setWorkspaceActiveBrowser: (browserId: string | null) =>
-      ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", browserId),
+    registerWorkspaceBrowser: (input: { browserId: string; workspaceId: string }) =>
+      ipcRenderer.invoke("paseo:browser:register-workspace-browser", input),
+    setWorkspaceActiveBrowser: (input: { workspaceId: string; browserId: string | null }) =>
+      ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", input),
+    setAgentActiveBrowser: (input: { agentId: string; browserId: string | null }) =>
+      ipcRenderer.invoke("paseo:browser:set-agent-active-browser", input),
     openDevTools: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
     clearPartition: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:clear-partition", browserId),
+    executeAutomationCommand: (request: Record<string, unknown>) =>
+      ipcRenderer.invoke("paseo:browser:execute-automation-command", request),
+    captureElement: (
+      browserId: string,
+      rect: { x: number; y: number; width: number; height: number },
+    ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
+    copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
+      ipcRenderer.invoke("paseo:browser:copy-element", payload),
   },
 });

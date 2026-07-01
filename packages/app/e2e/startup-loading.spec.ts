@@ -14,7 +14,7 @@ test.describe("Startup loading presentation", () => {
       })
       .openRoot();
 
-    await startup.expectsSavedHostShell({ label: "Dev" });
+    await startup.expectsSavedHostShell({ serverId: "srv_unreachable_mobile", label: "Dev" });
     await startup.expectsNoSavedHostErrorStatus();
     await startup.expectsNoLocalServerStartupCopy();
   });

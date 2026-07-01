@@ -374,6 +374,7 @@ test("importProviderSession imports a selected provider session without listing"
   const agentManager = {
     importProviderSession: vi.fn().mockResolvedValue(snapshot),
     getTimeline: vi.fn().mockReturnValue(timeline),
+    unarchiveSnapshot: vi.fn().mockResolvedValue(false),
   } as unknown as AgentManager;
   const agentStorage = {
     list: vi.fn().mockResolvedValue([]),
@@ -414,6 +415,7 @@ test("importProviderSession passes labels through the manager import operation",
   const agentManager = {
     importProviderSession: vi.fn().mockResolvedValue(snapshot),
     getTimeline: vi.fn().mockReturnValue([]),
+    unarchiveSnapshot: vi.fn().mockResolvedValue(false),
   } as unknown as AgentManager;
   const agentStorage = {
     list: vi.fn().mockResolvedValue([]),

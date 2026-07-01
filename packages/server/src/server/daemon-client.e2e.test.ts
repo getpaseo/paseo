@@ -197,12 +197,12 @@ test("createAgent with background initialPrompt returns a running snapshot befor
 
     expect(agent.status).toBe("running");
 
-    const fetchedWhileRunning = await client.fetchAgent(agent.id);
+    const fetchedWhileRunning = await client.fetchAgent({ agentId: agent.id });
     expect(fetchedWhileRunning?.agent.status).toBe("running");
 
     await new Promise((resolve) => setTimeout(resolve, 350));
 
-    const fetchedAfterCompletion = await client.fetchAgent(agent.id);
+    const fetchedAfterCompletion = await client.fetchAgent({ agentId: agent.id });
     expect(fetchedAfterCompletion?.agent.status).toBe("idle");
   } finally {
     await client.close();
@@ -473,8 +473,8 @@ class NonPersistentReloadClient implements AgentClient {
     });
   }
 
-  async listModels() {
-    return [];
+  async fetchCatalog() {
+    return { models: [], modes: [] };
   }
 }
 
@@ -547,7 +547,9 @@ beforeAll(async () => {
 
   ctx = await createDaemonTestContext({
     dictationFinalTimeoutMs: 5000,
-    ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
+    ...(openaiApiKey
+      ? { openai: { stt: { apiKey: openaiApiKey }, tts: { apiKey: openaiApiKey } } }
+      : {}),
     ...(speechConfig ? { speech: speechConfig } : {}),
   });
 }, 60000);
@@ -638,7 +640,7 @@ test("interrupts a running agent before archiving", async () => {
     const result = await ctx.client.archiveAgent(created.id);
     expect(result.archivedAt).toBeTruthy();
 
-    const archivedResult = await ctx.client.fetchAgent(created.id);
+    const archivedResult = await ctx.client.fetchAgent({ agentId: created.id });
     expect(archivedResult).not.toBeNull();
     expect(archivedResult?.agent.archivedAt).toBeTruthy();
     expect(archivedResult?.agent.status).not.toBe("running");
@@ -671,7 +673,7 @@ test("send_agent_message auto-unarchives archived agents", async () => {
     const finalState = await ctx.client.waitForFinish(created.id, 120000);
     expect(finalState.status).toBe("idle");
 
-    const refreshed = await ctx.client.fetchAgent(created.id);
+    const refreshed = await ctx.client.fetchAgent({ agentId: created.id });
     expect(refreshed).not.toBeNull();
     expect(refreshed?.agent.archivedAt).toBeNull();
   } finally {
@@ -691,7 +693,7 @@ test("refresh_agent auto-unarchives archived agents", async () => {
     await ctx.client.archiveAgent(created.id);
     await ctx.client.refreshAgent(created.id);
 
-    const refreshed = await ctx.client.fetchAgent(created.id);
+    const refreshed = await ctx.client.fetchAgent({ agentId: created.id });
     expect(refreshed).not.toBeNull();
     expect(refreshed?.agent.archivedAt).toBeNull();
   } finally {
@@ -770,7 +772,7 @@ test("resume_agent auto-unarchives archived agents", async () => {
         cwd,
       },
     });
-    const agentBeforeArchive = await ctx.client.fetchAgent(created.id);
+    const agentBeforeArchive = await ctx.client.fetchAgent({ agentId: created.id });
     expect(agentBeforeArchive?.agent.persistence).toBeTruthy();
     await ctx.client.archiveAgent(created.id);
 
@@ -779,7 +781,7 @@ test("resume_agent auto-unarchives archived agents", async () => {
       throw new Error("Expected persistence handle for resume test");
     }
     const resumed = await ctx.client.resumeAgent(handle);
-    const resumedDetails = await ctx.client.fetchAgent(resumed.id);
+    const resumedDetails = await ctx.client.fetchAgent({ agentId: resumed.id });
     expect(resumedDetails).not.toBeNull();
     expect(resumedDetails?.agent.archivedAt).toBeNull();
 
@@ -807,7 +809,7 @@ test("update_agent persists unloaded title and labels across auto-unarchive", as
       labels: { lane: "phase-1a" },
     });
 
-    const archived = await ctx.client.fetchAgent(created.id);
+    const archived = await ctx.client.fetchAgent({ agentId: created.id });
     expect(archived).not.toBeNull();
     expect(archived?.agent.archivedAt).toBeTruthy();
     expect(archived?.agent.title).toBe("Pinned Title");
@@ -817,7 +819,7 @@ test("update_agent persists unloaded title and labels across auto-unarchive", as
     const finalState = await ctx.client.waitForFinish(created.id, 120000);
     expect(finalState.status).toBe("idle");
 
-    const unarchived = await ctx.client.fetchAgent(created.id);
+    const unarchived = await ctx.client.fetchAgent({ agentId: created.id });
     expect(unarchived).not.toBeNull();
     expect(unarchived?.agent.archivedAt).toBeNull();
     expect(unarchived?.agent.title).toBe("Pinned Title");
@@ -974,7 +976,7 @@ test("creates agent and exercises lifecycle", async () => {
 
   expect(agent.id).toBeTruthy();
   expect(agent.status).toBe("idle");
-  const fetchedResult = await ctx.client.fetchAgent(agent.id);
+  const fetchedResult = await ctx.client.fetchAgent({ agentId: agent.id });
   expect(fetchedResult?.agent.id).toBe(agent.id);
 
   const agentUpdate = await agentUpdatePromise;
@@ -1149,7 +1151,10 @@ test("creates agent and exercises lifecycle", async () => {
     return unsubscribeCommands;
   });
 
-  const commands = await ctx.client.listCommands(agent.id, commandsRequestId);
+  const commands = await ctx.client.listCommands({
+    agentId: agent.id,
+    requestId: commandsRequestId,
+  });
   const commandsMessage = await commandsResponsePromise;
   expect(commands.agentId).toBe(agent.id);
   expect(Array.isArray(commands.commands)).toBe(true);

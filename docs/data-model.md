@@ -27,6 +27,9 @@ $PASEO_HOME/
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   └── workspaces.json                  # Workspace registry
+├── runtime/
+│   └── managed-processes/
+│       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
 └── push-tokens.json                     # Expo push notification tokens
 ```
 
@@ -51,7 +54,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `lastActivityAt`     | `string?` (ISO 8601)                     | Last activity timestamp                                                                                                                                                                                                                                                                                                                                                             |
 | `lastUserMessageAt`  | `string?` (ISO 8601)                     | Last user message timestamp                                                                                                                                                                                                                                                                                                                                                         |
 | `title`              | `string?`                                | User-visible title                                                                                                                                                                                                                                                                                                                                                                  |
-| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). `paseo.parent-agent-id` set automatically when launched via the `create_agent` MCP tool — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                                                                           |
+| `labels`             | `Record<string, string>`                 | Key-value labels (default `{}`). `paseo.parent-agent-id` is set automatically for `create_agent` subagent relationships — see [agent-lifecycle.md](./agent-lifecycle.md)                                                                                                                                                                                                            |
 | `lastStatus`         | `AgentStatus`                            | One of: `"initializing"`, `"idle"`, `"running"`, `"error"`, `"closed"`                                                                                                                                                                                                                                                                                                              |
 | `lastModeId`         | `string?`                                | Last active mode ID                                                                                                                                                                                                                                                                                                                                                                 |
 | `config`             | `SerializableConfig?`                    | Agent session configuration (see below)                                                                                                                                                                                                                                                                                                                                             |
@@ -147,6 +150,7 @@ Single file, validated with `PersistedConfigSchema`.
   daemon: {
     listen: "127.0.0.1:6767",
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
+    trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     cors: { allowedOrigins: string[] },
@@ -160,7 +164,12 @@ Single file, validated with `PersistedConfigSchema`.
     root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
   },
   providers: {
-    openai: { apiKey: string },
+    openai: {
+      apiKey?: string,
+      baseUrl?: string,
+      stt?: { apiKey?: string, baseUrl?: string },
+      tts?: { apiKey?: string, baseUrl?: string }
+    },
     local: { modelsDir: string }
   },
   agents: {
@@ -189,6 +198,41 @@ All fields are optional with sensible defaults.
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
+
+Set these to select OpenAI instead of local speech:
+
+| Env var                        | Applies to                      |
+| ------------------------------ | ------------------------------- |
+| `PASEO_VOICE_STT_PROVIDER`     | Voice mode STT provider         |
+| `PASEO_DICTATION_STT_PROVIDER` | Composer dictation STT provider |
+| `PASEO_VOICE_TTS_PROVIDER`     | Voice mode TTS provider         |
+
+OpenAI speech can be configured under `providers.openai`. STT and TTS resolve independently, so they can point at different endpoints:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "stt": {
+        "apiKey": "sk-...",
+        "baseUrl": "https://stt.example.com/v1"
+      },
+      "tts": {
+        "apiKey": "sk-...",
+        "baseUrl": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+`providers.openai.stt` is used for both composer dictation and voice mode speech-to-text; `providers.openai.tts` is used for voice mode text-to-speech. The equivalent env vars are `OPENAI_STT_API_KEY`/`OPENAI_STT_BASE_URL` and `OPENAI_TTS_API_KEY`/`OPENAI_TTS_BASE_URL`. Each feature falls back to `providers.openai.apiKey`/`providers.openai.baseUrl`, then `OPENAI_API_KEY`/`OPENAI_BASE_URL`, when its own fields are unset. These settings apply only to Paseo OpenAI speech features, not to Codex or other OpenAI-backed tools.
+
+Paseo uses these paths under the configured OpenAI base URL:
+
+- dictation STT: `/v1/audio/transcriptions`
+- voice mode STT: `/v1/audio/transcriptions`
+- voice mode TTS: `/v1/audio/speech`
 
 ---
 
@@ -409,6 +453,11 @@ Array of workspace records. A workspace is a specific working directory within a
 | `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable                                                                                                                                                        |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. Path-derived grouping keys (e.g. `deriveWorkspaceDirectoryKey`, used at bootstrap to group agents into a workspace) are directory keys, not workspace identity, and must not be persisted or compared as ids.
+
+`projectId` is still a real FK: workspace records should have a matching project record. Read-only
+history surfaces tolerate transient orphaned workspaces by omitting those rows so one bad FK cannot
+blank the whole History screen, but mutation paths should repair or remove the orphaned state rather
+than treating it as valid.
 
 ---
 

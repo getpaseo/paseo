@@ -1,7 +1,13 @@
 import { expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost, TEST_HOST_LABEL } from "./daemon-registry";
-import { escapeRegex } from "./regex";
 import { getServerId } from "./server-id";
+import { expectAppRoute } from "./route-assertions";
+import {
+  buildProjectsSettingsRoute,
+  buildSettingsHostSectionRoute,
+  buildSettingsRoute,
+  buildSettingsSectionRoute,
+} from "@/utils/host-routes";
 
 const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -25,7 +31,7 @@ const SECTION_LABELS = {
 
 export type SettingsSection = keyof typeof SECTION_LABELS | "projects";
 
-type HostSection = "connections" | "agents" | "workspaces" | "providers" | "host";
+type HostSection = "connections" | "agents" | "workspaces" | "providers" | "usage" | "host";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");
@@ -33,12 +39,12 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
 
   if (section === "projects") {
     await page.getByTestId("settings-projects").click();
-    await expect(page).toHaveURL(/\/settings\/projects$/);
+    await expectAppRoute(page, buildProjectsSettingsRoute());
     return;
   }
 
   await sidebar.getByRole("button", { name: SECTION_LABELS[section], exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/settings/${section}$`));
+  await expectAppRoute(page, buildSettingsSectionRoute(section));
 }
 
 export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
@@ -55,9 +61,7 @@ export async function openSettingsHostSection(
   section: HostSection,
 ): Promise<void> {
   await page.getByTestId(`settings-host-section-${section}`).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/settings/hosts/${escapeRegex(encodeURIComponent(serverId))}/${section}$`),
-  );
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, section));
 }
 
 export async function expectSettingsHeader(page: Page, title: string): Promise<void> {
@@ -84,13 +88,13 @@ export async function toggleHostAdvanced(page: Page): Promise<void> {
   await page.getByTestId("direct-host-advanced-toggle").click();
 }
 
-export async function openCompactSettings(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/h\/|\/welcome/, { timeout: 15000 });
+export async function openCompactSettings(page: Page, expectedStartRoute: string): Promise<void> {
+  await expectAppRoute(page, expectedStartRoute, { timeout: 15_000 });
   await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
   const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
   await expect(settingsButton).toBeVisible();
   await settingsButton.click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expectAppRoute(page, buildSettingsRoute());
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
 }
 
@@ -149,7 +153,7 @@ export async function expectSettingsHostPickerLabel(page: Page, label: string): 
 }
 
 export async function expectCompactSettingsList(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/settings$/);
+  await expectAppRoute(page, buildSettingsRoute());
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
   await expect(page.getByText("Theme", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Play test" })).toHaveCount(0);
@@ -189,7 +193,7 @@ export async function removeCurrentHostFromSettings(page: Page): Promise<void> {
   await page.getByTestId("host-page-remove-host-button").click();
   await expect(page.getByTestId("remove-host-confirm-modal")).toBeVisible();
   await page.getByTestId("remove-host-confirm").click();
-  await expect(page).toHaveURL(/\/settings$/);
+  await expectAppRoute(page, buildSettingsRoute());
 }
 
 export async function expectSettingsBackButton(page: Page): Promise<void> {
@@ -201,9 +205,7 @@ export async function clickSettingsBackToWorkspace(page: Page): Promise<void> {
 }
 
 export async function expectHostSettingsUrl(page: Page, serverId: string): Promise<void> {
-  await expect(page).toHaveURL(
-    new RegExp(`/settings/hosts/${escapeRegex(encodeURIComponent(serverId))}/connections$`),
-  );
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "connections"));
 }
 
 export async function verifyLegacyHostSettingsRedirect(page: Page): Promise<void> {
@@ -249,6 +251,7 @@ export async function expectDirectHostUriHidden(page: Page): Promise<void> {
 }
 
 export async function expectDiagnosticsContent(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Run" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Play test" })).toBeVisible();
 }
 
@@ -374,6 +377,7 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   await expect(sidebar.getByTestId("settings-host-section-agents")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-workspaces")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-providers")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-usage")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-host")).toBeVisible();
 
   // The old per-host entry rows are replaced by the host picker.
@@ -389,9 +393,9 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   await expect(sidebar).toBeVisible({ timeout: 15_000 });
 
   // Single-host fixture: the picker is a non-interactive chip (no dropdown to
-  // open) that surfaces the local host by its label. The "Local" marker only
-  // appears on dropdown rows in the multi-host case, which this fixture does not
-  // exercise.
+  // open) that surfaces the local host by its label. The per-row connection
+  // endpoint only appears on dropdown rows in the multi-host case, which this
+  // fixture does not exercise.
   const picker = sidebar.getByTestId("settings-host-picker");
   await expect(picker).toBeVisible();
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();

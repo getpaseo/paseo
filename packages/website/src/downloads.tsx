@@ -6,17 +6,18 @@ export function releaseBase(version: string) {
 
 export interface ReleaseAssetInfo {
   version: string;
+  linuxAppImageAsset: string;
   windowsX64Asset: string | null;
   windowsArm64Asset: string | null;
 }
 
 export function downloadUrls(release: ReleaseAssetInfo) {
-  const { version, windowsX64Asset, windowsArm64Asset } = release;
+  const { version, linuxAppImageAsset, windowsX64Asset, windowsArm64Asset } = release;
   const base = releaseBase(version);
   return {
     macAppleSilicon: `${base}/Paseo-${version}-arm64.dmg`,
     macIntel: `${base}/Paseo-${version}-x64.dmg`,
-    linuxAppImage: `${base}/Paseo-${version}-x86_64.AppImage`,
+    linuxAppImage: `${base}/${linuxAppImageAsset}`,
     linuxDeb: `${base}/Paseo-${version}-amd64.deb`,
     linuxRpm: `${base}/Paseo-${version}-x86_64.rpm`,
     windowsExeX64: `${base}/${windowsX64Asset ?? `Paseo-Setup-${version}.exe`}`,

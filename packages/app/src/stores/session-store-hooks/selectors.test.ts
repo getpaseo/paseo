@@ -10,13 +10,17 @@ import {
   selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
-  selectWorkspaceOrderByScopeForServer,
+  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
   type SidebarOrderSnapshot,
 } from "./selectors";
-import { useSessionStore, type WorkspaceDescriptor } from "../session-store";
+import {
+  useSessionStore,
+  type EmptyProjectDescriptor,
+  type WorkspaceDescriptor,
+} from "../session-store";
 
 const SERVER_ID = "test-server";
 
@@ -82,9 +86,15 @@ function trackSelector<S, T>(
 
 function emptySidebarOrder(): SidebarOrderSnapshot {
   return {
-    projectOrderByServerId: {},
-    workspaceOrderByServerAndProject: {},
+    projectOrder: [],
+    workspaceOrderByProject: {},
   };
+}
+
+function selectWorkspaceStructureProjectKeys(
+  state: Parameters<typeof selectWorkspaceStructureProjects>[0],
+): string[] {
+  return selectWorkspaceStructureProjects(state, [SERVER_ID]).map((project) => project.projectKey);
 }
 
 afterEach(() => {
@@ -201,12 +211,43 @@ describe("workspace structure composition", () => {
     sidebar: SidebarOrderSnapshot,
   ): ReturnType<typeof composeWorkspaceStructure> {
     return composeWorkspaceStructure({
-      serverId,
-      projects: selectWorkspaceStructureProjects(useSessionStore.getState(), serverId),
-      projectOrder: selectProjectOrder(sidebar, serverId),
-      workspaceOrderByScope: selectWorkspaceOrderByScopeForServer(sidebar, serverId),
+      projects: selectWorkspaceStructureProjects(useSessionStore.getState(), [serverId]),
+      projectOrder: selectProjectOrder(sidebar),
+      workspaceOrderByScope: selectWorkspaceOrderByScope(sidebar),
     });
   }
+
+  it("keeps a project parent visible throughout the last workspace archive transition", () => {
+    const workspace = createWorkspace({
+      id: "workspace-a",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/a",
+      workspaceDirectory: "/repo/a",
+    });
+    const emptyProject: EmptyProjectDescriptor = {
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectCustomName: null,
+      projectRootPath: "/repo/a",
+      projectKind: "git",
+    };
+    initializeWorkspaces([workspace]);
+
+    const emittedProjectKeys = [selectWorkspaceStructureProjectKeys(useSessionStore.getState())];
+    const stop = useSessionStore.subscribe((state) => {
+      emittedProjectKeys.push(selectWorkspaceStructureProjectKeys(state));
+    });
+
+    try {
+      useSessionStore.getState().removeWorkspace(SERVER_ID, workspace.id);
+      useSessionStore.getState().addEmptyProject(SERVER_ID, emptyProject);
+    } finally {
+      stop();
+    }
+
+    expect(emittedProjectKeys).toEqual([["project-a"], ["project-a"]]);
+  });
 
   it("changes for membership updates but not status-only updates", () => {
     const workspaceA = createWorkspace({ id: "workspace-a", name: "A" });
@@ -215,7 +256,7 @@ describe("workspace structure composition", () => {
 
     const tracked = trackSelector(
       useSessionStore,
-      (state) => selectWorkspaceStructureProjects(state, SERVER_ID),
+      (state) => selectWorkspaceStructureProjects(state, [SERVER_ID]),
       workspaceEqualityFns.deep,
     );
     const before = tracked.current;
@@ -223,7 +264,10 @@ describe("workspace structure composition", () => {
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspaceB]);
     const afterAdd = tracked.current;
     expect(afterAdd).not.toBe(before);
-    expect(afterAdd[0]?.workspaceKeys).toEqual(["workspace-a", "workspace-b"]);
+    expect(afterAdd[0]?.workspaceKeys).toEqual([
+      "test-server:workspace-a",
+      "test-server:workspace-b",
+    ]);
 
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceA, status: "running" }]);
     expect(tracked.current).toBe(afterAdd);
@@ -231,7 +275,7 @@ describe("workspace structure composition", () => {
     tracked.stop();
   });
 
-  it("renders a project with zero active workspaces as an empty project parent", () => {
+  it("renders a project parent with zero active workspaces", () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
     useSessionStore.getState().setWorkspaces(SERVER_ID, new Map());
     useSessionStore.getState().setEmptyProjects(SERVER_ID, [
@@ -244,7 +288,7 @@ describe("workspace structure composition", () => {
       },
     ]);
 
-    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
+    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), [SERVER_ID]);
     expect(projects).toEqual([
       expect.objectContaining({
         projectKey: "empty-project",
@@ -263,7 +307,7 @@ describe("workspace structure composition", () => {
 
     const tracked = trackSelector(
       useSessionStore,
-      (state) => selectWorkspaceStructureProjects(state, SERVER_ID),
+      (state) => selectWorkspaceStructureProjects(state, [SERVER_ID]),
       workspaceEqualityFns.deep,
     );
     const before = tracked.current;
@@ -292,7 +336,7 @@ describe("workspace structure composition", () => {
     const before = snapshotStructure(SERVER_ID, emptySidebarOrder());
     const after = snapshotStructure(SERVER_ID, {
       ...emptySidebarOrder(),
-      projectOrderByServerId: { [SERVER_ID]: ["project-b", "project-a"] },
+      projectOrder: ["project-b", "project-a"],
     });
 
     expect(after.projects.map((project) => project.projectKey)).toEqual(["project-b", "project-a"]);

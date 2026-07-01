@@ -132,7 +132,7 @@ export async function runUpdateCommand(
   }
 
   try {
-    const fetchResult = await client.fetchAgent(agentIdArg);
+    const fetchResult = await client.fetchAgent({ agentId: agentIdArg });
     if (!fetchResult) {
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
@@ -148,7 +148,7 @@ export async function runUpdateCommand(
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
     });
 
-    const updatedResult = await client.fetchAgent(agentId);
+    const updatedResult = await client.fetchAgent({ agentId });
     if (!updatedResult) {
       throw new Error(`Agent not found after update: ${agentId}`);
     }

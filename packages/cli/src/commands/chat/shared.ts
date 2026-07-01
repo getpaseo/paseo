@@ -26,6 +26,7 @@ export async function connectChatClient(host?: string) {
 export async function attachAgentNamesToMessages(
   client: Awaited<ReturnType<typeof connectToDaemon>>,
   messages: ChatMessageRow[],
+  options: { timeout?: number; bestEffort?: boolean } = {},
 ): Promise<ChatMessageRow[]> {
   const agentIds = new Set<string>();
   for (const message of messages) {
@@ -39,9 +40,18 @@ export async function attachAgentNamesToMessages(
     return messages;
   }
 
-  const payload = await client.fetchAgents({
-    filter: { includeArchived: true },
-  });
+  let payload: Awaited<ReturnType<typeof client.fetchAgents>>;
+  try {
+    payload = await client.fetchAgents({
+      filter: { includeArchived: true },
+      ...(typeof options.timeout === "number" ? { timeout: options.timeout } : {}),
+    });
+  } catch (error) {
+    if (options.bestEffort) {
+      return messages;
+    }
+    throw error;
+  }
   const agentNames = new Map<string, string>();
   for (const entry of payload.entries) {
     const title = entry.agent.title?.trim();

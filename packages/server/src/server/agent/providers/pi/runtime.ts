@@ -42,7 +42,7 @@ export interface PiRuntimeSession {
   abort(): Promise<void>;
   getState(): Promise<PiSessionState>;
   getMessages(): Promise<PiAgentMessage[]>;
-  getAvailableModels(): Promise<PiModel[]>;
+  getAvailableModels(timeoutMs?: number): Promise<PiModel[]>;
   setModel(provider: string, modelId: string): Promise<PiModel>;
   setThinkingLevel(level: string): Promise<void>;
   getSessionStats(): Promise<PiSessionStats>;

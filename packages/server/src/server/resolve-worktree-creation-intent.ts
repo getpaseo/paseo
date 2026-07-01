@@ -6,18 +6,21 @@ export type WorktreeCreationIntent = WorktreeSource;
 export type ResolveWorktreeCreationIntentInput =
   | {
       worktreeSlug: string;
+      branchName?: string;
       refName?: string;
       action?: "branch-off";
       githubPrNumber?: undefined;
     }
   | {
       worktreeSlug?: string;
+      branchName?: string;
       refName?: string;
       action: "checkout";
       githubPrNumber?: number;
     }
   | {
       worktreeSlug?: string;
+      branchName?: string;
       refName?: string;
       action?: undefined;
       githubPrNumber: number;
@@ -46,7 +49,7 @@ export async function resolveWorktreeCreationIntent(
     return {
       kind: "branch-off",
       baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
-      branchName: input.worktreeSlug,
+      branchName: input.branchName ?? input.worktreeSlug,
     };
   }
 
@@ -84,14 +87,14 @@ export async function resolveWorktreeCreationIntent(
     return {
       kind: "branch-off",
       baseBranch: input.refName.trim(),
-      branchName: input.worktreeSlug,
+      branchName: input.branchName ?? input.worktreeSlug,
     };
   }
 
   return {
     kind: "branch-off",
     baseBranch: await resolveDefaultBranch(repoRoot, deps),
-    branchName: input.worktreeSlug,
+    branchName: input.branchName ?? input.worktreeSlug,
   };
 }
 
@@ -113,9 +116,10 @@ async function resolveGitHubPrCheckoutIntent(params: {
     checkoutTarget?.baseRefName?.trim() ||
     (await resolveDefaultBranch(params.repoRoot, params.deps));
   const localBranchName = buildGitHubPrLocalBranchName({ headRef, checkoutTarget });
-  const pushRemoteUrl = checkoutTarget
+  const pushRemoteUrl = checkoutTarget?.isCrossRepository
     ? checkoutTarget.headRepositorySshUrl || checkoutTarget.headRepositoryUrl || undefined
     : undefined;
+  const trackOriginHead = checkoutTarget ? !checkoutTarget.isCrossRepository : false;
 
   return {
     kind: "checkout-github-pr",
@@ -124,6 +128,7 @@ async function resolveGitHubPrCheckoutIntent(params: {
     baseRefName,
     ...(localBranchName !== headRef ? { localBranchName } : {}),
     ...(pushRemoteUrl ? { pushRemoteUrl } : {}),
+    ...(trackOriginHead ? { trackOriginHead } : {}),
   };
 }
 

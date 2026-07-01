@@ -241,7 +241,8 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       const images = wirePayload.images;
 
       const trimmedPrompt = text.trim();
-      if (!trimmedPrompt && !allowEmptyText) {
+      const hasAttachmentContent = images.length > 0 || wirePayload.attachments.length > 0;
+      if (!trimmedPrompt && !hasAttachmentContent && !allowEmptyText) {
         const error = new Error(t("composer.errors.initialPromptRequired"));
         dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;

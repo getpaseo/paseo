@@ -282,6 +282,7 @@ export function InlineReviewGutterCell({
   reviewTarget,
   comments,
   isLineHovered = false,
+  lineHeight,
   onStartComment,
   style,
   actionTestID,
@@ -291,6 +292,7 @@ export function InlineReviewGutterCell({
   comments: readonly ReviewDraftComment[];
   isEditorOpen: boolean;
   isLineHovered?: boolean;
+  lineHeight?: number;
   onStartComment: (target: ReviewableDiffTarget) => void;
   style?: StyleProp<ViewStyle>;
   actionTestID?: string;
@@ -334,10 +336,28 @@ export function InlineReviewGutterCell({
   }, [isInteractionActive]);
 
   const pressableStyle = useCallback((): StyleProp<ViewStyle> => style, [style]);
+  const lineHeightStyle = useMemo<StyleProp<ViewStyle>>(
+    () =>
+      lineHeight !== undefined
+        ? inlineUnistylesStyle({ height: lineHeight, minHeight: lineHeight })
+        : null,
+    [lineHeight],
+  );
 
   const labelStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.gutterLabel, hasComments && styles.gutterLabelActive],
-    [hasComments],
+    () => [styles.gutterLabel, lineHeightStyle, hasComments && styles.gutterLabelActive],
+    [hasComments, lineHeightStyle],
+  );
+  const innerStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [styles.gutterInner, lineHeightStyle],
+    [lineHeightStyle],
+  );
+  const actionIconStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      styles.gutterActionIcon,
+      lineHeight !== undefined && inlineUnistylesStyle({ top: Math.floor((lineHeight - 22) / 2) }),
+    ],
+    [lineHeight],
   );
 
   return (
@@ -353,11 +373,11 @@ export function InlineReviewGutterCell({
       onPressOut={handlePressOut}
       style={pressableStyle}
     >
-      <View style={styles.gutterInner}>
+      <View style={innerStyle}>
         <View style={labelStyle}>
           {children}
           {showAction ? (
-            <View style={styles.gutterActionIcon} testID={actionTestID}>
+            <View style={actionIconStyle} testID={actionTestID}>
               <ThemedPlus size={16} strokeWidth={2.4} uniProps={accentForegroundIconColorMapping} />
             </View>
           ) : null}

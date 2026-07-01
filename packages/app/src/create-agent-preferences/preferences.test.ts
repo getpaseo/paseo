@@ -81,6 +81,39 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("does not erase a saved mode when a later partial update has no mode", () => {
+    expect(
+      mergeProviderPreferences({
+        preferences: {
+          provider: "codex",
+          providerPreferences: {
+            codex: {
+              model: "gpt-5.5",
+              mode: "full-access",
+              thinkingByModel: { "gpt-5.5": "high" },
+            },
+          },
+        },
+        provider: "codex",
+        updates: {
+          model: "gpt-5.6",
+          mode: undefined,
+          thinkingByModel: undefined,
+          featureValues: undefined,
+        },
+      }),
+    ).toEqual({
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "gpt-5.6",
+          mode: "full-access",
+          thinkingByModel: { "gpt-5.5": "high" },
+        },
+      },
+    });
+  });
+
   it("loads invalid stored preferences as empty preferences", () => {
     expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({});
   });

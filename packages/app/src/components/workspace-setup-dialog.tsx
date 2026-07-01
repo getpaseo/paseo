@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { useToast } from "@/contexts/toast-context";
@@ -14,6 +15,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
@@ -25,7 +27,7 @@ import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-disp
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
-import type { ImageAttachment, MessagePayload } from "@/composer/types";
+import type { MessagePayload } from "@/composer/types";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -94,7 +96,9 @@ async function callWorkspaceCreation({
       worktreeSlug: createNameId(),
     });
   }
-  return connectedClient.openProject(input.cwd);
+  return connectedClient.createWorkspace({
+    source: { kind: "directory", path: input.cwd },
+  });
 }
 
 function failureMessageForCreationMethod(
@@ -322,7 +326,13 @@ export function WorkspaceSetupDialog() {
 
         setAgents(serverId, (previous) => {
           const next = new Map(previous);
-          next.set(agent.id, normalizeAgentSnapshot(agent, serverId));
+          next.set(
+            agent.id,
+            applyLegacyDaemonWorkspaceOwnership({
+              serverId,
+              agent: normalizeAgentSnapshot(agent, serverId),
+            }),
+          );
           return next;
         });
         navigateAfterCreation(ensuredWorkspace.id, { kind: "agent", agentId: agent.id });
@@ -353,14 +363,6 @@ export function WorkspaceSetupDialog() {
 
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
-
-  const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
-  const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
-    addImagesRef.current?.(files);
-  }, []);
-  const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
-    addImagesRef.current = addImages;
-  }, []);
 
   const isCompact = useIsCompactFormFactor();
   const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
@@ -418,9 +420,8 @@ export function WorkspaceSetupDialog() {
       snapPoints={SNAP_POINTS}
       testID="workspace-setup-dialog"
       desktopMaxWidth={640}
-      onFilesDropped={handleFilesDropped}
     >
-      <View style={styles.section}>
+      <FileDropZone style={styles.section}>
         <Composer
           agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
           serverId={serverId}
@@ -438,10 +439,9 @@ export function WorkspaceSetupDialog() {
           commandDraftConfig={composerState?.commandDraftConfig}
           agentControls={agentControlsWithDisabled}
           inputWrapperStyle={styles.composerInputWrapper}
-          onAddImages={handleAddImagesCallback}
           footer={composerFooter}
         />
-      </View>
+      </FileDropZone>
 
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>

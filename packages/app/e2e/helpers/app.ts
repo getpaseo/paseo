@@ -342,9 +342,17 @@ export const selectModel = async (page: Page, model: string) => {
   if (await modelTrigger.isVisible().catch(() => false)) {
     await modelTrigger.click();
   } else {
-    const modelLabel = page.getByText("MODEL", { exact: true }).first();
-    await expect(modelLabel).toBeVisible();
-    await modelLabel.click();
+    const modelButton = page
+      .getByRole("button", { name: /Select model/i })
+      .filter({ visible: true })
+      .first();
+    if (await modelButton.isVisible().catch(() => false)) {
+      await modelButton.click();
+    } else {
+      const modelLabel = page.getByText("MODEL", { exact: true }).first();
+      await expect(modelLabel).toBeVisible();
+      await modelLabel.click();
+    }
   }
 
   // Wait for the model dropdown to open

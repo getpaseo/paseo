@@ -69,6 +69,14 @@ function makeTimelineEvent(
   } as AgentStreamEventPayload;
 }
 
+function makeAssistantTimelineEvent(text: string, messageId?: string): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "claude",
+    item: { type: "assistant_message", text, ...(messageId ? { messageId } : {}) },
+  } as AgentStreamEventPayload;
+}
+
 function makeToolCallTimelineEvent(callId: string): AgentStreamEventPayload {
   return {
     type: "timeline",
@@ -1523,6 +1531,65 @@ describe("processAgentStreamEvents", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
+  it("keeps matching assistant message ids in the live head", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeAssistantTimelineEvent("Hel", "assistant-one"), 1),
+        makeStreamReducerEvent(makeAssistantTimelineEvent("lo", "assistant-one"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(false);
+    expect(result.changedHead).toBe(true);
+    expect(result.tail).toEqual([]);
+    expect(result.head).toHaveLength(1);
+    expect(result.head[0]).toMatchObject({
+      kind: "assistant_message",
+      text: "Hello",
+      messageId: "assistant-one",
+    });
+  });
+
+  it("flushes the live assistant head before starting a different assistant message id", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeAssistantTimelineEvent("First", "assistant-one"), 1),
+        makeStreamReducerEvent(makeAssistantTimelineEvent("Second", "assistant-two"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(true);
+    expect(result.changedHead).toBe(true);
+    expect(getAssistantTexts(result.tail)).toEqual(["First"]);
+    expect(getAssistantTexts(result.head)).toEqual(["Second"]);
+  });
+
+  it("flushes an anonymous assistant head before starting an identified assistant message", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeAssistantTimelineEvent("Anonymous"), 1),
+        makeStreamReducerEvent(makeAssistantTimelineEvent("Identified", "assistant-two"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(true);
+    expect(result.changedHead).toBe(true);
+    expect(getAssistantTexts(result.tail)).toEqual(["Anonymous"]);
+    expect(getAssistantTexts(result.head)).toEqual(["Identified"]);
+  });
+
   it("promotes completed assistant markdown blocks to tail while keeping the live block in head", () => {
     const result = processAgentStreamEvents({
       events: [
@@ -1630,6 +1697,92 @@ describe("processAgentStreamEvents", () => {
       startSeq: 1,
       endSeq: 2,
     } satisfies TimelineCursor);
+  });
+
+  it("keeps Claude image tool-result output before following assistant blocks while text streams", () => {
+    const imageMarkdown =
+      "![Image](/tmp/paseo-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png)";
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(
+          {
+            type: "timeline",
+            provider: "claude",
+            item: {
+              type: "assistant_message",
+              text: "ABC",
+              messageId: "assistant-before",
+            },
+          } as AgentStreamEventPayload,
+          1,
+        ),
+        makeStreamReducerEvent(makeToolCallTimelineEvent("toolu_read_png"), 2),
+        makeStreamReducerEvent(
+          {
+            type: "timeline",
+            provider: "claude",
+            item: {
+              type: "tool_call",
+              callId: "toolu_read_png",
+              name: "Read",
+              status: "completed",
+              detail: {
+                type: "read",
+                filePath: "/tmp/image.png",
+              },
+              error: null,
+            },
+          } as AgentStreamEventPayload,
+          3,
+        ),
+        makeStreamReducerEvent(
+          {
+            type: "timeline",
+            provider: "claude",
+            item: {
+              type: "assistant_message",
+              text: imageMarkdown,
+            },
+          } as AgentStreamEventPayload,
+          4,
+        ),
+        makeStreamReducerEvent(
+          {
+            type: "timeline",
+            provider: "claude",
+            item: {
+              type: "assistant_message",
+              text: "D",
+              messageId: "assistant-after",
+            },
+          } as AgentStreamEventPayload,
+          5,
+        ),
+        makeStreamReducerEvent(
+          {
+            type: "timeline",
+            provider: "claude",
+            item: {
+              type: "assistant_message",
+              text: "\n\nE",
+              messageId: "assistant-after",
+            },
+          } as AgentStreamEventPayload,
+          6,
+        ),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
+      "ABC",
+      imageMarkdown,
+      "D",
+      "E",
+    ]);
   });
 
   it("returns the final optimistic lifecycle patch across a batch", () => {

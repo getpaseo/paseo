@@ -674,6 +674,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
     config: {
       mcp: { injectIntoAgents: true },
       providers: {},
+      browserTools: { enabled: false },
       metadataGeneration: { providers: [] },
       autoArchiveAfterMerge: false,
       enableTerminalAgentHooks: false,
@@ -728,6 +729,7 @@ test("config actions delegate to existing daemon config RPCs", async () => {
           enabled: false,
         },
       },
+      browserTools: { enabled: false },
       metadataGeneration: { providers: [] },
       autoArchiveAfterMerge: false,
       enableTerminalAgentHooks: false,

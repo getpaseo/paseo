@@ -5,6 +5,8 @@ import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
+import { ja } from "./resources/ja";
+import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
@@ -101,28 +103,35 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
-  it("keeps UN official language keys in sync with English", () => {
+  it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ja).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
   });
 
-  it("keeps non-English UN official languages translated beyond fallback labels", () => {
+  it("keeps non-English supported languages translated beyond fallback labels", () => {
     const totalStrings = Object.keys(flattenStrings(en)).length;
     const maxFallbackStrings = Math.floor(totalStrings * 0.25);
     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
+    expect(findInterpolationMismatches(ja)).toEqual([]);
+    expect(findInterpolationMismatches(ptBR)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
   });
@@ -137,11 +146,15 @@ describe("translation resources", () => {
     expect(ar.modelSelector.modelCountPlural).toBe("{{count}} نماذج");
     expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(fr.modelSelector.modelCountPlural).toBe("{{count}} modèles");
+    expect(ja.modelSelector.modelCountPlural).toBe("{{count}}つのモデル");
+    expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
     expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
     expect(ar.settings.providers.models.many).toBe("{{count}} نماذج");
     expect(es.settings.providers.models.many).toBe("{{count}} modelos");
     expect(fr.settings.providers.models.many).toBe("{{count}} modèles");
+    expect(ja.settings.providers.models.many).toBe("{{count}}つのモデル");
+    expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
@@ -183,6 +196,7 @@ describe("translation resources", () => {
     expect(en.composer.github.title).toBe("Attach issue or PR");
     expect(en.agentControls.provider.fallback).toBe("Provider");
     expect(en.agentControls.hints.model).toBe("Change model");
+    expect(en.agentControls.hints.mode).toBe("Change mode");
     expect(en.agentControls.features.title).toBe("Features");
     expect(en.agentControls.mode.title).toBe("Mode");
     expect(en.agentStream.permission.required).toBe("Permission Required");
@@ -243,12 +257,16 @@ describe("translation resources", () => {
     expect(en.workspace.git.actions.commit.label).toBe("Commit");
     expect(en.workspace.git.diff.binaryFile).toBe("Binary file");
     expect(en.workspace.git.pr.sections.checks).toBe("Checks");
+    expect(en.workspace.git.pr.actions.viewPullRequest).toBe("View");
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 
   it("includes sidebar and workspace creation keys for the Batch 4C migration", () => {
     expect(en.sidebar.workspace.actions.copyPath).toBe("Copy path");
     expect(en.sidebar.project.confirmations.removeTitle).toBe("Remove project?");
+    expect(en.sidebar.project.toasts.updateHostToRemove).toBe(
+      "Update the host to remove projects.",
+    );
     expect(en.newWorkspace.title).toBe("New workspace");
     expect(en.newWorkspace.refPicker.searchPlaceholder).toBe("Search branches and PRs");
     expect(en.openProject.tiles.addProject.title).toBe("Add a project");
@@ -285,6 +303,7 @@ describe("translation resources", () => {
     expect(en.settings.shortcuts.sections.tabsPanes).toBe("Tabs & Panes");
     expect(en.settings.shortcuts.help.toggleCommandCenter).toBe("Toggle command center");
     expect(en.settings.shortcuts.help.newWorkspace).toBe("New workspace");
+    expect(en.settings.shortcuts.help.cycleAgentMode).toBe("Cycle agent mode");
     expect(en.settings.shortcuts.helpNotes.showKeyboardShortcuts).toBe(
       "Available when focus is not in a text field or terminal.",
     );
@@ -369,6 +388,7 @@ describe("translation resources", () => {
   it("includes picker, file pane, and tool detail keys for the Batch 4L migration", () => {
     expect(en.projectPicker.placeholder).toBe("Type a directory path...");
     expect(en.projectPicker.opening).toBe("Opening project...");
+    expect(en.projectPicker.searching).toBe("Searching...");
     expect(en.projectPicker.empty).toBe("Start typing a path");
     expect(en.branchSwitcher.currentBranch).toBe(
       "Current branch: {{branchName}}. Press to switch branch.",
@@ -501,8 +521,23 @@ describe("translation resources", () => {
     expect(en.desktop.updates.status.installing).toBe("Installing app update...");
     expect(en.desktop.updates.status.upToDate).toBe("App is up to date.");
     expect(en.desktop.updates.status.pending).toBe("We'll let you know when the update is ready.");
+    expect(en.desktop.updates.status.pendingWithLastChecked).toBe(
+      "We'll let you know when the update is ready. Last checked at {{time}}.",
+    );
+    expect(en.desktop.updates.status.pendingWithVersion).toBe(
+      "Update found: {{version}}. Downloading...",
+    );
+    expect(en.desktop.updates.status.pendingWithVersionAndLastChecked).toBe(
+      "Update found: {{version}}. Downloading... Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.availableWithVersion).toBe("Update ready: {{version}}");
+    expect(en.desktop.updates.status.availableWithVersionAndLastChecked).toBe(
+      "Update ready: {{version}}. Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.available).toBe("An app update is ready to install.");
+    expect(en.desktop.updates.status.availableWithLastChecked).toBe(
+      "An app update is ready to install. Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.installed).toBe("App update installed. Restart required.");
     expect(en.desktop.updates.status.failed).toBe("Failed to update app.");
     expect(en.desktop.updates.status.idle).toBe("Update status has not been checked yet.");

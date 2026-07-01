@@ -6,7 +6,8 @@
 
 <p align="center">
   <a href="README.md">English</a> ·
-  <a href="README.zh-CN.md">简体中文</a>
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="README.ja.md">日本語</a>
 </p>
 
 <p align="center">
@@ -153,6 +154,7 @@ npm run typecheck
 ## 社区
 
 - [paseo-relay](https://github.com/zenghongtu/paseo-relay) — Go 实现的自托管 relay
+- [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 扩展
 
 ### 自托管 relay TLS
 

@@ -16,14 +16,22 @@ export interface AgentSlashCommand {
 
 export type DraftCommandConfig = AgentCommandsDraftConfig;
 
-export type AgentCommandsClient = Pick<DaemonClient, "listCommands">;
+interface ListAgentCommandsOptions {
+  agentId: string;
+  draftConfig?: DraftCommandConfig;
+}
+
+export interface AgentCommandsClient {
+  listCommands(options: ListAgentCommandsOptions): ReturnType<DaemonClient["listCommands"]>;
+}
 
 export async function fetchAgentCommands(input: {
   client: AgentCommandsClient;
   agentId: string;
   draftConfig?: DraftCommandConfig;
 }): Promise<AgentSlashCommand[]> {
-  const response = await input.client.listCommands(input.agentId, {
+  const response = await input.client.listCommands({
+    agentId: input.agentId,
     draftConfig: input.draftConfig,
   });
   return response.commands as AgentSlashCommand[];

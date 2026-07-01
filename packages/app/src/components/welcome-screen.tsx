@@ -12,7 +12,7 @@ import { PairLinkModal } from "./pair-link-modal";
 import { Button } from "@/components/ui/button";
 import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
-import { buildHostRootRoute } from "@/utils/host-routes";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb, isNative } from "@/constants/platform";
@@ -170,15 +170,12 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
 
   useEffect(() => {
     if (!anyOnlineServerId) return;
-    router.replace(buildHostRootRoute(anyOnlineServerId));
+    router.replace(buildOpenProjectRoute());
   }, [anyOnlineServerId, router]);
 
-  const finishOnboarding = useCallback(
-    (serverId: string) => {
-      router.replace(buildHostRootRoute(serverId));
-    },
-    [router],
-  );
+  const finishOnboarding = useCallback(() => {
+    router.replace(buildOpenProjectRoute());
+  }, [router]);
 
   const handleOpenPaseoSite = useCallback(() => {
     void openExternalUrl("https://paseo.sh");
@@ -197,9 +194,9 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   }, [router]);
 
   const handleHostSaved = useCallback(
-    ({ profile, serverId }: { profile: HostProfile; serverId: string }) => {
+    ({ profile }: { profile: HostProfile; serverId: string }) => {
       onHostAdded?.(profile);
-      finishOnboarding(serverId);
+      finishOnboarding();
     },
     [onHostAdded, finishOnboarding],
   );

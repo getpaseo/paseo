@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
+  detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
   type LifecycleAgentSnapshot,
@@ -39,6 +41,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
   readonly labelUpdates: Array<{ agentId: string; labels: Record<string, string> }> = [];
   readonly notifiedAgentIds: string[] = [];
   readonly modeUpdates: Array<{ agentId: string; modeId: string }> = [];
+  readonly detachedAgentIds: string[] = [];
   inFlightAgentIds = new Set<string>();
 
   constructor(private readonly storage: FakeLifecycleAgentStorage) {}
@@ -94,12 +97,46 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     this.labelUpdates.push({ agentId, labels });
   }
 
+  async detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }> {
+    this.detachedAgentIds.push(agentId);
+    const existing = this.storage.records.get(agentId);
+    if (!existing) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+    const previousParentAgentId = getParentAgentIdFromLabels(existing.labels);
+    if (!previousParentAgentId) {
+      return {
+        record: existing,
+        live: this.liveAgents.has(agentId),
+        previousParentAgentId: null,
+      };
+    }
+    const labels = { ...existing.labels };
+    delete labels[PARENT_AGENT_ID_LABEL];
+    const record = {
+      ...existing,
+      labels,
+      updatedAt: "2026-05-10T10:30:00.000Z",
+    };
+    this.storage.records.set(agentId, record);
+    return {
+      record,
+      live: this.liveAgents.has(agentId),
+      previousParentAgentId,
+    };
+  }
+
   notifyAgentState(agentId: string): void {
     this.notifiedAgentIds.push(agentId);
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+  async setAgentMode(agentId: string, modeId: string) {
     this.modeUpdates.push({ agentId, modeId });
+    return null;
   }
 
   async updateAgentMetadata(
@@ -206,13 +243,51 @@ describe("agent lifecycle commands", () => {
     ]);
   });
 
+  test("detaches an agent by clearing only the parent relationship", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    storage.records.set("agent-1", {
+      ...storedAgent("agent-1"),
+      labels: {
+        [PARENT_AGENT_ID_LABEL]: "parent-agent",
+        team: "infra",
+      },
+    });
+    const manager = new FakeLifecycleAgentManager(storage);
+
+    await expect(detachAgentCommand({ agentManager: manager }, "agent-1")).resolves.toEqual({
+      agentId: "agent-1",
+      live: false,
+      previousParentAgentId: "parent-agent",
+      record: {
+        ...storedAgent("agent-1"),
+        labels: { team: "infra" },
+        updatedAt: "2026-05-10T10:30:00.000Z",
+      },
+    });
+
+    expect(manager.detachedAgentIds).toEqual(["agent-1"]);
+  });
+
+  test("detach is accepted when the agent is already detached", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    storage.records.set("agent-1", storedAgent("agent-1"));
+    const manager = new FakeLifecycleAgentManager(storage);
+
+    await expect(detachAgentCommand({ agentManager: manager }, "agent-1")).resolves.toEqual({
+      agentId: "agent-1",
+      live: false,
+      previousParentAgentId: null,
+      record: storedAgent("agent-1"),
+    });
+  });
+
   test("sets an agent mode and returns the accepted mode", async () => {
     const storage = new FakeLifecycleAgentStorage();
     const manager = new FakeLifecycleAgentManager(storage);
 
     await expect(
       setAgentModeCommand({ agentManager: manager }, { agentId: "agent-1", modeId: "plan" }),
-    ).resolves.toEqual({ modeId: "plan" });
+    ).resolves.toEqual({ modeId: "plan", notice: null });
 
     expect(manager.modeUpdates).toEqual([{ agentId: "agent-1", modeId: "plan" }]);
   });

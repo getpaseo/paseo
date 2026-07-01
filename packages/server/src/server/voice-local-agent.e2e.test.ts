@@ -79,7 +79,7 @@ function waitForSignal<T>(
   beforeAll(async () => {
     ctx = await createDaemonTestContext({
       agentClients: {},
-      openai: { apiKey: openaiApiKey! },
+      openai: { stt: { apiKey: openaiApiKey! }, tts: { apiKey: openaiApiKey! } },
       speech: {
         providers: {
           dictationStt: { provider: "openai", explicit: true },

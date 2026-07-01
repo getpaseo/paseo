@@ -18,7 +18,6 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
-  ListModelsOptions,
 } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -365,8 +364,8 @@ describe("ScheduleService", () => {
         return new PromptEchoScheduleSession();
       }
 
-      async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-        return [];
+      async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
+        return { models: [], modes: [] };
       }
 
       async isAvailable(): Promise<boolean> {
@@ -548,8 +547,8 @@ describe("ScheduleService", () => {
         return session;
       }
 
-      async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-        return [];
+      async fetchCatalog(): Promise<{ models: AgentModelDefinition[]; modes: AgentMode[] }> {
+        return { models: [], modes: [] };
       }
 
       async isAvailable(): Promise<boolean> {
@@ -659,7 +658,7 @@ describe("ScheduleService", () => {
         return opencodeClient.createSession(...args);
       },
       resumeSession: (...args) => opencodeClient.resumeSession(...args),
-      listModels: (...args) => opencodeClient.listModels(...args),
+      fetchCatalog: (...args) => opencodeClient.fetchCatalog(...args),
       isAvailable: () => opencodeClient.isAvailable(),
     } satisfies AgentClient;
     const manager = new AgentManager({

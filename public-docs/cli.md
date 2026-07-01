@@ -115,6 +115,7 @@ paseo agent mode <id> plan     # Set plan mode
 
 ```bash
 paseo daemon start             # Start the daemon
+paseo daemon start --web-ui    # Start and serve the bundled web UI
 paseo daemon status            # Check status
 paseo daemon stop              # Stop the daemon
 ```

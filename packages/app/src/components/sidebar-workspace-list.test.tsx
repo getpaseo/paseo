@@ -152,29 +152,27 @@ function makeHost(): HostProfile {
   };
 }
 
+function setHostProfiles(hosts: HostProfile[]): void {
+  (
+    getHostRuntimeStore() as unknown as {
+      setHostsAndSync: (hosts: HostProfile[]) => void;
+    }
+  ).setHostsAndSync(hosts);
+}
+
 function initializeSidebarState(workspaces: WorkspaceDescriptor[]): void {
   act(() => {
-    getHostRuntimeStore().syncHosts([makeHost()]);
+    setHostProfiles([makeHost()]);
     useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
     useSessionStore
       .getState()
       .setWorkspaces(SERVER_ID, new Map(workspaces.map((entry) => [entry.id, entry])));
     useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
     useSidebarOrderStore.setState({
-      projectOrderByServerId: {
-        [SERVER_ID]: ["project-a", "project-b"],
-      },
-      workspaceOrderByServerAndProject: {
-        [`${SERVER_ID}::project-a`]: [
-          `${SERVER_ID}:a-main`,
-          `${SERVER_ID}:a-one`,
-          `${SERVER_ID}:a-two`,
-        ],
-        [`${SERVER_ID}::project-b`]: [
-          `${SERVER_ID}:b-main`,
-          `${SERVER_ID}:b-one`,
-          `${SERVER_ID}:b-two`,
-        ],
+      projectOrder: ["project-a", "project-b"],
+      workspaceOrderByProject: {
+        ["project-a"]: [`${SERVER_ID}:a-main`, `${SERVER_ID}:a-one`, `${SERVER_ID}:a-two`],
+        ["project-b"]: [`${SERVER_ID}:b-main`, `${SERVER_ID}:b-one`, `${SERVER_ID}:b-two`],
       },
     });
   });
@@ -258,7 +256,7 @@ function WorkspaceSelectionProbe({
 
 function SidebarFrameProbe({ counts }: { counts: RenderCounts }): ReactElement {
   counts.frame += 1;
-  const { projects } = useSidebarWorkspacesList({ serverId: SERVER_ID });
+  const { projects } = useSidebarWorkspacesList({ hostFilters: [SERVER_ID] });
 
   return (
     <>
@@ -345,11 +343,11 @@ describe("sidebar workspace render isolation", () => {
     container = null;
     act(() => {
       pathnameState.value = "/";
-      getHostRuntimeStore().syncHosts([]);
+      setHostProfiles([]);
       useSessionStore.getState().clearSession(SERVER_ID);
       useSidebarOrderStore.setState({
-        projectOrderByServerId: {},
-        workspaceOrderByServerAndProject: {},
+        projectOrder: [],
+        workspaceOrderByProject: {},
       });
     });
   });

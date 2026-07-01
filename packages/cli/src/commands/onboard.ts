@@ -40,6 +40,7 @@ type OnboardPersistedConfig = PersistedConfig & {
 };
 
 const DEFAULT_READY_TIMEOUT_MS = 10 * 60 * 1000;
+const READY_PROBE_TIMEOUT_MS = 1200;
 
 class OnboardCancelledError extends Error {}
 
@@ -201,15 +202,22 @@ function renderProgressLine(progress: DownloadProgress): string {
 
 type ProbeResult = { kind: "ready"; listen: string; host: string | null } | { kind: "pending" };
 
-async function probeDaemonReady(home: string): Promise<ProbeResult> {
+async function probeDaemonReady(home: string, timeoutMs: number): Promise<ProbeResult> {
   const state = resolveLocalDaemonState({ home });
   const host = resolveTcpHostFromListen(state.listen);
+  const deadline = Date.now() + timeoutMs;
+  const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
 
   if (state.running && host) {
-    const client = await tryConnectToDaemon({ host, timeout: 1200 });
+    const client = await tryConnectToDaemon({
+      host,
+      timeout: Math.min(remainingTimeoutMs(), READY_PROBE_TIMEOUT_MS),
+    });
     if (client) {
       try {
-        await client.fetchAgents();
+        await client.fetchAgents({
+          timeout: Math.min(remainingTimeoutMs(), READY_PROBE_TIMEOUT_MS),
+        });
         return { kind: "ready", listen: state.listen, host };
       } catch {
         // Daemon process is alive but not API-ready yet.
@@ -255,23 +263,29 @@ async function waitForDaemonReady(args: {
   onStatus?: (message: string) => void;
 }): Promise<{ listen: string; host: string | null }> {
   const deadline = Date.now() + args.timeoutMs;
+  const createTimeoutError = () => {
+    const recentLogs = tailDaemonLog(args.home, 60);
+    return new Error(
+      [
+        `Timed out after ${Math.ceil(args.timeoutMs / 1000)}s waiting for daemon readiness.`,
+        recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+  };
 
   async function poll(state: ProgressState): Promise<{ listen: string; host: string | null }> {
-    const probe = await probeDaemonReady(args.home);
+    if (Date.now() >= deadline) {
+      throw createTimeoutError();
+    }
+    const probe = await probeDaemonReady(args.home, Math.max(1, deadline - Date.now()));
     if (probe.kind === "ready") {
       return { listen: probe.listen, host: probe.host };
     }
     const nextState = announceProgress(args.home, state, args.onStatus);
     if (Date.now() >= deadline) {
-      const recentLogs = tailDaemonLog(args.home, 60);
-      throw new Error(
-        [
-          `Timed out after ${Math.ceil(args.timeoutMs / 1000)}s waiting for daemon readiness.`,
-          recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      );
+      throw createTimeoutError();
     }
     await sleep(200);
     return poll(nextState);

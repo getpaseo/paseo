@@ -69,7 +69,7 @@ async function runtimeSessionId(
   harness: OpenCodeRewindHarness,
   session: OpenCodeRewindSession,
 ): Promise<string> {
-  const snapshot = await harness.client.fetchAgent(session.agentId);
+  const snapshot = await harness.client.fetchAgent({ agentId: session.agentId });
   const sessionId =
     snapshot?.agent.runtimeInfo?.sessionId ?? snapshot?.agent.persistence?.sessionId;
   if (!sessionId) {
@@ -107,7 +107,7 @@ async function recordAgentStatusTransitions(
   session: OpenCodeRewindSession,
 ): Promise<{ records: AgentStatusRecord[]; stop: () => void }> {
   const records: AgentStatusRecord[] = [];
-  const initial = await harness.client.fetchAgent(session.agentId);
+  const initial = await harness.client.fetchAgent({ agentId: session.agentId });
   if (initial?.agent.status) {
     records.push({ at: Date.now(), status: initial.agent.status });
   }
@@ -143,7 +143,7 @@ async function expectAgentIdle(
   harness: OpenCodeRewindHarness,
   session: OpenCodeRewindSession,
 ): Promise<void> {
-  const snapshot = await harness.client.fetchAgent(session.agentId);
+  const snapshot = await harness.client.fetchAgent({ agentId: session.agentId });
   expect(snapshot?.agent.status).toBe("idle");
 }
 
