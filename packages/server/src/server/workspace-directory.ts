@@ -475,9 +475,9 @@ export class WorkspaceDirectory {
     return candidates.at(-1) ?? null;
   }
 
-  // Project parents that have no active workspaces. These persist as first-class
-  // empty projects so the sidebar can render an empty project row with a
-  // "+ New workspace" affordance.
+  // Project parents that have no active workspaces. The wire field is the
+  // sidebar projection bucket for projects whose workspace list is currently
+  // empty; it is not a separate domain record.
   async listEmptyProjects(): Promise<WorkspaceProjectDescriptor[]> {
     const [persistedWorkspaces, persistedProjects] = await Promise.all([
       this.deps.workspaceRegistry.list(),
@@ -566,8 +566,8 @@ export class WorkspaceDirectory {
         ? this.pager.encode(pagedEntries[pagedEntries.length - 1], sort)
         : null;
 
-    // Empty project parents ride only on the first page so the sidebar can render
-    // them without them being duplicated across pagination.
+    // Project parents with no active workspaces ride only on the first page so
+    // the sidebar can render them without duplicating them across pagination.
     const projectIdFilter = filter?.projectId?.trim();
     const emptyProjects = cursorToken
       ? []

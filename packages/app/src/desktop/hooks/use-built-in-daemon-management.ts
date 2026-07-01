@@ -60,7 +60,7 @@ export function useBuiltInDaemonManagement(
             }),
           persistSettings: (next) => updateSettings(next) as Promise<void>,
           startDaemon: startDesktopDaemon,
-          stopDaemon: stopDesktopDaemon,
+          stopDaemon: () => stopDesktopDaemon("settings"),
         });
         if (result.kind === "enabled") {
           const upsertResult = await upsertDesktopDaemonConnection(

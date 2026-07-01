@@ -95,6 +95,33 @@ export async function expectAttachmentPill(page: Page, testID: string): Promise<
   await expect(page.getByTestId(testID).first()).toBeVisible({ timeout: 10_000 });
 }
 
+export async function dropFileOnComposer(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  const dataTransfer = await page.evaluateHandle(
+    ({ name, mimeType, base64 }) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const droppedFile = new File([bytes], name, { type: mimeType });
+      const transfer = new DataTransfer();
+      transfer.items.add(droppedFile);
+      return transfer;
+    },
+    {
+      name: file.name,
+      mimeType: file.mimeType,
+      base64: file.buffer.toString("base64"),
+    },
+  );
+
+  const composerRoot = page.getByTestId("message-input-root").filter({ visible: true }).first();
+  await expect(composerRoot).toBeVisible({ timeout: 10_000 });
+  await composerRoot.dispatchEvent("dragenter", { dataTransfer });
+  await composerRoot.dispatchEvent("dragover", { dataTransfer });
+  await composerRoot.dispatchEvent("drop", { dataTransfer });
+  await dataTransfer.dispose();
+}
+
 /** Hover to reveal the X button (hidden until hover on desktop web), then click by accessible label. */
 export async function removeAttachmentPill(
   page: Page,
@@ -149,6 +176,7 @@ export async function selectGithubOption(
 export interface MockAgentSetup {
   client: SeedDaemonClient;
   repo: Awaited<ReturnType<typeof createTempGitRepo>>;
+  cleanup: () => Promise<void>;
 }
 
 /** Create a temp repo, start a mock agent, navigate to it, and wait for it to be running. */
@@ -160,22 +188,35 @@ export async function startRunningMockAgent(
 
   const repo = await createTempGitRepo(opts.prefix);
   const client = await connectSeedClient();
-  const opened = await client.openProject(repo.path);
-  if (!opened.workspace) throw new Error(opened.error ?? "Failed to open project");
+  const createdWorkspace = await client.createWorkspace({
+    source: { kind: "directory", path: repo.path },
+  });
+  if (!createdWorkspace.workspace) {
+    throw new Error(createdWorkspace.error ?? "Failed to create workspace");
+  }
+  const workspace = createdWorkspace.workspace;
   const agent = await client.createAgent({
     provider: "mock",
     cwd: repo.path,
-    workspaceId: opened.workspace.id,
+    workspaceId: workspace.id,
     model: opts.model,
   });
-  const agentUrl = `${buildHostWorkspaceRoute(serverId, opened.workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
+  const agentUrl = `${buildHostWorkspaceRoute(serverId, workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
   await page.goto(agentUrl);
   await expectComposerVisible(page);
   await client.sendAgentMessage(agent.id, opts.prompt);
   await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
     timeout: 30_000,
   });
-  return { client, repo };
+  return {
+    client,
+    repo,
+    cleanup: async () => {
+      await client.removeProject(workspace.projectId).catch(() => undefined);
+      await client.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    },
+  };
 }
 
 export interface GithubWorkspaceHandle {
@@ -188,10 +229,20 @@ export async function openGithubWorkspace(
   repoPath: string,
 ): Promise<GithubWorkspaceHandle> {
   const client = await connectWorkspaceSetupClient();
-  const opened = await client.openProject(repoPath);
-  if (!opened.workspace) throw new Error(opened.error ?? `Failed to open project ${repoPath}`);
+  const createdWorkspace = await client.createWorkspace({
+    source: { kind: "directory", path: repoPath },
+  });
+  if (!createdWorkspace.workspace) {
+    throw new Error(createdWorkspace.error ?? `Failed to create workspace ${repoPath}`);
+  }
+  const workspace = createdWorkspace.workspace;
   await gotoAppShell(page);
-  await selectWorkspaceInSidebar(page, opened.workspace.id);
+  await selectWorkspaceInSidebar(page, workspace.id);
   await waitForTabBar(page);
-  return { cleanup: () => client.close().catch(() => undefined) };
+  return {
+    cleanup: async () => {
+      await client.removeProject(workspace.projectId).catch(() => undefined);
+      await client.close().catch(() => undefined);
+    },
+  };
 }

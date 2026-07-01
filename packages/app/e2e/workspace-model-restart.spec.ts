@@ -10,6 +10,7 @@ import { buildHostWorkspaceRoute, decodeWorkspaceIdFromPathSegment } from "@/uti
 import { buildSeededHost } from "./helpers/daemon-registry";
 import { loadDaemonClientConstructor } from "./helpers/daemon-client-loader";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./helpers/node-ws-factory";
+import { withDisabledE2ESpeechEnv } from "./helpers/speech-env";
 import {
   expectNewWorkspaceProjectSelected,
   openGlobalNewWorkspaceComposer,
@@ -243,18 +244,16 @@ async function startRestartDaemon(input: {
   const tsxBin = execSync("which tsx").toString().trim();
   const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
     cwd: serverDir,
-    env: {
+    env: withDisabledE2ESpeechEnv({
       ...process.env,
       PASEO_HOME: input.paseoHome,
       PASEO_SERVER_ID: SERVER_ID,
       PASEO_LISTEN: `127.0.0.1:${port}`,
       PASEO_CORS_ORIGINS: input.origin,
       PASEO_RELAY_ENABLED: "0",
-      PASEO_DICTATION_ENABLED: "0",
-      PASEO_VOICE_MODE_ENABLED: "0",
       PASEO_NODE_ENV: "development",
       NODE_ENV: "development",
-    },
+    }),
     stdio: ["ignore", "ignore", "pipe"],
     detached: false,
   });
@@ -390,7 +389,7 @@ async function expectWorkspaceRowInStatusBucket(
   page: Page,
   input: { serverId: string; workspaceId: string; bucket: string },
 ) {
-  await page.getByTestId("sidebar-grouping-selector").click();
+  await page.getByTestId("sidebar-display-preferences-menu").click();
   await page.getByTestId("sidebar-grouping-status").click();
   await expect(
     page

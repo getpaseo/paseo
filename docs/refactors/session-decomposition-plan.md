@@ -13,6 +13,15 @@ Each domain becomes a controller class in its own file with the **exact** contra
 
 Session shrinks to a connection/dispatch shell: it keeps `handleMessage`, the `??` chain (1739-1751), `emit`/`emitBinary`, `sessionLogger`, connection identity, inflight metrics, lifecycle intents, and the **ordered** `cleanup()`. Each `dispatchXMessage` collapses to `return this.xController.dispatch(msg)`.
 
+## Progress (shipped — diverged from the original filenames)
+
+The first carves shipped as **deep modules with a narrow Host seam**, not the `dispatch(msg)`-owned-set controllers sketched below: `session.ts` keeps each `dispatchXMessage` switch and delegates per case to the subsystem. Home convention that emerged: session subsystems live at **`session/<domain>/`**, with `session.ts` as the orchestrator shell.
+
+- **#1640 — VoiceSession** (`session/voice/voice-session.ts`, seam `VoiceSessionHost`): the STT/TTS/dictation/turn-detection subsystem. _(Originally landed at `server/voice/`; relocated under `session/` so all session subsystems share one home.)_
+- **#1644 — CheckoutSession, read side** (`session/checkout/checkout-session.ts`, seam `CheckoutSessionHost`, port `CheckoutDiffSubscriber`): status, branch validate/suggest, diff subscribe/unsubscribe, manual refresh. The workspace-git observer already delegates `emitStatusUpdate`/`scheduleDiffRefresh` to it.
+
+**Next carve — CheckoutSession mutation side (Slice 4 below).** The 17 checkout _write_ handlers still inline in `session.ts` (`dispatchCheckoutMessage`, ~2010) — branch switch/rename, commit, merge, merge-from-base, pull, push, PR create/merge, github set-auto-merge/get-check-details, PR status, PR timeline, github search, stash save/pop/list — move into the existing `session/checkout/checkout-session.ts` behind `CheckoutSessionHost`. The Slice-3 observer entanglement the table fears is already resolved: #1644 moved the status/diff read side into CheckoutSession, so the workspace observer delegates today and this no longer blocks on the WorkspaceController split.
+
 ### Why this is safe at the dispatch seam (verified)
 
 `dispatchInboundMessage` builds `a() ?? b() ?? ... ?? dispatchMiscMessage()` and short-circuits on the first non-`undefined` **Promise object** (not its resolved value). Message-type spaces are **disjoint** (no duplicate `case` labels across switches), so at most one dispatcher matches any message — collapsing to delegation cannot change which handler runs. `dispatchTerminalMessage` (2150-2153) already proves this. Two quirks preserved verbatim: schedule/\* is reached via the chat dispatcher's OWN `default` arm (2183), not the top-level `??`; and `start_workspace_script_request` (a workspace type) is special-cased before terminal delegation (2150).
@@ -117,7 +126,7 @@ In-place, separately reviewable. Split the `audio_output` TTS-debug branch out o
 
 ## Slice 7 — VoiceSessionController (XL)
 
-**Move:** voice handlers + ~25 voice fields + the TTS-debug hook (Slice 6) + `voiceModeAgentId`/`isVoiceMode` + the `shouldAutoAllowVoicePermission` predicate (Slice 3) → `packages/server/src/server/voice/voice-session-controller.ts`. Carve voice types out of `dispatchVoiceAndControlMessage`, leaving infra (restart/shutdown/heartbeat/ping/abort) on the shell.
+**Move:** voice handlers + ~25 voice fields + the TTS-debug hook (Slice 6) + `voiceModeAgentId`/`isVoiceMode` + the `shouldAutoAllowVoicePermission` predicate (Slice 3) → the existing `packages/server/src/server/session/voice/voice-session.ts` (see Progress above). Carve voice types out of `dispatchVoiceAndControlMessage`, leaving infra (restart/shutdown/heartbeat/ping/abort) on the shell.
 
 **SessionContext surface:** pure `emit`, `emitBinary`, `hasBinaryChannel`, `sessionLogger`/`sessionId`/`paseoHome`, `getSpeechReadiness`, agent-control port `{ loadAgent, reloadWithSystemPrompt, interruptIfRunning, isRunning, sendSpokenText, buildAgentPrompt }`, `getSignal`/`abortCurrent` (Slice 6).
 

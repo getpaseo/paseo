@@ -34,6 +34,7 @@ test.describe("Workspace agent tab rename", () => {
       const initialTitle = `agent-rename-${randomUUID().slice(0, 8)}`;
       const agent = await createIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
         title: initialTitle,
       });
 

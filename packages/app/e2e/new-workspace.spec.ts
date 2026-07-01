@@ -52,7 +52,7 @@ interface WorkspaceStatusGroupEvent {
 }
 
 async function switchSidebarToStatusGrouping(page: import("@playwright/test").Page) {
-  await page.getByTestId("sidebar-grouping-selector").click();
+  await page.getByTestId("sidebar-display-preferences-menu").click();
   await page.getByTestId("sidebar-grouping-status").click();
   await expect(page.getByTestId("sidebar-status-group-done")).toBeVisible({ timeout: 30_000 });
 }

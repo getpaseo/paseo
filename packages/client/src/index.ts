@@ -30,6 +30,8 @@ export { DaemonClient };
 export type {
   DaemonClientConfig,
   DaemonEvent,
+  BrowserAutomationExecuteRequestMessage,
+  BrowserAutomationExecuteResponseMessage,
   WebSocketFactory,
   WebSocketLike,
 } from "./daemon-client.js";
@@ -229,6 +231,7 @@ export interface PaseoAgentHandle {
   refetch(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   archive(): Promise<{ archivedAt: string }>;
+  detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -471,7 +474,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       latest: () => latest,
       refetch: async (requestId) => {
-        const result = await daemonClient.fetchAgent(id, requestId);
+        const result = await daemonClient.fetchAgent({ agentId: id, requestId });
         latest = result?.agent ?? null;
         return result;
       },
@@ -482,6 +485,9 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
           latest = { ...latest, archivedAt: result.archivedAt };
         }
         return result;
+      },
+      detach: async () => {
+        await daemonClient.detachAgent(id);
       },
       subscribe: (handler) =>
         daemonClient.on("agent_update", (message) => {

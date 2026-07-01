@@ -213,6 +213,20 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
         },
         {
           type: "assistant",
+          parent_tool_use_id: "task-call-1",
+          message: {
+            id: "subagent-message-1",
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "Sub-agent narration belongs inside the Task row, not the parent transcript.",
+              },
+            ],
+          },
+        },
+        {
+          type: "assistant",
           parent_tool_use_id: null,
           message: {
             content: [
@@ -293,6 +307,46 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     );
 
     expect(projectedTaskCalls).toHaveLength(1);
+  });
+
+  test("keeps sidechain assistant text out of the parent transcript", async () => {
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    const events = await collectUntilTerminal(streamSession(session, "delegate work"));
+    await session.close();
+
+    const visibleAssistantText = events
+      .flatMap((event) =>
+        event.type === "timeline" && event.item.type === "assistant_message"
+          ? [event.item.text]
+          : [],
+      )
+      .join("");
+
+    expect(visibleAssistantText).not.toContain("Sub-agent narration");
+
+    const latestSubAgentUpdate = events
+      .filter(
+        (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "task-call-1" &&
+          event.item.detail.type === "sub_agent",
+      )
+      .map((event) => event.item)
+      .at(-1);
+
+    expect(latestSubAgentUpdate?.detail).toMatchObject({
+      type: "sub_agent",
+      log: expect.stringContaining("[Read] README.md"),
+    });
   });
 
   test("tails sub-agent actions instead of dropping latest entries at cap", async () => {

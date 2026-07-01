@@ -132,6 +132,25 @@ test.describe("Sidebar workspace list", () => {
       await workspace.cleanup();
     }
   });
+
+  test("workspace hover card shows host as metadata", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-host-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+
+      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      await row.hover();
+
+      const hoverCard = page.getByTestId("workspace-hover-card");
+      await expect(hoverCard).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("hover-card-workspace-host")).toHaveText("localhost");
+      await expect(hoverCard).not.toContainText(/\b(Online|Connecting|Offline|Error|Idle)\b/);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
 
 test.describe("Mobile sidebar panelState transition", () => {

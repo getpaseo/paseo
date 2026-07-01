@@ -1,7 +1,12 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { normalizeWorkspaceOpaqueId, normalizeWorkspacePath } from "@/utils/workspace-identity";
 
-const pendingWorkspaceArchivesByServer = new Map<string, Set<string>>();
+interface PendingWorkspaceArchive {
+  workspaceId: string;
+  workspaceDirectory: string | null;
+}
+
+const pendingWorkspaceArchivesByServer = new Map<string, Map<string, PendingWorkspaceArchive>>();
 
 function pendingArchiveKey(input: { serverId: string; workspaceId: string }): string {
   return `${input.serverId.trim()}::${input.workspaceId.trim()}`;
@@ -10,6 +15,7 @@ function pendingArchiveKey(input: { serverId: string; workspaceId: string }): st
 export function markWorkspaceArchivePending(input: {
   serverId: string;
   workspaceId: string;
+  workspaceDirectory?: string | null;
 }): void {
   const serverId = input.serverId.trim();
   const workspaceId = normalizeWorkspaceOpaqueId(input.workspaceId);
@@ -17,8 +23,11 @@ export function markWorkspaceArchivePending(input: {
     return;
   }
 
-  const archives = pendingWorkspaceArchivesByServer.get(serverId) ?? new Set<string>();
-  archives.add(pendingArchiveKey({ serverId, workspaceId }));
+  const archives = pendingWorkspaceArchivesByServer.get(serverId) ?? new Map();
+  archives.set(pendingArchiveKey({ serverId, workspaceId }), {
+    workspaceId,
+    workspaceDirectory: normalizeWorkspacePath(input.workspaceDirectory),
+  });
   pendingWorkspaceArchivesByServer.set(serverId, archives);
 }
 
@@ -45,15 +54,34 @@ export function clearWorkspaceArchivePending(input: {
 export function isWorkspaceArchivePending(input: {
   serverId: string;
   workspaceId?: string | null;
+  workspaceDirectory?: string | null;
 }): boolean {
   const serverId = input.serverId.trim();
-  const workspaceId = normalizeWorkspaceOpaqueId(input.workspaceId);
-  if (!serverId || !workspaceId) {
+  if (!serverId) {
     return false;
   }
 
   const archives = pendingWorkspaceArchivesByServer.get(serverId);
-  return archives?.has(pendingArchiveKey({ serverId, workspaceId })) ?? false;
+  if (!archives) {
+    return false;
+  }
+
+  const workspaceId = normalizeWorkspaceOpaqueId(input.workspaceId);
+  if (workspaceId && archives.has(pendingArchiveKey({ serverId, workspaceId }))) {
+    return true;
+  }
+
+  const workspaceDirectory = normalizeWorkspacePath(input.workspaceDirectory);
+  if (!workspaceDirectory) {
+    return false;
+  }
+
+  for (const archive of archives.values()) {
+    if (archive.workspaceDirectory === workspaceDirectory) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function shouldSuppressWorkspaceForLocalArchive(input: {
@@ -63,5 +91,6 @@ export function shouldSuppressWorkspaceForLocalArchive(input: {
   return isWorkspaceArchivePending({
     serverId: input.serverId,
     workspaceId: input.workspace.id,
+    workspaceDirectory: input.workspace.workspaceDirectory,
   });
 }

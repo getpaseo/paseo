@@ -48,8 +48,9 @@ The heart of Paseo. A Node.js process that:
 - Listens for WebSocket connections from clients
 - Manages agent lifecycle (create, run, stop, resume, archive)
 - Streams agent output in real time via a timeline model
-- Exposes an MCP server for agent-to-agent control
+- Provides agent-to-agent tools through a transport-neutral tool catalog, with MCP as one adapter
 - Optionally connects outbound to a relay for remote access
+- Optionally serves the browser web client from the same HTTP server (self-hosting guide: [public-docs/web-ui.md](../public-docs/web-ui.md))
 
 All paths are under `packages/server/src/`.
 
@@ -62,7 +63,8 @@ All paths are under `packages/server/src/`.
 | `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations        |
 | `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management      |
 | `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                        |
-| `server/agent/mcp-server.ts`    | MCP server for sub-agent creation, permissions, timeouts                     |
+| `server/agent/tools/`           | Transport-neutral Paseo tool catalog for subagents, permissions, worktrees   |
+| `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK      |
 | `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                              |
 | `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                |
 | `server/schedule/`              | Cron-based scheduled agents                                                  |
@@ -136,7 +138,7 @@ Electron wrapper for macOS, Linux, and Windows.
 
 > **Window-state v1 limitation:** only the _first_ window of a session restores and persists saved geometry (size/position/maximized). Windows opened via ⌘⇧N / second-instance / "Open in new window" open at the default size, OS-cascaded, and do not persist — this avoids every window stacking on the same restored bounds and fighting over the single window-state store. Lifting this needs per-window state keys.
 >
-> **In-app browser panes are not yet per-window.** The active-browser id (`features/browser-webviews.ts`) and the webview registration queue (`pendingBrowserWebviewIds` in `main.ts`) are process-global. With browser panes open in two windows, a menu Reload can target the other window's webview, and near-simultaneous webview attach across windows can register under the wrong browser id. Multi-window v1 ships windows; making the browser-webview subsystem window-scoped is a follow-up.
+> **In-app browser panes are not yet per-window.** Browser webviews are tracked by one process-global registry that keeps a single current `WebContents` per browser id. Human focus and agent automation targets are intentionally separate: the workspace-active browser follows the user's focused tab, while the agent-active browser is the default target for browser MCP commands. The webview registration queue (`pendingBrowserWebviewIds` in `main.ts`) is still process-global. With browser panes open in two windows, a menu Reload can target the other window's webview, and near-simultaneous webview attach across windows can register under the wrong browser id. Multi-window v1 ships windows; making the browser-webview subsystem window-scoped is a follow-up.
 
 ### `packages/website` — Marketing site
 
@@ -166,6 +168,8 @@ There is no dedicated welcome message; the server emits a `status` session messa
 **Top-level WS envelopes** are `hello`, `recording_state`, `ping`/`pong`, and `session` (which wraps the rich union of session messages).
 
 Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a session RPC and not RFC6455 protocol ping. The app runs through browser and React Native WebSocket APIs, which do not expose protocol ping, so this envelope is the portable way to test the direct or relay data path. Session RPC timeouts are operation failures and must not be treated as proof that the socket is dead.
+
+Client session RPC waits default to 60s so slow relay or mobile networks do not turn a live but delayed daemon response into a false operation failure. Keep connect timeouts, app-level grace windows, explicit diagnostic latency probes, liveness ping timers, and genuinely long-running RPCs separate from this default.
 
 New session RPCs use dotted names with `.request` and `.response` suffixes, such as `checkout.github.set_auto_merge.request` and `checkout.github.set_auto_merge.response`. See [rpc-namespacing.md](rpc-namespacing.md) for the convention and migration rules for older flat RPC names.
 
@@ -288,6 +292,8 @@ All providers:
 - Support session resume via persistence handles
 - Map tool calls to a normalized `ToolCallDetail` type
 - Expose provider-specific modes (plan, default, full-access)
+
+Providers that can accept native tool definitions should set `supportsNativePaseoTools` and read `launchContext.paseoTools`. The daemon then passes the shared Paseo tool catalog directly and removes the internal Paseo MCP server from that provider launch config. Providers that only support MCP continue to receive the same tools through the MCP fallback at `/mcp/agents`.
 
 ## Data flow: running an agent
 

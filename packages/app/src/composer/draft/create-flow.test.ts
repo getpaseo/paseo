@@ -87,4 +87,63 @@ describe("useDraftAgentCreateFlow", () => {
     });
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);
   });
+
+  it("allows retrying an empty prompt when the draft still has context attachments", async () => {
+    const attachment = {
+      kind: "chat_history",
+      id: "chat-history-1",
+      attachment: {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        title: "Chat history",
+        text: "Previous conversation",
+      },
+      source: {
+        serverId: "server-1",
+        agentId: "agent-source",
+      },
+    } as const;
+    const createRequest = vi.fn(async () => ({
+      agentId: "agent-1",
+      result: { id: "agent-1" },
+    }));
+    const onCreateSuccess = vi.fn();
+    const validateBeforeSubmit = vi.fn(() => null);
+
+    const { result } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-1",
+        getPendingServerId: () => "server-1",
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest,
+        onCreateSuccess,
+        validateBeforeSubmit,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleCreateFromInput({
+        text: "   ",
+        attachments: [attachment],
+        cwd: "/repo",
+      });
+    });
+
+    expect(validateBeforeSubmit).toHaveBeenCalledWith({
+      text: "",
+      attachments: [attachment],
+      cwd: "/repo",
+    });
+    expect(createRequest).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        text: "",
+        attachments: [attachment.attachment],
+      }),
+      text: "",
+      attachments: [attachment.attachment],
+      cwd: "/repo",
+    });
+    expect(onCreateSuccess).toHaveBeenCalledTimes(1);
+  });
 });

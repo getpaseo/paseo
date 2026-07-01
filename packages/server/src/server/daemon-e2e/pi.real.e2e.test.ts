@@ -149,7 +149,7 @@ test(
           model: PI_FREE_COMPACTION_TEST_MODEL,
         });
 
-        const result = await client.listCommands(agent.id);
+        const result = await client.listCommands({ agentId: agent.id });
         expect(result.commands).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
@@ -651,12 +651,12 @@ test(
 );
 
 test(
-  "PiRpcAgentClient.listModels returns non-empty Pi model definitions",
+  "PiRpcAgentClient.fetchCatalog returns non-empty Pi model definitions",
   async () => {
     const client = createPiClient();
     const cwd = tmpCwd("pi-list-models-");
     try {
-      const models = await client.listModels({ cwd, force: false });
+      const { models } = await client.fetchCatalog({ scope: "workspace", cwd, force: false });
 
       expect(models.length).toBeGreaterThan(0);
       for (const model of models) {

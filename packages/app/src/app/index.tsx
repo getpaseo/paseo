@@ -2,8 +2,12 @@ import React from "react";
 import { Redirect, usePathname } from "expo-router";
 import { StartupSplashScreen } from "@/screens/startup-splash-screen";
 import { useEarliestOnlineHostServerId, useHostRuntimeBootstrapState } from "@/app/_layout";
-import { resolveStartupRoute } from "@/app/host-runtime-bootstrap";
+import {
+  resolveStartupRoute,
+  resolveWorkspaceSelectionStatus,
+} from "@/navigation/host-runtime-bootstrap";
 import { useHostRegistryStatus, useHosts } from "@/runtime/host-runtime";
+import { useHasHydratedWorkspaces, useWorkspaceExists } from "@/stores/session-store-hooks";
 import {
   useIsLastWorkspaceSelectionHydrated,
   useLastWorkspaceSelection,
@@ -20,6 +24,13 @@ export default function Index() {
   const hostRegistryStatus = useHostRegistryStatus();
   const workspaceSelection = useLastWorkspaceSelection();
   const isWorkspaceSelectionLoaded = useIsLastWorkspaceSelectionHydrated();
+  const workspaceSelectionServerId = workspaceSelection?.serverId ?? null;
+  const workspaceSelectionWorkspaceId = workspaceSelection?.workspaceId ?? null;
+  const hasHydratedWorkspaceSelectionHost = useHasHydratedWorkspaces(workspaceSelectionServerId);
+  const workspaceSelectionExists = useWorkspaceExists(
+    workspaceSelectionServerId,
+    workspaceSelectionWorkspaceId,
+  );
 
   const startupRoute = resolveStartupRoute({
     route: { kind: "index", pathname },
@@ -28,6 +39,10 @@ export default function Index() {
     hosts,
     anyOnlineHostServerId,
     workspaceSelection,
+    workspaceSelectionStatus: resolveWorkspaceSelectionStatus({
+      hasHydratedWorkspaces: hasHydratedWorkspaceSelectionHost,
+      workspaceExists: workspaceSelectionExists,
+    }),
     isWorkspaceSelectionLoaded,
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });

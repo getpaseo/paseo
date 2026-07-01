@@ -54,6 +54,12 @@ describe("schedule cron cadence", () => {
     );
   });
 
+  test("rejects step fields with extra slash tokens", () => {
+    expect(() => validateScheduleCadence({ type: "cron", expression: "*/5/2 * * * *" })).toThrow(
+      "Invalid cron minute step",
+    );
+  });
+
   test("rejects invalid cron time zones", () => {
     expect(() =>
       validateScheduleCadence({

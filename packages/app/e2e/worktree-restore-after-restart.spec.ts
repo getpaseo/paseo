@@ -20,6 +20,7 @@ test.describe("Worktree restore after daemon restart", () => {
   let worktreeClient: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
   const createdWorktreeDirectories = new Set<string>();
+  const createdProjectIds = new Set<string>();
 
   test.describe.configure({ retries: 0, timeout: 180_000 });
 
@@ -34,6 +35,10 @@ test.describe("Worktree restore after daemon restart", () => {
       await archiveWorkspaceFromDaemon(worktreeClient, directory).catch(() => undefined);
     }
     createdWorktreeDirectories.clear();
+    for (const projectId of createdProjectIds) {
+      await worktreeClient.removeProject(projectId).catch(() => undefined);
+    }
+    createdProjectIds.clear();
     await client?.close().catch(() => undefined);
     await worktreeClient?.close().catch(() => undefined);
     await tempRepo?.cleanup().catch(() => undefined);
@@ -49,15 +54,18 @@ test.describe("Worktree restore after daemon restart", () => {
     // the History table cells must show after restore — never "main".
     const worktreeSlug = `restart-restore-${randomUUID().slice(0, 8)}`;
 
-    await openProjectViaDaemon(worktreeClient, tempRepo.path);
+    const project = await openProjectViaDaemon(worktreeClient, tempRepo.path);
+    createdProjectIds.add(project.projectKey);
     const worktree = await createWorktreeViaDaemon(worktreeClient, {
       cwd: tempRepo.path,
       slug: worktreeSlug,
     });
+    createdProjectIds.add(worktree.projectKey);
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
 
     const agent = await createIdleAgent(client, {
       cwd: worktree.workspaceDirectory,
+      workspaceId: worktree.workspaceId,
       title: `restart-restore-${randomUUID().slice(0, 8)}`,
     });
     expect(existsSync(worktree.workspaceDirectory)).toBe(true);

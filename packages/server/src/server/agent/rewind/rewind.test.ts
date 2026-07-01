@@ -2,12 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager } from "../agent-manager.js";
-import type {
-  AgentClient,
-  AgentSession,
-  AgentSessionConfig,
-  ListModelsOptions,
-} from "../agent-sdk-types.js";
+import type { AgentClient, AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
 import { FakeRewindSession, REWIND_TEST_CAPABILITIES } from "./test-rewind-session.js";
 
 class FakeRewindClient implements AgentClient {
@@ -24,8 +19,8 @@ class FakeRewindClient implements AgentClient {
     return this.session;
   }
 
-  async listModels(_options: ListModelsOptions) {
-    return [];
+  async fetchCatalog(_options: FetchCatalogOptions) {
+    return { models: [], modes: [] };
   }
 
   async isAvailable() {

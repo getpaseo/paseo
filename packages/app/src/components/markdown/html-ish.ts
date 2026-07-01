@@ -651,8 +651,13 @@ function getInlineCodeRanges(
     }
 
     const marker = open[0];
-    const close = findClosingBacktickRun(source, BACKTICK_RUN_RE.lastIndex, marker, fencedRanges);
+    const afterOpen = BACKTICK_RUN_RE.lastIndex;
+    const close = findClosingBacktickRun(source, afterOpen, marker, fencedRanges);
     if (!close) {
+      // Unmatched backtick run — skip past it so the loop doesn't restart from 0.
+      // findClosingBacktickRun exhausts the global regex, which resets lastIndex
+      // to 0 when exec() returns null (ECMAScript §22.2.7.2).
+      BACKTICK_RUN_RE.lastIndex = afterOpen;
       continue;
     }
 

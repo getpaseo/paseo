@@ -13,16 +13,17 @@ type NewWorkspaceDaemonClient = Pick<
   | "close"
   | "connect"
   | "createPaseoWorktree"
+  | "createWorkspace"
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
-  | "openProject"
   | "patchDaemonConfig"
+  | "removeProject"
 >;
 
-type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
-type WorkspacePayload = Pick<OpenProjectPayload, "error" | "workspace">;
-type WorkspaceDescriptor = NonNullable<OpenProjectPayload["workspace"]>;
+type CreateWorkspacePayload = Awaited<ReturnType<NewWorkspaceDaemonClient["createWorkspace"]>>;
+type WorkspacePayload = Pick<CreateWorkspacePayload, "error" | "workspace">;
+type WorkspaceDescriptor = NonNullable<CreateWorkspacePayload["workspace"]>;
 
 export interface OpenedProject {
   workspaceId: string;
@@ -37,7 +38,7 @@ function requireWorkspace(payload: WorkspacePayload) {
     throw new Error(payload.error);
   }
   if (!payload.workspace) {
-    throw new Error("openProject returned no workspace.");
+    throw new Error("workspace.create returned no workspace.");
   }
   return payload.workspace;
 }
@@ -96,7 +97,11 @@ export async function openProjectViaDaemon(
   client: NewWorkspaceDaemonClient,
   repoPath: string,
 ): Promise<OpenedProject> {
-  const workspace = requireWorkspace(await client.openProject(repoPath));
+  const workspace = requireWorkspace(
+    await client.createWorkspace({
+      source: { kind: "directory", path: repoPath },
+    }),
+  );
   return openedProjectFromWorkspace(workspace);
 }
 
@@ -154,7 +159,7 @@ export async function openNewWorkspaceComposer(
   await expect(button).toBeVisible({ timeout: 30_000 });
   await button.click();
 
-  await expect(page).toHaveURL(/\/h\/[^/]+\/new(?:\?.*)?$/, {
+  await expect(page).toHaveURL(/\/new(?:\?.*)?$/, {
     timeout: 30_000,
   });
 }
@@ -162,7 +167,7 @@ export async function openNewWorkspaceComposer(
 export async function openGlobalNewWorkspaceComposer(page: Page): Promise<void> {
   await page.getByTestId("sidebar-global-new-workspace").click();
 
-  await expect(page).toHaveURL(/\/h\/[^/]+\/new(?:\?.*)?$/, {
+  await expect(page).toHaveURL(/\/new(?:\?.*)?$/, {
     timeout: 30_000,
   });
 }

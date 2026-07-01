@@ -252,6 +252,7 @@ export default function TerminalEmulator({
   const scrollVisibilityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollActiveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastObservedOffsetRef = useRef<number | null>(null);
+  const lastMetricsRef = useRef({ offset: 0, viewportSize: 0, contentSize: 0 });
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
@@ -290,6 +291,19 @@ export default function TerminalEmulator({
   const [isScrollActive, setIsScrollActive] = useState(false);
   const [isDropActive, setIsDropActive] = useState(false);
   const dropActiveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateViewportMetricsState = useCallback((metrics: ViewportMetrics) => {
+    const lastMetrics = lastMetricsRef.current;
+    if (
+      metrics.offset === lastMetrics.offset &&
+      metrics.viewportSize === lastMetrics.viewportSize &&
+      metrics.contentSize === lastMetrics.contentSize
+    ) {
+      return;
+    }
+
+    lastMetricsRef.current = metrics;
+    setViewportMetrics(metrics);
+  }, []);
 
   const domBridgeRef = useRef<DOMImperativeFactory | null>(null);
   useDOMImperativeHandle(
@@ -575,24 +589,30 @@ export default function TerminalEmulator({
     const viewportElement = host.querySelector<HTMLElement>(".xterm-viewport");
     if (!viewportElement) {
       viewportRef.current = null;
-      setViewportMetrics({ offset: 0, viewportSize: 0, contentSize: 0 });
+      updateViewportMetricsState({ offset: 0, viewportSize: 0, contentSize: 0 });
       return () => {};
     }
 
     viewportRef.current = viewportElement;
 
     const updateViewportMetrics = () => {
-      setViewportMetrics({
-        offset: Math.max(0, viewportElement.scrollTop),
-        viewportSize: Math.max(0, viewportElement.clientHeight),
-        contentSize: Math.max(0, viewportElement.scrollHeight),
-      });
+      const offset = Math.max(0, viewportElement.scrollTop);
+      const viewportSize = Math.max(0, viewportElement.clientHeight);
+      const contentSize = Math.max(0, viewportElement.scrollHeight);
+      updateViewportMetricsState({ offset, viewportSize, contentSize });
     };
 
     updateViewportMetrics();
 
+    let scrollRafId: number | null = null;
     const handleViewportScroll = () => {
-      updateViewportMetrics();
+      if (scrollRafId !== null) {
+        return;
+      }
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        updateViewportMetrics();
+      });
     };
 
     const resizeObserver = new ResizeObserver(() => {
@@ -604,27 +624,20 @@ export default function TerminalEmulator({
       resizeObserver.observe(scrollAreaElement);
     }
 
-    const mutationObserver = new MutationObserver(() => {
-      updateViewportMetrics();
-    });
-    mutationObserver.observe(host, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class"],
-    });
-
     viewportElement.addEventListener("scroll", handleViewportScroll, { passive: true });
 
     return () => {
+      if (scrollRafId !== null) {
+        cancelAnimationFrame(scrollRafId);
+        scrollRafId = null;
+      }
       viewportElement.removeEventListener("scroll", handleViewportScroll);
       resizeObserver.disconnect();
-      mutationObserver.disconnect();
       if (viewportRef.current === viewportElement) {
         viewportRef.current = null;
       }
     };
-  }, [streamKey]);
+  }, [streamKey, updateViewportMetricsState]);
 
   useEffect(() => {
     const maxScrollOffset = Math.max(0, viewportMetrics.contentSize - viewportMetrics.viewportSize);
@@ -700,7 +713,7 @@ export default function TerminalEmulator({
         return;
       }
       viewportElement.scrollTop = nextOffset;
-      setViewportMetrics({
+      updateViewportMetricsState({
         offset: nextOffset,
         viewportSize: Math.max(0, viewportElement.clientHeight),
         contentSize: Math.max(0, viewportElement.scrollHeight),
@@ -720,7 +733,12 @@ export default function TerminalEmulator({
       window.removeEventListener("pointerup", stopDragging);
       window.removeEventListener("pointercancel", stopDragging);
     };
-  }, [isDraggingScrollbar, scrollbarGeometry.maxHandleOffset, scrollbarGeometry.maxScrollOffset]);
+  }, [
+    isDraggingScrollbar,
+    scrollbarGeometry.maxHandleOffset,
+    scrollbarGeometry.maxScrollOffset,
+    updateViewportMetricsState,
+  ]);
 
   const handleVisible =
     scrollbarGeometry.isVisible && (isDraggingScrollbar || isScrollVisible || isHandleHovered);

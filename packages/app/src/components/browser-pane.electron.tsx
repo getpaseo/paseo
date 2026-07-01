@@ -5,18 +5,47 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   createElement,
 } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
-import { ArrowLeft, ArrowRight, MousePointer2, PencilRuler, RotateCw } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  Copy,
+  Maximize,
+  Monitor,
+  MousePointer2,
+  PencilRuler,
+  RotateCw,
+  Smartphone,
+  Tablet,
+  X,
+  type LucideIcon,
+} from "lucide-react-native";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import * as Clipboard from "expo-clipboard";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/contexts/toast-context";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   buildWorkspaceAttachmentScopeKey,
   useWorkspaceAttachments,
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
-import type { BrowserElementAttachment } from "@/attachments/types";
+import type {
+  AttachmentMetadata,
+  BrowserAnnotationIntent,
+  BrowserElementAttachment,
+} from "@/attachments/types";
+import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import {
   getDesktopHost,
@@ -25,6 +54,11 @@ import {
 } from "@/desktop/host";
 import { isDev } from "@/constants/platform";
 import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/stores/browser-store";
+import {
+  prepareBrowserWebview,
+  releaseResidentBrowserWebview,
+  takeResidentBrowserWebview,
+} from "./browser-webview-resident";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -45,9 +79,80 @@ type WebTextInput = TextInput & {
   getNativeRef?: () => unknown;
 };
 
-type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted"> & {
+type BrowserElementSelection = Omit<
+  BrowserElementAttachment,
+  "formatted" | "comment" | "intent"
+> & {
   attributes?: Record<string, string>;
 };
+
+interface BrowserElementAnnotation {
+  comment: string;
+  intent: BrowserAnnotationIntent;
+}
+
+const BROWSER_ANNOTATION_INTENTS: readonly BrowserAnnotationIntent[] = [
+  "fix",
+  "change",
+  "question",
+  "approve",
+];
+
+type DeviceSizeId =
+  | "responsive"
+  | "iphone-se"
+  | "iphone-14"
+  | "iphone-14-pro-max"
+  | "pixel-7"
+  | "galaxy-s20"
+  | "ipad-mini"
+  | "ipad-air"
+  | "ipad-pro-11"
+  | "ipad-pro-12"
+  | "surface-pro"
+  | "laptop"
+  | "desktop-1080"
+  | "desktop-1440";
+
+interface DeviceSizePreset {
+  id: DeviceSizeId;
+  /** Display name (not translated — device names are proper nouns). */
+  name: string;
+  /** Fixed CSS width, or null for "fill the available area". */
+  width: number | null;
+  height: number | null;
+  icon: LucideIcon;
+}
+
+// Viewport presets for the in-app browser. "responsive" fills the pane; the
+// others render a fixed-size, centered frame so the user can preview how a page
+// behaves at common device sizes. Content is centered (not left-aligned).
+const DEVICE_SIZE_PRESETS: readonly DeviceSizePreset[] = [
+  { id: "responsive", name: "Responsive", width: null, height: null, icon: Maximize },
+  { id: "iphone-se", name: "iPhone SE", width: 375, height: 667, icon: Smartphone },
+  { id: "iphone-14", name: "iPhone 14", width: 390, height: 844, icon: Smartphone },
+  { id: "iphone-14-pro-max", name: "iPhone 14 Pro Max", width: 430, height: 932, icon: Smartphone },
+  { id: "pixel-7", name: "Pixel 7", width: 412, height: 915, icon: Smartphone },
+  { id: "galaxy-s20", name: "Galaxy S20", width: 360, height: 800, icon: Smartphone },
+  { id: "ipad-mini", name: "iPad Mini", width: 768, height: 1024, icon: Tablet },
+  { id: "ipad-air", name: "iPad Air", width: 820, height: 1180, icon: Tablet },
+  { id: "ipad-pro-11", name: 'iPad Pro 11"', width: 834, height: 1194, icon: Tablet },
+  { id: "ipad-pro-12", name: 'iPad Pro 12.9"', width: 1024, height: 1366, icon: Tablet },
+  { id: "surface-pro", name: "Surface Pro", width: 912, height: 1368, icon: Tablet },
+  { id: "laptop", name: "Laptop", width: 1366, height: 768, icon: Monitor },
+  { id: "desktop-1080", name: "Desktop 1080p", width: 1920, height: 1080, icon: Monitor },
+  { id: "desktop-1440", name: "Desktop 1440p", width: 2560, height: 1440, icon: Monitor },
+];
+
+const RESPONSIVE_DEVICE_LABEL_KEY = "workspace.browser.devices.responsive";
+
+function formatDevicePresetLabel(preset: DeviceSizePreset, responsiveLabel: string): string {
+  const name = preset.id === "responsive" ? responsiveLabel : preset.name;
+  if (preset.width && preset.height) {
+    return `${name} · ${preset.width}×${preset.height}`;
+  }
+  return name;
+}
 
 const ERR_ABORTED = -3;
 const ALLOWED_BROWSER_PROTOCOLS = new Set(["http:", "https:"]);
@@ -110,10 +215,17 @@ function getUnsafeNavigationMessage(
   }
 }
 
-function formatElementAttachment(selection: BrowserElementSelection): string {
+function formatElementAttachment(
+  selection: BrowserElementSelection,
+  annotation?: BrowserElementAnnotation,
+): string {
   const textPreview = truncateText(selection.text.trim(), 200);
   const html = truncateText(selection.outerHTML.trim(), 800);
   const parts: string[] = [];
+
+  if (annotation) {
+    parts.push(`intent: ${annotation.intent}`);
+  }
 
   if (selection.reactSource?.fileName) {
     const loc = [
@@ -146,6 +258,11 @@ function formatElementAttachment(selection: BrowserElementSelection): string {
     parts.push(`parents: ${selection.parentChain.slice(0, 3).join(" > ")}`);
   }
 
+  const comment = annotation?.comment.trim();
+  if (comment) {
+    parts.push(`feedback: ${comment}`);
+  }
+
   return [
     `<browser-element url="${selection.url}">`,
     parts.map((part) => `  ${part}`).join("\n"),
@@ -156,7 +273,10 @@ function formatElementAttachment(selection: BrowserElementSelection): string {
 
 function buildBrowserElementAttachment(
   selection: BrowserElementSelection,
+  annotation?: BrowserElementAnnotation,
+  screenshot?: AttachmentMetadata,
 ): BrowserElementAttachment {
+  const comment = annotation?.comment.trim();
   return {
     url: selection.url,
     selector: selection.selector,
@@ -168,7 +288,10 @@ function buildBrowserElementAttachment(
     reactSource: selection.reactSource,
     parentChain: selection.parentChain,
     children: selection.children,
-    formatted: formatElementAttachment(selection),
+    ...(comment ? { comment } : {}),
+    ...(annotation ? { intent: annotation.intent } : {}),
+    ...(screenshot ? { screenshot } : {}),
+    formatted: formatElementAttachment(selection, annotation),
   };
 }
 
@@ -211,6 +334,90 @@ function clearWebviewSelector(webview: ElectronWebview): void {
   void executeWebviewJavaScript(
     webview,
     "if(window.__paseoSelector) window.__paseoSelector.destroy(); window.__paseoSelectorResult = null;",
+  ).catch(ignoreWebviewJavaScriptError);
+}
+
+interface BrowserAnnotationMarker {
+  index: number;
+  selector: string;
+}
+
+// Draws numbered badges over annotated elements inside the guest page. The
+// overlay is a fixed, pointer-events:none layer that re-measures element rects
+// on scroll/resize via rAF. Markers are matched by the CSS selector captured at
+// annotation time; unmatched selectors are simply skipped.
+function buildAnnotationMarkerScript(markers: readonly BrowserAnnotationMarker[]): string {
+  const payload = JSON.stringify(
+    markers.map((marker) => ({ index: marker.index, selector: marker.selector })),
+  );
+  return `
+    (function() {
+      var markers = ${payload};
+      if (window.__paseoAnnotationMarkers) { window.__paseoAnnotationMarkers.update(markers); return true; }
+      var host = document.createElement('div');
+      host.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483646;pointer-events:none;';
+      (document.body || document.documentElement).appendChild(host);
+      var badges = [];
+      var current = markers;
+      function clearBadges() {
+        for (var i = 0; i < badges.length; i++) { if (badges[i].parentNode) badges[i].parentNode.removeChild(badges[i]); }
+        badges = [];
+      }
+      function reposition() {
+        clearBadges();
+        for (var i = 0; i < current.length; i++) {
+          var m = current[i];
+          var el = null;
+          try { el = document.querySelector(m.selector); } catch (e) { el = null; }
+          if (!el) continue;
+          var rect = el.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          var badge = document.createElement('div');
+          badge.textContent = String(m.index);
+          badge.style.cssText = 'position:fixed;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#2563eb;color:#fff;font:600 11px/18px -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.4);pointer-events:none;box-sizing:border-box;';
+          badge.style.left = Math.max(0, rect.left) + 'px';
+          badge.style.top = Math.max(0, rect.top) + 'px';
+          host.appendChild(badge);
+          badges.push(badge);
+        }
+      }
+      var scheduled = false;
+      function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(function() { scheduled = false; reposition(); });
+      }
+      window.addEventListener('scroll', schedule, true);
+      window.addEventListener('resize', schedule, true);
+      window.__paseoAnnotationMarkers = {
+        update: function(next) { current = next; schedule(); },
+        destroy: function() {
+          window.removeEventListener('scroll', schedule, true);
+          window.removeEventListener('resize', schedule, true);
+          clearBadges();
+          if (host.parentNode) host.parentNode.removeChild(host);
+          window.__paseoAnnotationMarkers = null;
+        }
+      };
+      reposition();
+      return true;
+    })()
+  `;
+}
+
+function applyAnnotationMarkers(
+  webview: ElectronWebview,
+  markers: readonly BrowserAnnotationMarker[],
+): void {
+  void executeWebviewJavaScript(webview, buildAnnotationMarkerScript(markers)).catch(
+    ignoreWebviewJavaScriptError,
+  );
+}
+
+function clearAnnotationMarkers(webview: ElectronWebview): void {
+  void executeWebviewJavaScript(
+    webview,
+    "if(window.__paseoAnnotationMarkers) window.__paseoAnnotationMarkers.destroy();",
   ).catch(ignoreWebviewJavaScriptError);
 }
 
@@ -270,6 +477,139 @@ function startSelectorResultPolling(input: {
   return poll;
 }
 
+function ToolbarButton({
+  label,
+  children,
+  active,
+  disabled,
+  onPress,
+  style,
+}: {
+  label: string;
+  children: ReactNode;
+  active?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  style: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
+}) {
+  const accessibilityState = useMemo(
+    () => ({ disabled: Boolean(disabled), selected: Boolean(active) }),
+    [active, disabled],
+  );
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild disabled={disabled}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          accessibilityState={accessibilityState}
+          disabled={disabled}
+          onPress={onPress}
+          style={style}
+        >
+          {children}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <Text style={styles.toolbarTooltipText}>{label}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// Lucide icons themed via withUnistyles so their color stays theme-reactive
+// without a banned useUnistyles() call.
+const ThemedMaximize = withUnistyles(Maximize);
+const ThemedSmartphone = withUnistyles(Smartphone);
+const ThemedTablet = withUnistyles(Tablet);
+const ThemedMonitor = withUnistyles(Monitor);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+function resolveThemedDeviceIcon(icon: LucideIcon): typeof ThemedMaximize {
+  if (icon === Smartphone) return ThemedSmartphone;
+  if (icon === Tablet) return ThemedTablet;
+  if (icon === Monitor) return ThemedMonitor;
+  return ThemedMaximize;
+}
+
+function DeviceSizeMenuItem({
+  preset,
+  selected,
+  label,
+  onSelect,
+}: {
+  preset: DeviceSizePreset;
+  selected: boolean;
+  label: string;
+  onSelect: (id: DeviceSizeId) => void;
+}) {
+  const ThemedIcon = resolveThemedDeviceIcon(preset.icon);
+  const handleSelect = useCallback(() => {
+    onSelect(preset.id);
+  }, [onSelect, preset.id]);
+  const leading = useMemo(
+    () => <ThemedIcon size={16} uniProps={deviceMutedIconMapping} />,
+    [ThemedIcon],
+  );
+  return (
+    <DropdownMenuItem
+      onSelect={handleSelect}
+      selected={selected}
+      showSelectedCheck
+      leading={leading}
+    >
+      {label}
+    </DropdownMenuItem>
+  );
+}
+
+function DeviceSizeMenu({
+  selectedId,
+  onSelect,
+  triggerStyle,
+}: {
+  selectedId: DeviceSizeId;
+  onSelect: (id: DeviceSizeId) => void;
+  triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
+}) {
+  const { t } = useTranslation();
+  const selectedPreset =
+    DEVICE_SIZE_PRESETS.find((preset) => preset.id === selectedId) ?? DEVICE_SIZE_PRESETS[0];
+  const SelectedIcon = resolveThemedDeviceIcon(selectedPreset.icon);
+  const label = t("workspace.browser.devices.label");
+  return (
+    <DropdownMenu>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger accessibilityLabel={label} style={triggerStyle}>
+            <View style={styles.deviceTrigger}>
+              <SelectedIcon size={16} uniProps={deviceMutedIconMapping} />
+              <ThemedChevronDown size={12} uniProps={deviceMutedIconMapping} />
+            </View>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <Text style={styles.toolbarTooltipText}>{label}</Text>
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" scrollable maxHeight={360}>
+        {DEVICE_SIZE_PRESETS.map((preset) => (
+          <DeviceSizeMenuItem
+            key={preset.id}
+            preset={preset}
+            selected={preset.id === selectedId}
+            label={formatDevicePresetLabel(preset, t(RESPONSIVE_DEVICE_LABEL_KEY))}
+            onSelect={onSelect}
+          />
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 // eslint-disable-next-line complexity
 export function BrowserPane({
   browserId,
@@ -300,7 +640,19 @@ export function BrowserPane({
   browserRef.current = browser;
   const pendingNavigationUrlRef = useRef<string | null>(null);
   const domReadyRef = useRef(false);
+  const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
   const [selectorActive, setSelectorActive] = useState(false);
+  // Which action the active selector performs on click: open the annotation card
+  // ("annotate") or copy the element to the clipboard ("grab").
+  const selectorModeRef = useRef<"annotate" | "grab">("annotate");
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const [deviceSizeId, setDeviceSizeId] = useState<DeviceSizeId>("responsive");
+  const [pendingSelection, setPendingSelection] = useState<BrowserElementSelection | null>(null);
+  // Screenshot is captured at selection time (overlay already torn down, no
+  // scroll drift) and reused when the annotation card is submitted.
+  const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
@@ -404,16 +756,16 @@ export function BrowserPane({
       initialUrlRef.current,
       browserErrorLabelsRef.current,
     );
-    const webview = document.createElement("webview") as ElectronWebview;
+    const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
+    const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
     webviewRef.current = webview;
-    webview.setAttribute("partition", `persist:paseo-browser-${browserId}`);
-    webview.setAttribute("allowpopups", "true");
-    webview.setAttribute("spellcheck", "false");
-    webview.setAttribute("autosize", "on");
-    webview.setAttribute(
-      "src",
-      initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
-    );
+    void getDesktopHost()?.browser?.registerWorkspaceBrowser?.({ browserId, workspaceId });
+    if (!residentWebview) {
+      prepareBrowserWebview(webview, {
+        browserId,
+        initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+      });
+    }
     webview.style.display = "flex";
     webview.style.flex = "1";
     webview.style.width = "100%";
@@ -490,6 +842,12 @@ export function BrowserPane({
     const handleDomReady = () => {
       domReadyRef.current = true;
       syncNavigationState();
+      // The previous page's overlay is gone after a load; re-apply markers for
+      // the freshly loaded document.
+      const markers = annotationMarkersRef.current;
+      if (markers.length > 0) {
+        applyAnnotationMarkers(webview, markers);
+      }
     };
     const handleWebviewFocus = () => {
       onFocusPane?.();
@@ -528,7 +886,14 @@ export function BrowserPane({
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
       if (host.contains(webview)) {
-        host.removeChild(webview);
+        const browserStillExists = Boolean(
+          useBrowserStore.getState().browsersById[browserIdRef.current],
+        );
+        if (browserStillExists) {
+          releaseResidentBrowserWebview(browserIdRef.current, webview);
+        } else {
+          host.removeChild(webview);
+        }
       }
       if (webviewRef.current === webview) {
         webviewRef.current = null;
@@ -659,7 +1024,11 @@ export function BrowserPane({
   }, [draftUrl, navigate]);
 
   const addElementAttachment = useCallback(
-    (selection: BrowserElementSelection) => {
+    (
+      selection: BrowserElementSelection,
+      annotation: BrowserElementAnnotation,
+      screenshot?: AttachmentMetadata,
+    ) => {
       if (!workspaceAttachmentScopeKey) {
         return;
       }
@@ -669,7 +1038,7 @@ export function BrowserPane({
           ...workspaceAttachments,
           {
             kind: "browser_element",
-            attachment: buildBrowserElementAttachment(selection),
+            attachment: buildBrowserElementAttachment(selection, annotation, screenshot),
           },
         ],
       });
@@ -677,12 +1046,126 @@ export function BrowserPane({
     [setWorkspaceAttachments, workspaceAttachmentScopeKey, workspaceAttachments],
   );
 
-  const startElementSelector = useCallback(() => {
-    const webview = webviewRef.current;
-    if (!webview || !domReadyRef.current || !workspaceAttachmentScopeKey) return;
-    setSelectorActive(true);
+  const captureElementScreenshot = useCallback(
+    async (selection: BrowserElementSelection): Promise<AttachmentMetadata | undefined> => {
+      const captureElement = getDesktopHost()?.browser?.captureElement;
+      if (typeof captureElement !== "function") {
+        return undefined;
+      }
+      const { x, y, width, height } = selection.boundingRect;
+      if (width <= 0 || height <= 0) {
+        return undefined;
+      }
+      try {
+        const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
+        if (!dataUrl) {
+          return undefined;
+        }
+        return await persistAttachmentFromDataUrl({
+          dataUrl,
+          mimeType: "image/png",
+          fileName: `element-${selection.tag}.png`,
+        });
+      } catch (error) {
+        console.warn("[browser-pane] captureElement failed", error);
+        return undefined;
+      }
+    },
+    [],
+  );
 
-    const js = `
+  const grabElementToClipboard = useCallback(
+    async (selection: BrowserElementSelection) => {
+      const text = formatElementAttachment(selection);
+      const copyElement = getDesktopHost()?.browser?.copyElement;
+      const captureElement = getDesktopHost()?.browser?.captureElement;
+      const { x, y, width, height } = selection.boundingRect;
+
+      let imageDataUrl: string | undefined;
+      if (typeof captureElement === "function" && width > 0 && height > 0) {
+        try {
+          const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
+          imageDataUrl = dataUrl ?? undefined;
+        } catch (error) {
+          console.warn("[browser-pane] capture element for grab failed", error);
+        }
+      }
+
+      // Copy via the main process; the renderer's navigator.clipboard rejects
+      // with NotAllowedError because focus is inside the guest <webview>.
+      if (typeof copyElement === "function") {
+        try {
+          const ok = await copyElement({ text, imageDataUrl });
+          if (ok) {
+            toastRef.current?.copied(t("workspace.browser.controls.grabElementLabel"));
+          } else {
+            toastRef.current?.error(t("workspace.browser.controls.grabFailed"));
+          }
+          return;
+        } catch (error) {
+          console.warn("[browser-pane] copyElement bridge failed", error);
+        }
+      }
+
+      // Fallback to expo-clipboard (text only) when the bridge is unavailable.
+      try {
+        await Clipboard.setStringAsync(text);
+        toastRef.current?.copied(t("workspace.browser.controls.grabElementLabel"));
+      } catch (error) {
+        console.warn("[browser-pane] clipboard fallback failed", error);
+        toastRef.current?.error(t("workspace.browser.controls.grabFailed"));
+      }
+    },
+    [t],
+  );
+
+  const handleSelectorResult = useCallback(
+    (selection: BrowserElementSelection) => {
+      if (selectorModeRef.current === "grab") {
+        void grabElementToClipboard(selection);
+        return;
+      }
+      pendingScreenshotRef.current = undefined;
+      setPendingSelection(selection);
+      void captureElementScreenshot(selection).then((screenshot) => {
+        pendingScreenshotRef.current = screenshot;
+        return undefined;
+      });
+    },
+    [captureElementScreenshot, grabElementToClipboard],
+  );
+
+  const submitAnnotation = useCallback(
+    (annotation: BrowserElementAnnotation) => {
+      const selection = pendingSelection;
+      const screenshot = pendingScreenshotRef.current;
+      pendingScreenshotRef.current = undefined;
+      setPendingSelection(null);
+      if (!selection) {
+        return;
+      }
+      addElementAttachment(selection, annotation, screenshot);
+    },
+    [addElementAttachment, pendingSelection],
+  );
+
+  const cancelAnnotation = useCallback(() => {
+    pendingScreenshotRef.current = undefined;
+    setPendingSelection(null);
+  }, []);
+
+  const startElementSelector = useCallback(
+    (mode: "annotate" | "grab") => {
+      const webview = webviewRef.current;
+      if (!webview || !domReadyRef.current) return;
+      // Annotate needs a workspace scope to attach to; grab only copies.
+      if (mode === "annotate" && !workspaceAttachmentScopeKey) return;
+      selectorModeRef.current = mode;
+      pendingScreenshotRef.current = undefined;
+      setPendingSelection(null);
+      setSelectorActive(true);
+
+      const js = `
       (function() {
         if (window.__paseoSelector) { window.__paseoSelector.destroy(); }
         var overlay = null;
@@ -693,16 +1176,74 @@ export function BrowserPane({
           '.__paseo-select-mode *, .__paseo-select-mode *::before, .__paseo-select-mode *::after { animation: none !important; transition: none !important; }',
           '.__paseo-select-mode a, .__paseo-select-mode button, .__paseo-select-mode input, .__paseo-select-mode select, .__paseo-select-mode textarea, .__paseo-select-mode [role="button"], .__paseo-select-mode [onclick] { pointer-events: none !important; }',
           '.__paseo-select-mode iframe, .__paseo-select-mode video, .__paseo-select-mode audio { pointer-events: none !important; }',
+          '.__paseo-hover-label { position: fixed; z-index: 2147483647; pointer-events: none; max-width: 360px; padding: 4px 8px; border-radius: 6px; background: rgba(24,24,27,0.96); color: #fff; font: 500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+          '.__paseo-hover-label .__paseo-tag { color: #93c5fd; }',
+          '.__paseo-hover-label .__paseo-id { color: #fca5a5; }',
+          '.__paseo-hover-label .__paseo-cls { color: #fcd34d; }',
+          '.__paseo-hover-label .__paseo-dim { color: #a1a1aa; margin-left: 6px; }',
+          '.__paseo-hover-label .__paseo-comp { color: #86efac; margin-left: 6px; }',
         ].join('\\n');
         document.head.appendChild(style);
         document.documentElement.classList.add('__paseo-select-mode');
+        var hoverLabel = document.createElement('div');
+        hoverLabel.className = '__paseo-hover-label';
+        hoverLabel.style.display = 'none';
+        document.documentElement.appendChild(hoverLabel);
         var last = null;
+        function escapeHtml(value) {
+          return String(value).replace(/[&<>"]/g, function(ch) {
+            return ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;';
+          });
+        }
+        function describeElement(el) {
+          var tag = el.tagName ? el.tagName.toLowerCase() : 'node';
+          var parts = ['<span class="__paseo-tag">' + escapeHtml(tag) + '</span>'];
+          if (el.id) {
+            parts.push('<span class="__paseo-id">#' + escapeHtml(el.id) + '</span>');
+          }
+          if (el.classList && el.classList.length) {
+            var cls = Array.prototype.slice.call(el.classList, 0, 2)
+              .filter(function(c) { return c.indexOf('__paseo') !== 0; })
+              .map(function(c) { return '.' + escapeHtml(c); })
+              .join('');
+            if (cls) parts.push('<span class="__paseo-cls">' + cls + '</span>');
+          }
+          var comp = getReactSource(el);
+          if (comp && comp.componentName) {
+            parts.push('<span class="__paseo-comp">&lt;' + escapeHtml(comp.componentName) + '&gt;</span>');
+          }
+          var rect = el.getBoundingClientRect();
+          parts.push('<span class="__paseo-dim">' + Math.round(rect.width) + '×' + Math.round(rect.height) + '</span>');
+          return { html: parts.join(''), rect: rect };
+        }
+        function positionLabel(rect, e) {
+          var pad = 12;
+          var lw = hoverLabel.offsetWidth || 0;
+          var lh = hoverLabel.offsetHeight || 0;
+          var top = rect.top - lh - 6;
+          if (top < 4) top = rect.bottom + 6;
+          if (top + lh > window.innerHeight - 4) top = Math.max(4, e.clientY - lh - 6);
+          var left = rect.left;
+          if (left + lw > window.innerWidth - 4) left = Math.max(4, window.innerWidth - lw - 4);
+          if (left < 4) left = 4;
+          hoverLabel.style.top = Math.round(top) + 'px';
+          hoverLabel.style.left = Math.round(left) + 'px';
+        }
         function onMove(e) {
           e.preventDefault();
           e.stopPropagation();
           if (last) last.classList.remove('__paseo-hover');
-          e.target.classList.add('__paseo-hover');
-          last = e.target;
+          var el = e.target;
+          el.classList.add('__paseo-hover');
+          last = el;
+          try {
+            var info = describeElement(el);
+            hoverLabel.innerHTML = info.html;
+            hoverLabel.style.display = 'block';
+            positionLabel(info.rect, e);
+          } catch (err) {
+            hoverLabel.style.display = 'none';
+          }
         }
         function buildSelector(el) {
           if (el.id) return '#' + el.id;
@@ -779,6 +1320,7 @@ export function BrowserPane({
           e.stopImmediatePropagation();
           var el = e.target;
           if (last) last.classList.remove('__paseo-hover');
+          hoverLabel.style.display = 'none';
           var attrs = {};
           for (var i = 0; i < el.attributes.length; i++) {
             attrs[el.attributes[i].name] = el.attributes[i].value;
@@ -822,6 +1364,7 @@ export function BrowserPane({
           document.removeEventListener('submit', blockEvent, true);
           document.documentElement.classList.remove('__paseo-select-mode');
           if (last) last.classList.remove('__paseo-hover');
+          if (hoverLabel.parentNode) hoverLabel.parentNode.removeChild(hoverLabel);
           style.remove();
           window.__paseoSelector = null;
         }
@@ -840,31 +1383,33 @@ export function BrowserPane({
       })()
     `;
 
-    try {
-      void executeWebviewJavaScript(webview, js)
-        .then(() => {
-          const poll = startSelectorResultPolling({
-            webview,
-            onSelection: addElementAttachment,
-            onDone: () => setSelectorActive(false),
-          });
-          window.setTimeout(() => {
-            window.clearInterval(poll);
+      try {
+        void executeWebviewJavaScript(webview, js)
+          .then(() => {
+            const poll = startSelectorResultPolling({
+              webview,
+              onSelection: handleSelectorResult,
+              onDone: () => setSelectorActive(false),
+            });
+            window.setTimeout(() => {
+              window.clearInterval(poll);
+              setSelectorActive(false);
+              if (webviewRef.current !== webview || !domReadyRef.current) {
+                return;
+              }
+              destroyWebviewSelector(webview);
+            }, 30000);
+            return undefined;
+          })
+          .catch(() => {
             setSelectorActive(false);
-            if (webviewRef.current !== webview || !domReadyRef.current) {
-              return;
-            }
-            destroyWebviewSelector(webview);
-          }, 30000);
-          return undefined;
-        })
-        .catch(() => {
-          setSelectorActive(false);
-        });
-    } catch {
-      setSelectorActive(false);
-    }
-  }, [addElementAttachment, workspaceAttachmentScopeKey]);
+          });
+      } catch {
+        setSelectorActive(false);
+      }
+    },
+    [handleSelectorResult, workspaceAttachmentScopeKey],
+  );
 
   const cancelElementSelector = useCallback(() => {
     const webview = webviewRef.current;
@@ -876,12 +1421,61 @@ export function BrowserPane({
     }
   }, []);
 
+  const currentPageUrl = browser?.url ?? null;
+  const annotationMarkers = useMemo<BrowserAnnotationMarker[]>(() => {
+    if (!currentPageUrl) {
+      return [];
+    }
+    const normalizedCurrent = normalizeWorkspaceBrowserUrl(currentPageUrl);
+    const markers: BrowserAnnotationMarker[] = [];
+    let index = 0;
+    for (const attachment of workspaceAttachments) {
+      if (attachment.kind !== "browser_element") {
+        continue;
+      }
+      index += 1;
+      if (normalizeWorkspaceBrowserUrl(attachment.attachment.url) !== normalizedCurrent) {
+        continue;
+      }
+      markers.push({ index, selector: attachment.attachment.selector });
+    }
+    return markers;
+  }, [currentPageUrl, workspaceAttachments]);
+
+  const markersKey = useMemo(() => JSON.stringify(annotationMarkers), [annotationMarkers]);
+  annotationMarkersRef.current = annotationMarkers;
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    const webview = webviewRef.current;
+    if (!webview || !domReadyRef.current) {
+      return;
+    }
+    if (annotationMarkers.length === 0) {
+      clearAnnotationMarkers(webview);
+      return;
+    }
+    applyAnnotationMarkers(webview, annotationMarkers);
+    // markersKey captures the marker contents; re-run when they change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markersKey, currentPageUrl]);
+
   const handleToggleElementSelector = useCallback(() => {
     if (selectorActive) {
       cancelElementSelector();
       return;
     }
-    startElementSelector();
+    startElementSelector("annotate");
+  }, [cancelElementSelector, selectorActive, startElementSelector]);
+
+  const handleToggleGrab = useCallback(() => {
+    if (selectorActive) {
+      cancelElementSelector();
+      return;
+    }
+    startElementSelector("grab");
   }, [cancelElementSelector, selectorActive, startElementSelector]);
 
   const handleOpenDevTools = useCallback(() => {
@@ -936,17 +1530,46 @@ export function BrowserPane({
     [selectorActive],
   );
 
-  const webviewHostStyle = useMemo<CSSProperties>(
-    () => ({
-      display: "flex",
-      flex: 1,
-      width: "100%",
-      height: "100%",
-      minHeight: 0,
-      background: theme.colors.surface0,
-    }),
-    [theme.colors.surface0],
+  const devicePreset = useMemo(
+    () =>
+      DEVICE_SIZE_PRESETS.find((preset) => preset.id === deviceSizeId) ?? DEVICE_SIZE_PRESETS[0],
+    [deviceSizeId],
   );
+  const isResponsiveDevice = devicePreset.width === null;
+
+  const webviewHostStyle = useMemo<CSSProperties>(
+    () =>
+      isResponsiveDevice
+        ? {
+            display: "flex",
+            flex: 1,
+            width: "100%",
+            height: "100%",
+            minHeight: 0,
+            background: theme.colors.surface0,
+          }
+        : {
+            // Fixed-size device frame, centered within webviewWrap (see styles).
+            display: "flex",
+            width: devicePreset.width ?? undefined,
+            maxWidth: "100%",
+            height: devicePreset.height ?? undefined,
+            maxHeight: "100%",
+            minHeight: 0,
+            background: theme.colors.surface0,
+            boxShadow: "0 2px 16px rgba(0,0,0,0.25)",
+          },
+    [devicePreset.height, devicePreset.width, isResponsiveDevice, theme.colors.surface0],
+  );
+
+  const webviewWrapStyle = useMemo(
+    () => [styles.webviewWrap, !isResponsiveDevice && styles.webviewWrapDeviceFrame],
+    [isResponsiveDevice],
+  );
+
+  const setWebviewHostNode = useCallback((node: HTMLDivElement | null) => {
+    webviewHostRef.current = node;
+  }, []);
 
   if (!isElectronRuntime()) {
     return (
@@ -961,27 +1584,24 @@ export function BrowserPane({
     <View style={styles.container}>
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.browser.controls.back")}
+          <ToolbarButton
+            label={t("workspace.browser.controls.back")}
             disabled={!browser?.canGoBack}
             onPress={handleBack}
             style={backIconButtonStyle}
           >
             <ArrowLeft size={16} color={theme.colors.foregroundMuted} />
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.browser.controls.forward")}
+          </ToolbarButton>
+          <ToolbarButton
+            label={t("workspace.browser.controls.forward")}
             disabled={!browser?.canGoForward}
             onPress={handleForward}
             style={forwardIconButtonStyle}
           >
             <ArrowRight size={16} color={theme.colors.foregroundMuted} />
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={
+          </ToolbarButton>
+          <ToolbarButton
+            label={
               browser?.isLoading
                 ? t("workspace.browser.controls.stopLoading")
                 : t("workspace.browser.controls.refresh")
@@ -990,7 +1610,7 @@ export function BrowserPane({
             style={baseIconButtonStyle}
           >
             <RotateCw size={16} color={theme.colors.foregroundMuted} />
-          </Pressable>
+          </ToolbarButton>
         </View>
         <View style={styles.urlBarWrap}>
           <TextInput
@@ -1008,33 +1628,42 @@ export function BrowserPane({
           />
         </View>
         <View style={styles.chromeRight}>
+          <DeviceSizeMenu
+            selectedId={deviceSizeId}
+            onSelect={setDeviceSizeId}
+            triggerStyle={baseIconButtonStyle}
+          />
           {isDev ? (
-            <>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t("workspace.browser.controls.openDevTools")}
-                onPress={handleOpenDevTools}
-                style={baseIconButtonStyle}
-              >
-                <PencilRuler size={16} color={theme.colors.foregroundMuted} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  selectorActive
-                    ? t("workspace.browser.controls.cancelSelector")
-                    : t("workspace.browser.controls.selectElement")
-                }
-                onPress={handleToggleElementSelector}
-                style={selectorIconButtonStyle}
-              >
-                <MousePointer2
-                  size={16}
-                  color={selectorActive ? theme.colors.accent : theme.colors.foregroundMuted}
-                />
-              </Pressable>
-            </>
+            <ToolbarButton
+              label={t("workspace.browser.controls.openDevTools")}
+              onPress={handleOpenDevTools}
+              style={baseIconButtonStyle}
+            >
+              <PencilRuler size={16} color={theme.colors.foregroundMuted} />
+            </ToolbarButton>
           ) : null}
+          <ToolbarButton
+            label={
+              selectorActive
+                ? t("workspace.browser.controls.cancelSelector")
+                : t("workspace.browser.controls.selectElement")
+            }
+            active={selectorActive}
+            onPress={handleToggleElementSelector}
+            style={selectorIconButtonStyle}
+          >
+            <MousePointer2
+              size={16}
+              color={selectorActive ? theme.colors.accent : theme.colors.foregroundMuted}
+            />
+          </ToolbarButton>
+          <ToolbarButton
+            label={t("workspace.browser.controls.grabElement")}
+            onPress={handleToggleGrab}
+            style={baseIconButtonStyle}
+          >
+            <Copy size={16} color={theme.colors.foregroundMuted} />
+          </ToolbarButton>
         </View>
       </View>
       {browser?.lastError ? (
@@ -1044,17 +1673,179 @@ export function BrowserPane({
           </Text>
         </View>
       ) : null}
-      <View style={styles.webviewWrap}>
+      <View style={webviewWrapStyle}>
         {createElement("div", {
-          ref: (node: HTMLDivElement | null) => {
-            webviewHostRef.current = node;
-          },
+          ref: setWebviewHostNode,
           style: webviewHostStyle,
         })}
+        {pendingSelection ? (
+          <BrowserElementAnnotationCard
+            selection={pendingSelection}
+            onSubmit={submitAnnotation}
+            onCancel={cancelAnnotation}
+          />
+        ) : null}
       </View>
     </View>
   );
 }
+
+const INTENT_LABEL_KEYS: Record<BrowserAnnotationIntent, string> = {
+  fix: "workspace.browser.annotate.intents.fix",
+  change: "workspace.browser.annotate.intents.change",
+  question: "workspace.browser.annotate.intents.question",
+  approve: "workspace.browser.annotate.intents.approve",
+};
+
+function IntentChip({
+  active,
+  intent,
+  label,
+  onSelect,
+}: {
+  active: boolean;
+  intent: BrowserAnnotationIntent;
+  label: string;
+  onSelect: (intent: BrowserAnnotationIntent) => void;
+}) {
+  const handlePress = useCallback(() => {
+    onSelect(intent);
+  }, [intent, onSelect]);
+  const chipStyle = useMemo(() => [styles.intentChip, active && styles.intentChipActive], [active]);
+  const textStyle = useMemo(
+    () => [styles.intentChipText, active && styles.intentChipTextActive],
+    [active],
+  );
+  const accessibilityState = useMemo(() => ({ selected: active }), [active]);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      onPress={handlePress}
+      style={chipStyle}
+    >
+      <Text style={textStyle}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function BrowserElementAnnotationCard({
+  selection,
+  onSubmit,
+  onCancel,
+}: {
+  selection: BrowserElementSelection;
+  onSubmit: (annotation: BrowserElementAnnotation) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const [comment, setComment] = useState("");
+  const [intent, setIntent] = useState<BrowserAnnotationIntent>("fix");
+  const commentRef = useRef(comment);
+  commentRef.current = comment;
+  const intentRef = useRef(intent);
+  intentRef.current = intent;
+
+  const handleSubmit = useCallback(() => {
+    onSubmit({ comment: commentRef.current, intent: intentRef.current });
+  }, [onSubmit]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+        return;
+      }
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleSubmit();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [handleSubmit, onCancel]);
+
+  const elementText = truncateText(selection.text.trim().replace(/\s+/g, " "), 60);
+  const elementLabel = elementText ? `${selection.tag} · ${elementText}` : selection.tag;
+
+  return (
+    <View style={styles.annotationOverlay} pointerEvents="box-none">
+      <View style={styles.annotationCard}>
+        <View style={styles.annotationHeader}>
+          <Text numberOfLines={1} style={styles.annotationTitle}>
+            {t("workspace.browser.annotate.title")}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("workspace.browser.annotate.cancel")}
+            onPress={onCancel}
+            style={styles.annotationCloseButton}
+          >
+            <ThemedCloseIcon size={16} uniProps={iconForegroundMutedMapping} />
+          </Pressable>
+        </View>
+        <Text numberOfLines={1} style={styles.annotationElement}>
+          {elementLabel}
+        </Text>
+        <View style={styles.annotationIntents}>
+          {BROWSER_ANNOTATION_INTENTS.map((option) => (
+            <IntentChip
+              key={option}
+              active={option === intent}
+              intent={option}
+              label={t(INTENT_LABEL_KEYS[option])}
+              onSelect={setIntent}
+            />
+          ))}
+        </View>
+        <ThemedAnnotationInput
+          accessibilityLabel={t("workspace.browser.annotate.placeholder")}
+          autoFocus
+          multiline
+          onChangeText={setComment}
+          placeholder={t("workspace.browser.annotate.placeholder")}
+          style={styles.annotationInput}
+          uniProps={annotationInputMapping}
+          value={comment}
+        />
+        <View style={styles.annotationActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onCancel}
+            style={styles.annotationSecondaryButton}
+          >
+            <Text style={styles.annotationSecondaryText}>
+              {t("workspace.browser.annotate.cancel")}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleSubmit}
+            style={styles.annotationPrimaryButton}
+          >
+            <Text style={styles.annotationPrimaryText}>
+              {t("workspace.browser.annotate.submit")}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const ThemedCloseIcon = withUnistyles(X);
+const ThemedAnnotationInput = withUnistyles(TextInput);
+const iconForegroundMutedMapping = (theme: { colors: { foregroundMuted: string } }) => ({
+  color: theme.colors.foregroundMuted,
+});
+const annotationInputMapping = (theme: { colors: { foregroundMuted: string } }) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -1076,11 +1867,13 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+    flexShrink: 0,
   },
   chromeRight: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+    flexShrink: 0,
   },
   iconButton: {
     width: 28,
@@ -1131,6 +1924,131 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     overflow: "hidden",
+  },
+  // When a fixed device size is active, center the framed webview both axes over
+  // a muted backdrop instead of left-aligning it.
+  webviewWrapDeviceFrame: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface1,
+    padding: theme.spacing[3],
+  },
+  deviceTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  toolbarTooltipText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.popoverForeground,
+  },
+  annotationOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: theme.spacing[3],
+    alignItems: "center",
+  },
+  annotationCard: {
+    width: "100%",
+    maxWidth: 420,
+    gap: theme.spacing[2],
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  annotationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
+  annotationTitle: {
+    flex: 1,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+    color: theme.colors.foreground,
+  },
+  annotationCloseButton: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  annotationElement: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  annotationIntents: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[1],
+  },
+  intentChip: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+  },
+  intentChipActive: {
+    borderColor: theme.colors.accent,
+    backgroundColor: `${String(theme.colors.accent)}20`,
+  },
+  intentChipText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: "500",
+    color: theme.colors.foregroundMuted,
+  },
+  intentChipTextActive: {
+    color: theme.colors.accent,
+  },
+  annotationInput: {
+    minHeight: 64,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    textAlignVertical: "top",
+  },
+  annotationActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
+  annotationSecondaryButton: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+  },
+  annotationSecondaryText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+    color: theme.colors.foregroundMuted,
+  },
+  annotationPrimaryButton: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.accent,
+  },
+  annotationPrimaryText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+    color: theme.colors.accentForeground ?? "#ffffff",
   },
   unavailableState: {
     flex: 1,

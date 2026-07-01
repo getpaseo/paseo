@@ -179,7 +179,7 @@ async function runtimeSessionId(
   harness: ClaudeRewindHarness,
   session: ClaudeRewindSession,
 ): Promise<string | null> {
-  const snapshot = await harness.client.fetchAgent(session.agentId);
+  const snapshot = await harness.client.fetchAgent({ agentId: session.agentId });
   return snapshot?.agent.runtimeInfo?.sessionId ?? snapshot?.agent.persistence?.sessionId ?? null;
 }
 
@@ -289,7 +289,7 @@ describe("daemon E2E (real claude) - rewind", () => {
           expect(sessionIdAfter).not.toBe(sessionIdBefore);
         }
 
-        const snapshot = await harness.client.fetchAgent(session.agentId);
+        const snapshot = await harness.client.fetchAgent({ agentId: session.agentId });
         expect(snapshot?.agent.status).toBe("idle");
         expect(snapshot?.agent.pendingPermissions).toEqual([]);
       } finally {

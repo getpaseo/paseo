@@ -1,7 +1,7 @@
 import { chmod, readFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, test as base } from "./fixtures";
-import { seedWorkspace } from "./helpers/seed-client";
+import { expect, test as base, type Page } from "./fixtures";
+import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
@@ -30,6 +30,8 @@ import {
   restorePaseoConfig,
   unblockPaseoConfigWrites,
 } from "./helpers/project-settings";
+import { gotoAppShell } from "./helpers/app";
+import { createTempGitRepo } from "./helpers/workspace";
 
 const updatedSetup = ["npm install", "npm run build"];
 
@@ -131,7 +133,64 @@ async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<
   return readFile(path.join(project.path, "paseo.json"), "utf8");
 }
 
+async function addProjectFromSidebar(page: Page, projectPath: string): Promise<string> {
+  await page.getByTestId("sidebar-add-project").click();
+
+  const input = page.getByPlaceholder("Type a directory path...");
+  await expect(input).toBeVisible({ timeout: 30_000 });
+  await input.fill(projectPath);
+  await page.keyboard.press("Enter");
+
+  const projectRow = page
+    .locator('[data-testid^="sidebar-project-row-"]')
+    .filter({ hasText: path.basename(projectPath) })
+    .first();
+  await expect(projectRow).toBeVisible({ timeout: 30_000 });
+
+  const testId = await projectRow.getAttribute("data-testid");
+  expect(testId).not.toBeNull();
+  return testId!.replace("sidebar-project-row-", "");
+}
+
+async function openProjectSettingsFromSidebar(page: Page, projectId: string): Promise<void> {
+  const projectRow = page.getByTestId(`sidebar-project-row-${projectId}`);
+  await expect(projectRow).toBeVisible({ timeout: 30_000 });
+  await projectRow.hover();
+
+  const kebab = page.getByTestId(`sidebar-project-kebab-${projectId}`);
+  await expect(kebab).toBeVisible({ timeout: 10_000 });
+  await kebab.click();
+
+  const openSettingsItem = page.getByTestId(`sidebar-project-menu-open-settings-${projectId}`);
+  await expect(openSettingsItem).toBeVisible({ timeout: 10_000 });
+  await openSettingsItem.click();
+}
+
 test.describe("Projects settings", () => {
+  test("freshly-added project with no workspace is editable from the sidebar without a reload", async ({
+    page,
+  }) => {
+    const repo = await createTempGitRepo("projects-settings-empty-");
+    const client = await connectSeedClient();
+    let projectId: string | null = null;
+
+    try {
+      await gotoAppShell(page);
+
+      projectId = await addProjectFromSidebar(page, repo.path);
+      await openProjectSettingsFromSidebar(page, projectId);
+
+      await expectProjectSettingsFormVisible(page);
+      await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
+    } finally {
+      if (projectId) {
+        await client.removeProject(projectId).catch(() => undefined);
+      }
+      await client.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    }
+  });
+
   test("user edits worktree setup from the projects page", async ({ page, editableProject }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
@@ -223,9 +282,9 @@ test.describe("Projects settings — error UX", () => {
     page,
     editableProject,
   }) => {
-    // Drop the WS connection the moment a read_project_config_request is sent.
-    // Subsequent connections are proxied transparently so Reload can succeed.
-    await installReadTransportFailure(page);
+    // Reject read_project_config_request calls until the user clicks Reload.
+    // This keeps automatic reconnect refetches from racing past the callout.
+    const transportFailure = await installReadTransportFailure(page);
 
     await openProjects(page);
     await navigateToProjectSettings(page, editableProject.name);
@@ -233,7 +292,8 @@ test.describe("Projects settings — error UX", () => {
     await expectProjectSettingsError(page, "transport");
     await expectProjectSettingsFormHidden(page);
 
-    // The client reconnects after a ~1.5 s backoff; retry Reload until refetch succeeds.
+    // Retry Reload until the refetch wins any in-flight error-state rendering.
+    transportFailure.allowRecovery();
     await expect(async () => {
       await clickReloadProjectSettings(page);
       await expectNoProjectSettingsError(page, "transport", 3_000);

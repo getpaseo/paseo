@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   type AgentCommandsClient,
   type DraftCommandConfig,
   fetchAgentCommands,
 } from "./use-agent-commands-query";
 
-type ListCommands = DaemonClient["listCommands"];
+type ListCommands = AgentCommandsClient["listCommands"];
 type ListCommandsResult = Awaited<ReturnType<ListCommands>>;
 
 interface ListCommandsCall {
@@ -22,15 +21,8 @@ function createClient(response: ListCommandsResult): FakeAgentCommandsClient {
   const calls: ListCommandsCall[] = [];
   return {
     calls,
-    listCommands: (async (
-      agentId: string,
-      requestIdOrOptions?: string | { draftConfig?: DraftCommandConfig },
-    ) => {
-      const options =
-        typeof requestIdOrOptions === "object" && requestIdOrOptions !== null
-          ? requestIdOrOptions
-          : undefined;
-      calls.push({ agentId, draftConfig: options?.draftConfig });
+    listCommands: (async (options: Parameters<ListCommands>[0]) => {
+      calls.push({ agentId: options.agentId, draftConfig: options.draftConfig });
       return response;
     }) as ListCommands,
   };

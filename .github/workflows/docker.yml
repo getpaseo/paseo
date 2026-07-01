@@ -1,0 +1,205 @@
+name: Docker
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/docker.yml"
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      paseo_version:
+        description: "Paseo version to build. Required when publish is true."
+        required: false
+        default: ""
+      publish:
+        description: "Publish the image to GHCR. Manual publishes require paseo_version."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      source_build:
+        description: "Build from the checked-out source tree instead of npm."
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - "false"
+          - "true"
+      publish_latest:
+        description: "Also publish ghcr.io/getpaseo/paseo:latest. Ignored for prereleases."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.values.outputs.image }}
+      install_version: ${{ steps.values.outputs.install_version }}
+      publish: ${{ steps.values.outputs.publish }}
+      source_build: ${{ steps.values.outputs.source_build }}
+      check_tag: ${{ steps.values.outputs.check_tag }}
+      publish_tags: ${{ steps.values.outputs.publish_tags }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: values
+        env:
+          INPUT_PASEO_VERSION: ${{ inputs.paseo_version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_PUBLISH_LATEST: ${{ inputs.publish_latest }}
+          INPUT_SOURCE_BUILD: ${{ inputs.source_build }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          owner="$(printf '%s' "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/paseo"
+          install_version="${INPUT_PASEO_VERSION:-latest}"
+          publish=false
+          source_build=false
+          publish_latest=false
+          prerelease=false
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            install_version="${REF_NAME#v}"
+            publish=true
+            if [[ "${REF_NAME}" == *-* ]]; then
+              prerelease=true
+              source_build=true
+            else
+              publish_latest=true
+            fi
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${INPUT_PUBLISH:-false}" == "true" ]]; then
+              if [[ -z "${INPUT_PASEO_VERSION}" || "${INPUT_PASEO_VERSION}" == "latest" ]]; then
+                echo "::error::paseo_version is required for manual Docker publishes."
+                exit 1
+              fi
+              publish=true
+            fi
+
+            if [[ "${install_version}" == *-* ]]; then
+              prerelease=true
+            fi
+
+            case "${INPUT_SOURCE_BUILD:-auto}" in
+              true)
+                source_build=true
+                ;;
+              false)
+                source_build=false
+                ;;
+              auto)
+                if [[ "${prerelease}" == "true" ]]; then
+                  source_build=true
+                fi
+                ;;
+              *)
+                echo "::error::source_build must be auto, true, or false."
+                exit 1
+                ;;
+            esac
+
+            if [[ "${INPUT_PUBLISH_LATEST:-false}" == "true" && "${prerelease}" != "true" ]]; then
+              publish_latest=true
+            fi
+          fi
+
+          check_tag="${image}:check-${GITHUB_SHA::12}"
+          publish_tags="${image}:${install_version}"
+          if [[ "${publish_latest}" == "true" ]]; then
+            publish_tags="${publish_tags}"$'\n'"${image}:latest"
+          fi
+
+          {
+            echo "image=${image}"
+            echo "install_version=${install_version}"
+            echo "publish=${publish}"
+            echo "source_build=${source_build}"
+            echo "check_tag=${check_tag}"
+            echo "publish_tags<<EOF"
+            echo "${publish_tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Resolved image=${image} install_version=${install_version} publish=${publish} source_build=${source_build}"
+
+  build:
+    needs: setup
+    if: needs.setup.outputs.publish != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ needs.setup.outputs.source_build == 'true' && '.' || 'docker/base' }}
+          file: ${{ needs.setup.outputs.source_build == 'true' && 'docker/base/Dockerfile.source' || 'docker/base/Dockerfile' }}
+          platforms: ${{ env.PLATFORMS }}
+          build-args: |
+            PASEO_VERSION=${{ needs.setup.outputs.install_version }}
+          tags: ${{ needs.setup.outputs.check_tag }}
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=paseo
+          cache-to: type=gha,scope=paseo,mode=max
+
+  publish:
+    needs: setup
+    if: needs.setup.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ needs.setup.outputs.source_build == 'true' && '.' || 'docker/base' }}
+          file: ${{ needs.setup.outputs.source_build == 'true' && 'docker/base/Dockerfile.source' || 'docker/base/Dockerfile' }}
+          platforms: ${{ env.PLATFORMS }}
+          build-args: |
+            PASEO_VERSION=${{ needs.setup.outputs.install_version }}
+          tags: ${{ needs.setup.outputs.publish_tags }}
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=paseo
+          cache-to: type=gha,scope=paseo,mode=max

@@ -3,12 +3,7 @@ import type { Logger } from "pino";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
-import {
-  DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-  DEFAULT_OPENAI_TTS_MODEL,
-  type OpenAiSpeechProviderConfig,
-} from "./config.js";
-import { OpenAIRealtimeTranscriptionSession } from "./realtime-transcription-session.js";
+import { DEFAULT_OPENAI_TTS_MODEL, type OpenAiSpeechProviderConfig } from "./config.js";
 import { OpenAISTT } from "./stt.js";
 import { OpenAITTS } from "./tts.js";
 
@@ -34,11 +29,11 @@ export interface SpeechServices {
 function resolveOpenAiCredentials(
   openaiConfig: OpenAiSpeechProviderConfig | undefined,
 ): OpenAiCredentialState {
-  const openaiApiKey = openaiConfig?.apiKey;
+  const sttApiKey = openaiConfig?.stt?.apiKey;
   return {
-    openaiSttApiKey: openaiConfig?.stt?.apiKey ?? openaiApiKey,
-    openaiTtsApiKey: openaiConfig?.tts?.apiKey ?? openaiApiKey,
-    openaiDictationApiKey: openaiApiKey,
+    openaiSttApiKey: sttApiKey,
+    openaiTtsApiKey: openaiConfig?.tts?.apiKey,
+    openaiDictationApiKey: sttApiKey,
   };
 }
 
@@ -85,7 +80,7 @@ export function validateOpenAiCredentialRequirements(params: {
   }
 
   if (missingOpenAiCredentialsFor.length > 0) {
-    logger.error(
+    logger.warn(
       {
         requestedProviders: {
           dictationStt: providers.dictationStt.provider,
@@ -94,10 +89,7 @@ export function validateOpenAiCredentialRequirements(params: {
         },
         missingOpenAiCredentialsFor,
       },
-      "Invalid speech configuration: OpenAI provider selected but credentials are missing",
-    );
-    throw new Error(
-      `Missing OpenAI credentials for configured speech features: ${missingOpenAiCredentialsFor.join(", ")}`,
+      "Invalid speech configuration: OpenAI provider selected but credentials are missing — speech features will be unavailable",
     );
   }
 }
@@ -127,25 +119,6 @@ function createOpenAiTts(
     },
     logger,
   );
-}
-
-function createOpenAiDictationService(
-  apiKey: string,
-  openaiConfig: OpenAiSpeechProviderConfig | undefined,
-): SpeechToTextProvider {
-  return {
-    id: "openai",
-    createSession: ({ logger: sessionLogger, language, prompt }) =>
-      new OpenAIRealtimeTranscriptionSession({
-        apiKey,
-        logger: sessionLogger,
-        transcriptionModel:
-          openaiConfig?.realtimeTranscriptionModel ?? DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-        ...(language ? { language } : {}),
-        ...(prompt ? { prompt } : {}),
-        turnDetection: null,
-      }),
-  };
 }
 
 export function initializeOpenAiSpeechServices(params: {
@@ -189,13 +162,14 @@ export function initializeOpenAiSpeechServices(params: {
     }
 
     if (needsOpenAiDictation && openAiCredentials.openaiDictationApiKey) {
-      dictationSttService = createOpenAiDictationService(
+      dictationSttService = createOpenAiStt(
         openAiCredentials.openaiDictationApiKey,
         openaiConfig,
+        logger,
       );
     }
   } else if (needsAnyOpenAi) {
-    logger.warn("OpenAI speech providers are configured but credentials are missing");
+    // validateOpenAiCredentialRequirements already warned about missing credentials
   }
 
   return {

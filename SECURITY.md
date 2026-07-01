@@ -50,6 +50,10 @@ Connected clients are trusted operators of the daemon user. File previews follow
 
 If you expose the daemon beyond loopback, such as by binding to `0.0.0.0`, forwarding it through a tunnel or reverse proxy, or publishing it from a Docker container, you are responsible for restricting and securing that access. Setting a password is strongly recommended in that case.
 
+In Docker, the official image runs the daemon and agents as the non-root
+`paseo` user by default. Mounted workspaces and credentials are still fully
+available to anything the agents run inside the container.
+
 For remote access, use the relay connection. It is the supported path for reaching the daemon off-machine, and it adds end-to-end encryption plus a pairing handshake before commands are accepted.
 
 Host header validation and CORS origin checks are defense-in-depth controls for localhost exposure. They help block DNS rebinding and browser-based attacks, but they do not replace network isolation.

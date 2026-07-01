@@ -226,6 +226,47 @@ describe("shared messages attachments", () => {
     ]);
   });
 
+  it("keeps known text attachment context kinds and ignores future ones", () => {
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "req-text-context",
+      agentId: "agent-1",
+      text: "Continue",
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          contextKind: "chat_history",
+          title: "Chat history",
+          text: "Earlier context",
+        },
+        {
+          type: "text",
+          mimeType: "text/plain",
+          contextKind: "future_context",
+          title: "Future context",
+          text: "Future client hint",
+        },
+      ],
+    });
+
+    expect(parsed.attachments).toEqual([
+      {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        title: "Chat history",
+        text: "Earlier context",
+      },
+      {
+        type: "text",
+        mimeType: "text/plain",
+        title: "Future context",
+        text: "Future client hint",
+      },
+    ]);
+  });
+
   it("keeps known firstAgentContext attachments and drops unknown ones", () => {
     const parsed = CreatePaseoWorktreeRequestSchema.parse({
       type: "create_paseo_worktree_request",

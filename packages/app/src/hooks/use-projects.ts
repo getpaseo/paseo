@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import type { ProjectSummary } from "@/utils/projects";
@@ -16,6 +16,10 @@ export type {
 
 export const projectsQueryKey = ["projects"] as const;
 
+function projectsQueryRuntimeKey(hosts: readonly ProjectsHostInput[]) {
+  return hosts.map((host) => host.serverId).join("|");
+}
+
 export interface UseProjectsResult {
   projects: ProjectSummary[];
   hostErrors: ProjectHostError[];
@@ -27,6 +31,11 @@ export interface UseProjectsResult {
 export function useProjects(): UseProjectsResult {
   const hosts = useHosts();
   const runtime = getHostRuntimeStore();
+  const runtimeVersion = useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () => runtime.getVersion(),
+    () => runtime.getVersion(),
+  );
   const hostInputs = useMemo<ProjectsHostInput[]>(
     () =>
       hosts.map((host) => ({
@@ -37,8 +46,9 @@ export function useProjects(): UseProjectsResult {
   );
 
   const projectsQuery = useQuery({
-    queryKey: projectsQueryKey,
+    queryKey: [...projectsQueryKey, projectsQueryRuntimeKey(hostInputs), runtimeVersion] as const,
     queryFn: () => fetchAggregatedProjects({ hosts: hostInputs, runtime }),
+    staleTime: 5_000,
   });
 
   return {
