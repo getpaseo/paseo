@@ -1,48 +1,79 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ClaudeAgentClient } from "./agent.js";
-import type { AgentPersistenceHandle } from "../../agent-sdk-types.js";
-
-// Mock the rewind module to intercept realClaudeRewindSdk.forkSession
-vi.mock("./rewind.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./rewind.js")>();
-  return {
-    ...original,
-    realClaudeRewindSdk: {
-      forkSession: vi.fn(),
-    },
-  };
-});
-
-import { realClaudeRewindSdk } from "./rewind.js";
+import { describe, expect, test } from "vitest";
 import pino from "pino";
+import { ClaudeAgentClient } from "./agent.js";
+import type { ClaudeRewindSdk } from "./rewind.js";
+import type {
+  AgentLaunchContext,
+  AgentPersistenceHandle,
+  AgentSession,
+  AgentSessionConfig,
+} from "../../agent-sdk-types.js";
 
 const logger = pino({ level: "silent" });
 
+/** Records fork calls and returns a configurable forked session id. */
+class RecordingRewindSdk implements ClaudeRewindSdk {
+  readonly forkCalls: Array<{ sessionId: string; upToMessageId: string }> = [];
+  private nextSessionId: string;
+
+  constructor(nextSessionId = "forked-session") {
+    this.nextSessionId = nextSessionId;
+  }
+
+  async forkSession(
+    sessionId: string,
+    options: { upToMessageId: string },
+  ): Promise<{ sessionId: string }> {
+    this.forkCalls.push({ sessionId, upToMessageId: options.upToMessageId });
+    return { sessionId: this.nextSessionId };
+  }
+}
+
+/** Overrides resumeSession so forkSession can be exercised without a process. */
+class TestClaudeAgentClient extends ClaudeAgentClient {
+  readonly resumeCalls: Array<{
+    handle: AgentPersistenceHandle;
+    overrides?: Partial<AgentSessionConfig>;
+    launchContext?: AgentLaunchContext;
+  }> = [];
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.resumeCalls.push({ handle, overrides, launchContext });
+    return { id: "mock-session" } as AgentSession;
+  }
+}
+
+interface Harness {
+  client: TestClaudeAgentClient;
+  rewindSdk: RecordingRewindSdk;
+}
+
+function createHarness(options?: {
+  nextSessionId?: string;
+  readSessionFile?: (filePath: string) => Promise<string>;
+}): Harness {
+  const rewindSdk = new RecordingRewindSdk(options?.nextSessionId ?? "forked-session");
+  const client = new TestClaudeAgentClient({
+    logger,
+    resolveBinary: async () => "/usr/local/bin/claude",
+    rewindSdk,
+    readSessionFile: options?.readSessionFile,
+  });
+  return { client, rewindSdk };
+}
+
 describe("ClaudeAgentClient.forkSession", () => {
-  let client: ClaudeAgentClient;
-  let resumeSessionSpy: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    client = new ClaudeAgentClient({
-      logger,
-      resolveBinary: async () => "/usr/local/bin/claude",
-    });
-    // Spy on resumeSession to avoid actually launching a process
-    resumeSessionSpy = vi.fn().mockResolvedValue({ id: "mock-session" });
-    client.resumeSession = resumeSessionSpy;
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   test("capabilities.supportsFork is true", () => {
+    const { client } = createHarness();
     expect(client.capabilities.supportsFork).toBe(true);
   });
 
-  test("forkSession uses provided upToMessageId and calls sdk.forkSession", async () => {
-    const mockForkSession = vi.mocked(realClaudeRewindSdk.forkSession);
-    mockForkSession.mockResolvedValue({ sessionId: "new-forked-session" });
+  test("forkSession uses provided upToMessageId and calls the rewind sdk", async () => {
+    const { client, rewindSdk } = createHarness({ nextSessionId: "new-forked-session" });
 
     const handle: AgentPersistenceHandle = {
       provider: "claude",
@@ -53,25 +84,23 @@ describe("ClaudeAgentClient.forkSession", () => {
 
     await client.forkSession(handle, { upToMessageId: "msg-uuid-123" });
 
-    expect(mockForkSession).toHaveBeenCalledWith("original-session-id", {
-      upToMessageId: "msg-uuid-123",
-    });
-    expect(resumeSessionSpy).toHaveBeenCalledWith(
+    expect(rewindSdk.forkCalls).toEqual([
+      { sessionId: "original-session-id", upToMessageId: "msg-uuid-123" },
+    ]);
+    expect(client.resumeCalls).toEqual([
       {
-        ...handle,
-        sessionId: "new-forked-session",
-        nativeHandle: "new-forked-session",
+        handle: {
+          ...handle,
+          sessionId: "new-forked-session",
+          nativeHandle: "new-forked-session",
+        },
+        overrides: undefined,
+        launchContext: undefined,
       },
-      undefined,
-      undefined,
-    );
+    ]);
   });
 
   test("forkSession resolves last message id from JSONL when upToMessageId is omitted", async () => {
-    const mockForkSession = vi.mocked(realClaudeRewindSdk.forkSession);
-    mockForkSession.mockResolvedValue({ sessionId: "forked-from-last" });
-
-    // Mock readFile on the private resolveLastMessageId path
     const sessionContent = [
       JSON.stringify({ type: "system", uuid: "sys-1", content: "system prompt" }),
       JSON.stringify({ type: "user", uuid: "user-msg-1", content: [{ type: "text", text: "hi" }] }),
@@ -92,9 +121,10 @@ describe("ClaudeAgentClient.forkSession", () => {
       }),
     ].join("\n");
 
-    // Use dynamic import to access promises from node:fs
-    const fs = await import("node:fs");
-    const readFileSpy = vi.spyOn(fs.promises, "readFile").mockResolvedValue(sessionContent);
+    const { client, rewindSdk } = createHarness({
+      nextSessionId: "forked-from-last",
+      readSessionFile: async () => sessionContent,
+    });
 
     const handle: AgentPersistenceHandle = {
       provider: "claude",
@@ -105,25 +135,22 @@ describe("ClaudeAgentClient.forkSession", () => {
 
     await client.forkSession(handle, {});
 
-    // Should resolve last assistant message uuid
-    expect(mockForkSession).toHaveBeenCalledWith("session-for-whole-fork", {
-      upToMessageId: "asst-msg-2",
+    // Should resolve the last user or assistant message uuid.
+    expect(rewindSdk.forkCalls).toEqual([
+      { sessionId: "session-for-whole-fork", upToMessageId: "asst-msg-2" },
+    ]);
+    expect(client.resumeCalls[0]?.handle).toMatchObject({
+      sessionId: "forked-from-last",
+      nativeHandle: "forked-from-last",
     });
-    expect(resumeSessionSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "forked-from-last",
-        nativeHandle: "forked-from-last",
-      }),
-      undefined,
-      undefined,
-    );
-
-    readFileSpy.mockRestore();
   });
 
   test("forkSession throws when session file cannot be read and no upToMessageId", async () => {
-    const fs = await import("node:fs");
-    const readFileSpy = vi.spyOn(fs.promises, "readFile").mockRejectedValue(new Error("ENOENT"));
+    const { client } = createHarness({
+      readSessionFile: async () => {
+        throw new Error("ENOENT");
+      },
+    });
 
     const handle: AgentPersistenceHandle = {
       provider: "claude",
@@ -133,11 +160,11 @@ describe("ClaudeAgentClient.forkSession", () => {
     };
 
     await expect(client.forkSession(handle, {})).rejects.toThrow(/session file not found/);
-
-    readFileSpy.mockRestore();
   });
 
   test("forkSession throws when no cwd in metadata and no upToMessageId", async () => {
+    const { client } = createHarness();
+
     const handle: AgentPersistenceHandle = {
       provider: "claude",
       sessionId: "no-cwd-session",
@@ -149,8 +176,7 @@ describe("ClaudeAgentClient.forkSession", () => {
   });
 
   test("forkSession does not mutate the original handle", async () => {
-    const mockForkSession = vi.mocked(realClaudeRewindSdk.forkSession);
-    mockForkSession.mockResolvedValue({ sessionId: "brand-new-id" });
+    const { client } = createHarness({ nextSessionId: "brand-new-id" });
 
     const handle: AgentPersistenceHandle = {
       provider: "claude",

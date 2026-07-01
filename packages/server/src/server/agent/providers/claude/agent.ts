@@ -47,7 +47,12 @@ import {
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
-import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
+import {
+  realClaudeRewindSdk,
+  revertClaudeConversation,
+  revertClaudeFiles,
+  type ClaudeRewindSdk,
+} from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { SETTING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -361,6 +366,10 @@ interface ClaudeAgentClientOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   configDir?: string;
+  /** Injectable Claude rewind SDK (native session fork). Defaults to the real SDK. */
+  rewindSdk?: ClaudeRewindSdk;
+  /** Injectable reader for the persisted session JSONL (whole-conversation fork). */
+  readSessionFile?: (filePath: string) => Promise<string>;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -1415,6 +1424,8 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly configDir?: string;
+  private readonly rewindSdk: ClaudeRewindSdk;
+  private readonly readSessionFile: (filePath: string) => Promise<string>;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1423,6 +1434,9 @@ export class ClaudeAgentClient implements AgentClient {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.configDir = options.configDir;
+    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
+    this.readSessionFile =
+      options.readSessionFile ?? ((filePath) => promises.readFile(filePath, "utf8"));
   }
 
   async createSession(
@@ -1566,7 +1580,7 @@ export class ClaudeAgentClient implements AgentClient {
     const sessionId = handle.sessionId;
     const upToMessageId = options.upToMessageId ?? (await this.resolveLastMessageId(handle));
 
-    const fork = await realClaudeRewindSdk.forkSession(sessionId, { upToMessageId });
+    const fork = await this.rewindSdk.forkSession(sessionId, { upToMessageId });
 
     const forkedHandle: AgentPersistenceHandle = {
       ...handle,
@@ -1598,7 +1612,7 @@ export class ClaudeAgentClient implements AgentClient {
 
     let content: string;
     try {
-      content = await promises.readFile(sessionFile, "utf8");
+      content = await this.readSessionFile(sessionFile);
     } catch {
       throw new Error(`Cannot fork Claude session: session file not found at ${sessionFile}`);
     }
