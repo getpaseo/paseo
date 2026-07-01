@@ -64,6 +64,11 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
+  // Set during graceful daemon shutdown for agents that were mid-run; cleared
+  // by the next applySnapshot (the projection never emits it) or by the boot
+  // resume pass. Records with lastStatus "running" and no marker indicate an
+  // unclean shutdown (crash) — both shapes are picked up by resume-on-boot.
+  interruptedAt: z.string().nullable().optional(),
 });
 
 export type SerializableAgentConfig = Pick<

@@ -155,6 +155,12 @@ const FeatureWebUiSchema = z
   })
   .strict();
 
+const FeatureResumeAgentsOnBootSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
 const StructuredGenerationProviderConfigSchema = z
   .object({
     provider: z.string().min(1),
@@ -307,6 +313,7 @@ export const PersistedConfigSchema = z
         dictation: FeatureDictationSchema.optional(),
         voiceMode: FeatureVoiceModeSchema.optional(),
         webUi: FeatureWebUiSchema.optional(),
+        resumeAgentsOnBoot: FeatureResumeAgentsOnBootSchema.optional(),
       })
       .strict()
       .optional(),

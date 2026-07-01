@@ -39,6 +39,7 @@ interface TestPaseoDaemonOptions {
   serviceProxy?: PaseoDaemonConfig["serviceProxy"];
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
+  resumeAgentsOnBoot?: boolean;
 }
 
 export interface TestPaseoDaemon {
@@ -179,6 +180,7 @@ async function prepareTestDaemonConfig(
     voiceLlmModel: options.voiceLlmModel ?? null,
     dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
     downloadTokenTtlMs: options.downloadTokenTtlMs,
+    resumeAgentsOnBoot: options.resumeAgentsOnBoot,
   };
   return { config, paseoHomeRoot, paseoHome, staticDir };
 }

@@ -495,6 +495,10 @@ export function loadConfig(
     relayPublicUseTls: relay.publicUseTls,
     serviceProxy,
     webUi,
+    resumeAgentsOnBoot:
+      parseBooleanEnv(env.PASEO_RESUME_AGENTS_ON_BOOT) ??
+      persisted.features?.resumeAgentsOnBoot?.enabled ??
+      false,
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,

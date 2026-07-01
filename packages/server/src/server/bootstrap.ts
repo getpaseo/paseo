@@ -103,6 +103,7 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { resumeInterruptedAgents } from "./agent/agent-boot-resume.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -355,6 +356,7 @@ export interface PaseoDaemonConfig {
     enabled: boolean;
     distDir: string | null;
   };
+  resumeAgentsOnBoot?: boolean;
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
@@ -830,6 +832,10 @@ export async function createPaseoDaemon(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
   );
+  if (config.resumeAgentsOnBoot) {
+    await resumeInterruptedAgents({ agentManager, agentStorage, logger });
+    logger.info({ elapsed: elapsed() }, "Interrupted-agent resume pass complete");
+  }
   logger.info(
     "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
   );
@@ -1313,7 +1319,7 @@ export async function createPaseoDaemon(
 
   const stop = async () => {
     scriptHealthMonitor.stop();
-    await closeAllAgents(logger, agentManager);
+    await closeAllAgents(logger, agentManager, agentStorage);
     await agentManager.flush().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
@@ -1357,14 +1363,32 @@ export async function createPaseoDaemon(
   };
 }
 
-async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
+async function closeAllAgents(
+  logger: Logger,
+  agentManager: AgentManager,
+  agentStorage: AgentStorage,
+): Promise<void> {
   const agents = agentManager.listAgents();
   await Promise.all(
     agents.map(async (agent) => {
+      const wasActive = agent.lifecycle === "running" || agent.lifecycle === "initializing";
       try {
         await agentManager.closeAgent(agent.id);
       } catch (err) {
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
+      }
+      if (!wasActive || agent.internal) {
+        return;
+      }
+      // closeAgent persisted lastStatus "closed", erasing that this agent was
+      // mid-run. Stamp the record so resume-on-boot can find it after restart.
+      try {
+        const record = await agentStorage.get(agent.id);
+        if (record && !record.archivedAt) {
+          await agentStorage.upsert({ ...record, interruptedAt: new Date().toISOString() });
+        }
+      } catch (err) {
+        logger.error({ err, agentId: agent.id }, "Failed to mark agent as interrupted");
       }
     }),
   );
