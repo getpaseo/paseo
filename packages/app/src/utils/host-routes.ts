@@ -118,6 +118,10 @@ function isCleanLegacyPathDecode(value: string): boolean {
   return isLegacyPathLikeWorkspaceValue(value) && !hasLegacyDecodeNoise(value);
 }
 
+function hasDecodedLegacyWorkspaceTabRouteSuffix(value: string): boolean {
+  return /\/tab\/[^/]+\/?$/.test(value);
+}
+
 export type WorkspaceOpenIntent =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
@@ -298,6 +302,10 @@ export function parseHostWorkspaceRouteFromPathname(
   }
 
   const rawWorkspaceId = match[2];
+  if (rawWorkspaceId.startsWith("/") && hasDecodedLegacyWorkspaceTabRouteSuffix(rawWorkspaceId)) {
+    return null;
+  }
+
   const workspaceId = decodeWorkspaceIdFromPathSegment(rawWorkspaceId);
   if (!workspaceId) {
     return null;

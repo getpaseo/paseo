@@ -83,6 +83,12 @@ describe("workspace route parsing", () => {
     ).toBeNull();
   });
 
+  it("does not treat decoded legacy /tab routes as valid workspace routes", () => {
+    expect(
+      parseHostWorkspaceRouteFromPathname("/h/local/workspace//tmp/repo/tab/draft_abc123"),
+    ).toBeNull();
+  });
+
   it("builds plain workspace routes for URL-safe ids", () => {
     expect(buildHostWorkspaceRoute("local", "164")).toBe("/h/local/workspace/164");
   });

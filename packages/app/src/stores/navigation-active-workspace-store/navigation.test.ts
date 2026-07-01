@@ -112,6 +112,18 @@ describe("workspace navigation", () => {
     });
   });
 
+  it("ignores decoded legacy workspace tab routes", () => {
+    const selection = parseActiveWorkspaceSelection({
+      pathname: "/h/server-1/workspace//tmp/paseo-workspace/tab/draft_abc123",
+      params: {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+      },
+    });
+
+    expect(selection).toBeNull();
+  });
+
   it("falls back to workspace route params during cold route mount", () => {
     const selection = parseActiveWorkspaceSelection({
       pathname: "/",
