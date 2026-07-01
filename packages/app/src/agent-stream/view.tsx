@@ -95,7 +95,7 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
-import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
@@ -295,6 +295,13 @@ function buildForkDraftSetup(agent: AgentScreenAgent): WorkspaceDraftTabSetup | 
   };
 }
 
+function buildForkDraftTabTarget(
+  setup: WorkspaceDraftTabSetup | undefined,
+  draftId: string,
+): WorkspaceTabTarget {
+  return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -339,6 +346,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     const supportsAgentForkContext = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContext === true,
+    );
+    const supportsNativeFork = useSessionStore(
+      (state) =>
+        state.sessions[resolvedServerId]?.agents?.get(agentId)?.capabilities?.supportsFork ?? false,
     );
 
     const workspaceRoot = agent.cwd?.trim() || "";
@@ -428,23 +439,64 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
 
-    // Fork into a NEW TAB → real provider-native session fork: duplicate the
-    // actual provider session (truncated at this message for providers that
-    // support it, e.g. Claude/Codex) into an independent agent that opens as a
-    // tab in this workspace, with native scrollable history — not a chat-history
-    // attachment. Shares the daemon path used by the tab ⋮ "Fork agent" action
-    // (agent.fork.request → forkSession).
+    // Fork into a NEW TAB. For providers with native session fork
+    // (capabilities.supportsFork, e.g. Claude/Codex/Kiro/TRAE) this duplicates
+    // the real provider session (truncated at this message when supported) into
+    // an independent agent that opens as a tab in this workspace, with native
+    // scrollable history — the same daemon path as the tab ⋮ "Fork agent"
+    // (agent.fork.request → forkSession). Providers without native fork fall
+    // back to a chat-history attachment in a new draft tab in this workspace.
     const forkAssistantTurnIntoTab = useStableEvent(async (boundaryMessageId?: string) => {
       if (!client) {
         toast?.error(t("workspace.terminal.hostDisconnected"));
         return;
       }
-      toast?.show(t("fork.pending"), { durationMs: null });
+      if (supportsNativeFork) {
+        toast?.show(t("fork.pending"), { durationMs: null });
+        try {
+          await client.forkAgent(agentId, boundaryMessageId);
+          toast?.show(t("fork.success"), { variant: "success" });
+        } catch {
+          toast?.error(t("fork.errors.failed"));
+        }
+        return;
+      }
+
+      // Fallback for providers without native fork: chat-history attachment in a
+      // new draft tab in the current workspace (prior behavior).
       try {
-        await client.forkAgent(agentId, boundaryMessageId);
-        toast?.show(t("fork.success"), { variant: "success" });
-      } catch {
-        toast?.error(t("fork.errors.failed"));
+        if (!supportsAgentForkContext) {
+          toast?.error(t("message.actions.forkUnavailable"));
+          return;
+        }
+        const workspaceId = agent.workspaceId;
+        if (!workspaceId) {
+          throw new Error(t("message.actions.forkMissingWorkspace"));
+        }
+        const draftSetup = buildForkDraftSetup(agent);
+        const draftId = generateDraftId();
+        const payload = await client.buildAgentForkContext(
+          agentId,
+          boundaryMessageId ? { boundaryMessageId } : {},
+        );
+        const attachment = buildChatHistoryAttachment({
+          draftId,
+          serverId: resolvedServerId,
+          agentId,
+          payload,
+          missingAttachmentMessage: t("message.actions.forkFailed"),
+        });
+        useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+          scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+          attachments: [attachment],
+        });
+        navigateToPreparedWorkspaceTab({
+          serverId: resolvedServerId,
+          workspaceId,
+          target: buildForkDraftTabTarget(draftSetup, draftId),
+        });
+      } catch (error) {
+        toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
       }
     });
 
