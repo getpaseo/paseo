@@ -110,6 +110,142 @@ describe("daemon web UI bootstrap", () => {
     });
   });
 
+  test("defaults to port 80 when Host header has no port and no TLS", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: { host: "daemon.example.test" },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: "daemon.example.test:80",
+      useTls: false,
+      label: os.hostname(),
+    });
+  });
+
+  test("defaults to port 443 when Host header has no port and TLS is forwarded", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: "daemon.example.test",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: "daemon.example.test:443",
+      useTls: true,
+      label: os.hostname(),
+    });
+  });
+
+  test("defaults to port when Host is a bare IPv6 address without port", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      trustedProxies: [],
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: "[::1]",
+        },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: "[::1]:80",
+      useTls: false,
+      label: os.hostname(),
+    });
+  });
+
+  test("preserves explicit port on IPv6 Host header", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      trustedProxies: [],
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: "[::1]:6767",
+        },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: "[::1]:6767",
+      useTls: false,
+      label: os.hostname(),
+    });
+  });
+
+  test("preserves explicit port on Host header that already has a port", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: `daemon.example.test:9999`,
+        },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: "daemon.example.test:9999",
+      useTls: false,
+      label: os.hostname(),
+    });
+  });
+
   test("ignores forwarded HTTPS when proxy trust is disabled", async () => {
     const distDir = await createWebUiDist();
 
