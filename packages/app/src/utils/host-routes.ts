@@ -118,10 +118,6 @@ function isCleanLegacyPathDecode(value: string): boolean {
   return isLegacyPathLikeWorkspaceValue(value) && !hasLegacyDecodeNoise(value);
 }
 
-function hasDecodedLegacyWorkspaceTabRouteSuffix(value: string): boolean {
-  return /\/tab\/[^/]+\/?$/.test(value);
-}
-
 export type WorkspaceOpenIntent =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
@@ -289,9 +285,7 @@ export function parseHostWorkspaceRouteFromPathname(
   pathname: string,
 ): { serverId: string; workspaceId: string } | null {
   const pathOnly = stripSearchAndHash(pathname);
-  const match =
-    pathOnly.match(/^\/h\/([^/]+)\/workspace\/([^/]+)\/?$/) ??
-    pathOnly.match(/^\/h\/([^/]+)\/workspace\/(\/.+)$/);
+  const match = pathOnly.match(/^\/h\/([^/]+)\/workspace\/([^/]+)\/?$/);
   if (!match) {
     return null;
   }
@@ -302,10 +296,6 @@ export function parseHostWorkspaceRouteFromPathname(
   }
 
   const rawWorkspaceId = match[2];
-  if (rawWorkspaceId.startsWith("/") && hasDecodedLegacyWorkspaceTabRouteSuffix(rawWorkspaceId)) {
-    return null;
-  }
-
   const workspaceId = decodeWorkspaceIdFromPathSegment(rawWorkspaceId);
   if (!workspaceId) {
     return null;

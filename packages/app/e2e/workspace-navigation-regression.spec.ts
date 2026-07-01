@@ -256,9 +256,7 @@ test.describe("Workspace navigation regression", () => {
       await ws.close({ code: 1008, reason: "Blocked cold offline workspace route test." });
     });
 
-    await page.goto(
-      `/h/${encodeURIComponent(serverId)}/workspace/${encodeURIComponent("/tmp/paseo-missing-workspace")}`,
-    );
+    await page.goto(buildHostWorkspaceRoute(serverId, "/tmp/paseo-missing-workspace"));
 
     await expectHostConnectingOrOffline(page);
     await expectMenuButtonVisible(page);

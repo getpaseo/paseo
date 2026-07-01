@@ -70,22 +70,9 @@ describe("workspace route parsing", () => {
     });
   });
 
-  it("parses workspace route with decoded legacy path segments", () => {
-    expect(parseHostWorkspaceRouteFromPathname("/h/local/workspace//tmp/repo")).toEqual({
-      serverId: "local",
-      workspaceId: "/tmp/repo",
-    });
-  });
-
   it("does not treat /tab routes as valid workspace routes", () => {
     expect(
       parseHostWorkspaceRouteFromPathname("/h/local/workspace/L3RtcC9yZXBv/tab/draft_abc123"),
-    ).toBeNull();
-  });
-
-  it("does not treat decoded legacy /tab routes as valid workspace routes", () => {
-    expect(
-      parseHostWorkspaceRouteFromPathname("/h/local/workspace//tmp/repo/tab/draft_abc123"),
     ).toBeNull();
   });
 
