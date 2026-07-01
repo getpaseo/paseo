@@ -10,6 +10,7 @@ export interface ProjectSelection {
 
 export interface ProjectSelectionContext {
   contextKey: string;
+  manualContextKey: string;
   initialProject: HostProjectListItem | null;
   projects: HostProjectListItem[];
   routeProject: HostProjectListItem | null;
@@ -23,6 +24,13 @@ export function createProjectSelectionContextKey(input: {
 }): string {
   const projectScope = input.allowAllProjects ? "all-projects" : "worktree-projects";
   return `${input.selectedServerId}:${projectScope}:${input.routeProjectKey ?? ""}`;
+}
+
+export function createManualProjectSelectionContextKey(input: {
+  selectedServerId: string;
+  routeProjectKey: string | null;
+}): string {
+  return `${input.selectedServerId}:${input.routeProjectKey ?? ""}`;
 }
 
 export function createProjectSelection({
@@ -64,7 +72,9 @@ export function reconcileProjectSelection(
   context: ProjectSelectionContext,
 ): ProjectSelection {
   const initialSelection = createProjectSelection(context);
-  if (current.contextKey !== context.contextKey) {
+  const currentContextKey =
+    current.source === "manual" ? context.manualContextKey : context.contextKey;
+  if (current.contextKey !== currentContextKey) {
     return initialSelection;
   }
 

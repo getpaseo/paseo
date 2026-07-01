@@ -7,6 +7,7 @@ import {
   type HostProjectListItem,
 } from "@/projects/host-projects";
 import {
+  createManualProjectSelectionContextKey,
   createProjectSelectionContextKey,
   createProjectSelection,
   reconcileProjectSelection,
@@ -79,15 +80,27 @@ export function useNewWorkspaceProjectPicker({
     routeProjectKey,
     allowAllProjects,
   });
+  const manualSelectionContextKey = createManualProjectSelectionContextKey({
+    selectedServerId,
+    routeProjectKey,
+  });
   const selectionContext = useMemo<ProjectSelectionContext>(
     () => ({
       contextKey: selectionContextKey,
+      manualContextKey: manualSelectionContextKey,
       initialProject,
       projects: selectableProjects,
       routeProject,
       lastActiveProject,
     }),
-    [initialProject, lastActiveProject, routeProject, selectableProjects, selectionContextKey],
+    [
+      initialProject,
+      lastActiveProject,
+      manualSelectionContextKey,
+      routeProject,
+      selectableProjects,
+      selectionContextKey,
+    ],
   );
   const [projectSelection, setProjectSelection] = useState<ProjectSelection>(() =>
     createProjectSelection(selectionContext),
@@ -109,12 +122,12 @@ export function useNewWorkspaceProjectPicker({
       if (!project) return;
       if (!allowAllProjects && !project.hosts.some((host) => host.canCreateWorktree)) return;
       setProjectSelection({
-        contextKey: selectionContextKey,
+        contextKey: manualSelectionContextKey,
         projectKey: project.projectKey,
         source: "manual",
       });
     },
-    [allowAllProjects, projectByOptionId, selectionContextKey],
+    [allowAllProjects, manualSelectionContextKey, projectByOptionId],
   );
 
   return {

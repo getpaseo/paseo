@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HostProjectListItem } from "@/projects/host-projects";
 import {
+  createManualProjectSelectionContextKey,
   createProjectSelectionContextKey,
   createProjectSelection,
   reconcileProjectSelection,
@@ -26,8 +27,10 @@ function context(
     projects: HostProjectListItem[];
   },
 ): ProjectSelectionContext {
+  const contextKey = input.contextKey ?? "host:";
   return {
-    contextKey: "host:",
+    contextKey,
+    manualContextKey: input.manualContextKey ?? contextKey,
     routeProject: null,
     lastActiveProject: null,
     ...input,
@@ -107,6 +110,38 @@ describe("reconcileProjectSelection", () => {
       projectKey: remembered.projectKey,
       source: "initial",
     });
+  });
+
+  it("keeps a still-selectable manual selection when host project capability changes", () => {
+    const fallback = project("git-fallback");
+    const manual = project("manual-choice");
+    const remembered = project("remembered-directory");
+    const current: ProjectSelection = {
+      contextKey: createManualProjectSelectionContextKey({
+        selectedServerId: "host",
+        routeProjectKey: null,
+      }),
+      projectKey: manual.projectKey,
+      source: "manual",
+    };
+    const afterCapabilityHydration = context({
+      contextKey: createProjectSelectionContextKey({
+        selectedServerId: "host",
+        routeProjectKey: null,
+        allowAllProjects: true,
+      }),
+      manualContextKey: createManualProjectSelectionContextKey({
+        selectedServerId: "host",
+        routeProjectKey: null,
+      }),
+      initialProject: remembered,
+      projects: [fallback, manual, remembered],
+    });
+
+    const reconciled = reconcileProjectSelection(current, afterCapabilityHydration);
+
+    expect(reconciled).toEqual(current);
+    expect(resolveProjectSelection(reconciled, afterCapabilityHydration)).toEqual(manual);
   });
 
   it("falls back only when the selected project disappears", () => {
