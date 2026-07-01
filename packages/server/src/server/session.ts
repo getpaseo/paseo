@@ -174,7 +174,8 @@ import {
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
-import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
+import { searchHomeDirectories } from "./search/home-directories.js";
+import { searchWorkspaceEntries } from "./search/workspace-entries.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";

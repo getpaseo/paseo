@@ -27,6 +27,29 @@ const entries = [
   "packages/server/dist/server/terminal/terminal-worker-process.js",
 ];
 
+const FFF_BIN_PACKAGE = {
+  darwin: { arm64: "@ff-labs/fff-bin-darwin-arm64", x64: "@ff-labs/fff-bin-darwin-x64" },
+  linux: { arm64: "@ff-labs/fff-bin-linux-arm64-gnu", x64: "@ff-labs/fff-bin-linux-x64-gnu" },
+  win32: { arm64: "@ff-labs/fff-bin-win32-arm64", x64: "@ff-labs/fff-bin-win32-x64" },
+};
+
+const FFI_RS_PACKAGE = {
+  darwin: { arm64: "@yuuang/ffi-rs-darwin-arm64", x64: "@yuuang/ffi-rs-darwin-x64" },
+  linux: { arm64: "@yuuang/ffi-rs-linux-arm64-gnu", x64: "@yuuang/ffi-rs-linux-x64-gnu" },
+  win32: {
+    arm64: "@yuuang/ffi-rs-win32-arm64-msvc",
+    x64: "@yuuang/ffi-rs-win32-x64-msvc",
+  },
+};
+
+function packageGlob(packageName) {
+  return packageName ? [`node_modules/${packageName}/**`] : [];
+}
+
+function packageForHost(packagesByPlatform) {
+  return packagesByPlatform[process.platform]?.[process.arch] ?? null;
+}
+
 // Files read at runtime via fs APIs rather than `require`. nft only
 // traces the module graph; data files have to be listed explicitly.
 const additionalInputs = [
@@ -44,6 +67,11 @@ const additionalInputs = [
   // the Nix derivation builds for one platform at a time and ships only
   // its own binaries.
   `node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
+  // FFF resolves its native search library and ffi-rs binding dynamically.
+  "node_modules/@ff-labs/fff-node/**",
+  "node_modules/ffi-rs/**",
+  ...packageGlob(packageForHost(FFF_BIN_PACKAGE)),
+  ...packageGlob(packageForHost(FFI_RS_PACKAGE)),
 ];
 
 // Trace.
@@ -65,6 +93,10 @@ const { fileList, warnings } = await nodeFileTrace(entries, {
     // node-fetch optional peer for non-UTF-8 charset decoding; not
     // loaded in our usage.
     "encoding/**",
+    // Host packages are added explicitly above; other optional native
+    // variants are intentionally not part of the daemon closure.
+    "@ff-labs/fff-bin-*/**",
+    "@yuuang/ffi-rs-*/**",
     // Tests are stripped during the daemon build; nft sometimes still
     // tries to walk into them via index files. Belt and suspenders.
     "**/*.test.js",

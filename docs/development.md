@@ -173,6 +173,14 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### Workspace search
+
+Workspace file and directory suggestions are backed by `@ff-labs/fff-node` in
+`packages/server/src/server/search/workspace-entries.ts`. Treat that backend as
+the search and ignore boundary: do not add a separate `.gitignore`/`.rgignore`
+matcher in Paseo. If ignore semantics need to change, change the backend
+contract and keep the packaged desktop smoke covering dot-prefixed suggestions.
+
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array

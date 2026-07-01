@@ -329,6 +329,18 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Windows arm64 native search packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          fff_version="$(node -p "require('./node_modules/@ff-labs/fff-node/package.json').optionalDependencies['@ff-labs/fff-bin-win32-arm64']")"
+          ffi_version="$(node -p "require('./node_modules/ffi-rs/package.json').optionalDependencies['@yuuang/ffi-rs-win32-arm64-msvc']")"
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --fund=false --os=win32 --cpu=arm64 \
+            "@ff-labs/fff-bin-win32-arm64@${fff_version}" \
+            "@yuuang/ffi-rs-win32-arm64-msvc@${ffi_version}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Set desktop package version from tag
         shell: bash
         run: |

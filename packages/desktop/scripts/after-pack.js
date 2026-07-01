@@ -14,6 +14,38 @@ const RIPGREP_PLATFORM_DIR = {
   win32: { arm64: "arm64-win32", x64: "x64-win32" },
 };
 
+const FFF_BIN_PACKAGE = {
+  darwin: {
+    arm64: ["fff-bin-darwin-arm64"],
+    x64: ["fff-bin-darwin-x64"],
+    universal: ["fff-bin-darwin-arm64", "fff-bin-darwin-x64"],
+  },
+  linux: {
+    arm64: ["fff-bin-linux-arm64-gnu"],
+    x64: ["fff-bin-linux-x64-gnu"],
+  },
+  win32: {
+    arm64: ["fff-bin-win32-arm64"],
+    x64: ["fff-bin-win32-x64"],
+  },
+};
+
+const FFI_RS_PACKAGE = {
+  darwin: {
+    arm64: ["ffi-rs-darwin-arm64"],
+    x64: ["ffi-rs-darwin-x64"],
+    universal: ["ffi-rs-darwin-arm64", "ffi-rs-darwin-x64"],
+  },
+  linux: {
+    arm64: ["ffi-rs-linux-arm64-gnu"],
+    x64: ["ffi-rs-linux-x64-gnu"],
+  },
+  win32: {
+    arm64: ["ffi-rs-win32-arm64-msvc"],
+    x64: ["ffi-rs-win32-x64-msvc"],
+  },
+};
+
 function rmSafe(target) {
   fs.rmSync(target, { recursive: true, force: true });
 }
@@ -73,6 +105,43 @@ function pruneSharpLibvips(nodeModules, platform, arch) {
   }
 }
 
+function keepPackagesForPlatform(packagesByPlatform, platform, arch) {
+  return packagesByPlatform[platform]?.[arch] ?? [];
+}
+
+function pruneScopedNativePackages(nodeModules, scope, prefix, keepNames) {
+  if (keepNames.length === 0) {
+    return;
+  }
+
+  const scopeDir = path.join(nodeModules, scope);
+  if (!fs.existsSync(scopeDir)) {
+    return;
+  }
+
+  const keep = new Set(keepNames);
+  for (const entry of fs.readdirSync(scopeDir)) {
+    if (entry.startsWith(prefix) && !keep.has(entry)) {
+      rmSafe(path.join(scopeDir, entry));
+    }
+  }
+}
+
+function pruneFffNativePackages(nodeModules, platform, arch) {
+  pruneScopedNativePackages(
+    nodeModules,
+    "@ff-labs",
+    "fff-bin-",
+    keepPackagesForPlatform(FFF_BIN_PACKAGE, platform, arch),
+  );
+  pruneScopedNativePackages(
+    nodeModules,
+    "@yuuang",
+    "ffi-rs-",
+    keepPackagesForPlatform(FFI_RS_PACKAGE, platform, arch),
+  );
+}
+
 function pruneNativeModules(appOutDir, platform, arch) {
   const resourcesDir =
     platform === "darwin"
@@ -87,6 +156,7 @@ function pruneNativeModules(appOutDir, platform, arch) {
   pruneClaudeAgentSdk(nodeModules, platform, arch);
   pruneNodePty(nodeModules, platform, arch);
   pruneSharpLibvips(nodeModules, platform, arch);
+  pruneFffNativePackages(nodeModules, platform, arch);
 
   const after = dirSizeSync(nodeModules);
   const savedMB = ((before - after) / 1024 / 1024).toFixed(1);

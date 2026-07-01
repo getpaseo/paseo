@@ -16,6 +16,10 @@ files:
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
+  - node_modules/@ff-labs/fff-node/**/*
+  - node_modules/@ff-labs/fff-bin-*/**/*
+  - node_modules/ffi-rs/**/*
+  - node_modules/@yuuang/ffi-rs-*/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist

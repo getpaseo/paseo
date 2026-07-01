@@ -65,6 +65,7 @@
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.3.195",
     "@anthropic-ai/sdk": "^0.104.2",
+    "@ff-labs/fff-node": "^0.9.6",
     "@getpaseo/client": "0.1.102",
     "@getpaseo/highlight": "0.1.102",
     "@getpaseo/protocol": "0.1.102",

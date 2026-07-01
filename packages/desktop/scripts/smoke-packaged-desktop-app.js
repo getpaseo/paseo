@@ -1,9 +1,10 @@
-const { spawn, spawnSync } = require("node:child_process");
+const { execFileSync, spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
+const { pathToFileURL } = require("node:url");
 
 const EXECUTABLE_NAME = "Paseo";
 const SMOKE_TIMEOUT_MS = 60_000;
@@ -621,6 +622,97 @@ async function smokeCliTerminal({ appPath, env }) {
   }
 }
 
+async function loadConnectToDaemon() {
+  const clientModulePath = path.join(__dirname, "..", "..", "cli", "dist", "utils", "client.js");
+  const clientModule = await import(pathToFileURL(clientModulePath).href);
+  if (typeof clientModule.connectToDaemon !== "function") {
+    throw new Error(`CLI client module did not export connectToDaemon: ${clientModulePath}`);
+  }
+  return clientModule.connectToDaemon;
+}
+
+function createWorkspaceSearchFixture() {
+  const cwd = createTempDir("paseo-smoke-search-cwd-");
+  execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+  fs.writeFileSync(path.join(cwd, ".env.local"), "PASEO_PACKAGED_SMOKE=1\n");
+  fs.mkdirSync(path.join(cwd, ".opencode"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, ".opencode", "settings.json"), "{}\n");
+  fs.writeFileSync(path.join(cwd, ".gitignore"), "ignored.secret\n");
+  fs.writeFileSync(path.join(cwd, "ignored.secret"), "ignore me\n");
+  return cwd;
+}
+
+function assertSuggestionPayload(payload, label) {
+  if (payload?.error) {
+    throw new Error(`${label} returned error: ${payload.error}`);
+  }
+  if (!Array.isArray(payload?.entries)) {
+    throw new Error(`${label} returned invalid payload: ${JSON.stringify(payload)}`);
+  }
+}
+
+function assertSuggestionEntry(payload, expected, label) {
+  assertSuggestionPayload(payload, label);
+  const found = payload.entries.some(
+    (entry) => entry.path === expected.path && entry.kind === expected.kind,
+  );
+  if (!found) {
+    throw new Error(
+      `${label} did not include ${expected.kind} ${expected.path}. Entries: ${JSON.stringify(
+        payload.entries,
+      )}`,
+    );
+  }
+}
+
+async function smokeWorkspaceSearch({ host }) {
+  console.log("Packaged desktop smoke: querying workspace search through daemon RPC");
+  const cwd = createWorkspaceSearchFixture();
+  const connectToDaemon = await loadConnectToDaemon();
+  const client = await connectToDaemon({ host, timeout: SMOKE_TIMEOUT_MS });
+
+  try {
+    const envResults = await client.getDirectorySuggestions({
+      cwd,
+      query: "env",
+      includeFiles: true,
+      includeDirectories: true,
+      limit: 20,
+    });
+    assertSuggestionEntry(envResults, { path: ".env.local", kind: "file" }, "Dotfile search");
+
+    const opencodeResults = await client.getDirectorySuggestions({
+      cwd,
+      query: "opencode",
+      includeFiles: true,
+      includeDirectories: true,
+      limit: 20,
+    });
+    assertSuggestionEntry(
+      opencodeResults,
+      { path: ".opencode/settings.json", kind: "file" },
+      "Dot-directory search",
+    );
+
+    const ignoredResults = await client.getDirectorySuggestions({
+      cwd,
+      query: "ignored",
+      includeFiles: true,
+      includeDirectories: true,
+      limit: 20,
+    });
+    assertSuggestionPayload(ignoredResults, "Ignored file search");
+    if (ignoredResults.entries.some((entry) => entry.path === "ignored.secret")) {
+      throw new Error(
+        `Ignored file search returned ignored.secret: ${JSON.stringify(ignoredResults.entries)}`,
+      );
+    }
+  } finally {
+    await client.close().catch(() => {});
+    await removeTempDir(cwd);
+  }
+}
+
 async function stopCliDaemon({ appPath, env }) {
   console.log("Packaged desktop smoke: stopping daemon through bundled CLI shim");
   await runCliShimCommand({
@@ -677,9 +769,10 @@ async function smokePackagedDesktopApp({ appPath }) {
     const cliEnv = createDefaultDaemonEnv();
     await smokeCliShim({ appPath, env: cliEnv });
     await smokeCliTerminal({ appPath, env: cliEnv });
+    await smokeWorkspaceSearch({ host: message.status.listen });
     await stopDaemonForCleanup();
     console.log(
-      `Packaged desktop smoke passed: desktop-managed daemon pid ${message.status.pid}, listen ${message.status.listen}; CLI shim daemon status and terminal smoke succeeded`,
+      `Packaged desktop smoke passed: desktop-managed daemon pid ${message.status.pid}, listen ${message.status.listen}; CLI shim daemon status, terminal smoke, and workspace search succeeded`,
     );
   } catch (error) {
     if (smokeStarted && !daemonStopped) {

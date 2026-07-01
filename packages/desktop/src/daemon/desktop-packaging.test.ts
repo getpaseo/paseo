@@ -74,6 +74,15 @@ describe("desktop packaging", () => {
     );
   });
 
+  it("unpacks native workspace search packages", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain("node_modules/@ff-labs/fff-node/**/*");
+    expect(config).toContain("node_modules/@ff-labs/fff-bin-*/**/*");
+    expect(config).toContain("node_modules/ffi-rs/**/*");
+    expect(config).toContain("node_modules/@yuuang/ffi-rs-*/**/*");
+  });
+
   it("excludes package debug/source files from the packaged app", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 

@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { expect, test, type Page } from "./fixtures";
 import { composerLocator, expectComposerVisible } from "./helpers/composer";
 import {
@@ -207,6 +209,25 @@ async function openReadyMockAgent(
     await session.cleanup();
     throw error;
   }
+}
+
+async function seedDotPrefixedWorkspaceFiles(cwd: string): Promise<void> {
+  await writeFile(path.join(cwd, ".env.local"), "PASEO_E2E=1\n");
+  await mkdir(path.join(cwd, ".opencode"), { recursive: true });
+  await writeFile(path.join(cwd, ".opencode", "settings.json"), "{}\n");
+}
+
+async function expectFileMentionSuggestion(
+  page: Page,
+  query: string,
+  suggestion: string,
+): Promise<void> {
+  const input = composerLocator(page);
+  await input.fill(query);
+  const popover = page.getByTestId("composer-autocomplete-popover");
+  await expect(popover.getByText(suggestion, { exact: true }).first()).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 async function visiblePopoverBox(
@@ -516,6 +537,28 @@ test.describe("Composer autocomplete", () => {
       expectPopoverDoesNotDisappearAfterFirstVisible(frames);
     } finally {
       await agent.cleanup();
+    }
+  });
+
+  test("suggests dot-prefixed workspace entries for file mentions", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "autocomplete-dot-entries-",
+      title: "Dot file mention autocomplete",
+    });
+
+    try {
+      await seedDotPrefixedWorkspaceFiles(session.cwd);
+      await openAgentRoute(page, session);
+      await expectWorkspaceTabVisible(page, session.agentId);
+      await expectComposerVisible(page);
+
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+
+      await expectFileMentionSuggestion(page, "@.env", ".env.local");
+      await expectFileMentionSuggestion(page, "@.opencode", ".opencode/settings.json");
+    } finally {
+      await session.cleanup();
     }
   });
 

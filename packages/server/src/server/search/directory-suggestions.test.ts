@@ -1,9 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isPlatform } from "../test-utils/platform.js";
-import { searchHomeDirectories, searchWorkspaceEntries } from "./directory-suggestions.js";
+import { isPlatform } from "../../test-utils/platform.js";
+import { searchHomeDirectories } from "./home-directories.js";
+import { clearWorkspaceSearchCacheForTests, searchWorkspaceEntries } from "./workspace-entries.js";
 
 const isWindows = isPlatform("win32");
 
@@ -204,6 +206,7 @@ describe("searchWorkspaceEntries", () => {
     });
     mkdirSync(path.join(workspaceDir, "docs"), { recursive: true });
     mkdirSync(path.join(outsideDir, "escaped"), { recursive: true });
+    execFileSync("git", ["init"], { cwd: workspaceDir, stdio: "ignore" });
 
     writeFileSync(path.join(workspaceDir, "README.md"), "# paseo\n");
     writeFileSync(
@@ -218,6 +221,7 @@ describe("searchWorkspaceEntries", () => {
   });
 
   afterEach(() => {
+    clearWorkspaceSearchCacheForTests();
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
@@ -322,17 +326,17 @@ describe("searchWorkspaceEntries", () => {
       matchMode: "suffix",
     });
 
-    expect(basenameResults).toEqual([
-      { path: "src/file.ts", kind: "file" },
-      { path: "packages/app/src/file.ts", kind: "file" },
-    ]);
-    expect(suffixResults).toEqual([
-      { path: "src/file.ts", kind: "file" },
-      { path: "packages/app/src/file.ts", kind: "file" },
-    ]);
+    const expectedMatches = [
+      { path: "src/file.ts", kind: "file" as const },
+      { path: "packages/app/src/file.ts", kind: "file" as const },
+    ];
+    expect(basenameResults).toHaveLength(2);
+    expect(basenameResults).toEqual(expect.arrayContaining(expectedMatches));
+    expect(suffixResults).toHaveLength(2);
+    expect(suffixResults).toEqual(expect.arrayContaining(expectedMatches));
   });
 
-  it("suffix mode resolves exact workspace file paths before broad traversal", async () => {
+  it("suffix mode resolves exact workspace file paths", async () => {
     const targetPath = path.join(
       workspaceDir,
       "packages",
@@ -353,7 +357,6 @@ describe("searchWorkspaceEntries", () => {
       includeFiles: true,
       includeDirectories: false,
       matchMode: "suffix",
-      maxEntriesScanned: 1,
     });
 
     expect(results).toEqual([
@@ -364,7 +367,7 @@ describe("searchWorkspaceEntries", () => {
     ]);
   });
 
-  it("suffix mode resolves explicit hidden file paths without broad hidden traversal", async () => {
+  it("suffix mode resolves explicit dot-prefixed file paths", async () => {
     const targetPath = path.join(workspaceDir, ".dev", "paseo-home", "daemon.log");
     mkdirSync(path.dirname(targetPath), { recursive: true });
     writeFileSync(targetPath, "daemon log\n");
@@ -376,13 +379,40 @@ describe("searchWorkspaceEntries", () => {
       includeFiles: true,
       includeDirectories: false,
       matchMode: "suffix",
-      maxEntriesScanned: 1,
     });
 
     expect(results).toEqual([{ path: ".dev/paseo-home/daemon.log", kind: "file" }]);
   });
 
-  it("suffix mode finds files under allowlisted hidden workspace directories", async () => {
+  it("finds dot-prefixed files and files under dot-prefixed directories", async () => {
+    mkdirSync(path.join(workspaceDir, ".opencode"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, ".env.local"), "PASEO_TEST=1\n");
+    writeFileSync(path.join(workspaceDir, ".opencode", "settings.json"), "{}");
+
+    const envResults = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "env",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+    });
+    const opencodeResults = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "opencode",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+    });
+
+    expect(envResults).toContainEqual({ path: ".env.local", kind: "file" });
+    expect(opencodeResults).toContainEqual({ path: ".opencode", kind: "directory" });
+    expect(opencodeResults).toContainEqual({
+      path: ".opencode/settings.json",
+      kind: "file",
+    });
+  });
+
+  it("suffix mode finds files under dot-prefixed workspace directories", async () => {
     mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
     mkdirSync(path.join(workspaceDir, ".github", "workflows"), { recursive: true });
     writeFileSync(path.join(workspaceDir, ".claude", "settings.local.json"), "{}");
@@ -409,7 +439,7 @@ describe("searchWorkspaceEntries", () => {
     expect(githubResults).toEqual([{ path: ".github/workflows/ci.yml", kind: "file" }]);
   });
 
-  it("does not broadly traverse unlisted hidden workspace directories", async () => {
+  it("searches files under arbitrary dot-prefixed workspace directories", async () => {
     mkdirSync(path.join(workspaceDir, ".dev", "cache"), { recursive: true });
     writeFileSync(path.join(workspaceDir, ".dev", "cache", "needle.ts"), "");
     writeFileSync(path.join(workspaceDir, "src", "needle.ts"), "");
@@ -423,10 +453,15 @@ describe("searchWorkspaceEntries", () => {
       matchMode: "suffix",
     });
 
-    expect(results).toEqual([{ path: "src/needle.ts", kind: "file" }]);
+    expect(results).toEqual(
+      expect.arrayContaining([
+        { path: ".dev/cache/needle.ts", kind: "file" },
+        { path: "src/needle.ts", kind: "file" },
+      ]),
+    );
   });
 
-  it("does not suggest hidden directories even when includeDirectories is true", async () => {
+  it("suggests dot-prefixed directories when includeDirectories is true", async () => {
     mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
     writeFileSync(path.join(workspaceDir, ".claude", "settings.local.json"), "{}");
 
@@ -439,35 +474,52 @@ describe("searchWorkspaceEntries", () => {
       matchMode: "fuzzy",
     });
 
-    expect(results.some((entry) => entry.path === ".claude" && entry.kind === "directory")).toBe(
-      false,
-    );
+    expect(results).toContainEqual({ path: ".claude", kind: "directory" });
     expect(results).toContainEqual({
       path: ".claude/settings.local.json",
       kind: "file",
     });
   });
 
-  it("path mode does not suggest hidden workspace directories", async () => {
+  it("path-style queries include dot-prefixed workspace directories", async () => {
     mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
     writeFileSync(path.join(workspaceDir, ".claude", "settings.local.json"), "{}");
 
     const results = await searchWorkspaceEntries({
       cwd: workspaceDir,
-      query: "./",
+      query: "./.claude",
       limit: 20,
       includeFiles: true,
       includeDirectories: true,
       matchMode: "fuzzy",
     });
 
-    expect(results).toContainEqual({
-      path: "README.md",
+    expect(results).toContainEqual({ path: ".claude", kind: "directory" });
+    expect(results).not.toContainEqual({
+      path: ".claude/settings.local.json",
       kind: "file",
     });
-    expect(results.some((entry) => entry.path === ".claude" && entry.kind === "directory")).toBe(
-      false,
-    );
+  });
+
+  it("constrains fuzzy path-style queries to the typed parent directory", async () => {
+    mkdirSync(path.join(workspaceDir, "src", "nested"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "src", "config.ts"), "");
+    writeFileSync(path.join(workspaceDir, "src", "nested", "config.ts"), "");
+    writeFileSync(path.join(workspaceDir, "docs", "config.ts"), "");
+
+    const results = await searchWorkspaceEntries({
+      cwd: workspaceDir,
+      query: "src/co",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: true,
+      matchMode: "fuzzy",
+    });
+
+    expect(results).toContainEqual({ path: "src/components", kind: "directory" });
+    expect(results).toContainEqual({ path: "src/config.ts", kind: "file" });
+    expect(results).not.toContainEqual({ path: "src/nested/config.ts", kind: "file" });
+    expect(results).not.toContainEqual({ path: "docs/config.ts", kind: "file" });
   });
 
   it("does not traverse .git while searching workspace files", async () => {
@@ -513,7 +565,8 @@ describe("searchWorkspaceEntries", () => {
     },
   );
 
-  it("ignores node_modules entries so deep workspace files still resolve under scan limits", async () => {
+  it("respects workspace ignore rules for node_modules", async () => {
+    writeFileSync(path.join(workspaceDir, ".gitignore"), "node_modules/\n");
     mkdirSync(path.join(workspaceDir, "packages", "app", "src", "app"), { recursive: true });
     writeFileSync(path.join(workspaceDir, "packages", "app", "src", "app", "_layout.tsx"), "");
 
@@ -532,7 +585,6 @@ describe("searchWorkspaceEntries", () => {
       limit: 20,
       includeFiles: true,
       includeDirectories: true,
-      maxEntriesScanned: 60,
     });
 
     expect(results).toContainEqual({
@@ -542,11 +594,12 @@ describe("searchWorkspaceEntries", () => {
     expect(results.some((entry) => entry.path.startsWith("node_modules/"))).toBe(false);
   });
 
-  it("ignores common build/cache directories so large generated trees do not exhaust scan budget", async () => {
+  it("respects workspace ignore rules for generated trees", async () => {
     mkdirSync(path.join(workspaceDir, "packages", "app", "src"), { recursive: true });
     writeFileSync(path.join(workspaceDir, "packages", "app", "src", "needle.ts"), "");
 
     const heavyDirs = ["dist", "build", "target", "out", "coverage", "vendor", "__pycache__"];
+    writeFileSync(path.join(workspaceDir, ".gitignore"), `${heavyDirs.join("/\n")}/\n`);
     for (const heavyDir of heavyDirs) {
       for (let index = 0; index < 30; index += 1) {
         mkdirSync(path.join(workspaceDir, heavyDir, `bundle-${index}`), { recursive: true });
@@ -560,7 +613,6 @@ describe("searchWorkspaceEntries", () => {
       limit: 20,
       includeFiles: true,
       includeDirectories: true,
-      maxEntriesScanned: 80,
     });
 
     expect(results).toContainEqual({
