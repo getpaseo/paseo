@@ -7,6 +7,8 @@ export interface ChatCommandOptions extends CommandOptions {
   host?: string;
 }
 
+export type ChatAgentNameClient = Pick<Awaited<ReturnType<typeof connectToDaemon>>, "fetchAgent">;
+
 export async function connectChatClient(host?: string) {
   const daemonHost = getDaemonHost({ host });
   try {
@@ -24,7 +26,7 @@ export async function connectChatClient(host?: string) {
 }
 
 export async function attachAgentNamesToMessages(
-  client: Awaited<ReturnType<typeof connectToDaemon>>,
+  client: ChatAgentNameClient,
   messages: ChatMessageRow[],
   options: { timeout?: number; bestEffort?: boolean } = {},
 ): Promise<ChatMessageRow[]> {
@@ -40,23 +42,27 @@ export async function attachAgentNamesToMessages(
     return messages;
   }
 
-  let payload: Awaited<ReturnType<typeof client.fetchAgents>>;
-  try {
-    payload = await client.fetchAgents({
-      filter: { includeArchived: true },
-      ...(typeof options.timeout === "number" ? { timeout: options.timeout } : {}),
-    });
-  } catch (error) {
-    if (options.bestEffort) {
-      return messages;
-    }
-    throw error;
-  }
+  const resolvedNames = await Promise.all(
+    Array.from(agentIds).map(async (agentId): Promise<{ agentId: string; name: string } | null> => {
+      try {
+        const result = await client.fetchAgent({
+          agentId,
+          ...(typeof options.timeout === "number" ? { timeout: options.timeout } : {}),
+        });
+        const title = result?.agent.title?.trim();
+        return title ? { agentId, name: title } : null;
+      } catch (error) {
+        if (options.bestEffort === false) {
+          throw error;
+        }
+        return null;
+      }
+    }),
+  );
   const agentNames = new Map<string, string>();
-  for (const entry of payload.entries) {
-    const title = entry.agent.title?.trim();
-    if (title) {
-      agentNames.set(entry.agent.id, title);
+  for (const resolved of resolvedNames) {
+    if (resolved) {
+      agentNames.set(resolved.agentId, resolved.name);
     }
   }
 
