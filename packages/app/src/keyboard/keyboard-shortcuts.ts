@@ -166,8 +166,12 @@ const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
 
 const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   // --- Open project ---
+  // Open project moved from Cmd+Shift+O to Cmd+O. The binding ids intentionally
+  // keep their original "cmd-shift-o" / "ctrl-shift-o" names: user shortcut
+  // overrides are keyed by binding id, so renaming them would silently drop a
+  // user's customized Open project shortcut on upgrade.
   {
-    id: "agent-new-cmd-o-mac",
+    id: "agent-new-cmd-shift-o-mac",
     action: "agent.new",
     combo: "Cmd+O",
     when: { mac: true },
@@ -179,7 +183,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "agent-new-ctrl-o-non-mac",
+    id: "agent-new-ctrl-shift-o-non-mac",
     action: "agent.new",
     combo: "Ctrl+O",
     when: { mac: false, terminal: false },
