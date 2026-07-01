@@ -395,6 +395,16 @@ describe("keyboard-shortcuts", () => {
       event: { key: "T", code: "KeyT", altKey: true, shiftKey: true },
     },
     {
+      name: "does not keep old Cmd+Shift+O open-project binding after rebind to Cmd+O",
+      event: { key: "O", code: "KeyO", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+    },
+    {
+      name: "does not keep old Ctrl+Shift+O open-project binding after rebind to Ctrl+O",
+      event: { key: "O", code: "KeyO", ctrlKey: true, shiftKey: true },
+      context: { isMac: false },
+    },
+    {
       name: "does not match question-mark shortcut inside editable scopes",
       event: { key: "?", code: "Slash", shiftKey: true },
       context: { focusScope: "message-input" },
