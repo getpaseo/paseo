@@ -1749,14 +1749,13 @@ function WorkspaceRowItem({
   isDragging = false,
   dragHandleProps,
 }: WorkspaceRowItemProps) {
-  const currentPathname = usePathname();
   const handlePress = useCallback(() => {
     if (!workspace.serverId) {
       return;
     }
     onWorkspacePress?.();
-    navigateToWorkspace(workspace.serverId, workspace.workspaceId, { currentPathname });
-  }, [currentPathname, onWorkspacePress, workspace.serverId, workspace.workspaceId]);
+    navigateToWorkspace(workspace.serverId, workspace.workspaceId);
+  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
 
   return (
     <WorkspaceRow

@@ -47,17 +47,26 @@ dynamic params exist before any nested workspace leaf is selected.
 
 ## App-Wide Route Hops
 
-When app-wide routes such as `/new` navigate back into a host workspace, use
-`navigateToHostWorkspaceRoute()` instead of calling `router.dismissTo()` with the
-leaf workspace URL.
+When app-wide routes such as `/new`, `/settings`, or `/sessions` navigate back
+into a host workspace, express only the destination with `navigateToWorkspace()`.
+Do not make the caller branch on its current route.
 
 The root stack owns `h/[serverId]`; the host stack owns
 `workspace/[workspaceId]/index`. Repeated global-route hops must `POP_TO` the
-root host route and pass the nested workspace screen, or Expo Router can append
-extra hidden workspace deck entries.
+root host route and pass the nested workspace screen when a host route is
+already mounted, or Expo Router can append extra hidden workspace deck entries.
+The workspace navigation helper inspects the mounted navigation state to make
+that decision; if no host route is mounted yet, it falls back to ordinary route
+navigation.
 
 Those hidden entries are not harmless: composer floating panels can measure
 against the wrong deck and disappear offscreen.
+
+Hidden host routes may keep their local params while an app-wide route is
+foregrounded. Active-workspace observers must prefer the current pathname and
+only use local param fallback during cold mount (`/` or empty pathname), or a
+hidden workspace can overwrite the remembered workspace before Settings or
+History returns.
 
 ## Params
 
@@ -112,8 +121,7 @@ Before landing route changes:
 
 - [ ] Did you change `packages/app/src/app`? Re-read this file.
 - [ ] Did you touch remembered workspace restore? Keep root on `/h/[serverId]`.
-- [ ] Did an app-wide route return to a workspace? Use
-      `navigateToHostWorkspaceRoute()`.
+- [ ] Did any route return to a workspace? Use `navigateToWorkspace()`.
 - [ ] Did you add a route? Register it in the layout that directly owns it.
 - [ ] Did `useLocalSearchParams()` lose a required param? Fix the route tree.
 - [ ] Did native show a blank screen without a crash? Suspect route ownership

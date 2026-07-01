@@ -11,10 +11,6 @@ const HOST_WORKSPACE_ROUTE_NAME = "workspace/[workspaceId]/index";
 let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
   null;
 
-interface NavigateToHostWorkspaceRouteOptions {
-  popToExistingHostRoute?: boolean;
-}
-
 export function registerWorkspaceRouteNavigationRef(
   ref: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>,
 ): () => void {
@@ -26,33 +22,38 @@ export function registerWorkspaceRouteNavigationRef(
   };
 }
 
-function findStackKeyWithRouteName(state: unknown, routeName: string): string | null {
+function findStackKeyWithMountedRouteName(state: unknown, routeName: string): string | null {
   if (!state || typeof state !== "object") {
     return null;
   }
 
   const candidate = state as {
     key?: unknown;
-    routeNames?: unknown;
     routes?: unknown;
   };
-  if (
-    typeof candidate.key === "string" &&
-    Array.isArray(candidate.routeNames) &&
-    candidate.routeNames.includes(routeName)
-  ) {
-    return candidate.key;
-  }
 
   if (!Array.isArray(candidate.routes)) {
     return null;
+  }
+
+  if (
+    typeof candidate.key === "string" &&
+    candidate.routes.some(
+      (route) =>
+        !!route && typeof route === "object" && (route as { name?: unknown }).name === routeName,
+    )
+  ) {
+    return candidate.key;
   }
 
   for (const route of candidate.routes) {
     if (!route || typeof route !== "object") {
       continue;
     }
-    const childKey = findStackKeyWithRouteName((route as { state?: unknown }).state, routeName);
+    const childKey = findStackKeyWithMountedRouteName(
+      (route as { state?: unknown }).state,
+      routeName,
+    );
     if (childKey) {
       return childKey;
     }
@@ -69,7 +70,7 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
   }
 
   const rootState = navigation.getRootState();
-  const target = findStackKeyWithRouteName(rootState, ROOT_HOST_ROUTE_NAME);
+  const target = findStackKeyWithMountedRouteName(rootState, ROOT_HOST_ROUTE_NAME);
   if (!target) {
     return false;
   }
@@ -97,11 +98,8 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
   return true;
 }
 
-export function navigateToHostWorkspaceRoute(
-  route: string,
-  options: NavigateToHostWorkspaceRouteOptions = {},
-): void {
-  if (options.popToExistingHostRoute && dispatchHostWorkspacePopTo(route)) {
+export function navigateToHostWorkspaceRoute(route: string): void {
+  if (dispatchHostWorkspacePopTo(route)) {
     return;
   }
 

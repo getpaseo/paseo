@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextInput } from "react-native";
-import { router, usePathname, type Href } from "expo-router";
+import { router, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
@@ -136,7 +136,6 @@ function resolveActionShortcutKeys(
 
 export function useCommandCenter() {
   const { t } = useTranslation();
-  const pathname = usePathname();
   const { overrides } = useKeyboardShortcutOverrides();
   const open = useKeyboardShortcutsStore((s) => s.commandCenterOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setCommandCenterOpen);
@@ -223,10 +222,9 @@ export function useCommandCenter() {
       navigateToAgent({
         serverId: agent.serverId,
         agentId: agent.id,
-        currentPathname: pathname,
       });
     },
-    [pathname, setOpen],
+    [setOpen],
   );
 
   const openProjectPicker = useOpenProjectPicker();
