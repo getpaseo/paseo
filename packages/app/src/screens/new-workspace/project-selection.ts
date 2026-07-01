@@ -1,6 +1,7 @@
-import { resolveSelectedHostProject, type HostProjectListItem } from "@/projects/host-projects";
+import type { HostProjectListItem } from "@/projects/host-projects";
 
 export type ProjectSelectionSource = "initial" | "manual";
+export type InitialProjectSelectionSource = "route" | "lastActive" | "fallback" | null;
 
 export interface ProjectSelection {
   contextKey: string;
@@ -13,6 +14,7 @@ export interface ProjectSelectionContext {
   contextKey: string;
   manualContextKey: string;
   initialProject: HostProjectListItem | null;
+  initialProjectSource: InitialProjectSelectionSource;
   projects: HostProjectListItem[];
   routeProject: HostProjectListItem | null;
   lastActiveProject: HostProjectListItem | null;
@@ -47,37 +49,90 @@ export function createProjectSelection({
   };
 }
 
-function projectSelectionsAreEqual(left: ProjectSelection, right: ProjectSelection): boolean {
+export function resolveInitialProjectSelectionSource(input: {
+  initialProject: HostProjectListItem | null;
+  routeProject: HostProjectListItem | null;
+  lastActiveProject: HostProjectListItem | null;
+}): InitialProjectSelectionSource {
+  if (!input.initialProject) {
+    return null;
+  }
+  if (input.routeProject?.projectKey === input.initialProject.projectKey) {
+    return "route";
+  }
+  if (input.lastActiveProject?.projectKey === input.initialProject.projectKey) {
+    return "lastActive";
+  }
+  return "fallback";
+}
+
+function resolveProjectSelectionKey(selection: ProjectSelection): string | null {
+  const projectKey = selection.projectKey?.trim() ?? "";
+  return projectKey || null;
+}
+
+function resolveSelectedProjectFromInitialInputs(
+  projectKey: string,
+  context: ProjectSelectionContext,
+): HostProjectListItem | null {
   return (
-    left.contextKey === right.contextKey &&
-    left.projectKey === right.projectKey &&
-    left.project?.projectKey === right.project?.projectKey &&
-    left.source === right.source
+    (context.routeProject?.projectKey === projectKey ? context.routeProject : null) ??
+    (context.lastActiveProject?.projectKey === projectKey ? context.lastActiveProject : null)
   );
+}
+
+function refreshSelectionProject(
+  selection: ProjectSelection,
+  project: HostProjectListItem,
+): ProjectSelection {
+  if (selection.projectKey === project.projectKey && selection.project === project) {
+    return selection;
+  }
+  return {
+    ...selection,
+    projectKey: project.projectKey,
+    project,
+  };
+}
+
+function shouldResetInitialFallbackSelection(
+  selection: ProjectSelection,
+  context: ProjectSelectionContext,
+): boolean {
+  if (
+    selection.source !== "initial" ||
+    !context.initialProject ||
+    context.initialProjectSource !== "lastActive"
+  ) {
+    return false;
+  }
+
+  return selection.projectKey !== context.initialProject.projectKey;
 }
 
 export function resolveProjectSelection(
   selection: ProjectSelection,
   context: ProjectSelectionContext,
 ): HostProjectListItem | null {
-  const routeProject = selection.source === "manual" ? null : context.routeProject;
-  const lastActiveProject = selection.source === "manual" ? null : context.lastActiveProject;
+  const projectKey = resolveProjectSelectionKey(selection);
+  if (!projectKey) {
+    return null;
+  }
 
-  const selectedProject = resolveSelectedHostProject({
-    selectedProjectKey: selection.projectKey,
-    projects: context.projects,
-    routeProject,
-    lastActiveProject,
-  });
-  if (selectedProject) {
-    return selectedProject;
+  const selectableProject = context.projects.find((project) => project.projectKey === projectKey);
+  if (selectableProject) {
+    return selectableProject;
   }
 
   if (
-    selection.project?.projectKey === selection.projectKey &&
+    selection.project?.projectKey === projectKey &&
     context.shouldPreserveMissingProject(selection.project)
   ) {
     return selection.project;
+  }
+
+  if (selection.source !== "manual") {
+    return resolveSelectedProjectFromInitialInputs(projectKey, context);
   }
 
   return null;
@@ -94,9 +149,14 @@ export function reconcileProjectSelection(
     return initialSelection;
   }
 
-  if (resolveProjectSelection(current, context)) {
-    return current;
+  if (shouldResetInitialFallbackSelection(current, context)) {
+    return initialSelection;
   }
 
-  return projectSelectionsAreEqual(current, initialSelection) ? current : initialSelection;
+  const resolvedProject = resolveProjectSelection(current, context);
+  if (resolvedProject) {
+    return refreshSelectionProject(current, resolvedProject);
+  }
+
+  return initialSelection;
 }

@@ -5,6 +5,7 @@ import {
   createProjectSelectionContextKey,
   createProjectSelection,
   reconcileProjectSelection,
+  resolveInitialProjectSelectionSource,
   resolveProjectSelection,
   type ProjectSelection,
   type ProjectSelectionContext,
@@ -28,11 +29,20 @@ function context(
   },
 ): ProjectSelectionContext {
   const contextKey = input.contextKey ?? "host:";
+  const routeProject = input.routeProject ?? null;
+  const lastActiveProject = input.lastActiveProject ?? null;
   return {
     contextKey,
     manualContextKey: input.manualContextKey ?? contextKey,
-    routeProject: null,
-    lastActiveProject: null,
+    routeProject,
+    lastActiveProject,
+    initialProjectSource:
+      input.initialProjectSource ??
+      resolveInitialProjectSelectionSource({
+        initialProject: input.initialProject,
+        routeProject,
+        lastActiveProject,
+      }),
     shouldPreserveMissingProject: () => false,
     ...input,
   };
@@ -99,6 +109,79 @@ describe("reconcileProjectSelection", () => {
       project: initialProject,
       source: "initial",
     });
+  });
+
+  it("stores hydrated project snapshots before archive gaps", () => {
+    const routeProject = project("route-project");
+    const hydratedProject: HostProjectListItem = {
+      ...routeProject,
+      workspaceKeys: ["host:workspace"],
+    };
+    const current = createProjectSelection(
+      context({ initialProject: routeProject, projects: [], routeProject }),
+    );
+    const afterHydration = context({
+      initialProject: hydratedProject,
+      projects: [hydratedProject],
+      routeProject,
+    });
+
+    const hydratedSelection = reconcileProjectSelection(current, afterHydration);
+
+    expect(hydratedSelection).toEqual({
+      contextKey: "host:",
+      projectKey: hydratedProject.projectKey,
+      project: hydratedProject,
+      source: "initial",
+    });
+
+    const archiveGap = context({
+      initialProject: routeProject,
+      projects: [],
+      routeProject,
+      shouldPreserveMissingProject: (candidate) =>
+        candidate.workspaceKeys.includes("host:workspace"),
+    });
+
+    expect(resolveProjectSelection(hydratedSelection, archiveGap)).toEqual(hydratedProject);
+  });
+
+  it("resets an automatic fallback when the remembered project hydrates", () => {
+    const fallback = project("fallback");
+    const remembered = project("remembered");
+    const current = createProjectSelection(
+      context({ initialProject: fallback, projects: [fallback, remembered] }),
+    );
+    const afterRememberedHydration = context({
+      initialProject: remembered,
+      projects: [fallback, remembered],
+      lastActiveProject: remembered,
+    });
+
+    expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual({
+      contextKey: "host:",
+      projectKey: remembered.projectKey,
+      project: remembered,
+      source: "initial",
+    });
+  });
+
+  it("keeps manual selections when the remembered project hydrates", () => {
+    const manual = project("manual");
+    const remembered = project("remembered");
+    const current: ProjectSelection = {
+      contextKey: "host:",
+      projectKey: manual.projectKey,
+      project: manual,
+      source: "manual",
+    };
+    const afterRememberedHydration = context({
+      initialProject: remembered,
+      projects: [manual, remembered],
+      lastActiveProject: remembered,
+    });
+
+    expect(reconcileProjectSelection(current, afterRememberedHydration)).toEqual(current);
   });
 
   it("resets fallback selection when host project capability changes", () => {
