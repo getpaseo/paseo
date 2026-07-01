@@ -1,16 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
-import { router } from "expo-router";
 import {
   navigateToHostWorkspaceRoute,
   registerWorkspaceRouteNavigationRef,
 } from "./workspace-route-navigation";
-
-vi.mock("expo-router", () => ({
-  router: {
-    dismissTo: vi.fn(),
-  },
-}));
 
 function createNavigationRef(rootState: unknown, options: { ready?: boolean } = {}) {
   const dispatch = vi.fn();
@@ -40,11 +33,12 @@ describe("navigateToHostWorkspaceRoute", () => {
       routes: [{ key: "settings-general", name: "settings/[section]" }],
     });
     registerWorkspaceRouteNavigationRef(navigationRef);
+    const dismissTo = vi.fn();
 
-    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a");
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a", { dismissTo });
 
     expect(dispatch).not.toHaveBeenCalled();
-    expect(router.dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
+    expect(dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
   });
 
   it("pops to the mounted host route and targets the requested workspace", () => {
@@ -61,10 +55,11 @@ describe("navigateToHostWorkspaceRoute", () => {
       ],
     });
     registerWorkspaceRouteNavigationRef(navigationRef);
+    const dismissTo = vi.fn();
 
-    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a");
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a", { dismissTo });
 
-    expect(router.dismissTo).not.toHaveBeenCalled();
+    expect(dismissTo).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({
       type: "POP_TO",
       target: "root-stack",

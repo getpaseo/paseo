@@ -8,6 +8,14 @@ import {
 const ROOT_HOST_ROUTE_NAME = "h/[serverId]";
 const HOST_WORKSPACE_ROUTE_NAME = "workspace/[workspaceId]/index";
 
+interface NavigateToHostWorkspaceRouteDeps {
+  dismissTo(route: string): void;
+}
+
+const defaultNavigateToHostWorkspaceRouteDeps: NavigateToHostWorkspaceRouteDeps = {
+  dismissTo: (route) => router.dismissTo(route as Href),
+};
+
 let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
   null;
 
@@ -98,10 +106,13 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
   return true;
 }
 
-export function navigateToHostWorkspaceRoute(route: string): void {
+export function navigateToHostWorkspaceRoute(
+  route: string,
+  deps: NavigateToHostWorkspaceRouteDeps = defaultNavigateToHostWorkspaceRouteDeps,
+): void {
   if (dispatchHostWorkspacePopTo(route)) {
     return;
   }
 
-  router.dismissTo(route as Href);
+  deps.dismissTo(route);
 }
