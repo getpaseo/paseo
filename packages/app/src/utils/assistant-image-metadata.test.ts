@@ -25,7 +25,7 @@ describe("assistant image metadata", () => {
     setAssistantImageMetadata(
       {
         source: "/tmp/paseo-codex-screenshot.png",
-        workspaceRoot: "/Users/moboudra/dev/paseo",
+        workspaceRoot: "/workspaces/paseo",
         serverId: "server-1",
       },
       { width: 1200, height: 800 },

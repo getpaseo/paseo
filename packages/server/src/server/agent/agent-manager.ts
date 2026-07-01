@@ -5,7 +5,11 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
-import { isDelegatedAgent, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import {
+  getParentAgentIdFromLabels,
+  isDelegatedAgent,
+  PARENT_AGENT_ID_LABEL,
+} from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -23,6 +27,7 @@ import {
   type AgentPermissionResponse,
   type AgentPermissionResult,
   type AgentPersistenceHandle,
+  type AgentProviderNotice,
   type AgentPromptInput,
   type AgentProvider,
   type AgentRunOptions,
@@ -59,6 +64,7 @@ import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
+import type { PaseoToolCatalogFactory } from "./tools/types.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -79,6 +85,10 @@ type TimeoutResult = "completed" | "timed_out";
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
+}
+
+interface NormalizeConfigOptions {
+  resolveDefaultModel?: boolean;
 }
 
 interface TimeoutOptions {
@@ -197,6 +207,8 @@ export interface AgentManagerOptions {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
+  paseoToolsEnabled?: boolean;
+  paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -345,6 +357,17 @@ type ActiveManagedAgent =
   | ManagedAgentError;
 
 type LiveManagedAgent = ActiveManagedAgent;
+type AgentLabelPatch = Record<string, string | null>;
+
+interface WriteLabelsResult {
+  record: StoredAgentRecord | null;
+  live: boolean;
+}
+
+interface AgentMetadataPatch {
+  title?: string;
+  labels?: AgentLabelPatch;
+}
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
@@ -401,6 +424,21 @@ function validateAgentId(agentId: string, source: string): string {
     throw new Error(`${source}: agentId must be a UUID`);
   }
   return result.data;
+}
+
+function applyLabelPatch(
+  labels: Record<string, string>,
+  patch: AgentLabelPatch,
+): Record<string, string> {
+  const nextLabels = { ...labels };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete nextLabels[key];
+    } else {
+      nextLabels[key] = value;
+    }
+  }
+  return nextLabels;
 }
 
 function buildExplicitTimelineSeedForRegister(
@@ -490,6 +528,8 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
+  private paseoToolsEnabled = true;
+  private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -505,6 +545,7 @@ export class AgentManager {
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
+    this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -525,6 +566,11 @@ export class AgentManager {
       providerDefinitions: options.providerDefinitions ?? {},
       clients: options.clients ?? {},
     });
+  }
+
+  private configurePaseoTools(options: AgentManagerOptions): void {
+    this.paseoToolsEnabled = options.paseoToolsEnabled ?? true;
+    this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
@@ -561,6 +607,14 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  setPaseoToolsEnabled(enabled: boolean): void {
+    this.paseoToolsEnabled = enabled;
+  }
+
+  setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
+    this.paseoToolCatalogFactory = factory;
   }
 
   /**
@@ -767,8 +821,11 @@ export class AgentManager {
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-    const normalizedConfig = await this.normalizeConfig(config);
+    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
+    if (!normalizedConfig.model) {
+      return [];
+    }
     const available = await client.isAvailable();
     if (!available) {
       throw new Error(
@@ -801,8 +858,11 @@ export class AgentManager {
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const normalizedConfig = await this.normalizeConfig(config);
+    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
+    if (!normalizedConfig.model) {
+      return [];
+    }
     const available = await client.isAvailable();
     if (!available) {
       throw new Error(
@@ -867,12 +927,13 @@ export class AgentManager {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
     this.requireEnabledProvider(storedConfig.provider);
-    const launchContext = this.buildLaunchContext(resolvedAgentId, options?.env);
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, options?.env);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(launchConfig, launchContext, createOptions);
+    const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
       initialTitle: options?.initialTitle,
@@ -917,7 +978,6 @@ export class AgentManager {
       resolvedAgentId,
     );
 
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -925,7 +985,9 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const session = await client.resumeSession(handle, launchConfig, launchContext);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, options);
   }
 
@@ -951,13 +1013,14 @@ export class AgentManager {
       },
       resolvedAgentId,
     );
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
       },
-      { config: launchConfig, storedConfig, launchContext },
+      { config: providerLaunchConfig, storedConfig, launchContext },
     );
     const importedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(imported.config));
     const timelineRows = buildImportedTimelineRows(imported.timeline);
@@ -1005,11 +1068,12 @@ export class AgentManager {
       provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = this.buildLaunchContext(agentId);
+    const launchContext = await this.buildLaunchContext(agentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
-      ? await client.resumeSession(handle, launchConfig, launchContext)
-      : await client.createSession(launchConfig, launchContext);
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+      : await client.createSession(providerLaunchConfig, launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -1151,9 +1215,8 @@ export class AgentManager {
 
   // Children created via the MCP `create_agent` tool carry the parent-agent-id
   // label pointing back at the caller. Archiving the parent cascades to those
-  // children so subagent fleets don't outlive their orchestrator. Handoff agents
-  // launched the same way are caught by this cascade — see docs/agent-lifecycle.md
-  // for the accepted limitation.
+  // children so subagent fleets don't outlive their orchestrator. Detached
+  // handoff agents omit this label, so they stand outside the cascade.
   private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
     const registry = this.registry;
     if (!registry) {
@@ -1247,9 +1310,9 @@ export class AgentManager {
     });
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
-    await agent.session.setMode(modeId);
+    const notice = (await agent.session.setMode(modeId)) ?? null;
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
     agent.config.modeId = currentMode ?? undefined;
     agent.currentModeId = currentMode;
@@ -1259,6 +1322,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    return notice;
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -1278,15 +1342,19 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  async setAgentThinkingOption(agentId: string, thinkingOptionId: string | null): Promise<void> {
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null,
+  ): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
     const normalizedThinkingOptionId =
       typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
         ? thinkingOptionId
         : null;
 
+    let notice: AgentProviderNotice | null = null;
     if (agent.session.setThinkingOption) {
-      await agent.session.setThinkingOption(normalizedThinkingOptionId);
+      notice = (await agent.session.setThinkingOption(normalizedThinkingOptionId)) ?? null;
     }
 
     agent.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
@@ -1298,6 +1366,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    return notice;
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
@@ -1333,10 +1402,83 @@ export class AgentManager {
 
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     const agent = this.requireAgent(agentId);
-    agent.labels = { ...agent.labels, ...labels };
-    this.touchUpdatedAt(agent);
-    await this.persistSnapshot(agent);
-    this.emitState(agent, { persist: false });
+    await this.writeLabels(agent.id, labels);
+  }
+
+  private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      this.touchUpdatedAt(liveAgent);
+      await this.persistSnapshot(liveAgent);
+      this.emitState(liveAgent, { persist: false });
+      const record = this.registry ? await this.registry.get(agentId) : null;
+      return { record, live: true };
+    }
+
+    const nextRecord = await this.writeStoredMetadata(agentId, { labels: patch });
+    return { record: nextRecord, live: false };
+  }
+
+  private async writeStoredMetadata(
+    agentId: string,
+    patch: AgentMetadataPatch,
+  ): Promise<StoredAgentRecord> {
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    const nextRecord = {
+      ...record,
+      ...(patch.title ? { title: patch.title } : {}),
+      ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
+      updatedAt: this.nextStoredUpdatedAt(record),
+    };
+    await registry.upsert(nextRecord);
+    return nextRecord;
+  }
+
+  async detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }> {
+    const registry = this.requireRegistry();
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      const previousParentAgentId = getParentAgentIdFromLabels(liveAgent.labels);
+      if (!previousParentAgentId) {
+        await this.persistSnapshot(liveAgent);
+        const record = await registry.get(agentId);
+        if (!record) {
+          throw new Error(`Agent not found in storage after detach: ${agentId}`);
+        }
+        return { record, live: true, previousParentAgentId: null };
+      }
+
+      const { record } = await this.writeLabels(agentId, { [PARENT_AGENT_ID_LABEL]: null });
+      if (!record) {
+        throw new Error(`Agent not found in storage after detach: ${agentId}`);
+      }
+      return { record, live: true, previousParentAgentId };
+    }
+
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+    const previousParentAgentId = getParentAgentIdFromLabels(record.labels);
+    if (!previousParentAgentId) {
+      return { record, live: false, previousParentAgentId: null };
+    }
+
+    const result = await this.writeLabels(agentId, { [PARENT_AGENT_ID_LABEL]: null });
+    if (!result.record) {
+      throw new Error(`Agent not found in storage after detach: ${agentId}`);
+    }
+    return { record: result.record, live: false, previousParentAgentId };
   }
 
   notifyAgentState(agentId: string): void {
@@ -1394,9 +1536,12 @@ export class AgentManager {
       return false;
     }
 
+    await this.unarchiveNativeSession(record.provider, record.persistence);
+
     await registry.upsert({
       ...record,
       archivedAt: null,
+      updatedAt: new Date().toISOString(),
     });
 
     if (this.getAgent(agentId)) {
@@ -1433,23 +1578,12 @@ export class AgentManager {
         await this.setTitle(agentId, updates.title);
       }
       if (updates.labels) {
-        await this.setLabels(agentId, updates.labels);
+        await this.writeLabels(agentId, updates.labels);
       }
       return;
     }
 
-    const registry = this.requireRegistry();
-    const existing = await registry.get(agentId);
-    if (!existing) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    await registry.upsert({
-      ...existing,
-      ...(updates.title ? { title: updates.title } : {}),
-      ...(updates.labels ? { labels: { ...existing.labels, ...updates.labels } } : {}),
-      updatedAt: this.nextStoredUpdatedAt(existing),
-    });
+    await this.writeStoredMetadata(agentId, updates);
   }
 
   async runAgent(
@@ -3508,7 +3642,10 @@ export class AgentManager {
     }
   }
 
-  private async normalizeConfig(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+  private async normalizeConfig(
+    config: AgentSessionConfig,
+    options: NormalizeConfigOptions = {},
+  ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
@@ -3539,18 +3676,11 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    if (!normalized.model) {
-      const client = this.clients.get(normalized.provider);
-      if (client) {
-        try {
-          const models = await client.listModels({ cwd: normalized.cwd, force: false });
-          const defaultModel = models.find((model) => model.isDefault) ?? models[0];
-          if (defaultModel) {
-            normalized.model = defaultModel.id;
-          }
-        } catch {
-          // Provider may not support model listing — leave model undefined
-        }
+    const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
+    if (shouldResolveDefaultModel && !normalized.model) {
+      const defaultModelId = await this.resolveDefaultModelId(normalized);
+      if (defaultModelId) {
+        normalized.model = defaultModelId;
       }
     }
 
@@ -3564,6 +3694,24 @@ export class AgentManager {
     }
 
     return normalized;
+  }
+
+  private async resolveDefaultModelId(config: AgentSessionConfig): Promise<string | undefined> {
+    const client = this.clients.get(config.provider);
+    if (!client) {
+      return undefined;
+    }
+    try {
+      const catalog = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: config.cwd,
+        force: false,
+      });
+      return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
+    } catch {
+      // Provider may not support model listing — leave model undefined.
+      return undefined;
+    }
   }
 
   private async prepareSessionConfig(
@@ -3595,14 +3743,33 @@ export class AgentManager {
       : next;
   }
 
-  private buildLaunchContext(agentId: string, env?: Record<string, string>): AgentLaunchContext {
-    return {
+  private async buildLaunchContext(
+    agentId: string,
+    client: AgentClient,
+    env?: Record<string, string>,
+  ): Promise<AgentLaunchContext> {
+    const context: AgentLaunchContext = {
       agentId,
       env: {
         ...env,
         PASEO_AGENT_ID: agentId,
       },
     };
+    if (
+      this.paseoToolsEnabled &&
+      client.capabilities.supportsNativePaseoTools &&
+      this.paseoToolCatalogFactory
+    ) {
+      context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
+    }
+    return context;
+  }
+
+  private resolveProviderLaunchConfig(
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+  ): AgentSessionConfig {
+    return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
@@ -3669,6 +3836,16 @@ export class AgentManager {
         "Failed to archive native session (best-effort)",
       );
     }
+  }
+
+  private async unarchiveNativeSession(
+    provider: AgentProvider,
+    persistence: AgentPersistenceHandle | null | undefined,
+  ): Promise<void> {
+    if (!persistence) return;
+    const client = this.clients.get(provider);
+    if (!client?.unarchiveNativeSession) return;
+    await client.unarchiveNativeSession(persistence);
   }
 
   private requireAgent(id: string): LiveManagedAgent {

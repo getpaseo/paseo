@@ -435,6 +435,37 @@ describe("selectPrPaneState", () => {
     expect(state.isLoading).toBe(false);
   });
 
+  it("reports activityLoading while the timeline is pending its first response", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      shouldFetchTimeline: true,
+      timelineIsLoading: true,
+    });
+    expect(state.activityLoading).toBe(true);
+  });
+
+  it("does not report activityLoading when no timeline fetch was scheduled", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      shouldFetchTimeline: false,
+      timelineIsLoading: true,
+    });
+    expect(state.activityLoading).toBe(false);
+  });
+
+  it("does not report activityLoading once the timeline payload resolves", () => {
+    const state = selectPrPaneState({
+      ...baseSelectInput,
+      status: prStatus(),
+      shouldFetchTimeline: true,
+      timelineIsLoading: false,
+      timelinePayload: timelinePayload(),
+    });
+    expect(state.activityLoading).toBe(false);
+  });
+
   it("reports refreshing during background revalidation of either query", () => {
     expect(
       selectPrPaneState({

@@ -68,8 +68,8 @@ describe("Codex terminal agent hooks", () => {
     for (const event of codexAgentHookProvider.events) {
       expect(commandHooks(config, event.event)).toEqual([
         {
-          command: `[ -n "$PASEO_TERMINAL_ID" ] && "\${PASEO_HOOK_CLI:-paseo}" hooks codex ${event.event}`,
-          commandWindows: `if defined PASEO_TERMINAL_ID (if defined PASEO_HOOK_CLI ("%PASEO_HOOK_CLI%" hooks codex ${event.event}) else (paseo hooks codex ${event.event}))`,
+          command: `if [ -n "$PASEO_TERMINAL_ID" ]; then "\${PASEO_HOOK_CLI:-paseo}" hooks codex ${event.event}; fi`,
+          commandWindows: `if defined PASEO_TERMINAL_ID (if defined PASEO_HOOK_CLI ("%PASEO_HOOK_CLI%" hooks codex ${event.event}) else (paseo hooks codex ${event.event})) else (exit /b 0)`,
         },
       ]);
     }
@@ -102,7 +102,7 @@ describe("Codex terminal agent hooks", () => {
     const stopCommands = commandHooks(readHooksFile(configDir), "Stop").map((hook) => hook.command);
     expect(stopCommands).toEqual([
       "say codex done",
-      '[ -n "$PASEO_TERMINAL_ID" ] && "${PASEO_HOOK_CLI:-paseo}" hooks codex Stop',
+      'if [ -n "$PASEO_TERMINAL_ID" ]; then "${PASEO_HOOK_CLI:-paseo}" hooks codex Stop; fi',
     ]);
   });
 

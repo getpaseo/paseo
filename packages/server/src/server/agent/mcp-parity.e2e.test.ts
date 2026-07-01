@@ -163,12 +163,9 @@ function createRecordingAgentClients(): Record<AgentProvider, AgentClient> {
       },
       resumeSession: async (handle, overrides, launchContext) =>
         await client.resumeSession(handle, overrides, launchContext),
-      listModels: async (options) => await client.listModels(options),
+      fetchCatalog: async (options) => await client.fetchCatalog(options),
       isAvailable: async () => await client.isAvailable(),
     };
-    if (client.listModes) {
-      wrappedClient.listModes = async (options) => await client.listModes!(options);
-    }
     if (client.resolveCreateConfig) {
       wrappedClient.resolveCreateConfig = (input) => client.resolveCreateConfig!(input);
     }
@@ -201,20 +198,24 @@ async function makeCwd(prefix: string): Promise<string> {
 
 async function createTopLevelAgent(args?: Partial<StructuredContent>): Promise<string> {
   const cwd = typeof args?.cwd === "string" ? args.cwd : await makeCwd("agent-cwd");
+  const { cwd: _cwd, ...rest } = args ?? {};
   const payload = await callToolStructured(topLevelClient, "create_agent", {
-    cwd,
+    relationship: { kind: "detached" },
+    workspace: { kind: "create", source: { kind: "directory", path: cwd } },
     title: "Parity agent",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
     settings: { modeId: "bypassPermissions" },
     background: true,
-    ...args,
+    ...rest,
   });
   return str(payload.agentId);
 }
 
 async function createChildAgent(args?: Partial<StructuredContent>): Promise<string> {
   const payload = await callToolStructured(agentScopedClient, "create_agent", {
+    relationship: { kind: "subagent" },
+    workspace: { kind: "current" },
     title: "Parity child",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
@@ -288,7 +289,8 @@ beforeAll(async () => {
   topLevelClient = await createMcpClient(`http://127.0.0.1:${daemonHandle.port}/mcp/agents`);
 
   const parentPayload = await callToolStructured(topLevelClient, "create_agent", {
-    cwd: parentAgentCwd,
+    relationship: { kind: "detached" },
+    workspace: { kind: "create", source: { kind: "directory", path: parentAgentCwd } },
     title: "MCP parity parent",
     provider: "claude/claude-test-model",
     initialPrompt: "say done and stop",
@@ -338,10 +340,10 @@ describe("Suite A: Core Fixes", () => {
     }
   });
 
-  test("create_agent with detached true omits the parent agent label", async () => {
+  test("create_agent with detached relationship omits the parent agent label", async () => {
     let agentId: string | null = null;
     try {
-      agentId = await createChildAgent({ detached: true });
+      agentId = await createChildAgent({ relationship: { kind: "detached" } });
       const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
       expect(snapshot?.labels?.[PARENT_AGENT_ID_LABEL]).toBeUndefined();
     } finally {
@@ -836,9 +838,9 @@ describe("Suite E: Worktree Tools", () => {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
         target: {
-          mode: "branch-off",
-          newBranch: branchName,
-          base: "main",
+          kind: "branch-off",
+          worktreeSlug: branchName,
+          baseBranch: "main",
         },
       });
       worktreePath = str(created.worktreePath);
@@ -867,9 +869,9 @@ describe("Suite E: Worktree Tools", () => {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
         target: {
-          mode: "branch-off",
-          newBranch: branchName,
-          base: "main",
+          kind: "branch-off",
+          worktreeSlug: branchName,
+          baseBranch: "main",
         },
       });
       worktreePath = str(created.worktreePath);
@@ -900,9 +902,9 @@ describe("Suite E: Worktree Tools", () => {
       const created = await callToolStructured(topLevelClient, "create_worktree", {
         cwd: worktreeRepoCwd,
         target: {
-          mode: "branch-off",
-          newBranch: branchName,
-          base: "main",
+          kind: "branch-off",
+          worktreeSlug: branchName,
+          baseBranch: "main",
         },
       });
       worktreePath = str(created.worktreePath);

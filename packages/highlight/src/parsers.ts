@@ -14,6 +14,7 @@ import { parser as phpParser } from "@lezer/php";
 import { parser as rustParser } from "@lezer/rust";
 import { parser as xmlParser } from "@lezer/xml";
 import { parser as yamlParser } from "@lezer/yaml";
+import { csharpLanguage } from "@replit/codemirror-lang-csharp";
 import { parser as elixirParser } from "lezer-elixir";
 import type { Parser } from "@lezer/common";
 
@@ -62,6 +63,8 @@ const parsersByExtension: Record<string, Parser> = {
   swift: StreamLanguage.define(swift).parser,
   // Dart
   dart: StreamLanguage.define(dart).parser,
+  // C#
+  cs: csharpLanguage.parser,
   // Elixir
   ex: elixirParser,
   exs: elixirParser,

@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, MoreVertical, Pencil, Plus, X } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { HostPicker as SharedHostPicker, HostStatusDotSlot } from "@/components/hosts/host-picker";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -216,7 +217,6 @@ function ProjectSettingsBody({
     [project.projectKey, selectedHost.repoRoot, selectedHost.serverId],
   );
   const projectIconDataByKey = useProjectIconDataByProjectKey({
-    serverId: null,
     projects: projectIconTargets,
   });
   const projectIconDataUri = projectIconDataByKey.get(project.projectKey) ?? null;
@@ -942,24 +942,12 @@ function HostContext({ hosts, selectedHost, onSelectHost }: HostContextProps) {
   }
   return (
     <View testID="host-indicator" style={styles.hostIndicator}>
-      <HostStatusDot serverId={selectedHost.serverId} />
+      <HostStatusDotSlot serverId={selectedHost.serverId} />
       <Text style={styles.hostName} numberOfLines={1}>
         {selectedHost.serverName}
       </Text>
     </View>
   );
-}
-
-function HostStatusDot({ serverId }: { serverId: string }) {
-  const { theme } = useUnistyles();
-  const snapshot = useHostRuntimeSnapshot(serverId);
-  const status = snapshot?.connectionStatus ?? "connecting";
-  let color: string;
-  if (status === "online") color = theme.colors.palette.green[400];
-  else if (status === "connecting") color = theme.colors.palette.amber[500];
-  else color = theme.colors.palette.red[500];
-  const dotStyle = useMemo(() => [styles.hostStatusDot, { backgroundColor: color }], [color]);
-  return <View style={dotStyle} />;
 }
 
 interface HostPickerProps {
@@ -970,52 +958,42 @@ interface HostPickerProps {
 
 function HostPicker({ hosts, selectedHost, onSelectHost }: HostPickerProps) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<View | null>(null);
+  const hostOptions = useMemo(
+    () => hosts.map((host) => ({ serverId: host.serverId, label: host.serverName })),
+    [hosts],
+  );
+  const handleOpen = useCallback(() => setOpen(true), []);
+  const hostOptionTestID = useCallback((serverId: string) => `host-picker-item-${serverId}`, []);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
+    <SharedHostPicker
+      hosts={hostOptions}
+      value={selectedHost.serverId}
+      onSelect={onSelectHost}
+      open={open}
+      onOpenChange={setOpen}
+      anchorRef={triggerRef}
+      searchable={false}
+      title={t("settings.project.switchHost")}
+      desktopPlacement="bottom-start"
+      desktopMinWidth={240}
+      hostOptionTestID={hostOptionTestID}
+    >
+      <Pressable
+        ref={triggerRef}
         accessibilityLabel={t("settings.project.switchHost")}
         testID="host-picker"
         style={styles.hostIndicator}
+        onPress={handleOpen}
       >
-        <HostStatusDot serverId={selectedHost.serverId} />
+        <HostStatusDotSlot serverId={selectedHost.serverId} />
         <Text style={styles.hostName} numberOfLines={1}>
           {selectedHost.serverName}
         </Text>
         <ChevronDown size={ICON_SIZE} color={styles.chevronColor.color} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" minWidth={240}>
-        {hosts.map((host) => (
-          <HostPickerItem
-            key={host.serverId}
-            host={host}
-            isSelected={host.serverId === selectedHost.serverId}
-            onSelectHost={onSelectHost}
-          />
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-interface HostPickerItemProps {
-  host: ProjectHostEntry;
-  isSelected: boolean;
-  onSelectHost: (serverId: string) => void;
-}
-
-function HostPickerItem({ host, isSelected, onSelectHost }: HostPickerItemProps) {
-  const handleSelect = useCallback(
-    () => onSelectHost(host.serverId),
-    [host.serverId, onSelectHost],
-  );
-  return (
-    <DropdownMenuItem
-      testID={`host-picker-item-${host.serverId}`}
-      selected={isSelected}
-      onSelect={handleSelect}
-    >
-      {host.serverName}
-    </DropdownMenuItem>
+      </Pressable>
+    </SharedHostPicker>
   );
 }
 
@@ -1352,11 +1330,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     alignSelf: "flex-start",
     minWidth: 0,
-  },
-  hostStatusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: theme.borderRadius.full,
   },
   hostName: {
     color: theme.colors.foregroundMuted,

@@ -122,6 +122,7 @@ function fileHeaderPressableStyle({ pressed }: PressableStateCallbackType) {
 
 interface HighlightedTextProps {
   tokens: HighlightToken[];
+  textMetricsStyle: TextStyle;
   wrapLines?: boolean;
   testID?: string;
 }
@@ -140,14 +141,37 @@ function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefine
     : { whiteSpace: "pre", overflowWrap: "normal" };
 }
 
+function getNumericLineHeight(textMetricsStyle: TextStyle): number | undefined {
+  const { lineHeight } = textMetricsStyle;
+  return typeof lineHeight === "number" && Number.isFinite(lineHeight) ? lineHeight : undefined;
+}
+
+function useDiffRowMetricsStyle(textMetricsStyle: TextStyle): StyleProp<ViewStyle> {
+  const lineHeight = getNumericLineHeight(textMetricsStyle);
+  return useMemo(
+    () => (lineHeight !== undefined ? inlineUnistylesStyle({ minHeight: lineHeight }) : null),
+    [lineHeight],
+  );
+}
+
 function HighlightedToken({ token }: { token: HighlightToken }) {
   return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
 }
 
-function HighlightedText({ tokens, wrapLines = false, testID }: HighlightedTextProps) {
+function HighlightedText({
+  tokens,
+  textMetricsStyle,
+  wrapLines = false,
+  testID,
+}: HighlightedTextProps) {
   const containerStyle = useMemo(
-    () => [styles.diffTextMetrics, styles.diffLineText, getWrappedTextStyle(wrapLines)],
-    [wrapLines],
+    () => [
+      styles.diffTextMetrics,
+      textMetricsStyle,
+      styles.diffLineText,
+      getWrappedTextStyle(wrapLines),
+    ],
+    [textMetricsStyle, wrapLines],
   );
 
   const keyedTokens = useMemo(
@@ -246,6 +270,7 @@ function DiffGutterCell({
   lineNumber,
   type,
   gutterWidth,
+  textMetricsStyle,
   reviewTarget,
   reviewActions,
   isLineHovered,
@@ -256,6 +281,7 @@ function DiffGutterCell({
   lineNumber: number | null;
   type: DiffLine["type"] | undefined | null;
   gutterWidth: number;
+  textMetricsStyle: TextStyle;
   reviewTarget?: ReviewableDiffTarget | null;
   reviewActions?: InlineReviewActions;
   isLineHovered?: boolean;
@@ -263,23 +289,27 @@ function DiffGutterCell({
   textTestID?: string;
   actionTestID?: string;
 }) {
+  const lineHeight = getNumericLineHeight(textMetricsStyle);
+  const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
   const containerStyle = useMemo(
     () => [
       styles.gutterCell,
       lineTypeBackground(type),
+      rowMetricsStyle,
       inlineUnistylesStyle({ width: gutterWidth }),
       style,
     ],
-    [type, gutterWidth, style],
+    [type, rowMetricsStyle, gutterWidth, style],
   );
   const textStyle = useMemo(
     () => [
       styles.diffTextMetrics,
+      textMetricsStyle,
       styles.lineNumberText,
       type === "add" && styles.addLineNumberText,
       type === "remove" && styles.removeLineNumberText,
     ],
-    [type],
+    [textMetricsStyle, type],
   );
   const comments = useMemo(
     () =>
@@ -297,6 +327,7 @@ function DiffGutterCell({
       comments={comments}
       isEditorOpen={isEditorOpen}
       isLineHovered={isLineHovered}
+      lineHeight={lineHeight}
       onStartComment={onStartComment}
       style={containerStyle}
       actionTestID={actionTestID}
@@ -311,6 +342,7 @@ function DiffGutterCell({
 function DiffTextLine({
   line,
   wrapLines,
+  textMetricsStyle,
   reviewTarget,
   reviewActions,
   onHoverChange,
@@ -320,6 +352,7 @@ function DiffTextLine({
 }: {
   line: DiffLine;
   wrapLines: boolean;
+  textMetricsStyle: TextStyle;
   reviewTarget?: ReviewableDiffTarget | null;
   reviewActions?: InlineReviewActions;
   onHoverChange?: (hovered: boolean) => void;
@@ -328,14 +361,16 @@ function DiffTextLine({
   textTestID?: string;
 }) {
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+  const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
 
   const containerStyle = useMemo(
-    () => [styles.textLineContainer, lineTypeBackground(line.type)],
-    [line.type],
+    () => [styles.textLineContainer, lineTypeBackground(line.type), rowMetricsStyle],
+    [line.type, rowMetricsStyle],
   );
   const textStyle = useMemo(
     () => [
       styles.diffTextMetrics,
+      textMetricsStyle,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line.type === "add" && styles.addLineText,
@@ -343,7 +378,7 @@ function DiffTextLine({
       line.type === "header" && styles.headerLineText,
       line.type === "context" && styles.contextLineText,
     ],
-    [line.type, wrapLines],
+    [line.type, textMetricsStyle, wrapLines],
   );
 
   return (
@@ -356,7 +391,12 @@ function DiffTextLine({
       style={containerStyle}
     >
       {line.type !== "header" && visibleTokens ? (
-        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} testID={textTestID} />
+        <HighlightedText
+          tokens={visibleTokens}
+          textMetricsStyle={textMetricsStyle}
+          wrapLines={wrapLines}
+          testID={textTestID}
+        />
       ) : (
         <Text style={textStyle} testID={textTestID}>
           {formatDiffContentText(line.content)}
@@ -369,6 +409,7 @@ function DiffTextLine({
 function SplitTextLine({
   line,
   wrapLines,
+  textMetricsStyle,
   reviewActions,
   onHoverChange,
   hoverTargetKey,
@@ -376,20 +417,23 @@ function SplitTextLine({
 }: {
   line: SplitDiffDisplayLine | null;
   wrapLines: boolean;
+  textMetricsStyle: TextStyle;
   reviewActions?: InlineReviewActions;
   onHoverChange?: (hovered: boolean) => void;
   hoverTargetKey?: string | null;
   onHoverTargetChange?: (key: string | null) => void;
 }) {
   const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+  const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
 
   const containerStyle = useMemo(
-    () => [styles.textLineContainer, lineTypeBackground(line?.type)],
-    [line?.type],
+    () => [styles.textLineContainer, lineTypeBackground(line?.type), rowMetricsStyle],
+    [line?.type, rowMetricsStyle],
   );
   const textStyle = useMemo(
     () => [
       styles.diffTextMetrics,
+      textMetricsStyle,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line?.type === "add" && styles.addLineText,
@@ -397,7 +441,7 @@ function SplitTextLine({
       line?.type === "context" && styles.contextLineText,
       !line && styles.emptySplitCellText,
     ],
-    [line, wrapLines],
+    [line, textMetricsStyle, wrapLines],
   );
 
   return (
@@ -410,7 +454,11 @@ function SplitTextLine({
       style={containerStyle}
     >
       {visibleTokens ? (
-        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+        <HighlightedText
+          tokens={visibleTokens}
+          textMetricsStyle={textMetricsStyle}
+          wrapLines={wrapLines}
+        />
       ) : (
         <Text style={textStyle}>{formatDiffContentText(line?.content)}</Text>
       )}
@@ -423,6 +471,7 @@ function DiffLineView({
   lineNumber,
   gutterWidth,
   wrapLines,
+  textMetricsStyle,
   reviewTarget,
   reviewActions,
 }: {
@@ -430,19 +479,22 @@ function DiffLineView({
   lineNumber: number | null;
   gutterWidth: number;
   wrapLines: boolean;
+  textMetricsStyle: TextStyle;
   reviewTarget?: ReviewableDiffTarget | null;
   reviewActions?: InlineReviewActions;
 }) {
   const [isLineHovered, setIsLineHovered] = useState(false);
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+  const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
 
   const containerStyle = useMemo(
-    () => [styles.diffLineContainer, lineTypeBackground(line.type)],
-    [line.type],
+    () => [styles.diffLineContainer, lineTypeBackground(line.type), rowMetricsStyle],
+    [line.type, rowMetricsStyle],
   );
   const textStyle = useMemo(
     () => [
       styles.diffTextMetrics,
+      textMetricsStyle,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line.type === "add" && styles.addLineText,
@@ -450,7 +502,7 @@ function DiffLineView({
       line.type === "header" && styles.headerLineText,
       line.type === "context" && styles.contextLineText,
     ],
-    [line.type, wrapLines],
+    [line.type, textMetricsStyle, wrapLines],
   );
 
   return (
@@ -464,13 +516,18 @@ function DiffLineView({
         lineNumber={lineNumber}
         type={line.type}
         gutterWidth={gutterWidth}
+        textMetricsStyle={textMetricsStyle}
         reviewTarget={reviewTarget}
         reviewActions={reviewActions}
         isLineHovered={isLineHovered}
         style={styles.lineNumberGutter}
       />
       {line.type !== "header" && visibleTokens ? (
-        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+        <HighlightedText
+          tokens={visibleTokens}
+          textMetricsStyle={textMetricsStyle}
+          wrapLines={wrapLines}
+        />
       ) : (
         <Text style={textStyle}>{formatDiffContentText(line.content)}</Text>
       )}
@@ -482,23 +539,27 @@ function SplitDiffLine({
   line,
   gutterWidth,
   wrapLines,
+  textMetricsStyle,
   reviewActions,
 }: {
   line: SplitDiffDisplayLine | null;
   gutterWidth: number;
   wrapLines: boolean;
+  textMetricsStyle: TextStyle;
   reviewActions?: InlineReviewActions;
 }) {
   const [isLineHovered, setIsLineHovered] = useState(false);
   const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+  const rowMetricsStyle = useDiffRowMetricsStyle(textMetricsStyle);
 
   const containerStyle = useMemo(
-    () => [styles.diffLineContainer, lineTypeBackground(line?.type)],
-    [line?.type],
+    () => [styles.diffLineContainer, lineTypeBackground(line?.type), rowMetricsStyle],
+    [line?.type, rowMetricsStyle],
   );
   const textStyle = useMemo(
     () => [
       styles.diffTextMetrics,
+      textMetricsStyle,
       styles.diffLineText,
       getWrappedTextStyle(wrapLines),
       line?.type === "add" && styles.addLineText,
@@ -506,7 +567,7 @@ function SplitDiffLine({
       line?.type === "context" && styles.contextLineText,
       !line && styles.emptySplitCellText,
     ],
-    [line, wrapLines],
+    [line, textMetricsStyle, wrapLines],
   );
 
   return (
@@ -520,13 +581,18 @@ function SplitDiffLine({
         lineNumber={line?.lineNumber ?? null}
         type={line?.type}
         gutterWidth={gutterWidth}
+        textMetricsStyle={textMetricsStyle}
         reviewTarget={line?.reviewTarget}
         reviewActions={reviewActions}
         isLineHovered={isLineHovered}
         style={styles.lineNumberGutter}
       />
       {visibleTokens ? (
-        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
+        <HighlightedText
+          tokens={visibleTokens}
+          textMetricsStyle={textMetricsStyle}
+          wrapLines={wrapLines}
+        />
       ) : (
         <Text style={textStyle}>{formatDiffContentText(line?.content)}</Text>
       )}
@@ -649,6 +715,7 @@ function SplitDiffColumn({
   side,
   gutterWidth,
   wrapLines,
+  textMetricsStyle,
   reviewActions,
   showDivider = false,
 }: {
@@ -656,6 +723,7 @@ function SplitDiffColumn({
   side: "left" | "right";
   gutterWidth: number;
   wrapLines: boolean;
+  textMetricsStyle: TextStyle;
   reviewActions?: InlineReviewActions;
   showDivider?: boolean;
 }) {
@@ -677,6 +745,10 @@ function SplitDiffColumn({
     ],
     [scrollWidth],
   );
+  const headerLineTextStyle = useMemo(
+    () => [styles.diffTextMetrics, textMetricsStyle, styles.diffLineText, styles.headerLineText],
+    [textMetricsStyle],
+  );
 
   const keyedRows = useMemo(() => rows.map((row, i) => ({ key: `row-${i}`, row })), [rows]);
 
@@ -688,7 +760,7 @@ function SplitDiffColumn({
             if (row.kind === "header") {
               return (
                 <View key={key} style={styles.splitHeaderRow}>
-                  <Text style={HEADER_LINE_TEXT_STYLE}>{row.content}</Text>
+                  <Text style={headerLineTextStyle}>{row.content}</Text>
                 </View>
               );
             }
@@ -704,6 +776,7 @@ function SplitDiffColumn({
                   line={line}
                   gutterWidth={gutterWidth}
                   wrapLines={wrapLines}
+                  textMetricsStyle={textMetricsStyle}
                   reviewActions={reviewActions}
                 />
                 <InlineReviewRow
@@ -726,7 +799,13 @@ function SplitDiffColumn({
         {keyedRows.map(({ key, row }) => {
           if (row.kind === "header") {
             return (
-              <DiffGutterCell key={key} lineNumber={null} type="header" gutterWidth={gutterWidth} />
+              <DiffGutterCell
+                key={key}
+                lineNumber={null}
+                type="header"
+                gutterWidth={gutterWidth}
+                textMetricsStyle={textMetricsStyle}
+              />
             );
           }
           const line = side === "left" ? row.left : row.right;
@@ -742,6 +821,7 @@ function SplitDiffColumn({
                 lineNumber={line?.lineNumber ?? null}
                 type={line?.type}
                 gutterWidth={gutterWidth}
+                textMetricsStyle={textMetricsStyle}
                 reviewTarget={line?.reviewTarget}
                 reviewActions={reviewActions}
                 isLineHovered={
@@ -769,7 +849,7 @@ function SplitDiffColumn({
             if (row.kind === "header") {
               return (
                 <View key={key} style={styles.splitHeaderRow}>
-                  <Text style={HEADER_LINE_TEXT_STYLE}>{row.content}</Text>
+                  <Text style={headerLineTextStyle}>{row.content}</Text>
                 </View>
               );
             }
@@ -785,6 +865,7 @@ function SplitDiffColumn({
                 <SplitTextLine
                   line={line}
                   wrapLines={false}
+                  textMetricsStyle={textMetricsStyle}
                   reviewActions={reviewActions}
                   hoverTargetKey={reviewTargetKey}
                   onHoverTargetChange={setHoveredReviewTargetKey}
@@ -910,6 +991,7 @@ function DiffFileBody({
   layout,
   wrapLines,
   codeFontSize,
+  textMetricsStyle,
   reviewActions,
   onBodyHeightChange,
   testID,
@@ -918,6 +1000,7 @@ function DiffFileBody({
   layout: "unified" | "split";
   wrapLines: boolean;
   codeFontSize: number;
+  textMetricsStyle: TextStyle;
   reviewActions?: InlineReviewActions;
   onBodyHeightChange?: (file: ParsedDiffFile, height: number) => void;
   testID?: string;
@@ -978,6 +1061,7 @@ function DiffFileBody({
                 side="left"
                 gutterWidth={gutterWidth}
                 wrapLines={wrapLines}
+                textMetricsStyle={textMetricsStyle}
                 reviewActions={reviewActions}
               />
               <SplitDiffColumn
@@ -985,6 +1069,7 @@ function DiffFileBody({
                 side="right"
                 gutterWidth={gutterWidth}
                 wrapLines={wrapLines}
+                textMetricsStyle={textMetricsStyle}
                 reviewActions={reviewActions}
                 showDivider
               />
@@ -1005,6 +1090,7 @@ function DiffFileBody({
                       lineNumber={lineNumber}
                       gutterWidth={gutterWidth}
                       wrapLines={wrapLines}
+                      textMetricsStyle={textMetricsStyle}
                       reviewTarget={reviewTarget}
                       reviewActions={reviewActions}
                     />
@@ -1031,6 +1117,7 @@ function DiffFileBody({
                     lineNumber={lineNumber}
                     type={line.type}
                     gutterWidth={gutterWidth}
+                    textMetricsStyle={textMetricsStyle}
                     reviewTarget={reviewTarget}
                     reviewActions={reviewActions}
                     isLineHovered={
@@ -1059,6 +1146,7 @@ function DiffFileBody({
                     <DiffTextLine
                       line={line}
                       wrapLines={false}
+                      textMetricsStyle={textMetricsStyle}
                       reviewTarget={reviewTarget}
                       reviewActions={reviewActions}
                       hoverTargetKey={reviewTarget?.key ?? null}
@@ -1621,6 +1709,14 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const diffBodyTypographyKey = [appSettings.monoFontFamily, codeFontSize, diffBodyLineHeight].join(
     ":",
   );
+  const diffTextMetricsStyle = useMemo<TextStyle>(() => {
+    const monoFontFamily = appSettings.monoFontFamily.trim();
+    return {
+      fontSize: codeFontSize,
+      lineHeight: diffBodyLineHeight,
+      ...(monoFontFamily ? { fontFamily: monoFontFamily } : null),
+    };
+  }, [appSettings.monoFontFamily, codeFontSize, diffBodyLineHeight]);
   const diffModeTriggerStyle = useMemo(() => buildDiffModeTriggerStyle(), []);
 
   const unifiedToggleStyle = useMemo(
@@ -2009,6 +2105,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
           layout={effectiveLayout}
           wrapLines={wrapLines}
           codeFontSize={codeFontSize}
+          textMetricsStyle={diffTextMetricsStyle}
           reviewActions={reviewActions}
           onBodyHeightChange={handleBodyHeightChange}
           testID={`diff-file-${item.fileIndex}-body`}
@@ -2017,6 +2114,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     },
     [
       codeFontSize,
+      diffTextMetricsStyle,
       effectiveLayout,
       handleBodyHeightChange,
       handleHeaderHeightChange,
@@ -2680,7 +2778,6 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-const HEADER_LINE_TEXT_STYLE = [styles.diffTextMetrics, styles.diffLineText, styles.headerLineText];
 const FILE_SECTION_BODY_STYLE = [styles.fileSectionBodyContainer, styles.fileSectionBorder];
 const DIFF_CONTENT_SPLIT_ROW_STYLE = [styles.diffContent, styles.splitRow];
 const DIFF_CONTENT_ROW_STYLE = [styles.diffContent, styles.diffContentRow];

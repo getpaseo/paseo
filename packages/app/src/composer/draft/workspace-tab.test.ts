@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { validateDraftSubmission } from "./workspace-tab-core";
+import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
 
 const baseComposerState = {
   providerDefinitions: [{ id: "codewhale" }],
@@ -47,5 +47,25 @@ describe("workspace draft agent model validation", () => {
         },
       }),
     ).toBe("No model is available for the selected provider");
+  });
+});
+
+describe("workspace draft empty text readiness", () => {
+  test("allows attachment-only retries after a fork draft create fails", () => {
+    expect(
+      shouldAllowEmptyDraftText({
+        allowsEmptyAutoSubmit: false,
+        attachments: [{ kind: "chat_history" }],
+      }),
+    ).toBe(true);
+  });
+
+  test("still rejects empty drafts with no auto-submit and no attachments", () => {
+    expect(
+      shouldAllowEmptyDraftText({
+        allowsEmptyAutoSubmit: false,
+        attachments: [],
+      }),
+    ).toBe(false);
   });
 });

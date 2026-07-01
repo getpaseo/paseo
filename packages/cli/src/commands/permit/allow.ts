@@ -79,7 +79,7 @@ export async function runAllowCommand(
   }
 
   try {
-    const fetchResult = await client.fetchAgent(agentIdOrPrefix);
+    const fetchResult = await client.fetchAgent({ agentId: agentIdOrPrefix });
     if (!fetchResult) {
       await client.close();
       const error: CommandError = {

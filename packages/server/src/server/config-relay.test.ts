@@ -150,6 +150,56 @@ describe("daemon service proxy config", () => {
   });
 });
 
+describe("daemon trusted proxy config", () => {
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("trusts loopback proxies by default", async () => {
+    const home = await createPaseoHome({ version: 1 });
+
+    expect(loadConfig(home, { env: {} }).trustedProxies).toEqual(["loopback"]);
+  });
+
+  test("loads trusted proxies from persisted config", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        trustedProxies: ["loopback", "10.0.0.0/8"],
+      },
+    });
+
+    expect(loadConfig(home, { env: {} }).trustedProxies).toEqual(["loopback", "10.0.0.0/8"]);
+  });
+
+  test("PASEO_TRUSTED_PROXIES overrides persisted config", async () => {
+    const home = await createPaseoHome({
+      version: 1,
+      daemon: {
+        trustedProxies: ["loopback"],
+      },
+    });
+
+    const config = loadConfig(home, {
+      env: { PASEO_TRUSTED_PROXIES: "loopback,172.16.0.0/12" },
+    });
+
+    expect(config.trustedProxies).toEqual(["loopback", "172.16.0.0/12"]);
+  });
+
+  test("PASEO_TRUSTED_PROXIES supports explicit trust-all and trust-none modes", async () => {
+    const trustAllHome = await createPaseoHome({ version: 1 });
+    expect(
+      loadConfig(trustAllHome, { env: { PASEO_TRUSTED_PROXIES: "true" } }).trustedProxies,
+    ).toBe(true);
+
+    const trustNoneHome = await createPaseoHome({ version: 1 });
+    expect(
+      loadConfig(trustNoneHome, { env: { PASEO_TRUSTED_PROXIES: "false" } }).trustedProxies,
+    ).toEqual([]);
+  });
+});
+
 describe("daemon worktree root config", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));

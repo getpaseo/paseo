@@ -1,24 +1,24 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { withUnistyles } from "react-native-unistyles";
-import { FileText, MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
   ComposerAttachment,
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
+import { getWorkspaceAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AttachmentLabel, AttachmentPill } from "@/components/attachment-pill";
-import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   isWorkspaceAttachment,
   isPullRequestContextAttachment,
   userAttachmentsOnly,
   workspaceAttachmentToSubmitAttachment,
 } from "@/attachments/workspace-attachment-utils";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import {
+  getAttachmentKey,
+  removeSentContextAttachments,
+  removeWorkspaceAttachmentsMatching,
+} from "./workspace-cleanup";
 import { useClearReviewDraft } from "@/review/store";
-
-type TranslationFn = ReturnType<typeof useTranslation>["t"];
 
 interface WorkspaceAttachmentBindingInput {
   normalAttachments: UserComposerAttachment[];
@@ -50,97 +50,9 @@ interface ComposerWorkspaceAttachmentBinding {
   resetSuppression: () => void;
 }
 
-function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
-  if (attachment.kind === "browser_element") {
-    return JSON.stringify({
-      type: "browser_element",
-      url: attachment.attachment.url,
-      selector: attachment.attachment.selector,
-      tag: attachment.attachment.tag,
-      text: attachment.attachment.text,
-      html: attachment.attachment.outerHTML,
-    });
-  }
-  if (isPullRequestContextAttachment(attachment)) {
-    return JSON.stringify({
-      kind: attachment.kind,
-      id: attachment.id,
-    });
-  }
-  return JSON.stringify({
-    type: "review",
-    cwd: attachment.attachment.cwd,
-    mode: attachment.attachment.mode,
-    baseRef: attachment.attachment.baseRef ?? null,
-    reviewDraftKey: attachment.reviewDraftKey,
-    comments: attachment.attachment.comments.map((comment) => ({
-      filePath: comment.filePath,
-      side: comment.side,
-      lineNumber: comment.lineNumber,
-      body: comment.body,
-    })),
-  });
-}
-
-function removeWorkspaceAttachmentsMatching(selectedKey: string): void {
-  const { attachmentsByScope, setWorkspaceAttachments } = useWorkspaceAttachmentsStore.getState();
-  for (const [scopeKey, attachments] of Object.entries(attachmentsByScope)) {
-    const nextAttachments = attachments.filter(
-      (attachment) => getAttachmentKey(attachment) !== selectedKey,
-    );
-    if (nextAttachments.length !== attachments.length) {
-      setWorkspaceAttachments({ scopeKey, attachments: nextAttachments });
-    }
-  }
-}
-
-function removeSentContextAttachments(attachments: readonly ComposerAttachment[]): void {
-  const sentContextKeys = attachments.filter(isPullRequestContextAttachment).map(getAttachmentKey);
-  for (const key of sentContextKeys) {
-    removeWorkspaceAttachmentsMatching(key);
-  }
-}
-
-function getContextSourceLabel(attachment: WorkspaceComposerAttachment): string {
-  if (attachment.kind === "github.pull_request_check") {
-    return "Check logs";
-  }
-  if (attachment.kind === "github.pull_request_comment") {
-    return "Comment";
-  }
-  return "Review";
-}
-
-interface PillContent {
-  title: string;
-  subtitle: string;
-}
-
-function getPillContent(attachment: WorkspaceComposerAttachment, t: TranslationFn): PillContent {
-  if (attachment.kind === "browser_element") {
-    return {
-      title: attachment.attachment.tag,
-      subtitle: t("composer.attachments.element"),
-    };
-  }
-  if (isPullRequestContextAttachment(attachment)) {
-    return {
-      title: attachment.title,
-      subtitle: getContextSourceLabel(attachment),
-    };
-  }
-  return {
-    title: t("message.attachments.review"),
-    subtitle:
-      attachment.commentCount === 1
-        ? t("message.attachments.commentsOne")
-        : t("message.attachments.commentsMany", { count: attachment.commentCount }),
-  };
-}
-
 function getOpenAccessibilityLabel(
   attachment: WorkspaceComposerAttachment,
-  t: TranslationFn,
+  t: ReturnType<typeof useTranslation>["t"],
 ): string {
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.openBrowserElement");
@@ -148,12 +60,15 @@ function getOpenAccessibilityLabel(
   if (isPullRequestContextAttachment(attachment)) {
     return "Open context attachment";
   }
+  if (attachment.kind === "chat_history") {
+    return "Open chat history attachment";
+  }
   return t("composer.attachments.openReview");
 }
 
 function getRemoveAccessibilityLabel(
   attachment: WorkspaceComposerAttachment,
-  t: TranslationFn,
+  t: ReturnType<typeof useTranslation>["t"],
 ): string {
   if (attachment.kind === "browser_element") {
     return t("composer.attachments.removeBrowserElement");
@@ -161,17 +76,17 @@ function getRemoveAccessibilityLabel(
   if (isPullRequestContextAttachment(attachment)) {
     return "Remove context attachment";
   }
+  if (attachment.kind === "chat_history") {
+    return "Remove chat history attachment";
+  }
   return t("composer.attachments.removeReview");
 }
 
-function renderPillIcon(attachment: WorkspaceComposerAttachment): ReactElement {
-  if (attachment.kind === "browser_element") {
-    return <ThemedMousePointer2 size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
+function getPillTestID(attachment: WorkspaceComposerAttachment): string {
+  if (attachment.kind === "chat_history") {
+    return "composer-chat-history-attachment-pill";
   }
-  if (isPullRequestContextAttachment(attachment)) {
-    return <ThemedFileText size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
-  }
-  return <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />;
+  return "composer-review-attachment-pill";
 }
 
 function renderPill(args: RenderWorkspaceAttachmentPillArgs): ReactElement {
@@ -249,7 +164,11 @@ function useWorkspaceAttachmentBinding({
     ({ selectedAttachments: current, index }: RemoveWorkspaceAttachmentInput) => {
       const selected = current[index];
       if (isWorkspaceAttachment(selected)) {
-        if (selected.kind === "browser_element" || isPullRequestContextAttachment(selected)) {
+        if (
+          selected.kind === "browser_element" ||
+          selected.kind === "chat_history" ||
+          isPullRequestContextAttachment(selected)
+        ) {
           const selectedKey = getAttachmentKey(selected);
           removeWorkspaceAttachmentsMatching(selectedKey);
           return true;
@@ -323,7 +242,7 @@ function WorkspaceAttachmentPill({
   onRemove,
 }: WorkspaceAttachmentPillProps) {
   const { t } = useTranslation();
-  const content = getPillContent(attachment, t);
+  const content = getWorkspaceAttachmentPillContent(attachment, t);
   const handleOpen = useCallback(() => {
     onOpen(attachment);
   }, [onOpen, attachment]);
@@ -332,18 +251,14 @@ function WorkspaceAttachmentPill({
   }, [onRemove, index]);
   return (
     <AttachmentPill
-      testID="composer-review-attachment-pill"
+      testID={getPillTestID(attachment)}
       onOpen={handleOpen}
       onRemove={handleRemove}
       openAccessibilityLabel={getOpenAccessibilityLabel(attachment, t)}
       removeAccessibilityLabel={getRemoveAccessibilityLabel(attachment, t)}
       disabled={disabled}
     >
-      <AttachmentLabel
-        icon={renderPillIcon(attachment)}
-        title={content.title}
-        subtitle={content.subtitle}
-      />
+      <AttachmentLabel icon={content.icon} title={content.title} subtitle={content.subtitle} />
     </AttachmentPill>
   );
 }
@@ -355,8 +270,3 @@ export const composerWorkspaceAttachment = {
   userAttachmentsOnly,
   useBinding: useWorkspaceAttachmentBinding,
 };
-
-const ThemedMousePointer2 = withUnistyles(MousePointer2);
-const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);
-const ThemedFileText = withUnistyles(FileText);
-const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

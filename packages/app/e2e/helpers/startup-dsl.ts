@@ -156,14 +156,15 @@ class StartupAssertions {
     this.page = page;
   }
 
-  async expectsSavedHostShell(input: { label: string }): Promise<this> {
+  async expectsSavedHostShell(input: { serverId: string; label: string }): Promise<this> {
     await this.page.getByRole("button", { name: "Open menu", exact: true }).click();
-    await expect(this.page.getByText(input.label, { exact: true })).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(this.page.getByRole("button", { name: "Add project" })).toBeVisible();
-    await expect(this.page.getByRole("button", { name: "Home" })).toBeVisible();
-    await expect(this.page.getByRole("button", { name: "Settings" })).toBeVisible();
+    await this.page.getByTestId("sidebar-hosts-trigger").click();
+    const hostRow = this.page.getByTestId(`sidebar-host-row-${input.serverId}`);
+    await expect(hostRow).toBeVisible({ timeout: 15_000 });
+    await expect(hostRow).toContainText(input.label);
+    await expect(this.page.getByTestId("sidebar-add-project")).toBeVisible();
+    await expect(this.page.getByTestId("sidebar-home")).toBeVisible();
+    await expect(this.page.getByTestId("sidebar-settings")).toBeVisible();
     await expect(this.page.getByTestId("welcome-screen")).toHaveCount(0);
     return this;
   }

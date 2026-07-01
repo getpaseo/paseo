@@ -26,15 +26,26 @@ import {
 test.describe("Archive tab reconciliation", () => {
   let client: Awaited<ReturnType<typeof connectSeedClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
+  let projectId: string;
+  let workspaceId: string;
 
   test.describe.configure({ timeout: 300_000 });
 
   test.beforeAll(async () => {
     tempRepo = await createTempGitRepo("archive-tab-");
     client = await connectSeedClient();
+    const created = await client.createWorkspace({
+      source: { kind: "directory", path: tempRepo.path },
+    });
+    if (!created.workspace) {
+      throw new Error(created.error ?? `Failed to create workspace ${tempRepo.path}`);
+    }
+    projectId = created.workspace.projectId;
+    workspaceId = created.workspace.id;
   });
 
   test.afterAll(async () => {
+    await client?.removeProject(projectId).catch(() => undefined);
     await client?.close().catch(() => undefined);
     await tempRepo?.cleanup();
   });
@@ -42,10 +53,12 @@ test.describe("Archive tab reconciliation", () => {
   test("non-UI archive prunes the archived tab across open pages and reload", async ({ page }) => {
     const archived = await createIdleAgent(client, {
       cwd: tempRepo.path,
+      workspaceId,
       title: `cli-archive-${randomUUID().slice(0, 8)}`,
     });
     const surviving = await createIdleAgent(client, {
       cwd: tempRepo.path,
+      workspaceId,
       title: `cli-control-${randomUUID().slice(0, 8)}`,
     });
     const passivePage = await page.context().newPage();
@@ -81,10 +94,12 @@ test.describe("Archive tab reconciliation", () => {
   test("Sessions archive prunes the archived tab across open pages", async ({ page }) => {
     const archived = await createIdleAgent(client, {
       cwd: tempRepo.path,
+      workspaceId,
       title: `ui-archive-${randomUUID().slice(0, 8)}`,
     });
     const surviving = await createIdleAgent(client, {
       cwd: tempRepo.path,
+      workspaceId,
       title: `ui-control-${randomUUID().slice(0, 8)}`,
     });
     const passivePage = await page.context().newPage();
@@ -111,10 +126,12 @@ test.describe("Archive tab reconciliation", () => {
   test("clicking an archived session unarchives it and opens the agent", async ({ page }) => {
     const archived = await createIdleAgent(client, {
       cwd: tempRepo.path,
+      workspaceId,
       title: `unarchive-archived-${randomUUID().slice(0, 8)}`,
     });
     const surviving = await createIdleAgent(client, {
       cwd: tempRepo.path,
+      workspaceId,
       title: `unarchive-control-${randomUUID().slice(0, 8)}`,
     });
 

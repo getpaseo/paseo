@@ -150,12 +150,17 @@ describe("terminal-session-controller restore", () => {
   });
 });
 
-function listSession(input: { id: string; name: string; cwd: string }): TerminalSession {
+function listSession(input: {
+  id: string;
+  name: string;
+  cwd: string;
+  workspaceId?: string;
+}): TerminalSession {
   return {
     id: input.id,
     name: input.name,
     cwd: input.cwd,
-    workspaceId: "ws-test",
+    workspaceId: input.workspaceId ?? "ws-test",
     send: vi.fn(),
     subscribe: () => vi.fn(),
     onExit: () => vi.fn(),
@@ -175,6 +180,86 @@ function listSession(input: { id: string; name: string; cwd: string }): Terminal
     killAndWait: vi.fn(),
   };
 }
+
+describe("terminal-session-controller legacy terminal creation", () => {
+  test("resolves a missing workspaceId from the active workspace root", async () => {
+    const rootCwd = "/work/repo";
+    const appCwd = "/work/repo/packages/app";
+    const terminalCwd = "/work/repo/packages/app/src";
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const createTerminal = vi.fn(
+      async (options: Parameters<TerminalManager["createTerminal"]>[0]) =>
+        listSession({
+          id: "term-1",
+          name: options.name ?? "Terminal 1",
+          cwd: options.cwd,
+          workspaceId: options.workspaceId,
+        }),
+    );
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(),
+      createTerminal,
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      clearTerminalAttention: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => []),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+    const controller = new TerminalSessionController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      listTerminalWorkspaceRefs: async () => [
+        { workspaceId: "ws-root", cwd: rootCwd },
+        { workspaceId: "ws-app", cwd: appCwd },
+      ],
+    });
+
+    await controller.dispatch({
+      type: "create_terminal_request",
+      cwd: terminalCwd,
+      name: "App Shell",
+      requestId: "req-1",
+    });
+
+    expect(createTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: terminalCwd,
+        workspaceId: "ws-app",
+        name: "App Shell",
+      }),
+    );
+    expect(outboundMessages).toEqual([
+      {
+        type: "create_terminal_response",
+        payload: {
+          terminal: {
+            id: "term-1",
+            name: "App Shell",
+            cwd: terminalCwd,
+            workspaceId: "ws-app",
+            activity: null,
+          },
+          error: null,
+          requestId: "req-1",
+        },
+      },
+    ]);
+  });
+});
 
 async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));

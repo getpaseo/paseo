@@ -391,9 +391,8 @@ export async function killTerminalsForWorkspace(
   );
 }
 
-// Archiving the last workspace of a project leaves the project as a first-class
-// empty project — it persists until explicitly removed, so we never archive the
-// parent project here.
+// Archiving the last workspace of a project leaves the project record active.
+// The user removes the project explicitly, so we never archive the parent here.
 export async function archivePersistedWorkspaceRecord(input: {
   workspaceId: string;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "archive">;

@@ -11,7 +11,6 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentLaunchContext,
-  AgentModelDefinition,
   AgentPersistenceHandle,
   AgentPromptInput,
   AgentProvider,
@@ -21,6 +20,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  ProviderCatalog,
 } from "./agent-sdk-types.js";
 
 /**
@@ -206,15 +206,18 @@ class TestAgentClient implements AgentClient {
     return this.createSession(resolvedConfig);
   }
 
-  async listModels(): Promise<AgentModelDefinition[]> {
-    return [
-      {
-        provider: this.provider,
-        id: "test-model",
-        label: "Test Model",
-        isDefault: true,
-      },
-    ];
+  async fetchCatalog(): Promise<ProviderCatalog> {
+    return {
+      models: [
+        {
+          provider: this.provider,
+          id: "test-model",
+          label: "Test Model",
+          isDefault: true,
+        },
+      ],
+      modes: [],
+    };
   }
 
   async isAvailable(): Promise<boolean> {

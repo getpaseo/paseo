@@ -9,7 +9,7 @@ Replace the OpenCode provider's per-directory `/event` stream with OpenCode's `/
 ## Environment
 
 - `opencode --version`: `1.14.46`
-- `which opencode`: `/Users/moboudra/.asdf/installs/nodejs/22.20.0/bin/opencode`
+- `which opencode`: `opencode`
 - `node --version`: `v22.20.0`
 - `npm --version`: `10.9.3`
 

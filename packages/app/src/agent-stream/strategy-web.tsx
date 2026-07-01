@@ -117,11 +117,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     contentRef.current = node;
   }, []);
   const [followOutput, setFollowOutputr] = useState(true);
+  const followOutputRef = useRef(followOutput);
   const setFollowOutput = (value: boolean) => {
+    followOutputRef.current = value;
     setFollowOutputr(value);
     return value;
   };
-  const followOutputRef = useRef(followOutput);
   const lastKnownScrollTopRef = useRef(0);
   const pendingUserScrollUpIntentRef = useRef(false);
   const isPointerScrollActiveRef = useRef(false);
@@ -145,8 +146,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   followOutputRef.current = followOutput;
 
+  const hasRouteBottomAnchorRequest = routeBottomAnchorRequest !== null;
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
-  const isActivationReady = routeBottomAnchorRequest === null || isAuthoritativeHistoryReady;
+  const isActivationReady = !hasRouteBottomAnchorRequest || isAuthoritativeHistoryReady;
 
   const rowVirtualizer = useVirtualizer({
     count: segments.historyVirtualized.length,
@@ -276,12 +278,14 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const currentScrollTop = scrollContainer.scrollTop;
     const isAtBottom = isScrollContainerAtBottom(scrollContainer);
     const scrolledUp = currentScrollTop < lastKnownScrollTopRef.current - USER_SCROLL_DELTA_EPSILON;
+    const scrolledDown =
+      currentScrollTop > lastKnownScrollTopRef.current + USER_SCROLL_DELTA_EPSILON;
 
-    if (!followOutputRef.current && isAtBottom) {
+    if (!followOutputRef.current && isAtBottom && scrolledDown) {
       setFollowOutput(true);
       pendingUserScrollUpIntentRef.current = false;
     } else if (followOutputRef.current && pendingUserScrollUpIntentRef.current) {
-      if (scrolledUp) {
+      if (scrolledUp || !isAtBottom) {
         cancelPendingStickToBottom();
         setFollowOutput(false);
       }
@@ -318,6 +322,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!isActivationReady) {
       return;
     }
+    if (hasRouteBottomAnchorRequest && !followOutputRef.current) {
+      return;
+    }
     setFollowOutput(true);
     forceStickToBottom();
     const timeout = window.setTimeout(() => {
@@ -336,7 +343,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [activationKey, forceStickToBottom, isActivationReady, scheduleStickToBottom]);
+  }, [
+    activationKey,
+    forceStickToBottom,
+    hasRouteBottomAnchorRequest,
+    isActivationReady,
+    scheduleStickToBottom,
+  ]);
 
   useEffect(() => {
     if (!followOutputRef.current) {

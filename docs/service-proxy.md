@@ -67,6 +67,19 @@ For generated URLs to be reachable, you need wildcard DNS pointing to the machin
 
 Public service URLs expose the workspace service itself. Daemon password authentication protects daemon APIs; it does not protect proxied dev services.
 
+If the same reverse proxy serves the daemon web UI over HTTPS, it must also set `X-Forwarded-Proto` so the web UI can auto-connect with `wss://`. The daemon trusts forwarded headers from loopback proxies by default. If your proxy reaches the daemon from another address, configure the proxy ranges explicitly:
+
+```json
+{
+  "version": 1,
+  "daemon": {
+    "trustedProxies": ["loopback", "172.16.0.0/12"]
+  }
+}
+```
+
+`PASEO_TRUSTED_PROXIES` accepts the same comma-separated values, for example `loopback,172.16.0.0/12`. Use `true` only when the final trusted proxy overwrites client-supplied `X-Forwarded-*` headers.
+
 Nginx example:
 
 ```nginx
@@ -77,6 +90,7 @@ server {
     location / {
         proxy_pass http://10.1.1.1:8080;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```

@@ -28,7 +28,7 @@ describe("claude agent commands E2E", () => {
     expect(agent.status).toBe("idle");
 
     // List commands
-    const result = await ctx.client.listCommands(agent.id);
+    const result = await ctx.client.listCommands({ agentId: agent.id });
 
     // Should have no error
     expect(result.error).toBeNull();
@@ -52,7 +52,7 @@ describe("claude agent commands E2E", () => {
   }, 60000);
 
   test("returns error for non-existent agent", async () => {
-    const result = await ctx.client.listCommands("non-existent-agent-id");
+    const result = await ctx.client.listCommands({ agentId: "non-existent-agent-id" });
 
     expect(result.error).toBeTruthy();
     expect(result.error).toContain("Agent not found");

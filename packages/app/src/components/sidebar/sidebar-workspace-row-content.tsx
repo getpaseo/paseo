@@ -22,14 +22,15 @@ import { GitHubIcon } from "@/components/icons/github-icon";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import { SyncedLoader } from "@/components/synced-loader";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
+import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/use-pr-status-query";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 
-const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
@@ -111,6 +112,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   children?: ReactNode;
 }) {
+  const {
+    settings: { workspaceTitleSource },
+  } = useAppSettings();
+  const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   const workspaceBranchTextStyle = useMemo(
     () => [
       styles.workspaceBranchText,
@@ -133,7 +138,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           <View style={styles.workspaceTitleRow}>
             <View style={styles.workspaceTitleLeft}>
               <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-                {workspace.name}
+                {workspaceLabel}
               </Text>
               {scriptIconKind ? <WorkspaceScriptIcon kind={scriptIconKind} /> : null}
             </View>
@@ -220,7 +225,9 @@ function WorkspaceStatusIndicator({
     );
   }
 
-  if (bucket === "done") return null;
+  if (bucket === "done") {
+    return <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />;
+  }
 
   let KindIcon: typeof ThemedMonitor;
   if (workspaceKind === "local_checkout") KindIcon = ThemedMonitor;
@@ -315,7 +322,7 @@ function PrBadge({ hint }: { hint: PrHint }) {
         <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
       )}
       <Text style={textStyle} numberOfLines={1}>
-        #{hint.number}
+        {hint.number}
       </Text>
     </Pressable>
   );
@@ -503,7 +510,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceStatusDot: {
     position: "relative",
-    width: WORKSPACE_STATUS_DOT_WIDTH,
+    width: theme.iconSize.md,
     height: 20,
     borderRadius: theme.borderRadius.full,
     flexShrink: 0,

@@ -25,6 +25,7 @@ import {
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { isWeb } from "@/constants/platform";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { getOrCreateClientId } from "@/utils/client-id";
 import {
@@ -36,10 +37,17 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { getDesktopHost } from "@/desktop/host";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore } from "@/stores/session-store";
+import {
+  fetchLegacyDaemonWorkspaceDirectory,
+  shouldUseLegacyDaemonWorkspaceDirectory,
+} from "@/workspace/legacy-daemon-workspaces";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
 import { queryClient } from "@/query/query-client";
+import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -132,6 +140,17 @@ export interface HostRuntimeControllerDeps {
     hostname: string | null;
   }>;
   getClientId: () => Promise<string>;
+  readInitialConnectionHint?: () => InitialDaemonConnectionHint | null;
+  mountClientHandlers?: (input: {
+    client: DaemonClient;
+    host: HostProfile;
+    connection: HostConnection;
+  }) => () => void;
+}
+
+export interface HostRuntimeStorage {
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
 }
 
 export interface HostRuntimeStartOptions {
@@ -185,6 +204,54 @@ function readFetchAgentsNextCursor(
     return page.afterCursor;
   }
   return null;
+}
+
+interface AgentDirectoryFetchInput {
+  client: DaemonClient;
+  filter?: FetchAgentsOptions["filter"];
+  subscribe?: FetchAgentsOptions["subscribe"];
+  page?: FetchAgentsOptions["page"];
+}
+
+interface AgentDirectoryFetchResult {
+  entries: FetchAgentsEntry[];
+  subscriptionId: string | null;
+}
+
+async function fetchCurrentAgentDirectory(
+  input: AgentDirectoryFetchInput,
+): Promise<AgentDirectoryFetchResult> {
+  const pageLimit = input.page?.limit ?? DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT;
+  let cursor = input.page?.cursor ?? null;
+  let includeSubscribe = true;
+  let subscriptionId: string | null = null;
+  const entries: FetchAgentsEntry[] = [];
+
+  while (true) {
+    const payload = await input.client.fetchAgents({
+      scope: input.filter ? undefined : "active",
+      ...(input.filter ? { filter: input.filter } : {}),
+      sort: DEFAULT_AGENT_DIRECTORY_SORT,
+      ...(includeSubscribe && input.subscribe ? { subscribe: input.subscribe } : {}),
+      page: cursor ? { limit: pageLimit, cursor } : { limit: pageLimit },
+    });
+
+    entries.push(...payload.entries);
+    subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
+    includeSubscribe = false;
+
+    if (!readFetchAgentsHasMore(payload.pageInfo)) {
+      break;
+    }
+
+    const nextCursor = readFetchAgentsNextCursor(payload.pageInfo);
+    if (!nextCursor) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+
+  return { entries, subscriptionId };
 }
 
 function toActiveConnection(connection: HostConnection): ActiveConnection {
@@ -455,6 +522,12 @@ function probeIntervalForConnection(
 }
 
 function createDefaultDeps(): HostRuntimeControllerDeps {
+  const desktopBrowserAutomationAvailable =
+    typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
+  const browserAutomationCapabilities = desktopBrowserAutomationAvailable
+    ? { [CLIENT_CAPS.desktopBrowserAutomation]: true }
+    : undefined;
+
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const localTransportFactory = createDesktopLocalDaemonTransportFactory();
@@ -464,6 +537,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         clientType: "mobile" as const,
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
+        ...(browserAutomationCapabilities ? { capabilities: browserAutomationCapabilities } : {}),
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -501,8 +575,15 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       connectToDaemon(connection, {
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(browserAutomationCapabilities ? { capabilities: browserAutomationCapabilities } : {}),
       }),
     getClientId: () => getOrCreateClientId(),
+    mountClientHandlers: ({ client, host }) => {
+      if (!browserAutomationCapabilities) {
+        return () => {};
+      }
+      return mountBrowserAutomationDaemonClientHandler(client, { serverId: host.serverId });
+    },
   };
 }
 
@@ -515,6 +596,7 @@ export class HostRuntimeController {
   private listeners = new Set<() => void>();
   private activeClient: DaemonClient | null = null;
   private unsubscribeClientStatus: (() => void) | null = null;
+  private unsubscribeClientHandlers: (() => void) | null = null;
   private probeIntervalHandle: ReturnType<typeof setInterval> | null = null;
   private started = false;
   private connectionFirstSeenAt = new Map<string, number>();
@@ -596,6 +678,10 @@ export class HostRuntimeController {
     if (this.unsubscribeClientStatus) {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
+    }
+    if (this.unsubscribeClientHandlers) {
+      this.unsubscribeClientHandlers();
+      this.unsubscribeClientHandlers = null;
     }
     if (this.activeClient) {
       const prev = this.activeClient;
@@ -1074,6 +1160,10 @@ export class HostRuntimeController {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
     }
+    if (this.unsubscribeClientHandlers) {
+      this.unsubscribeClientHandlers();
+      this.unsubscribeClientHandlers = null;
+    }
     if (this.activeClient) {
       const previousClient = this.activeClient;
       this.activeClient = null;
@@ -1147,6 +1237,8 @@ export class HostRuntimeController {
     }
 
     this.activeClient = client;
+    this.unsubscribeClientHandlers =
+      this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
     this.applyConnectionEvent({
       type: "select_connection",
       connectionId: connection.id,
@@ -1221,6 +1313,37 @@ const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
 const LOCALHOST_FALLBACK_ENDPOINT = "localhost:6767";
 const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500;
 const E2E_STORAGE_KEY = "@paseo:e2e";
+const INITIAL_DAEMON_CONNECTION_HINT_GLOBAL_KEY = "__PASEO_INITIAL_DAEMON_CONNECTION__";
+
+export interface InitialDaemonConnectionHint {
+  listen: string;
+  useTls?: boolean;
+}
+
+function isInitialConnectionHintRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function readInitialDaemonConnectionHint(input?: {
+  isWebRuntime?: boolean;
+}): InitialDaemonConnectionHint | null {
+  const isWebRuntime = input?.isWebRuntime ?? isWeb;
+  if (!isWebRuntime || typeof globalThis === "undefined") {
+    return null;
+  }
+  const value = (globalThis as Record<string, unknown>)[INITIAL_DAEMON_CONNECTION_HINT_GLOBAL_KEY];
+  if (!isInitialConnectionHintRecord(value)) {
+    return null;
+  }
+  const listen = typeof value.listen === "string" ? value.listen.trim() : "";
+  if (!listen) {
+    return null;
+  }
+  return {
+    listen,
+    useTls: value.useTls === true,
+  };
+}
 
 function readConfiguredLocalDaemonOverride(): string | null {
   const value = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim();
@@ -1255,6 +1378,7 @@ export class HostRuntimeStore {
   private hostListListeners = new Set<() => void>();
   private version = 0;
   private hostListVersion = 0;
+  private hostRegistryLoaded = false;
   private hosts: HostProfile[] = [];
   private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
@@ -1262,9 +1386,11 @@ export class HostRuntimeStore {
   private agentDirectoryBootstrapInFlight = new Map<string, Promise<void>>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootStarted = false;
+  private storage: HostRuntimeStorage;
 
-  constructor(input?: { deps?: HostRuntimeControllerDeps }) {
+  constructor(input?: { deps?: HostRuntimeControllerDeps; storage?: HostRuntimeStorage }) {
     this.deps = input?.deps ?? createDefaultDeps();
+    this.storage = input?.storage ?? AsyncStorage;
   }
 
   // --- Host registry ---
@@ -1288,6 +1414,10 @@ export class HostRuntimeStore {
     return this.hostListVersion;
   }
 
+  isHostRegistryLoaded(): boolean {
+    return this.hostRegistryLoaded;
+  }
+
   boot(): void {
     if (this.bootStarted) {
       return;
@@ -1299,10 +1429,11 @@ export class HostRuntimeStore {
   private async runBoot(): Promise<void> {
     const override = readConfiguredLocalDaemonOverride();
     await this.loadFromStorage();
+    this.markHostRegistryLoaded();
 
     let isE2E: string | null = null;
     try {
-      isE2E = await AsyncStorage.getItem(E2E_STORAGE_KEY);
+      isE2E = await this.storage.getItem(E2E_STORAGE_KEY);
     } catch {
       return;
     }
@@ -1312,6 +1443,16 @@ export class HostRuntimeStore {
 
     if (shouldUseDesktopDaemon()) {
       return;
+    }
+
+    const initialHint = this.deps.readInitialConnectionHint
+      ? this.deps.readInitialConnectionHint()
+      : readInitialDaemonConnectionHint();
+    if (initialHint) {
+      const bootstrapped = await this.bootstrapInitialConnectionHint(initialHint);
+      if (bootstrapped) {
+        return;
+      }
     }
 
     if (override) {
@@ -1324,7 +1465,7 @@ export class HostRuntimeStore {
   private async loadFromStorage(): Promise<void> {
     let shouldPersistHosts = false;
     try {
-      const stored = await AsyncStorage.getItem(REGISTRY_STORAGE_KEY);
+      const stored = await this.storage.getItem(REGISTRY_STORAGE_KEY);
       if (!stored) {
         return;
       }
@@ -1350,6 +1491,14 @@ export class HostRuntimeStore {
         void this.persistHosts();
       }
     }
+  }
+
+  private markHostRegistryLoaded(): void {
+    if (this.hostRegistryLoaded) {
+      return;
+    }
+    this.hostRegistryLoaded = true;
+    this.emitHostList();
   }
 
   private async bootstrapDefaultLocalhost(): Promise<void> {
@@ -1414,6 +1563,37 @@ export class HostRuntimeStore {
         }
         await delay(CONFIGURED_OVERRIDE_BOOTSTRAP_RETRY_MS);
       }
+    }
+  }
+
+  private async bootstrapInitialConnectionHint(
+    hint: InitialDaemonConnectionHint,
+  ): Promise<boolean> {
+    const connection = connectionFromListen(hint.listen);
+    if (!connection) {
+      return false;
+    }
+    const connectionWithHint: HostConnection =
+      connection.type === "directTcp"
+        ? { ...connection, useTls: hint.useTls ?? connection.useTls ?? false }
+        : connection;
+    if (registryHasConnection(this.hosts, connectionWithHint)) {
+      return true;
+    }
+
+    try {
+      await this.probeAndUpsertConnection({
+        connection: connectionWithHint,
+        timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS,
+      });
+      return true;
+    } catch (error) {
+      console.warn("[HostRuntime] initial connection hint probe failed", {
+        listen: hint.listen,
+        useTls: hint.useTls,
+        error,
+      });
+      return false;
     }
   }
 
@@ -1694,7 +1874,7 @@ export class HostRuntimeStore {
 
   private async persistHosts(): Promise<void> {
     try {
-      await AsyncStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(this.hosts));
+      await this.storage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(this.hosts));
     } catch (error) {
       console.error("[HostRuntime] Failed to persist host registry", error);
     }
@@ -1912,46 +2092,37 @@ export class HostRuntimeStore {
 
     controller.markAgentDirectorySyncLoading();
     try {
-      const pageLimit = input.page?.limit ?? DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT;
-      let cursor = input.page?.cursor ?? null;
-      let includeSubscribe = true;
-      let subscriptionId: string | null = null;
-      const allEntries: FetchAgentsEntry[] = [];
-
-      while (true) {
-        const payload = await client.fetchAgents({
-          scope: input.filter ? undefined : "active",
-          ...(input.filter ? { filter: input.filter } : {}),
-          sort: DEFAULT_AGENT_DIRECTORY_SORT,
-          ...(includeSubscribe && input.subscribe ? { subscribe: input.subscribe } : {}),
-          page: cursor ? { limit: pageLimit, cursor } : { limit: pageLimit },
+      const session = useSessionStore.getState().sessions[input.serverId];
+      if (!input.filter && shouldUseLegacyDaemonWorkspaceDirectory(session?.serverInfo)) {
+        const result = await fetchLegacyDaemonWorkspaceDirectory({
+          client,
+          serverId: input.serverId,
+          subscribe: input.subscribe,
+          page: input.page,
         });
-
-        allEntries.push(...payload.entries);
-
-        subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
-        includeSubscribe = false;
-
-        if (!readFetchAgentsHasMore(payload.pageInfo)) {
-          break;
-        }
-
-        const nextCursor = readFetchAgentsNextCursor(payload.pageInfo);
-        if (!nextCursor) {
-          break;
-        }
-        cursor = nextCursor;
+        controller.markAgentDirectorySyncReady();
+        return {
+          agents: result.agents,
+          subscriptionId: result.subscriptionId,
+        };
       }
+
+      const directory = await fetchCurrentAgentDirectory({
+        client,
+        filter: input.filter,
+        subscribe: input.subscribe,
+        page: input.page,
+      });
 
       const { agents } = replaceFetchedAgentDirectory({
         serverId: input.serverId,
-        entries: allEntries,
+        entries: directory.entries,
       });
 
       controller.markAgentDirectorySyncReady();
       return {
         agents,
-        subscriptionId,
+        subscriptionId: directory.subscriptionId,
       };
     } catch (error) {
       controller.markAgentDirectorySyncError(toErrorMessage(error));
@@ -2064,6 +2235,28 @@ export function useHostRuntimeConnectionStatus(serverId: string): HostRuntimeCon
   );
 }
 
+export function useHostRuntimeConnectionStatuses(
+  serverIds: readonly string[],
+): ReadonlyMap<string, HostRuntimeConnectionStatus> {
+  const store = getHostRuntimeStore();
+  const version = useSyncExternalStore(
+    (onStoreChange) => store.subscribeAll(onStoreChange),
+    () => store.getVersion(),
+    () => store.getVersion(),
+  );
+
+  return useMemo(() => {
+    // The aggregate version is the reactivity trigger; re-read snapshots on every host tick.
+    void version;
+    return new Map(
+      serverIds.map(
+        (serverId) =>
+          [serverId, store.getSnapshot(serverId)?.connectionStatus ?? "connecting"] as const,
+      ),
+    );
+  }, [serverIds, store, version]);
+}
+
 export function useHostRuntimeLastError(serverId: string): string | null {
   const store = getHostRuntimeStore();
   return useSyncExternalStore(
@@ -2108,6 +2301,15 @@ export function useHostRegistryStatus(): HostRegistryStatus {
     (onStoreChange) => store.subscribeHostList(onStoreChange),
     () => store.getHostRegistryStatus(),
     () => store.getHostRegistryStatus(),
+  );
+}
+
+export function useHostRegistryLoaded(): boolean {
+  const store = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => store.subscribeHostList(onStoreChange),
+    () => store.isHostRegistryLoaded(),
+    () => store.isHostRegistryLoaded(),
   );
 }
 

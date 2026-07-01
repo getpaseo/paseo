@@ -1,15 +1,31 @@
 import { useRef } from "react";
-import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentCapabilityFlags,
+  AgentFeature,
+  AgentProvider,
+} from "@getpaseo/protocol/agent-types";
 
 export interface AgentScreenAgent {
   serverId: string;
   id: string;
+  provider?: AgentProvider;
   status: "initializing" | "idle" | "running" | "error" | "closed";
   cwd: string;
   workspaceId?: string;
   capabilities?: AgentCapabilityFlags;
+  currentModeId?: string | null;
+  model?: string | null;
+  thinkingOptionId?: string | null;
+  runtimeInfo?: {
+    model?: string | null;
+    modeId?: string | null;
+    thinkingOptionId?: string | null;
+  } | null;
+  features?: readonly AgentFeature[];
   lastError?: string | null;
   projectPlacement?: {
+    projectKey?: string;
+    projectName?: string;
     checkout?: {
       cwd?: string;
       isGit?: boolean;

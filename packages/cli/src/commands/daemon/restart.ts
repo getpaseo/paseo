@@ -61,6 +61,7 @@ function toStartOptions(options: CommandOptions): DaemonStartOptions {
     relay: typeof options.relay === "boolean" ? options.relay : undefined,
     mcp: typeof options.mcp === "boolean" ? options.mcp : undefined,
     injectMcp: typeof options.injectMcp === "boolean" ? options.injectMcp : undefined,
+    webUi: typeof options.webUi === "boolean" ? options.webUi : undefined,
     hostnames: typeof options.hostnames === "string" ? options.hostnames : undefined,
   };
 

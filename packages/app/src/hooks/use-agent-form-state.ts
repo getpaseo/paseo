@@ -76,6 +76,7 @@ export interface UseAgentFormStateResult {
   refreshProviderModels: (provider?: AgentProvider) => void;
   refetchProviderModelsIfStale: () => void;
   setProviderAndModelFromUser: (provider: AgentProvider, modelId: string) => void;
+  clearProviderSelectionFromUser: () => void;
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
 }
@@ -404,6 +405,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     ],
   );
 
+  const clearProviderSelectionFromUser = useCallback(() => {
+    dispatch({ type: "CLEAR_PROVIDER_SELECTION_FROM_USER" });
+  }, []);
+
   const setModeFromUser = useCallback(
     (modeId: string) => {
       dispatch({ type: "SET_MODE_FROM_USER", modeId });
@@ -547,6 +552,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       refreshProviderModels,
       refetchProviderModelsIfStale,
       setProviderAndModelFromUser,
+      clearProviderSelectionFromUser,
       workingDirIsEmpty,
       persistFormPreferences,
     }),
@@ -581,6 +587,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       refreshProviderModels,
       refetchProviderModelsIfStale,
       setProviderAndModelFromUser,
+      clearProviderSelectionFromUser,
       workingDirIsEmpty,
       persistFormPreferences,
     ],

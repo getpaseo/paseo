@@ -204,7 +204,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
 
       if (finish.status !== "idle") {
-        const snapshot = await client.fetchAgent(agent.id);
+        const snapshot = await client.fetchAgent({ agentId: agent.id });
         throw new Error(
           `Expected idle after replacement, got ${finish.status}. postSendStatuses=${JSON.stringify(postSendStatuses)} statusesBeforeFirstAssistant=${JSON.stringify(statusesBeforeFirstAssistant)} postSendAssistantTexts=${JSON.stringify(getAssistantTexts(postSendMessages, agent.id))} agentStatus=${snapshot?.agent.status ?? null} recentTimeline=${JSON.stringify(summarizeTimelineItems(timeline))}`,
         );
@@ -278,7 +278,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
       const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
 
       if (finish.status !== "idle") {
-        const snapshot = await client.fetchAgent(agent.id);
+        const snapshot = await client.fetchAgent({ agentId: agent.id });
         throw new Error(
           `Expected idle after quick follow-up, got ${finish.status}. postSendStatuses=${JSON.stringify(postSendStatuses)} statusesBeforeFirstAssistant=${JSON.stringify(statusesBeforeFirstAssistant)} postSendAssistantTexts=${JSON.stringify(getAssistantTexts(postSendMessages, agent.id))} agentStatus=${snapshot?.agent.status ?? null} recentTimeline=${JSON.stringify(summarizeTimelineItems(timeline))}`,
         );

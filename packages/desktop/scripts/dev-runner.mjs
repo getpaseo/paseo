@@ -19,7 +19,6 @@ if (!Number.isInteger(expoPort) || expoPort <= 0) {
 }
 
 const expoDevUrl = process.env.EXPO_DEV_URL || `http://localhost:${expoPort}`;
-const daemonEndpoint = process.env.PASEO_DAEMON_ENDPOINT || process.env.PASEO_LISTEN || "";
 const colorEnv = {
   FORCE_COLOR: process.env.FORCE_COLOR || "1",
   npm_config_color: process.env.npm_config_color || "always",
@@ -164,7 +163,6 @@ spawnChild("metro", "npx", ["expo", "start", "--port", String(expoPort)], {
     BROWSER: "none",
     APP_VARIANT: "development",
     PASEO_WEB_PLATFORM: "electron",
-    EXPO_PUBLIC_LOCAL_DAEMON: daemonEndpoint,
   },
 });
 

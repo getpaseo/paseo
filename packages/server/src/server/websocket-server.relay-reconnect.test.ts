@@ -52,6 +52,7 @@ const sessionMock = vi.hoisted(() => {
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     supports = vi.fn((capability: string) => this.args.clientCapabilities?.[capability] === true);
     getClientActivity = vi.fn(() => null);
+    getSessionId = vi.fn(() => "mock-session-id");
     resetPeakInflight = vi.fn(() => {});
     getRuntimeMetrics = vi.fn(() => ({
       checkoutDiffTargetCount: 0,
@@ -105,7 +106,6 @@ import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
-  socketMessageQueues: Map<unknown, Promise<void>>;
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
@@ -123,6 +123,30 @@ const WireEnvelopeSchema = z.object({
 function parseSentEnvelope(data: unknown): z.infer<typeof WireEnvelopeSchema> {
   if (typeof data !== "string") throw new Error("Expected string frame");
   return WireEnvelopeSchema.parse(JSON.parse(data));
+}
+
+function sentEnvelopes(socket: MockSocket): z.infer<typeof WireEnvelopeSchema>[] {
+  return socket.sent.filter((data) => typeof data === "string").map(parseSentEnvelope);
+}
+
+function sentServerInfoEnvelopes(socket: MockSocket): z.infer<typeof WireEnvelopeSchema>[] {
+  return sentEnvelopes(socket).filter(
+    (envelope) => parseServerInfoStatusPayload(envelope.message?.payload) !== null,
+  );
+}
+
+function sentBinaryFrames(socket: MockSocket): Uint8Array[] {
+  return socket.sent.map(asUint8Array).filter((frame): frame is Uint8Array => frame !== null);
+}
+
+function sentTerminalFrames(
+  socket: MockSocket,
+): NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>[] {
+  return sentBinaryFrames(socket)
+    .map(decodeTerminalStreamFrame)
+    .filter(
+      (frame): frame is NonNullable<ReturnType<typeof decodeTerminalStreamFrame>> => frame !== null,
+    );
 }
 
 const BinaryFrameSchema = z.object({
@@ -191,16 +215,21 @@ function createLogger() {
   return logger;
 }
 
-function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | null }) {
+function createServer(options?: {
+  speechReadiness?: SpeechReadinessSnapshot | null;
+  logger?: ReturnType<typeof createLogger>;
+}) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
     onChange: vi.fn(() => () => {}),
   };
+  const logger = options?.logger ?? createLogger();
   return new VoiceAssistantWebSocketServer(
     createStub<HTTPServer>({}),
-    createStub<pino.Logger>(createLogger()),
+    createStub<pino.Logger>(logger),
     "srv_test",
     createStub<AgentManager>({
+      subscribe: vi.fn(() => () => {}),
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
@@ -373,7 +402,6 @@ async function attachRelayAndHello(params: {
 }) {
   await params.server.attachExternalSocket(params.socket, { transport: "relay" });
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  await waitForSocketMessages(params.server, params.socket);
   expect(params.socket.sent.length).toBeGreaterThan(0);
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
@@ -393,7 +421,6 @@ async function attachDirectAndHello(params: {
     createDirectRequest(),
   );
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  await waitForSocketMessages(params.server, params.socket);
   expect(params.socket.sent.length).toBeGreaterThan(0);
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
@@ -403,11 +430,19 @@ async function attachDirectAndHello(params: {
   return serverInfo!;
 }
 
-async function waitForSocketMessages(
-  server: VoiceAssistantWebSocketServer,
-  socket: MockSocket,
-): Promise<void> {
-  await asInternals<WebSocketServerInternals>(server).socketMessageQueues.get(socket);
+function holdNextSessionMessage(session: (typeof sessionMock.instances)[number]): {
+  finish: () => void;
+} {
+  let finish = () => {};
+  session.handleMessage.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  return {
+    finish: () => finish(),
+  };
 }
 
 describe("relay external socket reconnect behavior", () => {
@@ -464,8 +499,6 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    await waitForSocketMessages(server, socket);
-
     expect(sessionMock.instances).toHaveLength(1);
     const session = sessionMock.instances[0];
     expect(session.args.clientCapabilities).toEqual({
@@ -561,11 +594,176 @@ describe("relay external socket reconnect behavior", () => {
         },
       }),
     );
-    await waitForSocketMessages(server, socket);
-
     expect(closeCode).toBe(4002);
     expect(["Invalid hello", "Session message before hello"]).toContain(closeReason);
     expect(sessionMock.instances).toHaveLength(0);
+
+    await server.close();
+  });
+
+  test("logs control RPCs with the socket identity", async () => {
+    const logger = createLogger();
+    const server = createServer({ logger });
+    const socket = new MockSocket();
+
+    await server.attachExternalSocket(socket, {
+      transport: "relay",
+      relayConnectionId: "relay-conn-1",
+    });
+    socket.emit("message", JSON.stringify(createHelloMessage("cid-control-log")));
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "shutdown_server_request",
+          requestId: "shutdown-1",
+        },
+      }),
+    );
+    await Promise.resolve();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: expect.stringMatching(/^conn_/),
+        transport: "relay",
+        relayConnectionId: "relay-conn-1",
+        clientId: "cid-control-log",
+        sessionId: "mock-session-id",
+        requestType: "shutdown_server_request",
+        requestId: "shutdown-1",
+        reason: "client_shutdown_rpc",
+      }),
+      "ws_control_rpc_received",
+    );
+
+    await server.close();
+  });
+
+  test("responds to top-level ping while provider diagnostic is still running", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-ping-during-provider-diagnostic",
+    });
+
+    const session = sessionMock.instances[0];
+    const providerDiagnostic = holdNextSessionMessage(session);
+
+    const sentBeforeDiagnostic = socket.sent.length;
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "provider_diagnostic_request",
+          provider: "grok",
+          requestId: "slow-provider-diagnostic",
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(session.handleMessage).toHaveBeenCalledTimes(1);
+    });
+
+    socket.emit("message", JSON.stringify({ type: "ping" }));
+    await Promise.resolve();
+
+    expect(sentEnvelopes(socket).slice(sentBeforeDiagnostic)).toContainEqual({ type: "pong" });
+
+    providerDiagnostic.finish();
+    await Promise.resolve();
+    await server.close();
+  });
+
+  test("routes later session requests while provider diagnostic is still running", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-session-request-during-provider-diagnostic",
+    });
+
+    const session = sessionMock.instances[0];
+    const providerDiagnostic = holdNextSessionMessage(session);
+
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "provider_diagnostic_request",
+          provider: "grok",
+          requestId: "slow-provider-diagnostic",
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(session.handleMessage).toHaveBeenCalledTimes(1);
+    });
+
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "ping",
+          requestId: "second-session-request",
+          clientSentAt: Date.now(),
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(session.handleMessage).toHaveBeenCalledTimes(2);
+    });
+
+    providerDiagnostic.finish();
+    await Promise.resolve();
+    await server.close();
+  });
+
+  test("sends rpc_error when an async session request fails", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-session-request-failure",
+    });
+
+    const session = sessionMock.instances[0];
+    session.handleMessage.mockRejectedValueOnce(new Error("handler exploded"));
+
+    const sentBeforeRequest = socket.sent.length;
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "provider_diagnostic_request",
+          provider: "grok",
+          requestId: "failing-provider-diagnostic",
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(sentEnvelopes(socket).slice(sentBeforeRequest)).toContainEqual({
+        type: "session",
+        message: {
+          type: "rpc_error",
+          payload: {
+            requestId: "failing-provider-diagnostic",
+            requestType: "provider_diagnostic_request",
+            error: "Invalid message",
+            code: "invalid_message",
+          },
+        },
+      });
+    });
 
     await server.close();
   });
@@ -705,20 +903,20 @@ describe("relay external socket reconnect behavior", () => {
       socket,
       clientId: "cid-server-info-broadcast",
     });
-    expect(socket.sent).toHaveLength(1);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(1);
 
     const speechReadiness = createReadySpeechReadinessSnapshot();
     server.publishSpeechReadiness(speechReadiness);
-    expect(socket.sent).toHaveLength(2);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
-    const secondEnvelope = parseSentEnvelope(socket.sent[1]);
+    const secondEnvelope = sentServerInfoEnvelopes(socket)[1];
     const secondPayload = parseServerInfoStatusPayload(secondEnvelope.message?.payload);
     expect(secondPayload?.capabilities?.voice?.dictation.enabled).toBe(true);
     expect(secondPayload?.capabilities?.voice?.voice.enabled).toBe(true);
 
     // Same readiness should not produce another server_info broadcast.
     server.publishSpeechReadiness(speechReadiness);
-    expect(socket.sent).toHaveLength(2);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
     await server.close();
   });
@@ -731,12 +929,12 @@ describe("relay external socket reconnect behavior", () => {
       socket,
       clientId: "cid-server-info-download-guidance",
     });
-    expect(socket.sent).toHaveLength(1);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(1);
 
     server.publishSpeechReadiness(createDownloadInProgressSpeechReadinessSnapshot());
-    expect(socket.sent).toHaveLength(2);
+    expect(sentServerInfoEnvelopes(socket)).toHaveLength(2);
 
-    const envelope = parseSentEnvelope(socket.sent[1]);
+    const envelope = sentServerInfoEnvelopes(socket)[1];
     const payload = parseServerInfoStatusPayload(envelope.message?.payload);
     expect(payload?.capabilities?.voice?.dictation.enabled).toBe(true);
     expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
@@ -768,13 +966,52 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    await waitForSocketMessages(server, socket);
-
     expect(session.handleBinaryFrame).toHaveBeenCalledTimes(1);
     const { frame } = BinaryFrameSchema.parse(session.handleBinaryFrame.mock.calls[0]?.[0]);
     expect(frame.opcode).toBe(TerminalStreamOpcode.Input);
     expect(frame.slot).toBe(9);
     expect(new TextDecoder().decode(frame.payload)).toBe("ls\r");
+
+    await server.close();
+  });
+
+  test("sends status error when async binary frame handling fails", async () => {
+    const server = createServer();
+
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-binary-inbound-failure",
+    });
+    expect(sessionMock.instances).toHaveLength(1);
+    const session = sessionMock.instances[0];
+    session.handleBinaryFrame.mockRejectedValueOnce(new Error("binary exploded"));
+
+    const sentBeforeFrame = socket.sent.length;
+    socket.emit(
+      "message",
+      Buffer.from(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Input,
+          slot: 11,
+          payload: new TextEncoder().encode("pwd\r"),
+        }),
+      ),
+    );
+
+    await vi.waitFor(() => {
+      expect(sentEnvelopes(socket).slice(sentBeforeFrame)).toContainEqual({
+        type: "session",
+        message: {
+          type: "status",
+          payload: {
+            status: "error",
+            message: "Invalid message: binary exploded",
+          },
+        },
+      });
+    });
 
     await server.close();
   });
@@ -797,14 +1034,12 @@ describe("relay external socket reconnect behavior", () => {
       onBinaryMessage(new Uint8Array([TerminalStreamOpcode.Output, 12, 0x6f, 0x6b]));
     }
 
-    expect(socket.sent).toHaveLength(2);
-    const binaryPayload = asUint8Array(socket.sent[1]);
-    expect(binaryPayload).not.toBeNull();
-    const frame = decodeTerminalStreamFrame(binaryPayload!);
-    expect(frame).not.toBeNull();
-    expect(frame!.opcode).toBe(TerminalStreamOpcode.Output);
-    expect(frame!.slot).toBe(12);
-    expect(new TextDecoder().decode(frame!.payload ?? new Uint8Array())).toBe("ok");
+    const terminalFrames = sentTerminalFrames(socket);
+    expect(terminalFrames).toHaveLength(1);
+    const frame = terminalFrames[0];
+    expect(frame.opcode).toBe(TerminalStreamOpcode.Output);
+    expect(frame.slot).toBe(12);
+    expect(new TextDecoder().decode(frame.payload ?? new Uint8Array())).toBe("ok");
 
     await server.close();
   });

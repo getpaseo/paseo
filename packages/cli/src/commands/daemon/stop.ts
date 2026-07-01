@@ -16,6 +16,8 @@ interface StopResult {
   home: string;
   pid: string;
   forced: boolean;
+  usedLifecycleRpc: boolean;
+  reason: "not_running" | "lifecycle_shutdown_rpc" | "owner_pid_signal" | "owner_pid_sigkill";
   message: string;
 }
 
@@ -75,6 +77,8 @@ export async function runStopCommand(
         home: result.home,
         pid: result.pid === null ? "-" : String(result.pid),
         forced: result.forced,
+        usedLifecycleRpc: result.usedLifecycleRpc,
+        reason: result.reason,
         message: result.message,
       },
       schema: stopResultSchema,

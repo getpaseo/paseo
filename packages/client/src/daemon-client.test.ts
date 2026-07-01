@@ -1,6 +1,7 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import { DaemonClient, type DaemonTransport, type Logger } from "./daemon-client";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -136,6 +137,58 @@ afterEach(async () => {
   await Promise.all(clients.map((client) => client.close()));
   clients.length = 0;
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+test("does not infer browser automation capabilities from Electron runtime", async () => {
+  vi.stubGlobal("navigator", {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Paseo/0.1.89 Chrome/146 Electron/41.2.0 Safari/537.36",
+  });
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "electron_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connectPromise;
+
+  const hello = z
+    .object({
+      type: z.literal("hello"),
+      capabilities: z.record(z.unknown()),
+    })
+    .parse(JSON.parse(assertStr(mock.sent[0])));
+  expect(hello.capabilities[CLIENT_CAPS.desktopBrowserAutomation]).toBeUndefined();
+});
+
+test("advertises consumer-provided browser automation capabilities", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "browser_capability_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+    capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connectPromise;
+
+  const hello = z
+    .object({
+      type: z.literal("hello"),
+      capabilities: z.record(z.unknown()),
+    })
+    .parse(JSON.parse(assertStr(mock.sent[0])));
+  expect(hello.capabilities[CLIENT_CAPS.desktopBrowserAutomation]).toBe(true);
 });
 
 const noopLogger: Logger = {
@@ -453,6 +506,7 @@ test("advertises client capabilities in hello", async () => {
     logger,
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
+    capabilities: { desktop_browser_automation: true },
   });
   clients.push(client);
 
@@ -470,6 +524,43 @@ test("advertises client capabilities in hello", async () => {
       custom_mode_icons: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      desktop_browser_automation: true,
+    },
+  });
+});
+
+test("sends typed browser automation execute responses", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  client.sendBrowserAutomationExecuteResponse({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: "req-1",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    },
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: "req-1",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
     },
   });
 });
@@ -520,6 +611,520 @@ test("keeps the transport connected when a session RPC ping times out", async ()
   await expect(client.ping({ timeoutMs: 1 })).rejects.toThrow("Timeout waiting for message");
 
   expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("defaults session RPC waiters to sixty seconds", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgent({
+    agentId: "agent-1",
+    requestId: "req-agent-1",
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_request",
+    requestId: "req-agent-1",
+    agentId: "agent-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (60000ms)");
+});
+
+test("honors explicit fetchAgent timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgent({
+    agentId: "agent-1",
+    requestId: "req-agent-1",
+    timeout: 5_000,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_request",
+    requestId: "req-agent-1",
+    agentId: "agent-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (5000ms)");
+});
+
+test("preserves legacy fetchAgent id overload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgent("agent-1", "req-agent-legacy");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_request",
+    requestId: "req-agent-legacy",
+    agentId: "agent-1",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_response",
+      payload: {
+        requestId: "req-agent-legacy",
+        agent: null,
+        project: null,
+        error: "legacy fetch sentinel",
+      },
+    }),
+  );
+
+  await expect(responsePromise).rejects.toThrow("legacy fetch sentinel");
+});
+
+test("honors explicit fetchAgentTimeline timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgentTimeline("agent-1", {
+    requestId: "req-timeline-1",
+    direction: "tail",
+    limit: 0,
+    projection: "projected",
+    timeout: 2_000,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_timeline_request",
+    requestId: "req-timeline-1",
+    agentId: "agent-1",
+    direction: "tail",
+    limit: 0,
+    projection: "projected",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_999);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2000ms)");
+});
+
+test("honors explicit fetchAgents timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.fetchAgents({
+    requestId: "req-agents-1",
+    scope: "active",
+    timeout: 1_200,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agents_request",
+    requestId: "req-agents-1",
+    scope: "active",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_199);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1200ms)");
+});
+
+test("honors explicit shutdownServer timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.shutdownServer({
+    requestId: "req-shutdown-1",
+    timeout: 1_500,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "shutdown_server_request",
+    requestId: "req-shutdown-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+});
+
+test("honors explicit readChatMessages timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.readChatMessages({
+    requestId: "req-chat-read-1",
+    room: "room-1",
+    limit: 1,
+    timeout: 2_500,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "chat/read",
+    requestId: "req-chat-read-1",
+    room: "room-1",
+    limit: 1,
+  });
+
+  await vi.advanceTimersByTimeAsync(2_499);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2500ms)");
+});
+
+test("honors explicit getDaemonStatus timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.getDaemonStatus({
+    requestId: "req-daemon-status-1",
+    timeout: 1_500,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "daemon.get_status.request",
+    requestId: "req-daemon-status-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+});
+
+test("honors explicit getDaemonPairingOffer timeout below the session RPC default", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.getDaemonPairingOffer({
+    requestId: "req-pairing-offer-1",
+    timeout: 1_500,
+  });
+  let settled = false;
+  void responsePromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "daemon.get_pairing_offer.request",
+    requestId: "req-pairing-offer-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+});
+
+test("keeps waitForAgentUpsert initial fetch inside the requested deadline", async () => {
+  useHeartbeatClock();
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const waitPromise = client.waitForAgentUpsert("agent-1", () => false, 5_000);
+  let settled = false;
+  void waitPromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_request",
+    requestId: expect.any(String),
+    agentId: "agent-1",
+  });
+
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(settled).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(waitPromise).rejects.toThrow("Timed out waiting for agent agent-1");
+});
+
+test("keeps default connect timeout shorter than session RPC waiters", async () => {
+  useHeartbeatClock();
+  try {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    let settled = false;
+    const pendingConnect = client.connect().then(
+      () => {
+        settled = true;
+        return { ok: true as const };
+      },
+      (error) => {
+        settled = true;
+        return { ok: false as const, error };
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(settled).toBe(false);
+    expect(client.getConnectionState().status).toBe("connecting");
+
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await pendingConnect;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+      if (result.error instanceof Error) {
+        expect(result.error.message).toContain("Connection timed out");
+      }
+    }
+    expect(client.getConnectionState().status).toBe("disconnected");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("stays online through ten minutes of pongs that arrive five seconds late", async () => {
@@ -1454,6 +2059,62 @@ test("sends structured first-agent context attachments with create_paseo_worktre
   });
 });
 
+test("sends project.add.request without creating a workspace", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const addPromise = client.addProject("/tmp/project", "req-add-project");
+
+  expect(mock.sent).toHaveLength(1);
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.add.request",
+    requestId: "req-add-project",
+    cwd: "/tmp/project",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.add.response",
+      payload: {
+        requestId: "req-add-project",
+        project: {
+          projectId: "/tmp/project",
+          projectDisplayName: "project",
+          projectCustomName: null,
+          projectRootPath: "/tmp/project",
+          projectKind: "git",
+        },
+        error: null,
+      },
+    }),
+  );
+
+  await expect(addPromise).resolves.toEqual({
+    requestId: "req-add-project",
+    project: {
+      projectId: "/tmp/project",
+      projectDisplayName: "project",
+      projectCustomName: null,
+      projectRootPath: "/tmp/project",
+      projectKind: "git",
+    },
+    error: null,
+  });
+});
+
 test("sends first-agent prompt context with workspace.create.request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -1519,6 +2180,47 @@ test("sends first-agent prompt context with workspace.create.request", async () 
     error: "local title sentinel",
     setupTerminalId: null,
   });
+});
+
+test("sends project.remove.request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const removePromise = client.removeProject("remote:github.com/acme/app", "req-remove-project");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "project.remove.request",
+    requestId: "req-remove-project",
+    projectId: "remote:github.com/acme/app",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "project.remove.response",
+      payload: {
+        requestId: "req-remove-project",
+        projectId: "remote:github.com/acme/app",
+        accepted: true,
+        removedWorkspaceIds: ["ws-main"],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(removePromise).resolves.toEqual({ removedWorkspaceIds: ["ws-main"] });
 });
 
 test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
@@ -1657,16 +2359,8 @@ test("sends explicit shutdown_server_request via shutdownServer", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const lifecycleClient = client as unknown as {
-    shutdownServer: (requestId?: string) => Promise<{
-      status: "shutdown_requested";
-      clientId: string;
-      requestId: string;
-    }>;
-  };
-
-  expect(typeof lifecycleClient.shutdownServer).toBe("function");
-  const promise = lifecycleClient.shutdownServer("req-shutdown-1");
+  expect(typeof client.shutdownServer).toBe("function");
+  const promise = client.shutdownServer({ requestId: "req-shutdown-1" });
 
   expect(mock.sent).toHaveLength(1);
   const request = parseSentFrame(mock.sent[0]);
@@ -2721,6 +3415,48 @@ test("fetches agents via RPC with filters, sort, and pagination", async () => {
   });
 });
 
+test("detaches an agent through the namespaced detach RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.detachAgent("child-agent");
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.detach.request",
+    agentId: "child-agent",
+  });
+  expect(typeof request.requestId).toBe("string");
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.detach.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "child-agent",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toBeUndefined();
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3208,7 +3944,8 @@ test("lists commands with draft config via RPC", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const promise = client.listCommands("__new_agent__", {
+  const promise = client.listCommands({
+    agentId: "__new_agent__",
     draftConfig: {
       provider: "codex",
       cwd: "/tmp/project",
@@ -3253,7 +3990,7 @@ test("lists commands with draft config via RPC", async () => {
   });
 });
 
-test("lists commands with legacy requestId signature via RPC", async () => {
+test("lists commands with explicit requestId via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -3270,13 +4007,16 @@ test("lists commands with legacy requestId signature via RPC", async () => {
   mock.triggerOpen();
   await connectPromise;
 
-  const promise = client.listCommands("agent-1", "req-legacy");
+  const promise = client.listCommands({
+    agentId: "agent-1",
+    requestId: "req-commands",
+  });
   expect(mock.sent).toHaveLength(1);
 
   const request = parseSentFrame(mock.sent[0]);
   expect(request.type).toBe("list_commands_request");
   expect(request.agentId).toBe("agent-1");
-  expect(request.requestId).toBe("req-legacy");
+  expect(request.requestId).toBe("req-commands");
   expect(request.draftConfig).toBeUndefined();
 
   mock.triggerMessage(
@@ -3288,7 +4028,7 @@ test("lists commands with legacy requestId signature via RPC", async () => {
           agentId: "agent-1",
           commands: [],
           error: null,
-          requestId: "req-legacy",
+          requestId: "req-commands",
         },
       },
     }),
@@ -3298,7 +4038,113 @@ test("lists commands with legacy requestId signature via RPC", async () => {
     agentId: "agent-1",
     commands: [],
     error: null,
-    requestId: "req-legacy",
+    requestId: "req-commands",
+  });
+});
+
+test("preserves legacy listCommands id overload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.listCommands("agent-1", "req-commands-legacy");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "list_commands_request",
+    requestId: "req-commands-legacy",
+    agentId: "agent-1",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "list_commands_response",
+      payload: {
+        agentId: "agent-1",
+        commands: [],
+        error: null,
+        requestId: "req-commands-legacy",
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    agentId: "agent-1",
+    commands: [],
+    error: null,
+    requestId: "req-commands-legacy",
+  });
+});
+
+test("preserves legacy listCommands options overload", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.listCommands("__new_agent__", {
+    requestId: "req-commands-draft-legacy",
+    draftConfig: {
+      provider: "codex",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "gpt-5",
+      thinkingOptionId: "off",
+    },
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "list_commands_request",
+    requestId: "req-commands-draft-legacy",
+    agentId: "__new_agent__",
+    draftConfig: {
+      provider: "codex",
+      cwd: "/tmp/project",
+      modeId: "bypassPermissions",
+      model: "gpt-5",
+      thinkingOptionId: "off",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "list_commands_response",
+      payload: {
+        agentId: "__new_agent__",
+        commands: [{ name: "help", description: "Show help", argumentHint: "" }],
+        error: null,
+        requestId: "req-commands-draft-legacy",
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    agentId: "__new_agent__",
+    commands: [{ name: "help", description: "Show help", argumentHint: "" }],
+    error: null,
+    requestId: "req-commands-draft-legacy",
   });
 });
 
@@ -3985,6 +4831,81 @@ test("dispatches terminals_changed events to typed listeners", async () => {
       names: ["Dev Server"],
     },
   ]);
+});
+
+test("sends provider.usage.list.request and resolves provider.usage.list.response", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const usagePromise = client.listProviderUsage({ requestId: "usage-1" });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.usage.list.request",
+      requestId: "usage-1",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-1",
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "glm",
+            displayName: "GLM coding plan",
+            status: "available",
+            planLabel: "GLM coding plan",
+            windows: [
+              {
+                id: "biweekly",
+                label: "Biweekly",
+                usedPct: 23,
+                remainingPct: 77,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "usage-1",
+    fetchedAt: "2026-06-19T00:00:00.000Z",
+    providers: [
+      {
+        providerId: "glm",
+        displayName: "GLM coding plan",
+        status: "available",
+        planLabel: "GLM coding plan",
+        windows: [
+          {
+            id: "biweekly",
+            label: "Biweekly",
+            usedPct: 23,
+            remainingPct: 77,
+          },
+        ],
+      },
+    ],
+  });
 });
 
 test("sends close_items_request and resolves close_items_response", async () => {

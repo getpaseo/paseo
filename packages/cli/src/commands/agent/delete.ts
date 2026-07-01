@@ -76,7 +76,7 @@ export async function runDeleteCommand(
         return isSameOrDescendantPath(options.cwd!, a.cwd);
       });
     } else if (id) {
-      const fetchResult = await client.fetchAgent(id);
+      const fetchResult = await client.fetchAgent({ agentId: id });
       if (!fetchResult) {
         const error: CommandError = {
           code: "AGENT_NOT_FOUND",

@@ -9,6 +9,7 @@ import {
   type ChordState,
   resolveKeyboardShortcut,
   buildEffectiveBindings,
+  getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
@@ -22,7 +23,6 @@ import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-over
 import { isNative } from "@/constants/platform";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
-import { useActiveServerId } from "@/hooks/use-active-server-id";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
@@ -54,8 +54,7 @@ export function useKeyboardShortcuts({
     step: 0,
     timeoutId: null,
   });
-  const activeServerId = useActiveServerId();
-  const openProjectPickerAction = useOpenProjectPicker(activeServerId);
+  const openProjectPickerAction = useOpenProjectPicker();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
 
@@ -72,6 +71,20 @@ export function useKeyboardShortcuts({
 
     const isDesktopApp = getIsElectronRuntime();
     const isMac = getShortcutOs() === "mac";
+
+    // Only the modifier that actually performs the workspace-index jump on this
+    // runtime should reveal the sidebar number badges (Alt on web, Cmd on
+    // desktop Mac, Ctrl on desktop non-Mac). The store ORs altDown/cmdOrCtrlDown
+    // to drive badge visibility, so we set the flag matching this runtime.
+    const badgeModifierKey = getWorkspaceIndexJumpModifierKey({ isMac, isDesktop: isDesktopApp });
+    const setBadgeModifierDown = (down: boolean) => {
+      const state = useKeyboardShortcutsStore.getState();
+      if (isDesktopApp) {
+        state.setCmdOrCtrlDown(down);
+      } else {
+        state.setAltDown(down);
+      }
+    };
 
     const shouldHandle = () => {
       if (typeof document === "undefined") return false;
@@ -156,11 +169,8 @@ export function useKeyboardShortcuts({
       }
 
       const key = event.key ?? "";
-      if (key === "Alt" && !event.shiftKey) {
-        useKeyboardShortcutsStore.getState().setAltDown(true);
-      }
-      if (isDesktopApp && (key === "Meta" || key === "Control") && !event.shiftKey) {
-        useKeyboardShortcutsStore.getState().setCmdOrCtrlDown(true);
+      if (key === badgeModifierKey && !event.shiftKey) {
+        setBadgeModifierDown(true);
       }
       if (key === "Shift") {
         const state = useKeyboardShortcutsStore.getState();
@@ -231,11 +241,8 @@ export function useKeyboardShortcuts({
 
     const handleKeyUp = (event: KeyboardEvent) => {
       const key = event.key ?? "";
-      if (key === "Alt") {
-        useKeyboardShortcutsStore.getState().setAltDown(false);
-      }
-      if (isDesktopApp && (key === "Meta" || key === "Control")) {
-        useKeyboardShortcutsStore.getState().setCmdOrCtrlDown(false);
+      if (key === badgeModifierKey) {
+        setBadgeModifierDown(false);
       }
     };
 

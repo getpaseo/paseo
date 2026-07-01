@@ -138,7 +138,7 @@ export class FakePiSession implements PiRuntimeSession {
     return this.messages;
   }
 
-  async getAvailableModels(): Promise<PiModel[]> {
+  async getAvailableModels(_timeoutMs?: number): Promise<PiModel[]> {
     return this.models;
   }
 

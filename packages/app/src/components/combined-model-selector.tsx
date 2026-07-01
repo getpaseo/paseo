@@ -80,6 +80,8 @@ interface CombinedModelSelectorProps {
     onPress: () => void;
     disabled: boolean;
     isOpen: boolean;
+    hovered: boolean;
+    pressed: boolean;
   }) => React.ReactNode;
   onOpen?: () => void;
   onClose?: () => void;
@@ -87,6 +89,15 @@ interface CombinedModelSelectorProps {
   isRetryingProvider?: boolean;
   disabled?: boolean;
   serverId?: string | null;
+  /**
+   * Render the custom trigger as a full-width form field: the outer Pressable
+   * becomes a transparent passthrough that stretches its child edge-to-edge and
+   * stops painting its own hover/pressed background and rounded corners. The
+   * trigger itself owns the field visuals and reads hovered/pressed to show its
+   * active state. Without this the trigger stays a content-width toolbar chip
+   * (the composer's layout).
+   */
+  triggerFill?: boolean;
 }
 
 interface SelectorContentProps {
@@ -574,6 +585,7 @@ export function CombinedModelSelector({
   isRetryingProvider = false,
   disabled = false,
   serverId = null,
+  triggerFill = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -693,14 +705,26 @@ export function CombinedModelSelector({
   }, [handleOpenChange, isOpen]);
 
   const triggerStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.trigger,
-      Boolean(hovered) && styles.triggerHovered,
-      (pressed || isOpen) && styles.triggerPressed,
-      disabled && styles.triggerDisabled,
-      renderTrigger ? styles.customTriggerWrapper : null,
-    ],
-    [disabled, isOpen, renderTrigger],
+    ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
+      // Fill mode: transparent full-width passthrough. The trigger paints its own
+      // hover/pressed state from the args, so the wrapper must not double-paint.
+      if (triggerFill) {
+        return [
+          styles.trigger,
+          styles.customTriggerWrapper,
+          styles.triggerFill,
+          disabled && styles.triggerDisabled,
+        ];
+      }
+      return [
+        styles.trigger,
+        Boolean(hovered) && styles.triggerHovered,
+        (pressed || isOpen) && styles.triggerPressed,
+        disabled && styles.triggerDisabled,
+        renderTrigger ? styles.customTriggerWrapper : null,
+      ];
+    },
+    [disabled, isOpen, renderTrigger, triggerFill],
   );
 
   const handleBackToAll = useCallback(() => {
@@ -789,12 +813,16 @@ export function CombinedModelSelector({
           accessibilityLabel={t("modelSelector.selectedModel", { model: selectedModelLabel })}
           testID="combined-model-selector"
         >
-          {renderTrigger({
-            selectedModelLabel: triggerLabel,
-            onPress: handleTriggerPress,
-            disabled,
-            isOpen,
-          })}
+          {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
+            renderTrigger({
+              selectedModelLabel: triggerLabel,
+              onPress: handleTriggerPress,
+              disabled,
+              isOpen,
+              hovered: Boolean(hovered),
+              pressed,
+            })
+          }
         </Pressable>
       ) : (
         <ComboboxTrigger
@@ -885,6 +913,16 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
     paddingVertical: 0,
     height: "auto",
+  },
+  // Stretch the wrapper (and, via column + stretch, its single child) to the
+  // full width of the field, with no background or rounding of its own.
+  triggerFill: {
+    alignSelf: "stretch",
+    flexShrink: 0,
+    flexDirection: "column",
+    alignItems: "stretch",
+    backgroundColor: "transparent",
+    borderRadius: 0,
   },
   favoritesContainer: {
     backgroundColor: theme.colors.surface1,

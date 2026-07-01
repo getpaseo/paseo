@@ -76,6 +76,7 @@ class RecordingPushNotificationSender implements PushNotificationSender {
 function createServer(agentManagerOverrides?: Record<string, unknown>) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
+    subscribe: vi.fn(() => () => {}),
     setAgentAttentionCallback: vi.fn(),
     getAgent: vi.fn(() => null),
     getLastAssistantMessage: vi.fn(async () => null),

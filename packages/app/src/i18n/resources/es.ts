@@ -165,7 +165,7 @@ export const es: TranslationResources = {
     hints: {
       thinking: "Modo de pensamiento",
       model: "Cambiar modelo",
-      mode: "Cambiar modo de permiso",
+      mode: "Cambiar modo",
     },
   },
   agentStream: {
@@ -248,6 +248,12 @@ export const es: TranslationResources = {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
+      forkMenu: "Bifurcar mensaje",
+      forkInNewTab: "Bifurcar en una pestaña nueva",
+      forkInNewWorkspace: "Bifurcar en un espacio de trabajo nuevo",
+      forkUnavailable: "Actualiza el host para usar esto.",
+      forkMissingWorkspace: "Este agente no está en un espacio de trabajo.",
+      forkFailed: "No se pudo bifurcar el chat",
       openFile: "Abrir archivo",
       copied: "Copiado",
     },
@@ -421,6 +427,25 @@ export const es: TranslationResources = {
         openDevTools: "Abrir herramientas de desarrollo del navegador",
         cancelSelector: "Cancelar selector de elementos",
         selectElement: "Seleccionar elemento",
+        grabElement: "Copiar elemento al portapapeles",
+        grabElementLabel: "elemento",
+        grabFailed: "No se pudo copiar el elemento",
+      },
+      annotate: {
+        title: "Enviar comentarios al agente",
+        placeholder: "Describe qué debería cambiar…",
+        submit: "Adjuntar",
+        cancel: "Cancelar",
+        intents: {
+          fix: "Corregir",
+          change: "Cambiar",
+          question: "Pregunta",
+          approve: "Aprobar",
+        },
+      },
+      devices: {
+        label: "Tamaño del dispositivo",
+        responsive: "Adaptable",
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
@@ -610,16 +635,16 @@ export const es: TranslationResources = {
           success: "Archivado",
         },
         mergePr: {
-          squash: "Fusionar",
-          merge: "Fusionar",
-          rebase: "Fusionar",
-          pending: "FusionandoPR...",
-          success: "PRfusionado",
+          squash: "Fusionar PR (squash)",
+          merge: "Fusionar PR (merge)",
+          rebase: "Fusionar PR (rebase)",
+          pending: "Fusionando PR...",
+          success: "PR fusionado",
         },
         autoMerge: {
-          enableSquash: "Fusión automática",
-          enableMerge: "Fusión automática",
-          enableRebase: "Fusión automática",
+          enableSquash: "Fusión automática (squash)",
+          enableMerge: "Fusión automática (merge)",
+          enableRebase: "Fusión automática (rebase)",
           enabled: "Combinación automática habilitada",
           enabling: "Habilitando la fusión automática...",
           disabling: "Desactivando la fusión automática...",
@@ -744,6 +769,9 @@ export const es: TranslationResources = {
         failedOpen: "No se pudo abrir el espacio de trabajo",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Ver",
+        },
         sections: {
           checks: "cheques",
           reviews: "Reseñas",
@@ -788,6 +816,7 @@ export const es: TranslationResources = {
     },
     sections: {
       sessions: "Historial",
+      schedules: "Horarios",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
@@ -814,6 +843,7 @@ export const es: TranslationResources = {
       toasts: {
         hostDisconnected: "Hostno está conectado",
         removeFailed: "No se pudieron eliminar algunos espacios de trabajo",
+        updateHostToRemove: "Actualiza el host para eliminar proyectos.",
       },
       empty: {
         title: "Aún no hay proyectos",
@@ -955,8 +985,17 @@ export const es: TranslationResources = {
         upToDate: "La aplicación está actualizada.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Le avisaremos cuando la actualización esté lista.",
+        pendingWithLastChecked:
+          "Le avisaremos cuando la actualización esté lista. Última comprobación a las {{time}}.",
+        pendingWithVersion: "Actualización encontrada: {{version}}. Descargando...",
+        pendingWithVersionAndLastChecked:
+          "Actualización encontrada: {{version}}. Descargando... Última comprobación a las {{time}}.",
         availableWithVersion: "Actualización lista:{{version}}",
+        availableWithVersionAndLastChecked:
+          "Actualización lista:{{version}}. Última comprobación a las {{time}}.",
         available: "Una actualización de la aplicación está lista para instalarse.",
+        availableWithLastChecked:
+          "Una actualización de la aplicación está lista para instalarse. Última comprobación a las {{time}}.",
         installed: "Actualización de la aplicación instalada. Se requiere reinicio.",
         failed: "No se pudo actualizar la aplicación.",
         idle: "El estado de la actualización aún no se ha comprobado.",
@@ -1083,6 +1122,7 @@ export const es: TranslationResources = {
   projectPicker: {
     placeholder: "Escriba una ruta de directorio...",
     opening: "Proyecto de apertura...",
+    searching: "Buscando...",
     empty: "Comience a escribir una ruta",
     errors: {
       directory_not_found: "No se encontró el directorio.",
@@ -1342,6 +1382,8 @@ export const es: TranslationResources = {
     backdrop: "Fondo del menú",
   },
   subagents: {
+    detachAction: "Separar {{label}}",
+    detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
   },
@@ -1427,6 +1469,7 @@ export const es: TranslationResources = {
       agents: "Agents",
       workspaces: "Workspaces",
       providers: "Proveedores",
+      usage: "Uso",
       terminals: "Terminals",
       host: "Host",
     },
@@ -1468,6 +1511,8 @@ export const es: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1479,6 +1524,22 @@ export const es: TranslationResources = {
       playTest: "Prueba de juego",
       playing: "Jugando...",
       playbackFailed: "Error de reproducción:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "Acerca de",
@@ -1598,6 +1659,7 @@ export const es: TranslationResources = {
         toggleFocusMode: "Alternar modo de enfoque",
         cycleTheme: "Tema del ciclo",
         focusMessageInput: "Entrada de mensaje de enfoque",
+        cycleAgentMode: "Alternar modo del agente",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar dictado/stop",
         interruptAgent: "agente de interrupción",
@@ -1760,6 +1822,30 @@ export const es: TranslationResources = {
           dialogFailedMessage:
             "No se puede abrir el cuadro de diálogo de confirmación de reinicio.",
         },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
+        },
         dangerZone: "Zona de peligro",
         remove: {
           title: "Eliminar host",
@@ -1818,6 +1904,9 @@ export const es: TranslationResources = {
         button: "Diagnóstico",
         refresh: "Refrescar",
         refreshing: "Refrescante...",
+        copyLabel: "diagnóstico",
+        copyAccessibility: "Copiar diagnóstico",
+        copyFailed: "No se pudo copiar el diagnóstico",
         refreshAccessibility: "Actualizar diagnóstico",
         refreshingAccessibility: "Diagnóstico refrescante",
         running: "Ejecutando diagnóstico...",

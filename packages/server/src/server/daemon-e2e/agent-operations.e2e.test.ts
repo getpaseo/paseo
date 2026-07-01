@@ -62,7 +62,7 @@ describe("timestamp behavior", () => {
       direction: "tail",
       limit: 200,
     });
-    const refreshedResult = await ctx.client.fetchAgent(agent.id);
+    const refreshedResult = await ctx.client.fetchAgent({ agentId: agent.id });
 
     // Verify agent is still idle
     expect(refreshedResult?.agent.status).toBe("idle");
@@ -79,7 +79,7 @@ describe("timestamp behavior", () => {
       direction: "tail",
       limit: 200,
     });
-    const clearResult = await ctx.client.fetchAgent(agent.id);
+    const clearResult = await ctx.client.fetchAgent({ agentId: agent.id });
 
     // Timestamp should STILL not have changed
     expect(clearResult?.agent.updatedAt).toBe(initialUpdatedAt);

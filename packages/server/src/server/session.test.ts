@@ -1,30 +1,25 @@
 import { execSync } from "child_process";
-import { EventEmitter } from "events";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
+  encodeFileTransferFrame,
   FileTransferOpcode,
+  type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
+import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
-import type {
-  SpeechToTextProvider,
-  StreamingTranscriptionCommittedEvent,
-  StreamingTranscriptionEvent,
-  StreamingTranscriptionSession,
-} from "./speech/speech-provider.js";
-import type {
-  TurnDetectionProvider,
-  TurnDetectionSession,
-} from "./speech/turn-detection-provider.js";
+import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
 import {
   asSessionInternals as asSessionInternalsHelper,
   asAgentManager,
@@ -48,8 +43,6 @@ import type {
 } from "../services/github-service.js";
 
 interface SessionHandlerInternals {
-  startVoiceTurnController(): Promise<void>;
-  stopVoiceTurnController(): Promise<void>;
   handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -72,7 +65,6 @@ interface SessionHandlerInternals {
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
-  createBranchFromBase(params: unknown): Promise<unknown>;
   handleCheckoutSwitchBranchRequest(params: unknown): Promise<unknown>;
   handleBranchSuggestionsRequest(params: unknown): Promise<unknown>;
   handleStashListRequest(params: unknown): Promise<unknown>;
@@ -80,9 +72,6 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
-  sttManager: {
-    transcribe(audio: Buffer, format: string): Promise<unknown>;
-  };
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -199,6 +188,8 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
+  agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
   workspaceGitService?: {
@@ -224,6 +215,10 @@ interface SessionForTestOptions {
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
+  serverId?: SessionOptions["serverId"];
+  daemonVersion?: SessionOptions["daemonVersion"];
+  daemonRuntimeConfig?: SessionOptions["daemonRuntimeConfig"];
+  downloadTokenStore?: SessionOptions["downloadTokenStore"];
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
 }
@@ -258,15 +253,17 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     onMessage: (message) => messages.push(message),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
-    downloadTokenStore: asDownloadTokenStore(),
+    downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
     pushTokenStore: asPushTokenStore(),
     paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
+      ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
       list: vi.fn().mockResolvedValue([]),
+      ...options.agentStorage,
     }),
     projectRegistry: options.projectRegistry ?? {
       list: vi.fn().mockResolvedValue([]),
@@ -304,200 +301,11 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
     voice: options.voice,
+    serverId: options.serverId,
+    daemonVersion: options.daemonVersion,
+    daemonRuntimeConfig: options.daemonRuntimeConfig,
   });
 }
-
-class FakeVoiceTurnDetectionSession extends EventEmitter implements TurnDetectionSession {
-  public readonly requiredSampleRate = 16000;
-
-  async connect(): Promise<void> {}
-
-  appendPcm16(_chunk: Buffer): void {}
-
-  flush(): void {}
-  reset(): void {}
-  close(): void {}
-}
-
-class FakeVoiceSttSession extends EventEmitter implements StreamingTranscriptionSession {
-  public readonly requiredSampleRate = 16000;
-  public commitCount = 0;
-
-  async connect(): Promise<void> {}
-
-  appendPcm16(_pcm16le: Buffer): void {}
-
-  commit(): void {
-    this.commitCount += 1;
-  }
-
-  clear(): void {}
-  close(): void {}
-
-  emitCommitted(event: StreamingTranscriptionCommittedEvent): void {
-    this.emit("committed", event);
-  }
-
-  emitTranscript(event: StreamingTranscriptionEvent): void {
-    this.emit("transcript", event);
-  }
-}
-
-function createVoiceSessionHarness() {
-  const messages: unknown[] = [];
-  const detector = new FakeVoiceTurnDetectionSession();
-  const sttSession = new FakeVoiceSttSession();
-  const sttProvider: SpeechToTextProvider = {
-    id: "local",
-    createSession: vi.fn(() => sttSession),
-  };
-  const turnDetection: TurnDetectionProvider = {
-    id: "local",
-    createSession: vi.fn(() => detector),
-  };
-  const session = createSessionForTest({
-    messages,
-    stt: sttProvider,
-    voice: { turnDetection },
-  });
-  Object.assign(session, {
-    isVoiceMode: true,
-    voiceModeAgentId: "11111111-1111-4111-8111-111111111111",
-  });
-  const internals = asSessionInternals(session);
-  const sendAgentMessage = vi
-    .spyOn(internals, "handleSendAgentMessage")
-    .mockResolvedValue({ ok: true });
-  const transcribe = vi.spyOn(asSessionInternals(session).sttManager, "transcribe");
-
-  return {
-    session,
-    internals,
-    messages,
-    detector,
-    sttSession,
-    sendAgentMessage,
-    transcribe,
-  };
-}
-
-async function settleVoiceSession(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-describe("session voice mode streaming transcription", () => {
-  test("submits the streaming final transcript to the agent without batch transcribe", async () => {
-    const harness = createVoiceSessionHarness();
-
-    await harness.internals.startVoiceTurnController();
-    harness.detector.emit("speech_started");
-    await settleVoiceSession();
-    harness.detector.emit("speech_stopped");
-    await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-    harness.sttSession.emitTranscript({
-      segmentId: "segment-1",
-      transcript: "ship the streaming final",
-      isFinal: true,
-      language: "en",
-      avgLogprob: -0.1,
-      isLowConfidence: false,
-    });
-    await settleVoiceSession();
-
-    expect(harness.sttSession.commitCount).toBe(1);
-    expect(harness.transcribe).not.toHaveBeenCalled();
-    expect(harness.sendAgentMessage).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      "ship the streaming final",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { spokenInput: true },
-    );
-    expect(harness.messages).toContainEqual(
-      expect.objectContaining({
-        type: "transcription_result",
-        payload: expect.objectContaining({
-          text: "ship the streaming final",
-          language: "en",
-          avgLogprob: -0.1,
-        }),
-      }),
-    );
-
-    await harness.internals.stopVoiceTurnController();
-  });
-
-  test("uses the finalization timeout empty transcript path without agent submission", async () => {
-    vi.useFakeTimers();
-    try {
-      const harness = createVoiceSessionHarness();
-
-      await harness.internals.startVoiceTurnController();
-      harness.detector.emit("speech_started");
-      await settleVoiceSession();
-      harness.detector.emit("speech_stopped");
-      await settleVoiceSession();
-      harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-
-      await vi.advanceTimersByTimeAsync(10_000);
-      await settleVoiceSession();
-
-      expect(harness.transcribe).not.toHaveBeenCalled();
-      expect(harness.sendAgentMessage).not.toHaveBeenCalled();
-      expect(harness.messages).toContainEqual(
-        expect.objectContaining({
-          type: "transcription_result",
-          payload: expect.objectContaining({
-            text: "",
-          }),
-        }),
-      );
-
-      await harness.internals.stopVoiceTurnController();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("filters low-confidence streaming finals without agent submission", async () => {
-    const harness = createVoiceSessionHarness();
-
-    await harness.internals.startVoiceTurnController();
-    harness.detector.emit("speech_started");
-    await settleVoiceSession();
-    harness.detector.emit("speech_stopped");
-    await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-    harness.sttSession.emitTranscript({
-      segmentId: "segment-1",
-      transcript: "background noise",
-      isFinal: true,
-      avgLogprob: -2.5,
-      isLowConfidence: true,
-    });
-    await settleVoiceSession();
-
-    expect(harness.transcribe).not.toHaveBeenCalled();
-    expect(harness.sendAgentMessage).not.toHaveBeenCalled();
-    expect(harness.messages).toContainEqual(
-      expect.objectContaining({
-        type: "transcription_result",
-        payload: expect.objectContaining({
-          text: "",
-          avgLogprob: -2.5,
-          isLowConfidence: true,
-        }),
-      }),
-    );
-
-    await harness.internals.stopVoiceTurnController();
-  });
-});
 
 describe("file explorer binary responses", () => {
   const tempDirs: string[] = [];
@@ -592,6 +400,337 @@ describe("file explorer binary responses", () => {
       opcode: FileTransferOpcode.FileEnd,
       requestId: "req-new-client",
       payload: new Uint8Array(),
+    });
+  });
+});
+
+describe("workspace file access (behavior preservation)", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeDir(prefix: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  function uploadFrame(args: Parameters<typeof encodeFileTransferFrame>[0]): FileTransferFrame {
+    const frame = decodeFileTransferFrame(encodeFileTransferFrame(args));
+    if (!frame) {
+      throw new Error("Expected a file transfer frame");
+    }
+    return frame;
+  }
+
+  test("file_explorer list returns directory entries", async () => {
+    const cwd = makeDir("file-access-list-");
+    writeFileSync(join(cwd, "a.txt"), "alpha");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "file_explorer_request",
+      cwd,
+      path: ".",
+      mode: "list",
+      requestId: "req-list",
+    });
+
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    if (message.type !== "file_explorer_response") {
+      throw new Error(`expected file_explorer_response, got ${message.type}`);
+    }
+    expect(message.payload.error).toBeNull();
+    expect(message.payload.directory).not.toBeNull();
+  });
+
+  test("file_explorer rejects an empty cwd with an error envelope", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "file_explorer_request",
+      cwd: "   ",
+      path: ".",
+      mode: "list",
+      requestId: "req-empty",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "file_explorer_response",
+        payload: expect.objectContaining({
+          error: "cwd is required",
+          directory: null,
+          file: null,
+          requestId: "req-empty",
+        }),
+      },
+    ]);
+  });
+
+  test("file_download_token issues a token for a real file", async () => {
+    const cwd = makeDir("file-access-token-");
+    writeFileSync(join(cwd, "report.txt"), "hello world");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
+    });
+
+    await session.handleMessage({
+      type: "file_download_token_request",
+      cwd,
+      path: "report.txt",
+      requestId: "req-token",
+    });
+
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    if (message.type !== "file_download_token_response") {
+      throw new Error(`expected file_download_token_response, got ${message.type}`);
+    }
+    expect(message.payload.error).toBeNull();
+    expect(typeof message.payload.token).toBe("string");
+    expect(message.payload.fileName).toBe("report.txt");
+    expect(message.payload.size).toBe(11);
+  });
+
+  test("file_download_token rejects an empty cwd with an error envelope", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "file_download_token_request",
+      cwd: "",
+      path: "report.txt",
+      requestId: "req-token-empty",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "file_download_token_response",
+        payload: expect.objectContaining({
+          token: null,
+          error: "cwd is required",
+          requestId: "req-token-empty",
+        }),
+      },
+    ]);
+  });
+
+  test("project_icon responds for a workspace cwd", async () => {
+    const cwd = makeDir("file-access-icon-");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage({
+      type: "project_icon_request",
+      cwd,
+      requestId: "req-icon",
+    });
+
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    if (message.type !== "project_icon_response") {
+      throw new Error(`expected project_icon_response, got ${message.type}`);
+    }
+    expect(message.payload.cwd).toBe(cwd);
+    expect(message.payload.error).toBeNull();
+  });
+
+  test("file upload round-trips bytes through binary frames", async () => {
+    const paseoHome = makeDir("file-access-upload-");
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, paseoHome });
+
+    await session.handleMessage({
+      type: "file.upload.request",
+      fileName: "notes.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-upload",
+    });
+    await session.handleBinaryFrame({
+      kind: "file_transfer",
+      frame: uploadFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId: "req-upload",
+        metadata: {
+          mime: "text/plain",
+          size: 11,
+          encoding: "binary",
+          modifiedAt: "2026-05-02T00:00:00.000Z",
+          fileName: "notes.txt",
+        },
+      }),
+    });
+    await session.handleBinaryFrame({
+      kind: "file_transfer",
+      frame: uploadFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId: "req-upload",
+        payload: new TextEncoder().encode("hello world"),
+      }),
+    });
+    await session.handleBinaryFrame({
+      kind: "file_transfer",
+      frame: uploadFrame({
+        opcode: FileTransferOpcode.FileEnd,
+        requestId: "req-upload",
+      }),
+    });
+
+    const response = messages.find((message) => message.type === "file.upload.response");
+    if (response?.type !== "file.upload.response") {
+      throw new Error("expected a file.upload.response message");
+    }
+    expect(response.payload.error).toBeNull();
+    expect(response.payload.file?.fileName).toBe("notes.txt");
+    expect(response.payload.file?.size).toBe(11);
+  });
+});
+
+function createStoredAgentRecord(
+  overrides: Pick<StoredAgentRecord, "id" | "cwd"> & Partial<StoredAgentRecord>,
+): StoredAgentRecord {
+  return {
+    id: overrides.id,
+    provider: overrides.provider ?? "codex",
+    cwd: overrides.cwd,
+    workspaceId: overrides.workspaceId,
+    createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00.000Z",
+    lastUserMessageAt: overrides.lastUserMessageAt ?? null,
+    title: overrides.title ?? null,
+    labels: overrides.labels ?? {},
+    lastStatus: overrides.lastStatus ?? "idle",
+    lastModeId: overrides.lastModeId ?? null,
+    config: overrides.config ?? null,
+    runtimeInfo: overrides.runtimeInfo,
+    features: overrides.features,
+    persistence: overrides.persistence ?? null,
+    lastError: overrides.lastError,
+    requiresAttention: overrides.requiresAttention,
+    attentionReason: overrides.attentionReason,
+    attentionTimestamp: overrides.attentionTimestamp,
+    internal: overrides.internal,
+    archivedAt: overrides.archivedAt ?? null,
+  };
+}
+
+describe("agent detach RPC", () => {
+  test("detaches a stored subagent and emits the updated standalone agent", async () => {
+    const messages: unknown[] = [];
+    const childBefore = createStoredAgentRecord({
+      id: "child-agent",
+      cwd: "/tmp/child",
+      workspaceId: "workspace-child",
+      title: "Child",
+      labels: {
+        [PARENT_AGENT_ID_LABEL]: "parent-agent",
+        topic: "handoff",
+      },
+    });
+    const childAfter = createStoredAgentRecord({
+      ...childBefore,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      labels: { topic: "handoff" },
+    });
+    const workspace = {
+      workspaceId: "workspace-child",
+      projectId: "project-child",
+      cwd: "/tmp/child",
+      kind: "worktree" as const,
+      displayName: "Child workspace",
+      title: null,
+      branch: "child",
+      baseBranch: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const project = {
+      projectId: "project-child",
+      rootPath: "/tmp/child",
+      kind: "git" as const,
+      displayName: "Project",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const detachAgent = vi.fn().mockResolvedValue({
+      record: childAfter,
+      live: false,
+      previousParentAgentId: "parent-agent",
+    });
+    const getAgent = vi.fn(() => null);
+
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent,
+        detachAgent,
+      },
+      agentStorage: {
+        list: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue(null),
+      },
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue(workspace),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        get: vi.fn().mockResolvedValue(project),
+        list: vi.fn().mockResolvedValue([project]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "subscribe-agents",
+      subscribe: { subscriptionId: "agents-sub" },
+    });
+    messages.splice(0);
+
+    await session.handleMessage({
+      type: "agent.detach.request",
+      agentId: childBefore.id,
+      requestId: "detach-1",
+    });
+
+    expect(detachAgent).toHaveBeenCalledWith("child-agent");
+    expect(messages).toContainEqual({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: expect.objectContaining({
+          id: "child-agent",
+          labels: { topic: "handoff" },
+          workspaceId: "workspace-child",
+        }),
+        project: expect.objectContaining({
+          projectKey: "project-child",
+          workspaceName: "Child workspace",
+        }),
+      },
+    });
+    expect(messages).toContainEqual({
+      type: "agent.detach.response",
+      payload: {
+        requestId: "detach-1",
+        agentId: "child-agent",
+        accepted: true,
+        error: null,
+      },
     });
   });
 });
@@ -839,6 +978,132 @@ describe("project config RPC authorization", () => {
   });
 });
 
+describe("daemon status + pairing RPC", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeHome(): string {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "daemon-session-test-")));
+    tempDirs.push(home);
+    return home;
+  }
+
+  test("daemon.get_status.request reports identity, runtime config, and mapped providers", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: makeHome(),
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      agentManager: {
+        listProviderAvailability: vi.fn().mockResolvedValue([
+          { provider: "claude", available: true },
+          { provider: "codex", available: false, error: "boom" },
+        ]),
+      },
+    });
+
+    await session.handleMessage({ type: "daemon.get_status.request", requestId: "status-1" });
+
+    expect(messages).toEqual([
+      {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "status-1",
+          serverId: "srv-test",
+          version: "9.9.9",
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: null,
+          listen: "127.0.0.1:6767",
+          relay: null,
+          providers: [
+            { provider: "claude", available: true, error: null },
+            { provider: "codex", available: false, error: "boom" },
+          ],
+        },
+      },
+    ]);
+  });
+
+  test("daemon.get_status.request falls back to a null/empty status when provider listing fails", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: makeHome(),
+      serverId: "srv-test",
+      daemonVersion: "9.9.9",
+      daemonRuntimeConfig: { listen: "127.0.0.1:6767", relay: null },
+      agentManager: {
+        listProviderAvailability: vi.fn().mockRejectedValue(new Error("provider listing failed")),
+      },
+    });
+
+    await session.handleMessage({
+      type: "daemon.get_status.request",
+      requestId: "status-fallback-1",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: "status-fallback-1",
+          serverId: "srv-test",
+          version: "9.9.9",
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: null,
+          listen: null,
+          relay: null,
+          providers: [],
+        },
+      },
+    ]);
+  });
+
+  test("daemon.get_pairing_offer.request returns an empty offer when relay is disabled", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      paseoHome: makeHome(),
+      daemonRuntimeConfig: {
+        listen: "127.0.0.1:6767",
+        relay: {
+          enabled: false,
+          endpoint: "relay.paseo.sh:443",
+          publicEndpoint: "relay.paseo.sh:443",
+          useTls: true,
+          publicUseTls: true,
+        },
+      },
+    });
+
+    await session.handleMessage({
+      type: "daemon.get_pairing_offer.request",
+      requestId: "pairing-1",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "daemon.get_pairing_offer.response",
+        payload: {
+          requestId: "pairing-1",
+          url: "",
+          qr: null,
+          relayEnabled: false,
+        },
+      },
+    ]);
+  });
+});
+
 function createWorkspaceGitSnapshot(
   cwd: string,
   overrides?: {
@@ -947,7 +1212,7 @@ describe("session provider refresh cwd routing", () => {
     expect(getSnapshot).toHaveBeenCalledWith(workspaceCwd);
   });
 
-  test("normalizes legacy model and mode list requests without cwd to home", async () => {
+  test("preserves legacy model and mode list requests without cwd as global", async () => {
     const messages: unknown[] = [];
     const {
       manager: providerSnapshotManager,
@@ -974,9 +1239,9 @@ describe("session provider refresh cwd routing", () => {
       requestId: "modes-home",
     });
 
-    expect(getSnapshot).toHaveBeenCalledWith(homedir());
+    expect(getSnapshot).toHaveBeenCalledWith(undefined);
     expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
-      cwd: homedir(),
+      cwd: undefined,
       providers: ["codex"],
     });
   });
@@ -1078,7 +1343,7 @@ describe("session provider refresh cwd routing", () => {
     });
 
     expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
-      cwd: homedir(),
+      cwd: undefined,
       providers: ["codex"],
     });
     warmupDeferred.resolve();
@@ -1128,7 +1393,7 @@ describe("session checkout merge handling", () => {
 
     checkoutGitMocks.mergeToBase.mockResolvedValue("/tmp/base-worktree");
 
-    await asSessionInternals(session).handleCheckoutMergeRequest({
+    await session.handleMessage({
       type: "checkout_merge_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1176,7 +1441,7 @@ describe("session checkout merge handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
+    await session.handleMessage({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1214,7 +1479,7 @@ describe("session checkout merge handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.mergeFromBase.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
+    await session.handleMessage({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1306,7 +1571,7 @@ diff --git a/file.txt b/file.txt
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService });
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: join(repoRoot, "nested"),
       message: "",
@@ -1327,7 +1592,7 @@ diff --git a/file.txt b/file.txt
 
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -1381,7 +1646,7 @@ diff --git a/file.txt b/file.txt
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "",
@@ -1486,7 +1751,7 @@ diff --git a/file.txt b/file.txt
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "",
@@ -1515,7 +1780,7 @@ diff --git a/file.txt b/file.txt
     const session = createSessionForTest({ workspaceGitService, messages });
     checkoutGitMocks.commitChanges.mockRejectedValue(new Error("nothing to commit"));
 
-    await asSessionInternals(session).handleCheckoutCommitRequest({
+    await session.handleMessage({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -1605,7 +1870,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ workspaceGitService });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: join(repoRoot, "nested"),
       baseRef: "main",
@@ -1650,7 +1915,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1789,7 +2054,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1831,7 +2096,7 @@ diff --git a/file.txt b/file.txt
     });
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrCreateRequest({
+    await session.handleMessage({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -1893,7 +2158,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "squash",
@@ -1990,7 +2255,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "squash",
@@ -2043,7 +2308,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "squash",
@@ -2105,7 +2370,7 @@ describe("session checkout pull request merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutPrMergeRequest({
+    await session.handleMessage({
       type: "checkout_pr_merge_request",
       cwd: "/tmp/request-worktree",
       mergeMethod: "merge",
@@ -2168,7 +2433,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: true,
@@ -2234,7 +2499,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: false,
@@ -2297,7 +2562,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: true,
@@ -2346,7 +2611,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: true,
@@ -2402,7 +2667,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: false,
@@ -2457,7 +2722,7 @@ describe("session checkout pull request auto-merge", () => {
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutGithubSetAutoMergeRequest({
+    await session.handleMessage({
       type: "checkout.github.set_auto_merge.request",
       cwd: "/tmp/request-worktree",
       enabled: false,
@@ -2491,7 +2756,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pullCurrentBranch.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutPullRequest({
+    await session.handleMessage({
       type: "checkout_pull_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-pull",
@@ -2521,7 +2786,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pushCurrentBranch.mockResolvedValue(undefined);
 
-    await asSessionInternals(session).handleCheckoutPushRequest({
+    await session.handleMessage({
       type: "checkout_push_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-push",
@@ -2558,7 +2823,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh",
@@ -2596,7 +2861,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh-error",
@@ -2624,7 +2889,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/service-worktree",
       requestId: "request-status",
@@ -2673,7 +2938,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/cold-worktree",
       requestId: "request-cold-status",
@@ -2749,10 +3014,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
-            project: {
+            project: expect.objectContaining({
               projectKey: "remote:github.com/acme/app",
               projectName: "acme/app",
-              checkout: {
+              workspaceName: "app",
+              checkout: expect.objectContaining({
                 cwd: "/repo/app",
                 isGit: true,
                 currentBranch: "app",
@@ -2760,8 +3026,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/app",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -2820,10 +3086,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-local",
-            project: {
+            project: expect.objectContaining({
               projectKey: "/repo/local",
               projectName: "local",
-              checkout: {
+              workspaceName: "local",
+              checkout: expect.objectContaining({
                 cwd: "/repo/local",
                 isGit: true,
                 currentBranch: "local",
@@ -2831,8 +3098,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/local",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -2919,7 +3186,7 @@ describe("session branch validation", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleValidateBranchRequest({
+    await session.handleMessage({
       type: "validate_branch_request",
       cwd: "/tmp/repo",
       branchName: "feature",
@@ -2985,101 +3252,6 @@ describe("session branch validation", () => {
   });
 });
 
-describe("session branch creation handling", () => {
-  test("validates the base branch through the workspace git service", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn(),
-      validateBranchRef: vi.fn().mockResolvedValue({ kind: "not-found" }),
-      hasLocalBranch: vi.fn(),
-    };
-    const session = createSessionForTest({ workspaceGitService });
-
-    await expect(
-      asSessionInternals(session).createBranchFromBase({
-        cwd: "/tmp/repo",
-        baseBranch: "missing-base",
-        newBranchName: "feature/new-work",
-      }),
-    ).rejects.toThrow("Base branch not found: missing-base");
-
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledWith("/tmp/repo", "missing-base");
-    expect(workspaceGitService.hasLocalBranch).not.toHaveBeenCalled();
-    expect(spawnMocks.execCommand).not.toHaveBeenCalledWith(
-      "git",
-      ["rev-parse", "--verify", "missing-base"],
-      { cwd: "/tmp/repo" },
-    );
-  });
-
-  test("checks local branch existence through the workspace git service", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn(),
-      validateBranchRef: vi.fn().mockResolvedValue({ kind: "local", name: "main" }),
-      hasLocalBranch: vi.fn().mockResolvedValue(true),
-    };
-    const session = createSessionForTest({ workspaceGitService });
-
-    await expect(
-      asSessionInternals(session).createBranchFromBase({
-        cwd: "/tmp/repo",
-        baseBranch: "main",
-        newBranchName: "feature/existing",
-      }),
-    ).rejects.toThrow("Branch already exists: feature/existing");
-
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledWith("/tmp/repo", "main");
-    expect(workspaceGitService.hasLocalBranch).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.hasLocalBranch).toHaveBeenCalledWith(
-      "/tmp/repo",
-      "feature/existing",
-    );
-    expect(spawnMocks.execCommand).not.toHaveBeenCalledWith(
-      "git",
-      ["show-ref", "--verify", "--quiet", "refs/heads/feature/existing"],
-      { cwd: "/tmp/repo" },
-    );
-  });
-
-  test("forces a workspace git snapshot refresh after creating a branch", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/repo", {
-          git: {
-            isDirty: false,
-          },
-        }),
-      ),
-      validateBranchRef: vi.fn().mockResolvedValue({ kind: "local", name: "main" }),
-      hasLocalBranch: vi.fn().mockResolvedValue(false),
-    };
-    const session = createSessionForTest({ workspaceGitService });
-    spawnMocks.execCommand.mockResolvedValue({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      signal: null,
-      truncated: false,
-    });
-
-    await asSessionInternals(session).createBranchFromBase({
-      cwd: "/tmp/repo",
-      baseBranch: "main",
-      newBranchName: "feature/new-work",
-    });
-
-    expect(spawnMocks.execCommand).toHaveBeenCalledWith(
-      "git",
-      ["checkout", "-b", "feature/new-work", "main"],
-      { cwd: "/tmp/repo" },
-    );
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
-      force: true,
-      reason: "create-branch",
-    });
-  });
-});
-
 describe("session checkout switch branch handling", () => {
   test("forces a workspace git snapshot refresh after switching branches", async () => {
     const messages: unknown[] = [];
@@ -3097,7 +3269,7 @@ describe("session checkout switch branch handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.checkoutResolvedBranch.mockResolvedValue({ source: "local" });
 
-    await asSessionInternals(session).handleCheckoutSwitchBranchRequest({
+    await session.handleMessage({
       type: "checkout_switch_branch_request",
       cwd: "/tmp/repo",
       branch: "release",
@@ -3342,7 +3514,7 @@ describe("session branch suggestions handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleBranchSuggestionsRequest({
+    await session.handleMessage({
       type: "branch_suggestions_request",
       cwd: "/tmp/repo",
       query: "service",
@@ -3386,7 +3558,7 @@ describe("session stash list handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleStashListRequest({
+    await session.handleMessage({
       type: "stash_list_request",
       cwd: "/tmp/repo",
       paseoOnly: true,
@@ -3417,7 +3589,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await asSessionInternals(session).handleStashSaveRequest({
+    await session.handleMessage({
       type: "stash_save_request",
       cwd: "/tmp/repo",
       branch: "feature",
@@ -3451,7 +3623,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await asSessionInternals(session).handleStashPopRequest({
+    await session.handleMessage({
       type: "stash_pop_request",
       cwd: "/tmp/repo",
       stashIndex: 0,
@@ -3877,6 +4049,362 @@ describe("session pull request timeline handling", () => {
         },
         error: null,
         requestId: "request-check-details",
+      },
+    });
+  });
+});
+
+describe("chat/schedule/loop dispatch routing (behavior preservation)", () => {
+  // Each chat/*, loop/*, and schedule/* type must reach its domain handler. The
+  // injected service stubs are unstubbed, so every handler's own try/catch fires
+  // and emits its domain rpc_error code — proving the message routed (a dropped
+  // case would silently no-op and emit nothing). schedule/* historically routed
+  // via the chat dispatcher's fall-through arm; this guards that path explicitly.
+  // handleMessage receives already-parsed messages, so these fixtures only need to
+  // satisfy the TS union here — zod parsing happens upstream at the transport.
+  const routingCases: Array<{ msg: SessionInboundMessage; code: string }> = [
+    {
+      msg: { type: "chat/create", requestId: "rt-chat-create", name: "room" },
+      code: "chat_request_failed",
+    },
+    { msg: { type: "chat/list", requestId: "rt-chat-list" }, code: "chat_request_failed" },
+    {
+      msg: { type: "chat/inspect", requestId: "rt-chat-inspect", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/delete", requestId: "rt-chat-delete", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/post", requestId: "rt-chat-post", room: "room", body: "hi" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/read", requestId: "rt-chat-read", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "chat/wait", requestId: "rt-chat-wait", room: "room" },
+      code: "chat_request_failed",
+    },
+    {
+      msg: { type: "loop/run", requestId: "rt-loop-run", prompt: "p", cwd: "/tmp/loop" },
+      code: "loop_request_failed",
+    },
+    { msg: { type: "loop/list", requestId: "rt-loop-list" }, code: "loop_request_failed" },
+    {
+      msg: { type: "loop/inspect", requestId: "rt-loop-inspect", id: "loop-1" },
+      code: "loop_request_failed",
+    },
+    {
+      msg: { type: "loop/logs", requestId: "rt-loop-logs", id: "loop-1" },
+      code: "loop_request_failed",
+    },
+    {
+      msg: { type: "loop/stop", requestId: "rt-loop-stop", id: "loop-1" },
+      code: "loop_request_failed",
+    },
+    {
+      msg: {
+        type: "schedule/create",
+        requestId: "rt-sched-create",
+        prompt: "p",
+        cadence: { type: "every", everyMs: 1000 },
+        target: { type: "agent", agentId: "00000000-0000-0000-0000-000000000000" },
+      },
+      code: "schedule_request_failed",
+    },
+    { msg: { type: "schedule/list", requestId: "rt-sched-list" }, code: "schedule_request_failed" },
+    {
+      msg: { type: "schedule/inspect", requestId: "rt-sched-inspect", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/logs", requestId: "rt-sched-logs", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/pause", requestId: "rt-sched-pause", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/resume", requestId: "rt-sched-resume", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/delete", requestId: "rt-sched-delete", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/run-once", requestId: "rt-sched-run-once", scheduleId: "s1" },
+      code: "schedule_request_failed",
+    },
+    {
+      msg: { type: "schedule/update", requestId: "rt-sched-update", scheduleId: "s1", name: "new" },
+      code: "schedule_request_failed",
+    },
+  ];
+
+  test.each(routingCases)("routes $msg.type to its domain handler", async ({ msg, code }) => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+
+    await session.handleMessage(msg);
+
+    const routed = messages
+      .filter(
+        (m): m is Extract<SessionOutboundMessage, { type: "rpc_error" }> => m.type === "rpc_error",
+      )
+      .find((m) => m.payload.requestId === msg.requestId);
+    expect(routed, `${msg.type} did not route to a handler (silent no-op)`).toBeDefined();
+    expect(routed?.payload.code).toBe(code);
+  });
+});
+
+describe("agent config setters", () => {
+  test("set_agent_mode_request: success emits accepted response carrying the notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const notice = { type: "info", message: "Switched to plan mode" } as const;
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentMode: vi.fn().mockResolvedValue(notice) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_mode_request",
+      agentId: "agent-1",
+      modeId: "plan",
+      requestId: "req-mode-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_mode_response",
+        payload: {
+          requestId: "req-mode-ok",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          notice,
+        },
+      },
+    ]);
+  });
+
+  test("set_agent_mode_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentMode: vi.fn().mockRejectedValue(new Error("mode boom")) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_mode_request",
+      agentId: "agent-1",
+      modeId: "plan",
+      requestId: "req-mode-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_mode_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent mode: mode boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_mode_response",
+      payload: {
+        requestId: "req-mode-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "mode boom",
+      },
+    });
+  });
+
+  test("set_agent_model_request: success emits accepted response with no notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentModel: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_model_request",
+      agentId: "agent-1",
+      modelId: "claude-opus-4-8",
+      requestId: "req-model-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_model_response",
+        payload: { requestId: "req-model-ok", agentId: "agent-1", accepted: true, error: null },
+      },
+    ]);
+  });
+
+  test("set_agent_model_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentModel: vi.fn().mockRejectedValue(new Error("model boom")) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_model_request",
+      agentId: "agent-1",
+      modelId: "claude-opus-4-8",
+      requestId: "req-model-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_model_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent model: model boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_model_response",
+      payload: {
+        requestId: "req-model-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "model boom",
+      },
+    });
+  });
+
+  test("set_agent_feature_request: success emits accepted response with no notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentFeature: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_feature_request",
+      agentId: "agent-1",
+      featureId: "web_search",
+      value: true,
+      requestId: "req-feature-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_feature_response",
+        payload: { requestId: "req-feature-ok", agentId: "agent-1", accepted: true, error: null },
+      },
+    ]);
+  });
+
+  test("set_agent_feature_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_feature_request",
+      agentId: "agent-1",
+      featureId: "web_search",
+      value: true,
+      requestId: "req-feature-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_feature_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent feature: feature boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_feature_response",
+      payload: {
+        requestId: "req-feature-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "feature boom",
+      },
+    });
+  });
+
+  test("set_agent_thinking_request: success emits accepted response carrying the notice", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const notice = { type: "warning", message: "Thinking budget reduced" } as const;
+    const session = createSessionForTest({
+      messages,
+      agentManager: { setAgentThinkingOption: vi.fn().mockResolvedValue(notice) },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_thinking_request",
+      agentId: "agent-1",
+      thinkingOptionId: "high",
+      requestId: "req-thinking-ok",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "set_agent_thinking_response",
+        payload: {
+          requestId: "req-thinking-ok",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+          notice,
+        },
+      },
+    ]);
+  });
+
+  test("set_agent_thinking_request: failure emits the activity_log error frame before the rejected response", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        setAgentThinkingOption: vi.fn().mockRejectedValue(new Error("thinking boom")),
+      },
+    });
+
+    await session.handleMessage({
+      type: "set_agent_thinking_request",
+      agentId: "agent-1",
+      thinkingOptionId: "high",
+      requestId: "req-thinking-err",
+    });
+
+    expect(messages.map((m) => m.type)).toEqual(["activity_log", "set_agent_thinking_response"]);
+    expect(messages[0]).toEqual({
+      type: "activity_log",
+      payload: {
+        id: expect.any(String),
+        timestamp: expect.any(Date),
+        type: "error",
+        content: "Failed to set agent thinking option: thinking boom",
+      },
+    });
+    expect(messages[1]).toEqual({
+      type: "set_agent_thinking_response",
+      payload: {
+        requestId: "req-thinking-err",
+        agentId: "agent-1",
+        accepted: false,
+        error: "thinking boom",
       },
     });
   });

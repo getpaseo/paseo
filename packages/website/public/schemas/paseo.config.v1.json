@@ -45,6 +45,21 @@
                 }
               ]
             },
+            "trustedProxies": {
+              "description": "Express trusted proxy setting for X-Forwarded-* headers. Defaults to [\"loopback\"]. Use true only when the final trusted proxy overwrites client-supplied forwarded headers.",
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "const": true
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
             "mcp": {
               "type": "object",
               "properties": {
@@ -159,6 +174,38 @@
                 "apiKey": {
                   "type": "string",
                   "minLength": 1
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stt": {
+                  "type": "object",
+                  "properties": {
+                    "apiKey": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "baseUrl": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "tts": {
+                  "type": "object",
+                  "properties": {
+                    "apiKey": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "baseUrl": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -385,6 +432,19 @@
                     }
                   },
                   "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "webUi": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "distDir": {
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "additionalProperties": false

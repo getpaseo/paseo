@@ -1,8 +1,14 @@
 import { useCallback, useMemo } from "react";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useSessionStore } from "@/stores/session-store";
-import { agentHistoryQueryKey } from "./agent-history-query-key";
+import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "./agent-history-query-key";
 
 export const ARCHIVE_AGENT_PENDING_QUERY_KEY = ["archive-agent-pending"] as const;
 const EMPTY_PENDING_ARCHIVE_AGENT_IDS = new Set<string>();
@@ -29,6 +35,7 @@ export interface AgentsListQueryData {
 
 export interface AgentHistoryQueryAgent {
   id?: string | null;
+  serverId?: string | null;
   archivedAt?: Date | null;
 }
 
@@ -175,7 +182,10 @@ export function markAgentArchivedInHistoryPayload<T extends AgentHistoryQueryDat
 
     let pageChanged = false;
     const agents = page.agents.map((agent) => {
-      if (agent.id !== input.agentId) {
+      if (
+        agent.id !== input.agentId ||
+        (agent.serverId != null && agent.serverId !== input.serverId)
+      ) {
         return agent;
       }
       pageChanged = true;
@@ -200,6 +210,10 @@ export function markAgentArchivedInHistoryCache(
     agentHistoryQueryKey(input.serverId),
     (current) => markAgentArchivedInHistoryPayload(current, input),
   );
+  queryClient.setQueriesData<AgentHistoryQueryData | undefined>(
+    { queryKey: allAgentHistoryQueryRootKey() },
+    (current) => markAgentArchivedInHistoryPayload(current, input),
+  );
 }
 
 export function clearArchiveAgentPending(input: IsAgentArchivingInput): void {
@@ -218,6 +232,7 @@ interface ArchivedAgentListCacheSnapshot {
   sidebarAgentsList: AgentsListQueryData | undefined;
   allAgents: AgentsListQueryData | undefined;
   agentHistory: AgentHistoryQueryData | undefined;
+  allAgentHistory: Array<[QueryKey, AgentHistoryQueryData | undefined]>;
 }
 
 interface ArchiveAgentMutationContext {
@@ -268,6 +283,9 @@ function getArchivedAgentListCacheSnapshot(
     agentHistory: queryClient.getQueryData<AgentHistoryQueryData | undefined>(
       agentHistoryQueryKey(serverId),
     ),
+    allAgentHistory: queryClient.getQueriesData<AgentHistoryQueryData | undefined>({
+      queryKey: allAgentHistoryQueryRootKey(),
+    }),
   };
 }
 
@@ -295,6 +313,9 @@ function restoreArchivedAgentListCacheSnapshot(
   );
   restoreCachedQuerySnapshot(queryClient, ["allAgents", serverId], snapshot.allAgents);
   restoreCachedQuerySnapshot(queryClient, agentHistoryQueryKey(serverId), snapshot.agentHistory);
+  for (const [queryKey, querySnapshot] of snapshot.allAgentHistory) {
+    restoreCachedQuerySnapshot(queryClient, queryKey, querySnapshot);
+  }
 }
 
 function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: string }): void {
@@ -359,6 +380,9 @@ export function applyArchivedAgentCloseResults(input: ApplyArchivedAgentCloseRes
     });
     void input.queryClient.invalidateQueries({
       queryKey: agentHistoryQueryKey(input.serverId),
+    });
+    void input.queryClient.invalidateQueries({
+      queryKey: allAgentHistoryQueryRootKey(),
     });
   }
 }
@@ -448,6 +472,9 @@ export function useArchiveAgent() {
       });
       void queryClient.invalidateQueries({
         queryKey: agentHistoryQueryKey(input.serverId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: allAgentHistoryQueryRootKey(),
       });
     },
   });

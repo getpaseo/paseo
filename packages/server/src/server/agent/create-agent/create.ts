@@ -46,9 +46,7 @@ interface CreateAgentCommandDependencies {
   terminalManager?: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
-  // Mints a fresh workspace for a cwd and returns its id. Used when an agent is
-  // created with no parent and no worktree: it owns a brand-new workspace rather
-  // than being attributed to an existing same-cwd workspace by path.
+  // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
 }
 
@@ -81,6 +79,7 @@ export interface CreateAgentFromMcpInput {
   title: string;
   initialPrompt: string;
   cwd?: string;
+  workspaceId?: string;
   thinking?: string;
   features?: Record<string, unknown>;
   labels?: Record<string, string>;
@@ -96,6 +95,7 @@ export interface CreateAgentFromMcpInput {
   } | null;
   worktree?: {
     worktreeName?: string;
+    branchName?: string;
     baseBranch?: string;
     refName?: string;
     action?: "branch-off" | "checkout";
@@ -245,15 +245,15 @@ async function resolveMcpCreateAgent(
     initialPrompt: input.initialPrompt,
   });
 
-  // A child agent created in its parent's working tree belongs to the parent's
-  // workspace. When a new worktree is created the child lives in that fresh
-  // workspace, so it is stamped with the new worktree's workspaceId instead
-  // (mirrors the session path) — keeping the agent discoverable by
-  // workspaceId-scoped archive. With neither a parent nor a worktree, the agent
-  // mints its own workspace; ownership is never resolved from cwd.
+  // MCP callers resolve workspace ownership before this point. Worktree
+  // creation wins because the new agent lives in the fresh worktree workspace.
+  // Otherwise use the explicit workspace id, then the parent workspace for
+  // direct internal callers. Ownership is never resolved from cwd.
   const workspaceId = setupContinuation
     ? createdWorkspaceId
-    : (parentAgent?.workspaceId ?? (await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd)));
+    : (input.workspaceId ??
+      parentAgent?.workspaceId ??
+      (await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd)));
 
   const { modeId: resolvedMode, featureValues: resolvedFeatures } =
     await dependencies.providerSnapshotManager.resolveCreateConfig({
@@ -420,6 +420,7 @@ async function resolveMcpCwd(params: {
     input: {
       cwd: params.cwd,
       worktreeSlug: worktree.worktreeName,
+      branchName: worktree.branchName,
       refName: worktree.refName,
       action: worktree.action,
       githubPrNumber: worktree.githubPrNumber,
