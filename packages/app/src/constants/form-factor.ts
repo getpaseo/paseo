@@ -15,8 +15,7 @@
  * (min of width/height) rather than the current width so the result is
  * orientation-insensitive and shrinks correctly under split-screen.
  *
- * TODO(fold): calibrate against a real Huawei Mate X / Mate XT unfolded state
- * via `adb shell wm size` + density once hardware is available.
+ * Verified against Resizable AVD at real Huawei Mate XT densities.
  */
 export const LARGE_SCREEN_MIN_SHORTEST_SIDE = 600;
 
