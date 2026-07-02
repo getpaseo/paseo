@@ -112,6 +112,7 @@ import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -2644,13 +2645,25 @@ function WorkspaceScreenContent({
       try {
         // Forks the whole conversation into a new, independent parallel agent;
         // the daemon broadcasts the new agent so it appears in the workspace.
-        await client.forkAgent(agentId);
+        const result = await client.forkAgent(agentId);
         toast.show(t("fork.success"), { variant: "success" });
+        // Jump to the fork immediately — otherwise the user (and any follow-up
+        // question meant to probe the new branch) stays on the original tab,
+        // which is confusing and silently exercises the wrong session.
+        if (result.newAgentId) {
+          const sourceAgent =
+            useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+          navigateToAgent({
+            serverId: normalizedServerId,
+            agentId: result.newAgentId,
+            workspaceId: sourceAgent?.workspaceId,
+          });
+        }
       } catch {
         toast.error(t("fork.errors.failed"));
       }
     },
-    [client, toast, t],
+    [client, toast, t, normalizedServerId],
   );
 
   const handleCopyFilePath = useCallback(

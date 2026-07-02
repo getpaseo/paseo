@@ -83,6 +83,7 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
@@ -454,8 +455,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       if (supportsNativeFork) {
         toast?.show(t("fork.pending"), { durationMs: null });
         try {
-          await client.forkAgent(agentId, boundaryMessageId);
+          const result = await client.forkAgent(agentId, boundaryMessageId);
           toast?.show(t("fork.success"), { variant: "success" });
+          // Jump to the fork immediately — otherwise the active tab (and any
+          // follow-up message meant to probe the new branch) stays on the
+          // original agent, which is confusing and silently exercises the
+          // wrong session.
+          if (result.newAgentId) {
+            navigateToAgent({
+              serverId: resolvedServerId,
+              agentId: result.newAgentId,
+              workspaceId: agent.workspaceId,
+            });
+          }
         } catch {
           toast?.error(t("fork.errors.failed"));
         }
