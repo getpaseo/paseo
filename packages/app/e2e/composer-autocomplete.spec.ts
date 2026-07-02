@@ -5,7 +5,7 @@ import {
   seedMockAgentWorkspace,
   type MockAgentWorkspace,
 } from "./helpers/mock-agent";
-import { expectWorkspaceTabVisible } from "./helpers/archive-tab";
+import { expectWorkspaceTabVisible, openSessions } from "./helpers/archive-tab";
 import { daemonWsRoutePattern } from "./helpers/daemon-port";
 import { getServerId } from "./helpers/server-id";
 import { switchWorkspaceViaSidebar } from "./helpers/workspace-ui";
@@ -151,6 +151,13 @@ async function installListCommandsStub(page: Page): Promise<void> {
 async function openAppWideNewWorkspace(page: Page): Promise<void> {
   await page.getByTestId("sidebar-global-new-workspace").first().click();
   await page.waitForURL((url) => url.pathname === "/new", { timeout: 30_000 });
+}
+
+async function openSettingsThenBackToWorkspace(page: Page): Promise<void> {
+  await page.getByTestId("sidebar-settings").filter({ visible: true }).first().click();
+  await expect(page).toHaveURL(/\/settings\/general$/, { timeout: 30_000 });
+  await page.getByTestId("settings-back-to-workspace").click();
+  await page.waitForURL((url) => url.pathname.includes("/workspace/"), { timeout: 30_000 });
 }
 
 async function expectSingleCurrentWorkspaceDeckEntry(
@@ -351,7 +358,7 @@ function expectPopoverDoesNotDisappearAfterFirstVisible(frames: PopoverFrame[]):
 }
 
 test.describe("Composer autocomplete", () => {
-  test("stays visible after returning from the app-wide new workspace route", async ({ page }) => {
+  test("stays visible after returning from app-wide routes", async ({ page }) => {
     await installListCommandsStub(page);
     const serverId = getServerId();
     const sessions: MockAgentWorkspace[] = [];
@@ -384,10 +391,28 @@ test.describe("Composer autocomplete", () => {
       await openAppWideNewWorkspace(page);
       await switchWorkspaceViaSidebar({ page, serverId, workspaceId: second.workspaceId });
       await expectComposerVisible(page, { timeout: 30_000 });
+      await expectSingleCurrentWorkspaceDeckEntry(page, {
+        expectedDeckEntryCount: 2,
+        serverId,
+        workspaceId: second.workspaceId,
+      });
 
-      await openAppWideNewWorkspace(page);
+      await openSettingsThenBackToWorkspace(page);
+      await expectComposerVisible(page, { timeout: 30_000 });
+      await expectSingleCurrentWorkspaceDeckEntry(page, {
+        expectedDeckEntryCount: 2,
+        serverId,
+        workspaceId: second.workspaceId,
+      });
+
+      await openSessions(page);
       await switchWorkspaceViaSidebar({ page, serverId, workspaceId: third.workspaceId });
       await expectComposerVisible(page, { timeout: 30_000 });
+      await expectSingleCurrentWorkspaceDeckEntry(page, {
+        expectedDeckEntryCount: sessions.length,
+        serverId,
+        workspaceId: third.workspaceId,
+      });
 
       await openAppWideNewWorkspace(page);
       await switchWorkspaceViaSidebar({ page, serverId, workspaceId: first.workspaceId });

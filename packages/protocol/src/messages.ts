@@ -254,6 +254,7 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z
     description: z.string().optional(),
     isDefault: z.boolean().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    contextWindowMaxTokens: z.number().optional(),
     thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
     defaultThinkingOptionId: z.string().optional(),
   })

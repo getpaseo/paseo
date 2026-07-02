@@ -48,6 +48,7 @@ describe("provider snapshot message schemas", () => {
           id: "MiniMax-M2.7",
           label: "MiniMax-M2.7",
           isDefault: true,
+          contextWindowMaxTokens: 1_000_000,
           thinkingOptions: [
             { id: "off", label: "Off" },
             { id: "max", label: "Max", isDefault: true },
@@ -62,6 +63,7 @@ describe("provider snapshot message schemas", () => {
         id: "MiniMax-M2.7",
         label: "MiniMax-M2.7",
         isDefault: true,
+        contextWindowMaxTokens: 1_000_000,
         thinkingOptions: [
           { id: "off", label: "Off" },
           { id: "max", label: "Max", isDefault: true },

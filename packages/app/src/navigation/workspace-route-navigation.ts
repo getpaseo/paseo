@@ -8,12 +8,16 @@ import {
 const ROOT_HOST_ROUTE_NAME = "h/[serverId]";
 const HOST_WORKSPACE_ROUTE_NAME = "workspace/[workspaceId]/index";
 
+interface NavigateToHostWorkspaceRouteDeps {
+  dismissTo(route: string): void;
+}
+
+const defaultNavigateToHostWorkspaceRouteDeps: NavigateToHostWorkspaceRouteDeps = {
+  dismissTo: (route) => router.dismissTo(route as Href),
+};
+
 let rootNavigationRef: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList> | null =
   null;
-
-interface NavigateToHostWorkspaceRouteOptions {
-  popToExistingHostRoute?: boolean;
-}
 
 export function registerWorkspaceRouteNavigationRef(
   ref: NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>,
@@ -26,33 +30,38 @@ export function registerWorkspaceRouteNavigationRef(
   };
 }
 
-function findStackKeyWithRouteName(state: unknown, routeName: string): string | null {
+function findStackKeyWithMountedRouteName(state: unknown, routeName: string): string | null {
   if (!state || typeof state !== "object") {
     return null;
   }
 
   const candidate = state as {
     key?: unknown;
-    routeNames?: unknown;
     routes?: unknown;
   };
-  if (
-    typeof candidate.key === "string" &&
-    Array.isArray(candidate.routeNames) &&
-    candidate.routeNames.includes(routeName)
-  ) {
-    return candidate.key;
-  }
 
   if (!Array.isArray(candidate.routes)) {
     return null;
+  }
+
+  if (
+    typeof candidate.key === "string" &&
+    candidate.routes.some(
+      (route) =>
+        !!route && typeof route === "object" && (route as { name?: unknown }).name === routeName,
+    )
+  ) {
+    return candidate.key;
   }
 
   for (const route of candidate.routes) {
     if (!route || typeof route !== "object") {
       continue;
     }
-    const childKey = findStackKeyWithRouteName((route as { state?: unknown }).state, routeName);
+    const childKey = findStackKeyWithMountedRouteName(
+      (route as { state?: unknown }).state,
+      routeName,
+    );
     if (childKey) {
       return childKey;
     }
@@ -69,7 +78,7 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
   }
 
   const rootState = navigation.getRootState();
-  const target = findStackKeyWithRouteName(rootState, ROOT_HOST_ROUTE_NAME);
+  const target = findStackKeyWithMountedRouteName(rootState, ROOT_HOST_ROUTE_NAME);
   if (!target) {
     return false;
   }
@@ -99,11 +108,11 @@ function dispatchHostWorkspacePopTo(route: string): boolean {
 
 export function navigateToHostWorkspaceRoute(
   route: string,
-  options: NavigateToHostWorkspaceRouteOptions = {},
+  deps: NavigateToHostWorkspaceRouteDeps = defaultNavigateToHostWorkspaceRouteDeps,
 ): void {
-  if (options.popToExistingHostRoute && dispatchHostWorkspacePopTo(route)) {
+  if (dispatchHostWorkspacePopTo(route)) {
     return;
   }
 
-  router.dismissTo(route as Href);
+  deps.dismissTo(route);
 }

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
 
@@ -38,6 +38,7 @@ describe("getClaudeModels", () => {
       "claude-fable-5",
       "claude-opus-4-8[1m]",
       "claude-opus-4-8",
+      "claude-sonnet-5",
       "claude-opus-4-7[1m]",
       "claude-opus-4-7",
       "claude-opus-4-6[1m]",
@@ -53,6 +54,28 @@ describe("getClaudeModels", () => {
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
     expect(defaults[0].id).toBe("claude-opus-4-8");
+  });
+
+  it("defines context window sizes in the catalog", () => {
+    const contextWindows = new Map(
+      getClaudeModels().map((model) => [model.id, model.contextWindowMaxTokens]),
+    );
+
+    expect(contextWindows).toEqual(
+      new Map([
+        ["claude-fable-5", 1_000_000],
+        ["claude-opus-4-8[1m]", 1_000_000],
+        ["claude-opus-4-8", 200_000],
+        ["claude-sonnet-5", 1_000_000],
+        ["claude-opus-4-7[1m]", 1_000_000],
+        ["claude-opus-4-7", 200_000],
+        ["claude-opus-4-6[1m]", 1_000_000],
+        ["claude-opus-4-6", 200_000],
+        ["claude-sonnet-4-6[1m]", 1_000_000],
+        ["claude-sonnet-4-6", 200_000],
+        ["claude-haiku-4-5", 200_000],
+      ]),
+    );
   });
 
   it("returns fresh copies each call", () => {
@@ -201,6 +224,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 describe("normalizeClaudeRuntimeModelId", () => {
   it("returns exact match for known model IDs", () => {
     expect(normalizeClaudeRuntimeModelId("claude-fable-5")).toBe("claude-fable-5");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6")).toBe("claude-opus-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
@@ -209,6 +233,7 @@ describe("normalizeClaudeRuntimeModelId", () => {
 
   it("normalizes dated model IDs to base model", () => {
     expect(normalizeClaudeRuntimeModelId("claude-fable-5-20260301")).toBe("claude-fable-5");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5-20260101")).toBe("claude-sonnet-5");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6-20260101")).toBe("claude-opus-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6-20260101")).toBe("claude-sonnet-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5");
@@ -228,5 +253,12 @@ describe("normalizeClaudeRuntimeModelId", () => {
   it("returns null for unrecognized strings", () => {
     expect(normalizeClaudeRuntimeModelId("gpt-5")).toBeNull();
     expect(normalizeClaudeRuntimeModelId("random")).toBeNull();
+  });
+});
+
+describe("findClaudeModel", () => {
+  it("resolves runtime model IDs to catalog entries", () => {
+    expect(findClaudeModel("claude-sonnet-5-20260101")?.id).toBe("claude-sonnet-5");
+    expect(findClaudeModel("claude-sonnet-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
   });
 });

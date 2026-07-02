@@ -19,7 +19,6 @@ interface RecordedPin {
 interface RecordedNavigation {
   serverId: string;
   workspaceId: string;
-  currentPathname?: string | null;
 }
 
 function createFakeLayout() {
@@ -42,12 +41,8 @@ function createFakeNavigator() {
   const navigations: RecordedNavigation[] = [];
   return {
     navigations,
-    navigateToWorkspace: (
-      serverId: string,
-      workspaceId: string,
-      options: { currentPathname?: string | null },
-    ) => {
-      navigations.push({ serverId, workspaceId, currentPathname: options.currentPathname });
+    navigateToWorkspace: (serverId: string, workspaceId: string) => {
+      navigations.push({ serverId, workspaceId });
     },
   };
 }
@@ -89,8 +84,6 @@ describe("prepareWorkspaceTab", () => {
     expect(layout.openedTabs).toEqual([
       { key: "server-1:/repo/worktree", target: { kind: "agent", agentId: AGENT_ID } },
     ]);
-    expect(navigator.navigations).toEqual([
-      { serverId: SERVER_ID, workspaceId: WORKSPACE_ID, currentPathname: undefined },
-    ]);
+    expect(navigator.navigations).toEqual([{ serverId: SERVER_ID, workspaceId: WORKSPACE_ID }]);
   });
 });

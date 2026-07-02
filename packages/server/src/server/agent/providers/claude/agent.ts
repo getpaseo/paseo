@@ -29,7 +29,11 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./task-notification-tool-call.js";
-import { getClaudeModelsWithSettings, normalizeClaudeRuntimeModelId } from "./models.js";
+import {
+  findClaudeModel,
+  getClaudeModelsWithSettings,
+  normalizeClaudeRuntimeModelId,
+} from "./models.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
@@ -1626,23 +1630,6 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function resolveInitialContextWindowSize(modelId: string | null | undefined): number | undefined {
-  const normalized = typeof modelId === "string" ? modelId.trim().toLowerCase() : "";
-  if (!normalized) {
-    return undefined;
-  }
-  if (normalized.includes("[1m]") || normalized.includes("context-1m")) {
-    return 1_000_000;
-  }
-  if (normalized.includes("claude-fable-5")) {
-    return 1_000_000;
-  }
-  if (/(?:^|[~/_-])(?:claude[-_ ]*)?(opus|sonnet|haiku)(?:$|[-_ ./])/.test(normalized)) {
-    return 200_000;
-  }
-  return undefined;
-}
-
 function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
   const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
   if (!messageUsage) {
@@ -1941,7 +1928,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.contextUsage = new ClaudeContextUsageState(
-      resolveInitialContextWindowSize(this.config.model),
+      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
     const handle = options.handle;
 
@@ -2187,7 +2174,7 @@ class ClaudeAgentSession implements AgentSession {
       await this.applyFastModeFeature(false, activeQuery);
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
-      resolveInitialContextWindowSize(this.config.model),
+      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;

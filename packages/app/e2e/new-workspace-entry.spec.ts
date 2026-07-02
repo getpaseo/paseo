@@ -10,6 +10,7 @@ import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { seedSavedSettingsHosts } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
+import { clickArchiveWorkspaceMenuItem, expectWorkspaceAbsentFromSidebar } from "./helpers/sidebar";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
 // Model B entry points into the New Workspace screen. The per-project
@@ -102,6 +103,54 @@ test.describe("New workspace entry points", () => {
       await expect(page.getByTestId("host-picker-trigger")).toHaveCount(0);
     } finally {
       await seeded.cleanup();
+    }
+  });
+
+  test("keeps the in-progress form when the remembered workspace is archived elsewhere", async ({
+    page,
+  }) => {
+    const otherProject: SeededWorkspace = await seedWorkspace({
+      repoPrefix: "aa-new-workspace-archive-other-",
+    });
+    const rememberedProject: SeededWorkspace = await seedWorkspace({
+      repoPrefix: "zz-new-workspace-archive-remembered-",
+    });
+    const serverId = getServerId();
+    const draftText = "keep this new workspace draft";
+
+    try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId,
+          label: "localhost",
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+      ]);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await page
+        .getByTestId(`sidebar-workspace-row-${serverId}:${rememberedProject.workspaceId}`)
+        .click();
+      await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
+
+      await page.goto(`/new?serverId=${encodeURIComponent(serverId)}`);
+      await expectNewWorkspaceProjectSelected(page, rememberedProject.projectDisplayName);
+
+      const composer = page.getByRole("textbox", { name: "Message agent..." });
+      await expect(composer).toBeEditable({ timeout: 30_000 });
+      await composer.fill(draftText);
+      await expect(composer).toHaveValue(draftText);
+
+      await clickArchiveWorkspaceMenuItem(page, rememberedProject.workspaceId);
+      await expectWorkspaceAbsentFromSidebar(page, rememberedProject.workspaceId);
+
+      await expect(page).toHaveURL(/\/new(?:\?.*)?$/, { timeout: 30_000 });
+      await expect(composer).toHaveValue(draftText);
+      await expectNewWorkspaceProjectSelected(page, rememberedProject.projectDisplayName);
+    } finally {
+      await otherProject.cleanup();
+      await rememberedProject.cleanup();
     }
   });
 

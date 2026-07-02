@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.103 - 2026-07-01
+
+### Added
+
+- Claude Sonnet 5 is available in the Claude model picker ([#1850](https://github.com/getpaseo/paseo/pull/1850))
+
 ## 0.1.102 - 2026-06-30
 
 ### Added
