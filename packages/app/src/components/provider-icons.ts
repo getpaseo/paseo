@@ -6,7 +6,9 @@ import { CodexIcon } from "@/components/icons/codex-icon";
 import { CopilotIcon } from "@/components/icons/copilot-icon";
 import { MiniMaxIcon } from "@/components/icons/minimax-icon";
 import { OpenCodeIcon } from "@/components/icons/opencode-icon";
+import { OpenRouterIcon } from "@/components/icons/openrouter-icon";
 import { OmpIcon } from "@/components/icons/omp-icon";
+import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { PiIcon } from "@/components/icons/pi-icon";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 import { resolveProviderIconName } from "@/components/provider-icon-name";
@@ -25,7 +27,10 @@ const BUILTIN_PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
   kiro: PackagePlus,
   minimax: MiniMaxIcon as unknown as ProviderIconComponent,
   omp: OmpIcon as unknown as ProviderIconComponent,
+  openai: CodexIcon as unknown as ProviderIconComponent,
   opencode: OpenCodeIcon as unknown as ProviderIconComponent,
+  openrouter: OpenRouterIcon as unknown as ProviderIconComponent,
+  paseo: PaseoLogo as unknown as ProviderIconComponent,
   pi: PiIcon as unknown as ProviderIconComponent,
 };
 

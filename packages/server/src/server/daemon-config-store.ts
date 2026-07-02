@@ -62,6 +62,16 @@ function isEqualValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function stripAgentProviderSecretConfig<T extends Record<string, unknown>>(config: T): T {
+  if (!Object.prototype.hasOwnProperty.call(config, "agents")) {
+    return config;
+  }
+
+  const next: Record<string, unknown> = { ...config };
+  delete next.agents;
+  return next as T;
+}
+
 export function applyMutableProviderConfigToOverrides(
   baseOverrides: Record<string, ProviderOverride> | undefined,
   mutableProviders: MutableDaemonConfig["providers"] | undefined,
@@ -91,7 +101,7 @@ export class DaemonConfigStore {
   constructor(paseoHome: string, initial: MutableDaemonConfig, logger?: LoggerLike) {
     this.paseoHome = paseoHome;
     this.logger = getLogger(logger);
-    this.current = MutableDaemonConfigSchema.parse(initial);
+    this.current = stripAgentProviderSecretConfig(MutableDaemonConfigSchema.parse(initial));
   }
 
   public get(): MutableDaemonConfig {
@@ -99,8 +109,12 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = MutableDaemonConfigPatchSchema.parse(partial);
-    const next = MutableDaemonConfigSchema.parse(deepMerge(this.current, parsedPatch));
+    const parsedPatch = stripAgentProviderSecretConfig(
+      MutableDaemonConfigPatchSchema.parse(partial),
+    );
+    const next = stripAgentProviderSecretConfig(
+      MutableDaemonConfigSchema.parse(deepMerge(this.current, parsedPatch)),
+    );
 
     const changedFieldPaths = Array.from(this.fieldChangeHandlers.keys()).filter((path) => {
       return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));

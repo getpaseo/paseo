@@ -25,18 +25,26 @@ node "$SCRIPT_DIR/fix-lockfile.mjs" "$LOCK_FILE"
 # 2. Prefetch deps and compute hash
 echo "Prefetching npm dependencies..."
 
-# Resolve prefetch-npm-deps from the same nixpkgs pinned in flake.lock
-NIXPKGS_URL="$(node -p "
-  const l = JSON.parse(require('fs').readFileSync('$ROOT_DIR/flake.lock', 'utf8'));
-  const n = l.nodes.nixpkgs.locked;
-  'github:' + n.owner + '/' + n.repo + '/' + n.rev;
-")"
-
 STDERR_LOG="$(mktemp)"
 trap "rm -f '$STDERR_LOG'" EXIT
 
-if ! NEW_HASH="$(nix shell "${NIXPKGS_URL}#prefetch-npm-deps" -c prefetch-npm-deps "$LOCK_FILE" 2>"$STDERR_LOG")"; then
-  echo "ERROR: prefetch-npm-deps failed:" >&2
+HASH_EXPR="
+let
+  flake = builtins.getFlake \"path:$ROOT_DIR\";
+  system = builtins.currentSystem;
+  fakeHash = \"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\";
+in
+  (flake.packages.\${system}.default.override { npmDepsHash = fakeHash; }).npmDeps
+"
+
+if nix build --no-link --impure --expr "$HASH_EXPR" >/dev/null 2>"$STDERR_LOG"; then
+  echo "ERROR: fake npmDepsHash unexpectedly succeeded." >&2
+  exit 1
+fi
+
+NEW_HASH="$(sed -n 's/.*got:[[:space:]]*\(sha256-[^[:space:]]*\).*/\1/p' "$STDERR_LOG" | tail -1)"
+if [[ -z "$NEW_HASH" ]]; then
+  echo "ERROR: failed to compute npmDepsHash:" >&2
   tail -20 "$STDERR_LOG" >&2
   exit 1
 fi

@@ -94,7 +94,21 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
-import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import type {
+  MutableDaemonConfig,
+  MutableDaemonConfigPatch,
+  PaseoAgentGetCatalogResponse,
+  PaseoAgentGetProvidersResponse,
+  PaseoAgentOAuthCompleteResponse,
+  PaseoAgentOAuthCredential,
+  PaseoAgentOAuthStartResponse,
+  PaseoAgentOAuthStoreCredentialResponse,
+  PaseoAgentRenameProviderRequest,
+  PaseoAgentRenameProviderResponse,
+  PaseoAgentRemoveProviderResponse,
+  PaseoAgentSetProviderRequest,
+  PaseoAgentSetProviderResponse,
+} from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 import {
@@ -828,6 +842,7 @@ const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const DEFAULT_SERVER_INFO_TIMEOUT_MS = 10_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
@@ -3861,6 +3876,119 @@ export class DaemonClient {
     this.sendSessionMessageStrict(response);
   }
 
+  async getPaseoAgentProviders(
+    requestId?: string,
+  ): Promise<PaseoAgentGetProvidersResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "config.paseo_agent.get_providers.request",
+      },
+      timeout: 10000,
+    });
+  }
+
+  async getPaseoAgentCatalog(requestId?: string): Promise<PaseoAgentGetCatalogResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "config.paseo_agent.get_catalog.request",
+      },
+      timeout: 10000,
+    });
+  }
+
+  async setPaseoAgentProvider(
+    input: Omit<PaseoAgentSetProviderRequest, "type" | "requestId"> & { requestId?: string },
+  ): Promise<PaseoAgentSetProviderResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "config.paseo_agent.set_provider.request",
+        name: input.name,
+        providerType: input.providerType,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
+        options: input.options,
+      },
+      timeout: 30000,
+    });
+  }
+
+  async removePaseoAgentProvider(
+    name: string,
+    requestId?: string,
+  ): Promise<PaseoAgentRemoveProviderResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "config.paseo_agent.remove_provider.request",
+        name,
+      },
+      timeout: 30000,
+    });
+  }
+
+  async renamePaseoAgentProvider(
+    input: Omit<PaseoAgentRenameProviderRequest, "type" | "requestId"> & { requestId?: string },
+  ): Promise<PaseoAgentRenameProviderResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "config.paseo_agent.rename_provider.request",
+        name: input.name,
+        displayName: input.displayName,
+      },
+      timeout: 30000,
+    });
+  }
+
+  async startPaseoAgentOAuth(
+    name: string,
+    options?: string | { mode?: string; requestId?: string },
+  ): Promise<PaseoAgentOAuthStartResponse["payload"]> {
+    const requestId = typeof options === "string" ? options : options?.requestId;
+    const mode = typeof options === "string" ? undefined : options?.mode;
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "config.paseo_agent.oauth.start.request",
+        name,
+        ...(mode ? { mode } : {}),
+      },
+      timeout: 30000,
+    });
+  }
+
+  async completePaseoAgentOAuth(
+    name: string,
+    requestId?: string,
+  ): Promise<PaseoAgentOAuthCompleteResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "config.paseo_agent.oauth.complete.request",
+        name,
+      },
+      timeout: 30000,
+    });
+  }
+
+  async storePaseoAgentOAuthCredential(input: {
+    name: string;
+    credential: PaseoAgentOAuthCredential;
+    requestId?: string;
+  }): Promise<PaseoAgentOAuthStoreCredentialResponse["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "config.paseo_agent.oauth.store_credential.request",
+        name: input.name,
+        credential: input.credential,
+      },
+      timeout: 30000,
+    });
+  }
+
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4634,6 +4762,29 @@ export class DaemonClient {
     return this.lastServerInfoMessage;
   }
 
+  async waitForServerInfo(
+    timeoutMs = DEFAULT_SERVER_INFO_TIMEOUT_MS,
+  ): Promise<ServerInfoStatusPayload> {
+    if (this.lastServerInfoMessage) {
+      return this.lastServerInfoMessage;
+    }
+
+    const { promise } = this.waitForWithCancel<ServerInfoStatusPayload>(
+      (msg) => {
+        if (msg.type !== "status") {
+          return null;
+        }
+        return parseServerInfoStatusPayload(msg.payload);
+      },
+      timeoutMs,
+      {
+        timeoutMessage: `Timed out waiting for server_info status message (${timeoutMs}ms)`,
+      },
+    );
+
+    return promise;
+  }
+
   private resolveTransportUrlForAttempt(): string {
     return this.config.url;
   }
@@ -5151,10 +5302,12 @@ export class DaemonClient {
   private waitForWithCancel<T>(
     predicate: (msg: SessionOutboundMessage) => T | null,
     timeout = 30000,
-    _options?: { skipQueue?: boolean },
+    options?: { skipQueue?: boolean; timeoutMessage?: string },
   ): WaitHandle<T> {
     // Capture stack trace at call site, not inside setTimeout
-    const timeoutError = new Error(`Timeout waiting for message (${timeout}ms)`);
+    const timeoutError = new Error(
+      options?.timeoutMessage ?? `Timeout waiting for message (${timeout}ms)`,
+    );
 
     let waiter: Waiter<T> | null = null;
     let settled = false;

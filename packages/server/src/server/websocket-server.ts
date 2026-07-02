@@ -1225,6 +1225,10 @@ export class VoiceAssistantWebSocketServer {
         daemonSelfUpdate: true,
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: true,
+        // COMPAT(paseoAgentConfig): added in v0.1.103, remove gate after 2027-01-02.
+        paseoAgentConfig: true,
+        // COMPAT(paseoAgentCatalog): added in v0.1.104, drop the gate when floor >= v0.1.104
+        paseoAgentCatalog: true,
       },
     };
   }
@@ -1714,17 +1718,20 @@ export class VoiceAssistantWebSocketServer {
     const { ws, data, error, log } = params;
     const err = error instanceof Error ? error : new Error(String(error));
     const { rawPayload, parsedPayload } = this.decodeRawMessagePayloadForError(data);
+    const redactedParsedPayload = redactPaseoAgentConfigSecrets(parsedPayload);
+    const redactedRawPayload =
+      redactedParsedPayload === parsedPayload ? rawPayload : JSON.stringify(redactedParsedPayload);
 
     const trimmedRawPayload =
-      typeof rawPayload === "string" && rawPayload.length > 2000
-        ? `${rawPayload.slice(0, 2000)}... (truncated)`
-        : rawPayload;
+      typeof redactedRawPayload === "string" && redactedRawPayload.length > 2000
+        ? `${redactedRawPayload.slice(0, 2000)}... (truncated)`
+        : redactedRawPayload;
 
     log.error(
       {
         err,
         rawPayload: trimmedRawPayload,
-        parsedPayload,
+        parsedPayload: redactedParsedPayload,
       },
       "Failed to parse/handle message",
     );
@@ -2296,4 +2303,49 @@ function extractRequestInfoFromUnknownWsInbound(
   }
 
   return null;
+}
+
+function redactPaseoAgentConfigSecrets(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const record = payload as Record<string, unknown>;
+  if (record.type !== "session" || !record.message || typeof record.message !== "object") {
+    return payload;
+  }
+
+  const message = record.message as Record<string, unknown>;
+  if (message.type === "config.paseo_agent.set_provider.request") {
+    const options = message.options;
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      return payload;
+    }
+    return {
+      ...record,
+      message: {
+        ...message,
+        options: {
+          ...(options as Record<string, unknown>),
+          ...(Object.prototype.hasOwnProperty.call(options, "apiKey")
+            ? { apiKey: "<redacted>" }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(options, "headers")
+            ? { headers: "<redacted>" }
+            : {}),
+        },
+      },
+    };
+  }
+
+  if (message.type === "config.paseo_agent.oauth.store_credential.request") {
+    return {
+      ...record,
+      message: {
+        ...message,
+        credential: "<redacted>",
+      },
+    };
+  }
+
+  return payload;
 }

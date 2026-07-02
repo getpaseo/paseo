@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
+import {
+  DaemonConfigStore,
+  applyMutableProviderConfigToOverrides,
+  type MutableDaemonConfigPatch,
+} from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 
 describe("applyMutableProviderConfigToOverrides", () => {
@@ -117,6 +121,100 @@ describe("DaemonConfigStore", () => {
       command: ["gemini", "--acp"],
       enabled: false,
     });
+  });
+
+  test("generic mutable config strips agent provider config instead of echoing secrets", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const broadcasts: unknown[] = [];
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+      },
+      undefined,
+    );
+    store.onChange((config) => broadcasts.push(config));
+
+    const secretBearingPatch: MutableDaemonConfigPatch & { agents: unknown } = {
+      agents: {
+        providers: {
+          custom: {
+            env: {
+              API_KEY: "shared-provider-secret",
+            },
+          },
+        },
+        paseo: {
+          providers: {
+            "openrouter-main": {
+              type: "openrouter",
+              options: {
+                apiKey: "sk-secret-openrouter",
+                headers: { Authorization: "Bearer header-secret" },
+                models: [{ id: "anthropic/claude-3.7-sonnet" }],
+              },
+            },
+          },
+        },
+      },
+    };
+    const returned = store.patch(secretBearingPatch);
+
+    const returnedJson = JSON.stringify(returned);
+    const broadcastJson = JSON.stringify(broadcasts);
+    expect(returnedJson).not.toContain("sk-secret-openrouter");
+    expect(returnedJson).not.toContain("header-secret");
+    expect(returnedJson).not.toContain("shared-provider-secret");
+    expect(broadcastJson).not.toContain("sk-secret-openrouter");
+    expect(broadcastJson).not.toContain("header-secret");
+    expect(broadcastJson).not.toContain("shared-provider-secret");
+    expect(loadPersistedConfig(paseoHome).agents?.providers).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).agents?.paseo).toBeUndefined();
+  });
+
+  test("mutable provider patches preserve existing dedicated Paseo Agent config on disk", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const initial = loadPersistedConfig(paseoHome);
+    initial.agents = {
+      paseo: {
+        providers: {
+          "openrouter-main": {
+            type: "openrouter",
+            options: {
+              apiKey: "sk-secret-openrouter",
+              models: [{ id: "anthropic/claude-3.7-sonnet" }],
+            },
+          },
+        },
+      },
+    };
+    writeFileSync(path.join(paseoHome, "config.json"), JSON.stringify(initial, null, 2) + "\n");
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+      },
+      undefined,
+    );
+
+    store.patch({
+      providers: {
+        claude: { enabled: false },
+      },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.paseo?.providers?.["openrouter-main"]?.options.apiKey).toBe(
+      "sk-secret-openrouter",
+    );
+    expect(persisted.agents?.providers?.claude).toEqual({ enabled: false });
   });
 
   test("patch persists append system prompt into config.json", () => {

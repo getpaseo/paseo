@@ -163,6 +163,7 @@ export interface ProviderSnapshotManagerSpies {
     typeof vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>
   >;
   applyMutableProviderConfig: ReturnType<typeof vi.fn<[unknown], AgentManagerProviderState>>;
+  applyPaseoAgentConfig: ReturnType<typeof vi.fn<[unknown], AgentManagerProviderState>>;
   destroy: ReturnType<typeof vi.fn<[], void>>;
 }
 
@@ -204,6 +205,10 @@ export function createProviderSnapshotManagerStub(): {
     providerDefinitions: {},
     clients: {},
   }));
+  const applyPaseoAgentConfig = vi.fn<[unknown], AgentManagerProviderState>(() => ({
+    providerDefinitions: {},
+    clients: {},
+  }));
   const on = vi.fn();
   const off = vi.fn();
   const destroy = vi.fn<[], void>();
@@ -224,6 +229,7 @@ export function createProviderSnapshotManagerStub(): {
     resolveDefaultModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
+    applyPaseoAgentConfig,
     on,
     off,
     destroy,
@@ -249,6 +255,7 @@ export function createProviderSnapshotManagerStub(): {
     resolveDefaultModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
+    applyPaseoAgentConfig,
     destroy,
   };
 }

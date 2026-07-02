@@ -33,10 +33,9 @@ export async function runPairCommand(options: PairOptions): Promise<void> {
   if (host) {
     const client = await tryConnectToDaemon({ host, timeout: 1500 });
     if (client) {
-      const supportsDaemonStatusRpc =
-        client.getLastServerInfoMessage()?.features?.daemonStatusRpc === true;
-      if (supportsDaemonStatusRpc) {
-        try {
+      try {
+        const serverInfo = await client.waitForServerInfo(PAIRING_DAEMON_RPC_TIMEOUT_MS);
+        if (serverInfo.features?.daemonStatusRpc === true) {
           const offer = await client.getDaemonPairingOffer({
             timeout: PAIRING_DAEMON_RPC_TIMEOUT_MS,
           });
@@ -46,11 +45,11 @@ export async function runPairCommand(options: PairOptions): Promise<void> {
             options,
           );
           return;
-        } catch {
-          // COMPAT(daemon-rpc-rollout): fall back to CLI-side pairing generation while
-          // old daemons lack daemonStatusRpc. Remove once the daemon floor is past
-          // v0.1.76; pairing should come from daemon.get_pairing_offer.
         }
+      } catch {
+        // COMPAT(daemon-rpc-rollout): fall back to CLI-side pairing generation while
+        // old daemons lack daemonStatusRpc. Remove once the daemon floor is past
+        // v0.1.76; pairing should come from daemon.get_pairing_offer.
       }
       await client.close().catch(() => {});
     }

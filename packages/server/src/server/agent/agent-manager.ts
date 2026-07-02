@@ -1085,7 +1085,8 @@ export class AgentManager {
     this.foregroundRuns.clearAgent(agentId, existing);
     await this.closeReloadedSession(existing.session, agentId);
 
-    if (rehydrateFromDisk) {
+    const canRehydrateFromProviderPersistence = rehydrateFromDisk && Boolean(handle);
+    if (canRehydrateFromProviderPersistence) {
       // Wipe both durable and in-memory timeline so registerSession mints a
       // new epoch and hydrateTimelineFromProvider re-streams the freshly read
       // provider history into an empty timeline.
@@ -1100,7 +1101,7 @@ export class AgentManager {
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
       lastUserMessageAt: existing.lastUserMessageAt,
-      historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+      historyPrimed: canRehydrateFromProviderPersistence ? false : preservedHistoryPrimed,
       lastUsage: preservedLastUsage,
       lastError: preservedLastError,
       attention: preservedAttention,
@@ -1812,11 +1813,7 @@ export class AgentManager {
       nextLifecycle = "idle";
     }
     mutableAgent.lifecycle = nextLifecycle;
-    const persistenceHandle =
-      mutableAgent.session.describePersistence() ??
-      (mutableAgent.runtimeInfo?.sessionId
-        ? { provider: mutableAgent.provider, sessionId: mutableAgent.runtimeInfo.sessionId }
-        : null);
+    const persistenceHandle = this.describePersistenceHandle(mutableAgent);
     if (persistenceHandle) {
       mutableAgent.persistence = attachPersistenceCwd(persistenceHandle, mutableAgent.cwd);
     }
@@ -2832,11 +2829,11 @@ export class AgentManager {
         newInfo.sessionId !== agent.runtimeInfo?.sessionId ||
         newInfo.modeId !== agent.runtimeInfo?.modeId;
       agent.runtimeInfo = newInfo;
-      if (!agent.persistence && newInfo.sessionId) {
-        agent.persistence = attachPersistenceCwd(
-          { provider: agent.provider, sessionId: newInfo.sessionId },
-          agent.cwd,
-        );
+      if (!agent.persistence) {
+        const persistenceHandle = this.describePersistenceHandle(agent);
+        if (persistenceHandle) {
+          agent.persistence = attachPersistenceCwd(persistenceHandle, agent.cwd);
+        }
       }
       // Emit state if runtimeInfo changed so clients get the updated model
       if (changed && options?.emit !== false) {
@@ -3128,7 +3125,7 @@ export class AgentManager {
 
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {
     const previousSessionId = agent.persistence?.sessionId ?? null;
-    const handle = agent.session.describePersistence();
+    const handle = this.describePersistenceHandle(agent);
     if (handle) {
       agent.persistence = attachPersistenceCwd(handle, agent.cwd);
       if (agent.persistence?.sessionId !== previousSessionId) {
@@ -3136,6 +3133,19 @@ export class AgentManager {
       }
     }
     void this.refreshRuntimeInfo(agent);
+  }
+
+  private describePersistenceHandle(agent: ActiveManagedAgent): AgentPersistenceHandle | null {
+    const handle = agent.session.describePersistence();
+    if (handle) {
+      return handle;
+    }
+    if (!agent.capabilities.supportsSessionPersistence) {
+      return null;
+    }
+    return agent.runtimeInfo?.sessionId
+      ? { provider: agent.provider, sessionId: agent.runtimeInfo.sessionId }
+      : null;
   }
 
   private async onStreamTimelineEvent(params: {
@@ -3719,11 +3729,13 @@ export class AgentManager {
     agentId: string,
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config));
+    const client = this.clients.get(storedConfig.provider);
+    const mcpBaseUrl = client && this.shouldEnablePaseoTools(client) ? this.mcpBaseUrl : null;
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,
         agentId,
-        mcpBaseUrl: this.mcpBaseUrl,
+        mcpBaseUrl,
         mcpAuthToken: this.mcpAuthToken,
       }),
     );
@@ -3756,13 +3768,17 @@ export class AgentManager {
       },
     };
     if (
-      this.paseoToolsEnabled &&
+      this.shouldEnablePaseoTools(client) &&
       client.capabilities.supportsNativePaseoTools &&
       this.paseoToolCatalogFactory
     ) {
       context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
     }
     return context;
+  }
+
+  private shouldEnablePaseoTools(client: AgentClient): boolean {
+    return this.paseoToolsEnabled || client.capabilities.requiresPaseoTools === true;
   }
 
   private resolveProviderLaunchConfig(

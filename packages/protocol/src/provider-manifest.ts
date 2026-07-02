@@ -220,6 +220,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     defaultModeId: null,
     modes: [],
   },
+  {
+    id: "paseo",
+    label: "Paseo Agent",
+    description: "Paseo's in-process agent harness with configurable inference providers",
+    defaultModeId: null,
+    modes: [],
+  },
 ];
 
 export const DEV_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [

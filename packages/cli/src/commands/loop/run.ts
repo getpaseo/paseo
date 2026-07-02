@@ -50,10 +50,7 @@ export function addLoopRunOptions(command: Command): Command {
     .argument("<prompt>", "Prompt for each fresh worker iteration")
     .option("--provider <provider>", "Default provider for worker and verifier agents")
     .option("--model <model>", "Default model for worker and verifier agents")
-    .option(
-      "--mode <mode>",
-      "Provider-specific mode for the worker agent (e.g. claude bypassPermissions, opencode build)",
-    )
+    .option("--mode <mode>", "Provider-specific mode for the worker agent")
     .option("--verify-provider <provider>", "Provider for the verifier agent")
     .option("--verify-model <model>", "Model for the verifier agent")
     .option("--verify-mode <mode>", "Provider-specific mode for the verifier agent")

@@ -19,6 +19,44 @@ const TEST_ENV_DEFAULTS = {
   PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? "0",
   PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? "0",
 };
+// Keep in sync with catalog.ts api_key auth envVar hints. These are scrubbed so
+// local developer credentials cannot hide CI-missing-auth failures.
+const PASEO_AGENT_PROVIDER_AUTH_ENV_KEYS = [
+  "OPENROUTER_API_KEY",
+  "KIMI_API_KEY",
+  "OPENCODE_API_KEY",
+] as const;
+
+function scrubPaseoAgentProviderAuthEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const scrubbed = { ...env };
+  for (const key of PASEO_AGENT_PROVIDER_AUTH_ENV_KEYS) {
+    delete scrubbed[key];
+  }
+  return scrubbed;
+}
+
+function testCliEnv(port: number): NodeJS.ProcessEnv {
+  return scrubPaseoAgentProviderAuthEnv({
+    ...process.env,
+    PASEO_HOST: `localhost:${port}`,
+    PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD,
+    PASEO_DICTATION_ENABLED: TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED,
+    PASEO_VOICE_MODE_ENABLED: TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED,
+  });
+}
+
+function testDaemonEnv(port: number, paseoHome: string): NodeJS.ProcessEnv {
+  return scrubPaseoAgentProviderAuthEnv({
+    ...process.env,
+    PASEO_HOME: paseoHome,
+    PASEO_LISTEN: `127.0.0.1:${port}`,
+    PASEO_RELAY_ENABLED: "false",
+    PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD,
+    PASEO_DICTATION_ENABLED: TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED,
+    PASEO_VOICE_MODE_ENABLED: TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED,
+    CI: "true",
+  });
+}
 
 function killPidTree(pid: number, signal: NodeJS.Signals): void {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -85,7 +123,7 @@ export async function createTempDirs(): Promise<{ paseoHome: string; workDir: st
  */
 async function probeDaemon(port: number): Promise<boolean> {
   try {
-    const result = await $`PASEO_HOST=localhost:${port} paseo agent ls`.nothrow();
+    const result = await $({ env: testCliEnv(port) })`paseo agent ls`.nothrow();
     return result.exitCode === 0;
   } catch {
     return false;
@@ -110,8 +148,9 @@ export async function waitForDaemon(port: number, timeout = 30000): Promise<void
  */
 export async function startDaemon(port: number, paseoHome: string): Promise<ProcessPromise> {
   $.verbose = false;
-  const daemon =
-    $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} PASEO_RELAY_ENABLED=false PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} CI=true paseo daemon start --foreground`.nothrow();
+  const daemon = $({
+    env: testDaemonEnv(port, paseoHome),
+  })`paseo daemon start --foreground`.nothrow();
   return daemon;
 }
 
@@ -125,7 +164,7 @@ export async function createTestContext(): Promise<TestContext> {
   // Helper to run CLI commands against test daemon
   const paseo = (args: string[]): ProcessPromise => {
     $.verbose = false;
-    return $`PASEO_HOST=localhost:${port} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} paseo ${args}`.nothrow();
+    return $({ env: testCliEnv(port) })`paseo ${args}`.nothrow();
   };
 
   // Cleanup function

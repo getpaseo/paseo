@@ -144,6 +144,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import type { PaseoAgentConfig } from "./agent/providers/paseo-agent/config.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
@@ -373,6 +374,7 @@ export interface PaseoDaemonConfig {
     }>;
   };
   providerOverrides?: Record<string, ProviderOverride>;
+  paseoAgentConfig?: PaseoAgentConfig;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
   pushNotificationSender?: PushNotificationSender;
@@ -739,6 +741,8 @@ export async function createPaseoDaemon(
     logger: providerSnapshotLogger,
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
+    paseoAgentConfig: config.paseoAgentConfig,
+    paseoHome: config.paseoHome,
     workspaceGitService,
     managedProcesses,
     isDev: config.isDev === true,
@@ -996,7 +1000,6 @@ export async function createPaseoDaemon(
   agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
 
   const mcpEnabled = config.mcpEnabled ?? true;
-  let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
 
@@ -1155,11 +1158,9 @@ export async function createPaseoDaemon(
           const logAndResolve = async () => {
             boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
             const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
-            agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
-            agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+            agentManager.setMcpBaseUrl(mcpBaseUrl);
             agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
             daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
-              agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
               agentManager.setPaseoToolsEnabled(value !== false);
             });
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {

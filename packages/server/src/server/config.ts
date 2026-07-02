@@ -505,6 +505,7 @@ export function loadConfig(
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     metadataGeneration: persisted.agents?.metadataGeneration,
     providerOverrides,
+    paseoAgentConfig: persisted.agents?.paseo,
     log: resolveLogConfigFromEnv(env, persisted),
   };
 }

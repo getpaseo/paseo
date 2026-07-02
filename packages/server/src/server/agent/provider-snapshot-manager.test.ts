@@ -363,12 +363,13 @@ describe("ProviderSnapshotManager public surface", () => {
         copilot: { enabled: false },
         opencode: { enabled: false },
         pi: { enabled: false },
+        paseo: { enabled: false },
       },
     });
     try {
       const entries = await manager.listProviders({ cwd: "/tmp/project", wait: true });
       const providers = entries.map((entry) => entry.provider).sort();
-      expect(providers).toEqual(["claude", "codex", "copilot", "omp", "opencode", "pi"]);
+      expect(providers).toEqual(["claude", "codex", "copilot", "omp", "opencode", "paseo", "pi"]);
       for (const entry of entries) {
         expect(entry.enabled).toBe(false);
         expect(entry.status).toBe("unavailable");
@@ -1012,6 +1013,105 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 
       const cwds = listener.mock.calls.map((call) => call[1]).sort();
       expect(cwds).toEqual([cwdA, cwdB].sort());
+    } finally {
+      manager.destroy();
+    }
+  });
+});
+
+describe("ProviderSnapshotManager applyPaseoAgentConfig", () => {
+  test("keeps unrelated provider loading state when Paseo Agent config changes", async () => {
+    let resolveFetchStarted: (() => void) | undefined;
+    let releaseFetch: (() => void) | undefined;
+    const fetchStarted = new Promise<void>((resolveStarted) => {
+      resolveFetchStarted = resolveStarted;
+    });
+    const fetchRelease = new Promise<void>((resolveRelease) => {
+      releaseFetch = resolveRelease;
+    });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+        omp: { enabled: false },
+      },
+      extraClients: {
+        claude: createExtraClient("claude", {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog() {
+            resolveFetchStarted?.();
+            await fetchRelease;
+            return { models: [] as AgentModelDefinition[], modes: [] as AgentMode[] };
+          },
+        }),
+      },
+      paseoAgentConfig: {},
+    });
+    try {
+      manager.getSnapshot();
+      await fetchStarted;
+
+      manager.applyPaseoAgentConfig({
+        providers: {
+          "openrouter-main": {
+            type: "openrouter",
+            options: {
+              apiKey: "sk-test",
+              models: [{ id: "anthropic/claude-3.7-sonnet", label: "Claude" }],
+            },
+          },
+        },
+      });
+
+      expect(manager.getSnapshot().find((entry) => entry.provider === "claude")).toMatchObject({
+        provider: "claude",
+        status: "loading",
+        enabled: true,
+      });
+    } finally {
+      releaseFetch?.();
+      manager.destroy();
+    }
+  });
+
+  test("refreshes Paseo Agent models without daemon restart", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+      },
+      paseoAgentConfig: {},
+    });
+    try {
+      manager.applyPaseoAgentConfig({
+        providers: {
+          "openrouter-main": {
+            type: "openrouter",
+            options: {
+              apiKey: "sk-test",
+              models: [{ id: "anthropic/claude-3.7-sonnet", label: "Claude" }],
+            },
+          },
+        },
+      });
+
+      const models = await manager.listModels({ provider: "paseo", wait: true });
+      expect(models).toEqual([
+        expect.objectContaining({
+          provider: "paseo",
+          id: "openrouter-main/anthropic/claude-3.7-sonnet",
+          label: "Claude",
+        }),
+      ]);
     } finally {
       manager.destroy();
     }

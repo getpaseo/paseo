@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { createRequire } from "node:module";
 import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
+import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/protocol/provider-manifest";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
@@ -156,11 +157,9 @@ function toStatusRows(status: DaemonStatus): StatusRow[] {
   return rows;
 }
 
-const PROVIDER_BINARIES: { label: string; binary: string }[] = [
-  { label: "Claude", binary: "claude" },
-  { label: "Codex", binary: "codex" },
-  { label: "OpenCode", binary: "opencode" },
-];
+const PROVIDER_BINARIES: { label: string; binary: string }[] = AGENT_PROVIDER_DEFINITIONS.filter(
+  (provider) => provider.voice?.enabled === true && provider.defaultModeId !== null,
+).map((provider) => ({ label: provider.label, binary: provider.id }));
 
 async function checkProviderBinary(
   binary: string,

@@ -27,6 +27,7 @@ import {
   shutdownAgentClients,
   type ProviderDefinition,
 } from "./provider-registry.js";
+import type { PaseoAgentConfig } from "./providers/paseo-agent/config.js";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
 import {
   formatProviderDiagnostic,
@@ -76,6 +77,8 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
+  paseoAgentConfig?: PaseoAgentConfig;
+  paseoHome?: string;
 }
 
 interface ProviderSnapshotRefreshOptions {
@@ -161,9 +164,11 @@ export class ProviderSnapshotManager {
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly isDev: boolean;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
+  private readonly paseoHome: string | undefined;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly baseProviderOverrides: Record<string, ProviderOverride> | undefined;
+  private paseoAgentConfig: PaseoAgentConfig | undefined;
   private providerRegistry: Record<AgentProvider, ProviderDefinition>;
   private providerClients: Record<AgentProvider, AgentClient>;
 
@@ -173,9 +178,11 @@ export class ProviderSnapshotManager {
     this.managedProcesses = options.managedProcesses;
     this.isDev = options.isDev === true;
     this.extraClients = options.extraClients ?? {};
+    this.paseoHome = options.paseoHome;
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
     this.baseProviderOverrides = options.providerOverrides;
+    this.paseoAgentConfig = options.paseoAgentConfig;
     this.refreshTimeoutMs = resolveRefreshTimeoutMs(options.refreshTimeoutMs);
     this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(
       options.diagnosticTimeoutMs,
@@ -374,16 +381,12 @@ export class ProviderSnapshotManager {
       this.baseProviderOverrides,
       mutableProviders,
     );
-    this.providerRegistry = this.buildRegistry();
-    this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+    return this.rebuildRegistryAndReconcileSnapshots();
+  }
 
-    for (const cwd of this.snapshots.keys()) {
-      this.providerLoads.delete(cwd);
-      this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
-      this.emitChange(cwd);
-    }
-
-    return this.getAgentManagerProviderState();
+  applyPaseoAgentConfig(config: PaseoAgentConfig | undefined): AgentManagerProviderState {
+    this.paseoAgentConfig = config;
+    return this.rebuildRegistryAndReconcileSnapshots();
   }
 
   on(event: "change", listener: ProviderSnapshotChangeListener): this {
@@ -421,6 +424,8 @@ export class ProviderSnapshotManager {
       workspaceGitService: this.workspaceGitService,
       managedProcesses: this.managedProcesses,
       isDev: this.isDev,
+      paseoAgentConfig: this.paseoAgentConfig,
+      paseoHome: this.paseoHome,
     });
 
     for (const [provider, client] of Object.entries(this.extraClients) as Array<
@@ -440,6 +445,19 @@ export class ProviderSnapshotManager {
     }
 
     return registry;
+  }
+
+  private rebuildRegistryAndReconcileSnapshots(): AgentManagerProviderState {
+    this.providerRegistry = this.buildRegistry();
+    this.providerClients = { ...this.extraClients } as Record<AgentProvider, AgentClient>;
+
+    for (const cwd of this.snapshots.keys()) {
+      this.providerLoads.delete(cwd);
+      this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
+      this.emitChange(cwd);
+    }
+
+    return this.getAgentManagerProviderState();
   }
 
   private resolveParent(parent: ManagedAgent): AgentCreateConfigParent {
@@ -567,11 +585,19 @@ export class ProviderSnapshotManager {
         defaultModeId: definition?.defaultModeId ?? null,
       };
 
-      if (!definition?.enabled || !current || current.status === "loading") {
+      if (!definition?.enabled) {
         entries.set(provider, {
           ...metadata,
           status: "unavailable",
           enabled: definition?.enabled ?? true,
+        });
+        continue;
+      }
+
+      if (!current || current.status === "loading") {
+        entries.set(provider, {
+          ...metadata,
+          status: "loading",
         });
         continue;
       }

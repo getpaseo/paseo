@@ -28,10 +28,7 @@ export function createScheduleCommand(): Command {
         "--provider <provider>",
         "Agent provider, or provider/model (e.g. codex or codex/gpt-5.4)",
       )
-      .option(
-        "--mode <mode>",
-        "Provider-specific mode (e.g. claude bypassPermissions, opencode build)",
-      )
+      .option("--mode <mode>", "Provider-specific mode")
       .option("--cwd <path>", "Working directory (default: current; required with --host)")
       .option("--run-now", "Fire one immediate run on creation (only with --cron)")
       .option("--no-run-now", "Wait the full interval before the first run (only with --every)")

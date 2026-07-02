@@ -1,52 +1,57 @@
 import type { Command } from "commander";
-import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
-import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
-import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/protocol/provider-manifest";
-import { tryConnectToDaemon } from "../../utils/client.js";
+import {
+  renderTable,
+  renderTableHeader,
+  type CommandOptions,
+  type ListResult,
+  type OutputSchema,
+} from "../../output/index.js";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type {
+  PaseoAgentCatalogEntry,
+  RedactedPaseoAgentProviderConfig,
+} from "@getpaseo/protocol/messages";
+import { connectToDaemon } from "../../utils/client.js";
+import { requirePaseoAgentCatalogFeature } from "./feature.js";
 
 export interface ProviderListItem {
-  provider: ProviderSnapshotEntry["provider"];
+  name: string;
+  providerType: string;
   label: string;
-  status: string;
-  enabled: "Enabled" | "Disabled";
-  defaultMode: string;
-  modes: string;
+  auth: string;
+  available: string;
+  models: string;
 }
 
-/** Derive provider list from the manifest — single source of truth */
-const PROVIDERS: ProviderListItem[] = AGENT_PROVIDER_DEFINITIONS.map((def) => ({
-  provider: def.id,
-  label: def.label,
-  status: "available",
-  enabled: def.enabledByDefault === false ? "Disabled" : "Enabled",
-  defaultMode: def.defaultModeId ?? "-",
-  modes: def.modes.length > 0 ? def.modes.map((m) => m.label).join(", ") : "-",
-}));
+interface ProviderLsClient extends Pick<
+  DaemonClient,
+  "waitForServerInfo" | "getPaseoAgentCatalog" | "getPaseoAgentProviders" | "close"
+> {}
 
-function getStaticProviders(): ProviderListItem[] {
-  return PROVIDERS;
+export interface ProviderLsDependencies {
+  connectDaemon: (options: { host?: string }) => Promise<ProviderLsClient>;
 }
 
-/** Schema for provider ls output */
+const defaultDependencies: ProviderLsDependencies = {
+  connectDaemon: connectToDaemon,
+};
+
 export const providerLsSchema: OutputSchema<ProviderListItem> = {
-  idField: "provider",
+  idField: "name",
   columns: [
-    { header: "PROVIDER", field: "provider", width: 12 },
-    { header: "LABEL", field: "label", width: 16 },
-    {
-      header: "STATUS",
-      field: "status",
-      width: 12,
-      color: (value) => {
-        if (value === "available") return "green";
-        if (value === "unavailable") return "red";
-        return undefined;
-      },
-    },
-    { header: "ENABLED", field: "enabled", width: 10 },
-    { header: "DEFAULT MODE", field: "defaultMode", width: 14 },
-    { header: "MODES", field: "modes", width: 30 },
+    { header: "NAME", field: "name", width: 20 },
+    { header: "TYPE", field: "providerType", width: 16 },
+    { header: "LABEL", field: "label", width: 22 },
+    { header: "AUTH", field: "auth", width: 16 },
+    { header: "AVAILABLE", field: "available", width: 10 },
+    { header: "MODELS", field: "models", width: 30 },
   ],
+  renderHuman: (result, options) => {
+    if (result.type === "list" && result.data.length === 0) {
+      return options.noHeaders ? "" : renderTableHeader(providerLsSchema, options);
+    }
+    return renderTable(result, options);
+  },
 };
 
 export type ProviderLsResult = ListResult<ProviderListItem>;
@@ -55,38 +60,52 @@ export interface ProviderLsOptions extends CommandOptions {
   host?: string;
 }
 
+function authState(provider: RedactedPaseoAgentProviderConfig): string {
+  if (!provider.auth) {
+    return "not configured";
+  }
+  return provider.auth.configured ? "Connected" : "Needs attention";
+}
+
+function catalogLabel(catalog: PaseoAgentCatalogEntry[], providerType: string): string {
+  return catalog.find((entry) => entry.id === providerType)?.label ?? providerType;
+}
+
 export async function runLsCommand(
   options: ProviderLsOptions,
   _command: Command,
+  dependencies: Partial<ProviderLsDependencies> = {},
 ): Promise<ProviderLsResult> {
-  const client = await tryConnectToDaemon({ host: options.host });
-
-  if (!client) {
-    return {
-      type: "list",
-      data: getStaticProviders(),
-      schema: providerLsSchema,
-    };
-  }
+  const deps = { ...defaultDependencies, ...dependencies };
+  const client = await deps.connectDaemon({ host: options.host });
 
   try {
-    const snapshot = await client.getProvidersSnapshot();
+    await requirePaseoAgentCatalogFeature(client);
+    const catalogResult = await client.getPaseoAgentCatalog();
+    if (catalogResult.error) {
+      throw {
+        code: "PROVIDER_CATALOG_FAILED",
+        message: catalogResult.error,
+      };
+    }
+    const providersResult = await client.getPaseoAgentProviders();
+    if (providersResult.error) {
+      throw {
+        code: "PROVIDER_LIST_FAILED",
+        message: providersResult.error,
+      };
+    }
+
     return {
       type: "list",
-      data: snapshot.entries.map((entry) => ({
-        provider: entry.provider,
-        label: entry.label ?? entry.provider,
-        status: entry.status === "ready" ? "available" : entry.status,
-        enabled: !entry.enabled ? "Disabled" : "Enabled",
-        defaultMode: entry.defaultModeId ?? "default",
-        modes: (entry.modes ?? []).map((mode) => mode.label).join(", "),
+      data: providersResult.providers.map((provider) => ({
+        name: provider.name,
+        providerType: provider.providerType,
+        label: catalogLabel(catalogResult.catalog, provider.providerType),
+        auth: authState(provider),
+        available: provider.available ? "yes" : "no",
+        models: provider.models.map((model) => model.id).join(", ") || "-",
       })),
-      schema: providerLsSchema,
-    };
-  } catch {
-    return {
-      type: "list",
-      data: getStaticProviders(),
       schema: providerLsSchema,
     };
   } finally {

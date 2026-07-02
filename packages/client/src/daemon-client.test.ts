@@ -75,6 +75,30 @@ function createMockTransport() {
   return {
     transport,
     sent,
+    sendServerInfo: (input: { serverId?: string; features?: Record<string, boolean> } = {}) => {
+      onMessage(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "status",
+            payload: {
+              status: "server_info",
+              serverId: input.serverId ?? `srv_test_${serverInfoOrdinal++}`,
+              hostname: null,
+              version: null,
+              ...(input.features ? { features: input.features } : {}),
+            },
+          },
+        }),
+      );
+    },
+    triggerOpenWithoutServerInfo: (options?: { preserveSent?: boolean }) => {
+      onOpen();
+      if (!options?.preserveSent) {
+        // Ignore HELLO handshake payloads in assertions.
+        sent.length = 0;
+      }
+    },
     triggerOpen: (options?: { preserveSent?: boolean }) => {
       onOpen();
       if (!options?.preserveSent) {
@@ -189,6 +213,57 @@ test("advertises consumer-provided browser automation capabilities", async () =>
     })
     .parse(JSON.parse(assertStr(mock.sent[0])));
   expect(hello.capabilities[CLIENT_CAPS.desktopBrowserAutomation]).toBe(true);
+});
+
+test("waitForServerInfo resolves when server_info arrives after the socket opens", async () => {
+  vi.useFakeTimers();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "server_info_wait_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const serverInfoPromise = client.waitForServerInfo(100);
+  const connectPromise = client.connect();
+  mock.triggerOpenWithoutServerInfo();
+  setTimeout(() => {
+    mock.sendServerInfo({
+      serverId: "srv_delayed_server_info",
+      features: { paseoAgentCatalog: true },
+    });
+  }, 25);
+
+  await vi.advanceTimersByTimeAsync(25);
+
+  await expect(serverInfoPromise).resolves.toMatchObject({
+    status: "server_info",
+    serverId: "srv_delayed_server_info",
+    features: { paseoAgentCatalog: true },
+  });
+  await connectPromise;
+});
+
+test("waitForServerInfo rejects clearly when server_info never arrives", async () => {
+  vi.useFakeTimers();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "server_info_timeout_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const serverInfoPromise = client.waitForServerInfo(50);
+  const rejection = expect(serverInfoPromise).rejects.toThrow(
+    "Timed out waiting for server_info status message (50ms)",
+  );
+
+  await vi.advanceTimersByTimeAsync(50);
+  await rejection;
 });
 
 const noopLogger: Logger = {

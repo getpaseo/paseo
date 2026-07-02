@@ -8,6 +8,7 @@ import {
   ProviderOverridesSchema,
 } from "./agent/provider-launch-config.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
+import { PaseoAgentConfigSchema } from "./agent/providers/paseo-agent/config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
 import { TerminalProfileSchema } from "@getpaseo/protocol/messages";
 
@@ -299,6 +300,7 @@ export const PersistedConfigSchema = z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
+        paseo: PaseoAgentConfigSchema.optional(),
       })
       .strict()
       .optional(),

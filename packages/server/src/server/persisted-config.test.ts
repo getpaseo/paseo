@@ -241,6 +241,34 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       ],
     });
   });
+
+  test("accepts the dedicated agents.paseo model provider config", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        paseo: {
+          defaultModel: "openrouter-main/anthropic/claude",
+          defaultAgent: "builder",
+          defaultProfile: "orchestrator",
+          providers: {
+            "openrouter-main": {
+              type: "openrouter",
+              options: {
+                baseUrl: "https://openrouter.ai/api/v1",
+                apiKey: "sk-test",
+                api: "openai-completions",
+                models: [{ id: "anthropic/claude", label: "Claude" }],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.paseo?.defaultModel).toBe("openrouter-main/anthropic/claude");
+    expect(parsed.agents?.paseo?.defaultAgent).toBe("builder");
+    expect(parsed.agents?.paseo?.defaultProfile).toBe("orchestrator");
+    expect(parsed.agents?.paseo?.providers?.["openrouter-main"]?.type).toBe("openrouter");
+  });
 });
 
 describe("provider overrides (new format)", () => {
