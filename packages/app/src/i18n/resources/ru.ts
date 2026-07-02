@@ -1391,6 +1391,15 @@ export const ru: TranslationResources = {
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      find: {
+        placeholder: "Найти",
+        matchCase: "Учитывать регистр",
+        matchCount: "{{current}} из {{total}}",
+        noResults: "Нет результатов",
+        nextMatch: "Следующее совпадение",
+        previousMatch: "Предыдущее совпадение",
+        close: "Закрыть поиск",
+      },
     },
   },
   toolCallDetails: {
@@ -1642,6 +1651,7 @@ export const ru: TranslationResources = {
         moveTabDown: "Переместить вкладку вниз",
         closePane: "Закрыть панель",
         newTerminal: "Новый терминал",
+        findInFile: "Найти в файле",
         toggleCommandCenter: "Переключить командный центр",
         showKeyboardShortcuts: "Показать сочетания клавиш",
         toggleLeftSidebar: "Переключить левую боковую панель",

@@ -1385,6 +1385,15 @@ export const ptBR: TranslationResources = {
       binaryPreviewUnavailable: "Prévia binária indisponível",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      find: {
+        placeholder: "Localizar",
+        matchCase: "Diferenciar maiúsculas de minúsculas",
+        matchCount: "{{current}} de {{total}}",
+        noResults: "Nenhum resultado",
+        nextMatch: "Próxima correspondência",
+        previousMatch: "Correspondência anterior",
+        close: "Fechar busca",
+      },
     },
   },
   toolCallDetails: {
@@ -1634,6 +1643,7 @@ export const ptBR: TranslationResources = {
         moveTabDown: "Mover aba para baixo",
         closePane: "Fechar painel",
         newTerminal: "Novo terminal",
+        findInFile: "Localizar no arquivo",
         toggleCommandCenter: "Alternar central de comandos",
         showKeyboardShortcuts: "Mostrar atalhos de teclado",
         toggleLeftSidebar: "Alternar barra lateral esquerda",

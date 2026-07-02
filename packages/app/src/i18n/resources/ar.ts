@@ -1360,6 +1360,15 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      find: {
+        placeholder: "بحث",
+        matchCase: "مطابقة حالة الأحرف",
+        matchCount: "{{current}} من {{total}}",
+        noResults: "لا توجد نتائج",
+        nextMatch: "التطابق التالي",
+        previousMatch: "التطابق السابق",
+        close: "إغلاق البحث",
+      },
     },
   },
   toolCallDetails: {
@@ -1609,6 +1618,7 @@ export const ar: TranslationResources = {
         moveTabDown: "حرك علامة التبويب لأسفل",
         closePane: "إغلاق الجزء",
         newTerminal: "محطة جديدة",
+        findInFile: "البحث في الملف",
         toggleCommandCenter: "تبديل مركز القيادة",
         showKeyboardShortcuts: "إظهار اختصارات لوحة المفاتيح",
         toggleLeftSidebar: "تبديل الشريط الجانبي الأيسر",

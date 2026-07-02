@@ -1368,6 +1368,15 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      find: {
+        placeholder: "Find",
+        matchCase: "Match case",
+        matchCount: "{{current}} of {{total}}",
+        noResults: "No results",
+        nextMatch: "Next match",
+        previousMatch: "Previous match",
+        close: "Close find",
+      },
     },
   },
   toolCallDetails: {
@@ -1616,6 +1625,7 @@ export const en = {
         moveTabDown: "Move tab down",
         closePane: "Close pane",
         newTerminal: "New terminal",
+        findInFile: "Find in file",
         toggleCommandCenter: "Toggle command center",
         showKeyboardShortcuts: "Show keyboard shortcuts",
         toggleLeftSidebar: "Toggle left sidebar",

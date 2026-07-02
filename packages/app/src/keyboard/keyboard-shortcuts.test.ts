@@ -368,6 +368,18 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, isDesktop: false },
       action: "workspace.tab.close.current",
     },
+    {
+      name: "matches Cmd+F to find in file on mac",
+      event: { key: "f", code: "KeyF", metaKey: true },
+      context: { isMac: true },
+      action: "file.find",
+    },
+    {
+      name: "matches Ctrl+F to find in file on non-mac",
+      event: { key: "f", code: "KeyF", ctrlKey: true },
+      context: { isMac: false },
+      action: "file.find",
+    },
   ];
 
   it.each(matchingCases)(
@@ -433,6 +445,16 @@ describe("keyboard-shortcuts", () => {
       name: "does not match Ctrl+K for command center on non-mac in terminal",
       event: { key: "k", code: "KeyK", ctrlKey: true },
       context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not match Ctrl+F for find in file on non-mac in terminal",
+      event: { key: "f", code: "KeyF", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not match Ctrl+F for find in file on mac (Cmd only)",
+      event: { key: "f", code: "KeyF", ctrlKey: true },
+      context: { isMac: true },
     },
     {
       name: "does not bind Ctrl+B on non-mac while terminal is focused",
@@ -598,6 +620,7 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
         "cycle-agent-mode": ["shift", "Tab"],
+        "file-find": ["mod", "F"],
       },
     },
     {
@@ -647,6 +670,7 @@ describe("keyboard-shortcut help sections", () => {
     const openProject = findRow(sections, "new-agent");
     const cycleAgentMode = findRow(sections, "cycle-agent-mode");
     const showShortcuts = findRow(sections, "show-shortcuts");
+    const findInFile = findRow(sections, "file-find");
 
     expect(projects?.titleKey).toBe("settings.shortcuts.sections.projects");
     expect(panels?.titleKey).toBe("settings.shortcuts.sections.panels");
@@ -654,6 +678,8 @@ describe("keyboard-shortcut help sections", () => {
     expect(openProject?.label).toBe("Open project");
     expect(cycleAgentMode?.labelKey).toBe("settings.shortcuts.help.cycleAgentMode");
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
+    expect(findInFile?.labelKey).toBe("settings.shortcuts.help.findInFile");
+    expect(findInFile?.label).toBe("Find in file");
   });
 
   it("does not expose Enter send behavior as rebindable shortcut rows", () => {

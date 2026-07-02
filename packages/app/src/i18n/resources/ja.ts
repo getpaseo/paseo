@@ -1377,6 +1377,15 @@ export const ja: TranslationResources = {
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      find: {
+        placeholder: "検索",
+        matchCase: "大文字と小文字を区別",
+        matchCount: "{{total}} 件中 {{current}} 件目",
+        noResults: "一致なし",
+        nextMatch: "次の一致",
+        previousMatch: "前の一致",
+        close: "検索を閉じる",
+      },
     },
   },
   toolCallDetails: {
@@ -1626,6 +1635,7 @@ export const ja: TranslationResources = {
         moveTabDown: "タブを下に移動",
         closePane: "ペインを閉じる",
         newTerminal: "新しいターミナル",
+        findInFile: "ファイル内を検索",
         toggleCommandCenter: "コマンドセンターを切り替え",
         showKeyboardShortcuts: "キーボードショートカットを表示",
         toggleLeftSidebar: "左サイドバーを切り替え",

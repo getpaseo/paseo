@@ -1402,6 +1402,15 @@ export const fr: TranslationResources = {
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      find: {
+        placeholder: "Rechercher",
+        matchCase: "Respecter la casse",
+        matchCount: "{{current}} sur {{total}}",
+        noResults: "Aucun résultat",
+        nextMatch: "Correspondance suivante",
+        previousMatch: "Correspondance précédente",
+        close: "Fermer la recherche",
+      },
     },
   },
   toolCallDetails: {
@@ -1654,6 +1663,7 @@ export const fr: TranslationResources = {
         moveTabDown: "Déplacer l'onglet vers le bas",
         closePane: "Fermer le volet",
         newTerminal: "Nouvelle borne",
+        findInFile: "Rechercher dans le fichier",
         toggleCommandCenter: "Basculer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Basculer la barre latérale gauche",

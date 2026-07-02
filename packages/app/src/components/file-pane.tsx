@@ -15,7 +15,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import { highlightCode } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
@@ -32,9 +32,12 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { MountedTabActiveContext } from "@/components/split-container";
 import { useAppVisible } from "@/hooks/use-app-visible";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
+import { FileFindBar } from "@/components/file-find-bar";
+import type { FileFindToken } from "@/components/file-find";
+import { useFileFind } from "@/components/use-file-find";
 
 interface CodeLineProps {
-  tokens: HighlightToken[];
+  tokens: FileFindToken[];
   lineNumber: number;
   gutterWidth: number;
   highlighted: boolean;
@@ -55,6 +58,14 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Content the find bar can search: code views only, never rendered markdown. */
+function findableContent(preview: ExplorerFile | null, isMarkdownFile: boolean): string | null {
+  if (!preview || preview.kind !== "text" || isMarkdownFile) {
+    return null;
+  }
+  return preview.content ?? "";
 }
 
 interface FileLineSelection {
@@ -154,11 +165,27 @@ const CodeLine = React.memo(function CodeLine({
 });
 
 interface CodeLineTokenProps {
-  token: HighlightToken;
+  token: FileFindToken;
+}
+
+function findHighlightStyle(find: FileFindToken["find"]) {
+  if (find === "active") {
+    return codeLineStyles.findMatchActive;
+  }
+  if (find === "match") {
+    return codeLineStyles.findMatch;
+  }
+  return null;
 }
 
 function CodeLineToken({ token }: CodeLineTokenProps) {
-  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
+  const syntaxStyle = syntaxTokenStyleFor(token.style);
+  const findStyle = findHighlightStyle(token.find);
+  const style = useMemo(
+    () => (findStyle ? [syntaxStyle, findStyle] : syntaxStyle),
+    [findStyle, syntaxStyle],
+  );
+  return <Text style={style}>{token.text}</Text>;
 }
 
 const codeLineStyles = StyleSheet.create((theme) => ({
@@ -186,6 +213,12 @@ const codeLineStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.code,
     lineHeight: theme.fontSize.code * 1.45,
     flex: 1,
+  },
+  findMatch: {
+    backgroundColor: theme.colors.findMatch,
+  },
+  findMatchActive: {
+    backgroundColor: theme.colors.findMatchActive,
   },
 }));
 
@@ -251,6 +284,20 @@ function FilePreviewBody({
     return () => clearTimeout(timeout);
   }, [lineHeight, lineSelection]);
 
+  // Find in file (#1437). Content is non-null only for code views, so the
+  // hook's keyboard handler falls through (native browser find) elsewhere.
+  const find = useFileFind({
+    content: findableContent(preview, isMarkdownFile),
+    highlightedLines,
+    previewScrollRef,
+    scrollbarOnScroll: scrollbar.onScroll,
+    scrollbarOnLayout: scrollbar.onLayout,
+    gutterWidth,
+    lineHeight,
+    codeFontSize: theme.fontSize.code,
+    contentPadding: theme.spacing[4],
+  });
+
   if (isLoading && !preview) {
     return (
       <View style={styles.centerState}>
@@ -289,7 +336,7 @@ function FilePreviewBody({
       );
     }
 
-    const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
+    const lines = find.displayLines ?? [[{ text: preview.content ?? "", style: null }]];
     const keyedLines = lines.map((tokens, index) => ({
       key: `line-${index}`,
       tokens,
@@ -318,8 +365,8 @@ function FilePreviewBody({
         <RNScrollView
           ref={previewScrollRef}
           style={styles.previewContent}
-          onLayout={scrollbar.onLayout}
-          onScroll={scrollbar.onScroll}
+          onLayout={find.handleVerticalLayout}
+          onScroll={find.handleVerticalScroll}
           onContentSizeChange={scrollbar.onContentSizeChange}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
@@ -328,17 +375,35 @@ function FilePreviewBody({
             <View style={styles.previewCodeScrollContent}>{codeLines}</View>
           ) : (
             <RNScrollView
+              ref={find.horizontalScrollRef}
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
               style={webScrollbarStyle}
               contentContainerStyle={styles.previewCodeScrollContent}
+              onLayout={find.handleHorizontalLayout}
+              onScroll={find.handleHorizontalScroll}
+              scrollEventThrottle={16}
             >
               {codeLines}
             </RNScrollView>
           )}
         </RNScrollView>
         {scrollbar.overlay}
+        {find.findOpen ? (
+          <FileFindBar
+            query={find.findQuery}
+            onQueryChange={find.handleFindQueryChange}
+            caseSensitive={find.findCaseSensitive}
+            onToggleCaseSensitive={find.toggleFindCaseSensitive}
+            matchCount={find.matchCount}
+            activeIndex={find.activeFindIndex}
+            onNext={find.handleFindNext}
+            onPrevious={find.handleFindPrevious}
+            onClose={find.closeFind}
+            inputRef={find.findInputRef}
+          />
+        ) : null}
       </View>
     );
   }

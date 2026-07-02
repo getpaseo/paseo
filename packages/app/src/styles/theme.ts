@@ -172,6 +172,11 @@ const lightSemanticColors = {
   success: "#20744A",
   successForeground: "#ffffff",
 
+  // Find-in-file match highlights — translucent amber layered behind matched
+  // code text so syntax colors stay readable underneath
+  findMatch: "rgba(245, 158, 11, 0.28)", // amber-500
+  findMatchActive: "rgba(245, 158, 11, 0.60)",
+
   // Legacy aliases (for gradual migration)
   background: "#ffffff",
   popover: "#ffffff",
@@ -285,6 +290,11 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     destructiveForeground: "#ffffff",
     success: tint.accent,
     successForeground: "#ffffff",
+
+    // Find-in-file match highlights — translucent amber layered behind matched
+    // code text so syntax colors stay readable underneath
+    findMatch: "rgba(245, 158, 11, 0.24)", // amber-500
+    findMatchActive: "rgba(245, 158, 11, 0.50)",
 
     // Legacy aliases (for gradual migration)
     background: tint.surface0,

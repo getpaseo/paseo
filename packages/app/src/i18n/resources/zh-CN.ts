@@ -1343,6 +1343,15 @@ export const zhCN: TranslationResources = {
       binaryPreviewUnavailable: "二进制预览不可用",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      find: {
+        placeholder: "查找",
+        matchCase: "区分大小写",
+        matchCount: "第 {{current}} 项，共 {{total}} 项",
+        noResults: "无结果",
+        nextMatch: "下一个匹配项",
+        previousMatch: "上一个匹配项",
+        close: "关闭查找",
+      },
     },
   },
   toolCallDetails: {
@@ -1590,6 +1599,7 @@ export const zhCN: TranslationResources = {
         moveTabDown: "向下移动标签",
         closePane: "关闭窗格",
         newTerminal: "新建终端",
+        findInFile: "在文件中查找",
         toggleCommandCenter: "切换命令中心",
         showKeyboardShortcuts: "显示键盘快捷键",
         toggleLeftSidebar: "切换左侧边栏",

@@ -47,7 +47,8 @@ export type KeyboardActionId =
   | "worktree.archive"
   | "view.toggle.focus"
   | "theme.cycle"
-  | "message-input.action";
+  | "message-input.action"
+  | "file.find";
 
 export type KeyboardShortcutPayload =
   | { index: number }

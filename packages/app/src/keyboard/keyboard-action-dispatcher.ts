@@ -29,7 +29,8 @@ export type KeyboardActionId =
   | "sidebar.toggle.right"
   | "workspace.new"
   | "worktree.new"
-  | "worktree.archive";
+  | "worktree.archive"
+  | "file.find";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -60,7 +61,8 @@ export type KeyboardActionDefinition =
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
-  | { id: "worktree.archive"; scope: KeyboardActionScope };
+  | { id: "worktree.archive"; scope: KeyboardActionScope }
+  | { id: "file.find"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {
   handlerId: string;
