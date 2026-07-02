@@ -4,15 +4,16 @@
 
 ## 场景矩阵
 
-|                              | Claude/Codex(原生 fork) | Kiro/TRAE(原生 fork,无 per-message) |
-|------------------------------|--------------------------|----------------------------------------|
-| **按消息 fork → New tab**     | 场景 A1(核心:截断验证)   | (无此能力,跳过)                        |
-| **按消息 fork → New Workspace** | 场景 A2(附件式回退验证)  | (无此能力,跳过)                        |
-| **tab ⋮ 整段 Fork agent**     | 场景 C                   | 场景 D                                 |
+|                                 | Claude/Codex(原生 fork) | Kiro/TRAE(原生 fork,无 per-message) |
+| ------------------------------- | ----------------------- | ----------------------------------- |
+| **按消息 fork → New tab**       | 场景 A1(核心:截断验证)  | (无此能力,跳过)                     |
+| **按消息 fork → New Workspace** | 场景 A2(附件式回退验证) | (无此能力,跳过)                     |
+| **tab ⋮ 整段 Fork agent**       | 场景 C                  | 场景 D                              |
 
 ## 前置:三轮会话
 
 用 Codex 新建一个会话,连续发 3 轮(用于场景 A1/A2 的截断验证):
+
 - msg1: "1+1等于几?" → assistant: "2"
 - msg2: "2+2等于几?" → assistant: "4"
 - msg3: "3+3等于几?" → assistant: "6"
@@ -65,6 +66,7 @@ Claude 复用已有的"你是什么模型"会话作为场景 C 的样本(不需�
 **修复**:废弃基于 id 匹配的边界解析。改为 `AgentManager.forkAgent` 在自己已有的、id 体系一致的 timeline rows 上计算出 0-based 的 `upToTurnIndex`(第几轮对话),通过新增的 `AgentForkOptions.upToTurnIndex` 字段传给 provider;Codex provider 直接用这个序号定位 `thread/read` turns 数组的下标,完全不再依赖任何 id 匹配。
 
 **验证**:
+
 - 新增 2 个单测覆盖该场景(`codex-app-server-agent.fork.test.ts`),覆盖修复前会失败的场景 + 边界在最后一轮时的空rollback
 - 61/61 fork 相关测试全过(含 kiro/trae/claude/agent-manager/provider-registry)
 - 端到端复测:全新 3 轮会话(one/two/three)从第 2 轮 fork,新 agent 追问后**只回答 "one" 和 "two"**,不再提及 "three"
