@@ -61,6 +61,10 @@ interface ScheduleRowProps extends ScheduleRowActions {
   provider: string | null;
   /** Client-derived state — the single source for the badge and next-run copy. */
   state: ScheduleDerivedState;
+  /** Host name, rendered when the list is flattened across hosts. */
+  serverName?: string;
+  /** Whether the schedule's host is the only one shown (hides serverName). */
+  singleHost?: boolean;
   pending?: ScheduleRowPending;
   isFirst: boolean;
 }
@@ -86,7 +90,12 @@ function stateBadge(state: ScheduleDerivedState): {
 // Meta reads left-to-right as identity → history → future: how often, when it
 // was created, when it last ran, and (only while it can still run) when it runs
 // next. Status lives on the badge, never repeated here.
-function buildMeta(schedule: ScheduleSummary, state: ScheduleDerivedState): string {
+function buildMeta(
+  schedule: ScheduleSummary,
+  state: ScheduleDerivedState,
+  serverName: string | undefined,
+  singleHost: boolean,
+): string {
   const parts = [
     formatCadence(schedule.cadence),
     `Created ${formatTimeAgo(new Date(schedule.createdAt))}`,
@@ -97,6 +106,9 @@ function buildMeta(schedule: ScheduleSummary, state: ScheduleDerivedState): stri
     if (next) {
       parts.push(`Next run ${next}`);
     }
+  }
+  if (serverName && !singleHost) {
+    parts.unshift(serverName);
   }
   return parts.join(" · ");
 }
@@ -125,6 +137,8 @@ export function ScheduleRow({
   targetLabel,
   provider,
   state,
+  serverName,
+  singleHost,
   pending,
   isFirst,
   onEdit,
@@ -140,7 +154,8 @@ export function ScheduleRow({
 
   const title = resolveScheduleTitle(schedule);
   const badge = stateBadge(state);
-  const meta = buildMeta(schedule, state);
+  const meta = buildMeta(schedule, state, serverName, singleHost ?? false);
+  const canRun = state === "active" || state === "paused";
 
   const rowStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
@@ -187,6 +202,7 @@ export function ScheduleRow({
           <StatusBadge label={badge.label} variant={badge.variant} />
           <ScheduleKebabMenu
             schedule={schedule}
+            canRun={canRun}
             pending={pending}
             onEdit={onEdit}
             onPause={onPause}
@@ -217,13 +233,19 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }): ReactElemen
 
 function ScheduleKebabMenu({
   schedule,
+  canRun,
   pending,
   onEdit,
   onPause,
   onResume,
   onRunNow,
   onDelete,
-}: Omit<ScheduleRowProps, "isFirst" | "targetLabel" | "provider" | "state">): ReactElement {
+}: Pick<
+  ScheduleRowProps,
+  "schedule" | "pending" | "onEdit" | "onPause" | "onResume" | "onRunNow" | "onDelete"
+> & {
+  canRun: boolean;
+}): ReactElement {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -246,6 +268,7 @@ function ScheduleKebabMenu({
         {schedule.status === "paused" ? (
           <DropdownMenuItem
             leading={resumeLeading}
+            disabled={!canRun}
             status={pending?.resume ? "pending" : "idle"}
             pendingLabel="Resuming..."
             onSelect={onResume}
@@ -256,7 +279,7 @@ function ScheduleKebabMenu({
         ) : (
           <DropdownMenuItem
             leading={pauseLeading}
-            disabled={schedule.status === "completed"}
+            disabled={schedule.status === "completed" || !canRun}
             status={pending?.pause ? "pending" : "idle"}
             pendingLabel="Pausing..."
             onSelect={onPause}
@@ -267,6 +290,7 @@ function ScheduleKebabMenu({
         )}
         <DropdownMenuItem
           leading={runLeading}
+          disabled={!canRun}
           status={pending?.runNow ? "pending" : "idle"}
           pendingLabel="Starting..."
           onSelect={onRunNow}

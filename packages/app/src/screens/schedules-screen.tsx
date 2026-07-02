@@ -136,6 +136,7 @@ function SchedulesScreenContent(): ReactElement {
   }, [schedules, agentsByKey, projectNameByCwd, agentDirReadyHosts]);
 
   const visibleRows = useMemo<ScheduleRowView[]>(() => {
+    const singleHost = selectedHost !== ALL_HOSTS_OPTION_ID;
     return resolvedRows
       .filter(
         ({ schedule, resolved }) =>
@@ -148,6 +149,8 @@ function SchedulesScreenContent(): ReactElement {
         targetLabel: resolved.target.label,
         provider: resolved.target.provider,
         state: resolved.state,
+        serverName: schedule.serverName,
+        singleHost,
       }));
   }, [resolvedRows, selectedHost, statusFilter]);
 
@@ -246,6 +249,7 @@ function SchedulesScreenBody({
   if (!hasSchedules) {
     return (
       <View style={styles.centered} testID="schedules-empty">
+        {hostErrors.length > 0 ? <ScheduleHostErrorsBanner errors={hostErrors} /> : null}
         <Text style={styles.message}>No schedules yet</Text>
         <Button variant="ghost" leftIcon={Plus} onPress={onCreate} testID="schedules-empty-new">
           Create a schedule
@@ -301,7 +305,7 @@ function ScheduleHostErrorsBanner({ errors }: { errors: ScheduleHostError[] }): 
       <View style={styles.errorsBanner} testID="schedules-host-errors">
         {errors.map((error) => (
           <Text key={error.serverId} style={styles.errorsBannerText}>
-            {`${error.serverName}: ${error.message}`}
+            {`${error.serverName}: Could not load schedules`}
           </Text>
         ))}
       </View>

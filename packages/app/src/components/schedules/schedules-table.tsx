@@ -15,6 +15,8 @@ export interface ScheduleRowView {
   targetLabel: string;
   provider: string | null;
   state: ScheduleDerivedState;
+  serverName: string;
+  singleHost: boolean;
 }
 
 interface SchedulesTableProps {
@@ -129,6 +131,8 @@ function SchedulesTableRow({
       targetLabel={row.targetLabel}
       provider={row.provider}
       state={row.state}
+      serverName={row.serverName}
+      singleHost={row.singleHost}
       isFirst={isFirst}
       pending={pending}
       onEdit={handleEdit}

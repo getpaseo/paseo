@@ -2803,12 +2803,14 @@ describe("create_schedule MCP tool", () => {
 
   it("requires provider for schedules", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2820,17 +2822,19 @@ describe("create_schedule MCP tool", () => {
         name: "Default schedule",
       }),
     ).rejects.toThrow("provider is required when target is new-agent");
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 
   it("keeps create_schedule provider overrides compatible with provider and provider/model forms", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2846,7 +2850,7 @@ describe("create_schedule MCP tool", () => {
       provider: "codex/gpt-5.4",
     });
 
-    expect(create).toHaveBeenNthCalledWith(
+    expect(createOrReplace).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         target: {
@@ -2858,7 +2862,7 @@ describe("create_schedule MCP tool", () => {
         },
       }),
     );
-    expect(create).toHaveBeenNthCalledWith(
+    expect(createOrReplace).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         target: {
@@ -2888,12 +2892,14 @@ describe("create_schedule MCP tool", () => {
         featureValues: { auto_accept: true },
       },
     } as ManagedAgent);
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       callerAgentId: "parent-agent",
       logger,
     });
@@ -2914,14 +2920,14 @@ describe("create_schedule MCP tool", () => {
 
   it("passes timezone through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn(async (scheduleInput: CreateScheduleInput) =>
+    const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
       createStoredSchedule(scheduleInput),
     );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2933,7 +2939,7 @@ describe("create_schedule MCP tool", () => {
       provider: "codex",
     });
 
-    expect(create).toHaveBeenCalledWith(
+    expect(createOrReplace).toHaveBeenCalledWith(
       expect.objectContaining({
         cadence: {
           type: "cron",
@@ -2946,12 +2952,12 @@ describe("create_schedule MCP tool", () => {
 
   it("rejects removed create_schedule every input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2963,17 +2969,17 @@ describe("create_schedule MCP tool", () => {
     });
     expect(parsed.success).toBe(false);
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 
   it("rejects create_schedule without cron", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2985,17 +2991,17 @@ describe("create_schedule MCP tool", () => {
       }),
     ).rejects.toThrow(/cron/);
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 
   it.each(["", "   "])("rejects create_schedule blank timezone %#", async (timezone) => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -3009,7 +3015,7 @@ describe("create_schedule MCP tool", () => {
       }),
     ).rejects.toThrow();
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 });
 
@@ -3027,12 +3033,14 @@ describe("create_heartbeat MCP tool", () => {
       availableModes: [],
       config: { title: "Parent agent" },
     } as ManagedAgent);
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       callerAgentId: "parent-agent",
       logger,
     });
@@ -3045,7 +3053,7 @@ describe("create_heartbeat MCP tool", () => {
       name: "status heartbeat",
     });
 
-    expect(create).toHaveBeenCalledWith(
+    expect(createOrReplace).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "check status",
         cadence: {
@@ -3061,12 +3069,12 @@ describe("create_heartbeat MCP tool", () => {
 
   it("requires an agent-scoped session", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_heartbeat");
@@ -3078,7 +3086,7 @@ describe("create_heartbeat MCP tool", () => {
       }),
     ).rejects.toThrow("create_heartbeat requires an agent-scoped session");
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 });
 
