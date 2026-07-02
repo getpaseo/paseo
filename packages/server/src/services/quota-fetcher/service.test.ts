@@ -434,6 +434,33 @@ describe("real provider usage fetchers", () => {
     );
   });
 
+  it("accepts a null Claude resets_at when a window has no scheduled reset", async () => {
+    writeClaudeCredentials(claudeHome, "at_valid");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.anthropic.com/api/oauth/usage",
+          () =>
+            jsonResponse({
+              five_hour: { utilization: 0, resets_at: null },
+              seven_day: { utilization: 1, resets_at: "2026-06-04T00:00:00Z" },
+            }),
+        ],
+      ]),
+    );
+
+    const result = await service().listUsage();
+    const claude = findProvider(result, "claude");
+
+    expect(claude).toMatchObject({
+      status: "available",
+      windows: expect.arrayContaining([
+        expect.objectContaining({ id: "five_hour", usedPct: 0, resetsAt: null }),
+        expect.objectContaining({ id: "weekly", usedPct: 1 }),
+      ]),
+    });
+  });
+
   it("returns unavailable Claude usage when credentials are missing", async () => {
     fetchApi = vi.fn() as never;
 
