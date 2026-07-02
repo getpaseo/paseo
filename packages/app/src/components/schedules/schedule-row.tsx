@@ -61,9 +61,9 @@ interface ScheduleRowProps extends ScheduleRowActions {
   provider: string | null;
   /** Client-derived state — the single source for the badge and next-run copy. */
   state: ScheduleDerivedState;
-  /** Host name, rendered when the list is flattened across hosts. */
+  /** Host name, rendered when the list spans more than one host. */
   serverName?: string;
-  /** Whether the schedule's host is the only one shown (hides serverName). */
+  /** True when only one host exists and the host name would be redundant. */
   singleHost?: boolean;
   pending?: ScheduleRowPending;
   isFirst: boolean;

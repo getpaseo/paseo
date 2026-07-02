@@ -136,7 +136,7 @@ function SchedulesScreenContent(): ReactElement {
   }, [schedules, agentsByKey, projectNameByCwd, agentDirReadyHosts]);
 
   const visibleRows = useMemo<ScheduleRowView[]>(() => {
-    const singleHost = selectedHost !== ALL_HOSTS_OPTION_ID;
+    const singleHost = hosts.length <= 1;
     return resolvedRows
       .filter(
         ({ schedule, resolved }) =>
@@ -152,7 +152,7 @@ function SchedulesScreenContent(): ReactElement {
         serverName: schedule.serverName,
         singleHost,
       }));
-  }, [resolvedRows, selectedHost, statusFilter]);
+  }, [resolvedRows, selectedHost, statusFilter, hosts.length]);
 
   const headerAction = useMemo(
     () => (

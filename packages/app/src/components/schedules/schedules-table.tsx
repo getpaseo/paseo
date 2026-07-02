@@ -16,6 +16,7 @@ export interface ScheduleRowView {
   provider: string | null;
   state: ScheduleDerivedState;
   serverName: string;
+  /** True when only one host exists, so the host name is redundant in rows. */
   singleHost: boolean;
 }
 
