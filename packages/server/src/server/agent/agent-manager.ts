@@ -547,6 +547,17 @@ function truncateForkRowsAtBoundary(
   return rows.slice(0, index + 1);
 }
 
+/**
+ * Number of assistant-turn boundaries (assistant_message rows) within `rows`.
+ * Used to translate a boundary message id into a 0-based turn index so
+ * providers whose own session-history API doesn't share the timeline's id
+ * scheme can locate the truncation point by position (see
+ * `AgentForkOptions.upToTurnIndex`).
+ */
+function countAssistantTurns(rows: readonly AgentTimelineRow[]): number {
+  return rows.filter((row) => row.item.type === "assistant_message").length;
+}
+
 /** Lineage labels stamped onto a forked agent. */
 function buildForkLabels(
   sourceAgentId: string,
@@ -1093,7 +1104,10 @@ export class AgentManager {
       ? truncateForkRowsAtBoundary(allForkRows, options.messageId)
       : allForkRows;
     const forkOptions: AgentForkOptions = options?.messageId
-      ? { upToMessageId: options.messageId }
+      ? {
+          upToMessageId: options.messageId,
+          upToTurnIndex: countAssistantTurns(forkRows) - 1,
+        }
       : {};
     const session = await client.forkSession(
       handle,

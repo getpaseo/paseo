@@ -6039,20 +6039,27 @@ export class CodexAppServerAgentClient implements AgentClient {
       });
       newThreadId = forked.thread.id;
 
-      // Per-message fork: truncate the copy so it ends at the requested message
+      // Per-message fork: truncate the copy so it ends at the requested turn
       // (mirrors the rewind path — fork copies the whole thread, then rollback
-      // removes the user turns after the boundary). Whole-conversation fork (no
-      // upToMessageId) keeps the full copy. Done on the forked thread only, so
+      // removes the turns after the boundary). Whole-conversation fork (no
+      // upToTurnIndex) keeps the full copy. Done on the forked thread only, so
       // the source is never mutated.
-      if (options.upToMessageId) {
-        const numTurns = await this.resolveCodexForkRollbackTurns(
+      //
+      // The boundary is located by TURN INDEX, not by matching upToMessageId
+      // against thread/read's items: Codex's `thread/read` RPC never returns
+      // the streaming `resp_..._msg` ids that `upToMessageId` uses — its items
+      // carry their own, unrelated position-based ids (e.g. "item-7") on every
+      // thread, forked or not. `upToTurnIndex` (the 0-based assistant-turn
+      // index, computed by the caller from the same timeline upToMessageId came
+      // from) sidesteps that id mismatch entirely.
+      if (options.upToTurnIndex !== undefined) {
+        const numTurns = await this.resolveCodexForkRollbackTurnsFromIndex(
           client,
           newThreadId,
-          cwd,
-          options.upToMessageId,
+          options.upToTurnIndex,
         );
         this.logger.info(
-          { threadId: newThreadId, upToMessageId: options.upToMessageId, numTurns },
+          { threadId: newThreadId, upToTurnIndex: options.upToTurnIndex, numTurns },
           "codex.fork.rollback",
         );
         if (numTurns > 0) {
@@ -6072,40 +6079,17 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   /**
-   * Number of trailing turns to roll back so a forked thread ends at the turn
-   * containing `upToMessageId`. The fork boundary is the assistant message id of
-   * the selected turn, so we locate the THREAD TURN whose items include that
-   * message (assistant or user) and roll back every turn after it. Reads the
-   * forked thread's own history (self-contained). Returns 0 when the boundary is
-   * the last turn or cannot be located (→ keep the full copy).
+   * Number of trailing turns to roll back on `threadId` so it ends at turn
+   * `boundaryTurnIndex` (0-based, inclusive).
    */
-  private async resolveCodexForkRollbackTurns(
+  private async resolveCodexForkRollbackTurnsFromIndex(
     client: CodexAppServerClientLike,
     threadId: string,
-    cwd: string | null,
-    upToMessageId: string,
+    boundaryTurnIndex: number,
   ): Promise<number> {
     const response = await requestCodexThreadHistory((id) => readCodexThread(client, id), threadId);
-    const turns = response.thread.turns;
-    let boundaryTurnIndex = -1;
-    for (let t = 0; t < turns.length; t += 1) {
-      const rawItems = (turns[t] as { items?: unknown[] }).items ?? [];
-      const containsBoundary = rawItems.some((raw) => {
-        const item = threadItemToTimeline(raw, { cwd });
-        return (
-          (item?.type === "assistant_message" || item?.type === "user_message") &&
-          item.messageId === upToMessageId
-        );
-      });
-      if (containsBoundary) {
-        boundaryTurnIndex = t;
-        break;
-      }
-    }
-    if (boundaryTurnIndex < 0) {
-      return 0;
-    }
-    return turns.length - (boundaryTurnIndex + 1);
+    const turnCount = response.thread.turns.length;
+    return Math.max(0, turnCount - (boundaryTurnIndex + 1));
   }
 
   async listImportableSessions(

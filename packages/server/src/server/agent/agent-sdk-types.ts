@@ -199,6 +199,16 @@ export interface AgentForkOptions {
    * the fork copies the full session at its current state.
    */
   upToMessageId?: string;
+  /**
+   * 0-based index of the assistant turn containing `upToMessageId`, counted
+   * over the source agent's own displayed timeline (turn N = the Nth
+   * user/assistant exchange). Provided alongside `upToMessageId` so providers
+   * whose own session-history API uses a different, non-corresponding item id
+   * scheme (e.g. Codex's `thread/read`, which never returns the streaming
+   * `resp_..._msg` ids `upToMessageId` uses) can still locate the correct
+   * truncation point by position instead of by id match.
+   */
+  upToTurnIndex?: number;
 }
 
 export type AgentPromptContentBlock =
