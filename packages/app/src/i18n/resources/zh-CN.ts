@@ -1344,6 +1344,7 @@ export const zhCN: TranslationResources = {
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
       find: {
+        open: "在文件中查找",
         placeholder: "查找",
         matchCase: "区分大小写",
         matchCount: "第 {{current}} 项，共 {{total}} 项",

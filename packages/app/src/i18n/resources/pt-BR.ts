@@ -1386,6 +1386,7 @@ export const ptBR: TranslationResources = {
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
       find: {
+        open: "Localizar no arquivo",
         placeholder: "Localizar",
         matchCase: "Diferenciar maiúsculas de minúsculas",
         matchCount: "{{current}} de {{total}}",

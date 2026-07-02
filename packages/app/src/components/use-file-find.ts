@@ -14,6 +14,7 @@ import type {
   NativeSyntheticEvent,
   ScrollView as RNScrollView,
   TextInput,
+  View,
 } from "react-native";
 import type { HighlightToken } from "@getpaseo/highlight";
 import {
@@ -27,8 +28,10 @@ import {
 } from "@/components/file-find";
 import { MountedTabActiveContext } from "@/components/split-container";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useKeyboardShift } from "@/hooks/use-keyboard-shift-style";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import { usePaneFocus } from "@/panels/pane-context";
+import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
+import { useFileFindCapabilityStore } from "@/stores/file-find-capability-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
@@ -78,9 +81,13 @@ export interface UseFileFindResult {
   findCaseSensitive: boolean;
   matchCount: number;
   activeFindIndex: number;
+  /** 1-based line of the active match, for attaching activeFindLineRef. */
+  activeFindLine: number | null;
   /** Highlight lines with match segments flagged, or null without highlights. */
   displayLines: FileFindToken[][] | null;
   findInputRef: RefObject<TextInput | null>;
+  /** Attach to the active match's rendered line so scrolling can measure it. */
+  activeFindLineRef: RefObject<View | null>;
   horizontalScrollRef: RefObject<RNScrollView | null>;
   closeFind: () => void;
   handleFindQueryChange: (query: string) => void;
@@ -122,10 +129,15 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
   // Enter must still bring an off-screen match back into view.
   const [findStepNonce, setFindStepNonce] = useState(0);
   const findInputRef = useRef<TextInput>(null);
+  const activeFindLineRef = useRef<View>(null);
   const horizontalScrollRef = useRef<RNScrollView>(null);
   const paneFocus = usePaneFocus();
+  const { tabId } = usePaneContext();
   const isTabActive = useContext(MountedTabActiveContext);
   const handlerId = useId();
+  // Pane displacement while the software keyboard is up (0 on web); the
+  // keyboard overlays the pane, so this much of the viewport is not visible.
+  const { shift: keyboardShift } = useKeyboardShift();
 
   // Close the bar when the pane stops showing searchable code (file switched
   // to markdown render / image / binary, or the preview unloaded).
@@ -134,6 +146,14 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
       setFindOpen(false);
     }
   }, [canFind]);
+
+  // Publish searchability so chrome outside the pane tree (the compact
+  // tabs-row magnifier) can hide its trigger when find would be a no-op.
+  const setTabFindable = useFileFindCapabilityStore((state) => state.setTabFindable);
+  useEffect(() => {
+    setTabFindable(tabId, canFind);
+    return () => setTabFindable(tabId, false);
+  }, [canFind, setTabFindable, tabId]);
 
   const contentLines = useMemo(() => {
     if (content === null) {
@@ -326,18 +346,45 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
       return;
     }
 
-    const vertical = verticalMetricsRef.current;
-    const matchTop = contentPadding + (match.line - 1) * lineHeight;
-    const verticalMargin = lineHeight * 2;
-    if (vertical.viewport > 0) {
+    const scrollVerticallyTo = (matchTop: number, matchHeight: number) => {
+      const vertical = verticalMetricsRef.current;
+      // The software keyboard overlays the pane without resizing it, so only
+      // the viewport above the keyboard counts as visible.
+      const visibleViewport = vertical.viewport - Math.max(0, keyboardShift.value);
+      if (visibleViewport <= 0) {
+        return;
+      }
+      const verticalMargin = lineHeight * 2;
       const above = matchTop < vertical.offset + verticalMargin;
-      const below = matchTop + lineHeight > vertical.offset + vertical.viewport - verticalMargin;
+      const below = matchTop + matchHeight > vertical.offset + visibleViewport - verticalMargin;
       if (above || below) {
         previewScrollRef.current?.scrollTo({
-          y: Math.max(0, matchTop - Math.max(verticalMargin, vertical.viewport / 3)),
+          y: Math.max(0, matchTop - Math.max(verticalMargin, visibleViewport / 3)),
           animated: false,
         });
       }
+    };
+
+    // Prefer measuring the active line's rendered position: on compact
+    // layouts long lines wrap, so line-number x line-height drifts. The
+    // estimate stays as the fallback when measurement is unavailable.
+    const estimateAndScroll = () => {
+      scrollVerticallyTo(contentPadding + (match.line - 1) * lineHeight, lineHeight);
+    };
+    const lineNode = activeFindLineRef.current;
+    // RN's ScrollView types omit getInnerViewRef; both native and RNW
+    // implement it, returning the content host instance measureLayout needs.
+    const innerView = (
+      previewScrollRef.current as unknown as { getInnerViewRef?: () => unknown } | null
+    )?.getInnerViewRef?.();
+    if (lineNode && innerView != null) {
+      lineNode.measureLayout(
+        innerView as never,
+        (_x, y, _width, height) => scrollVerticallyTo(y, height),
+        estimateAndScroll,
+      );
+    } else {
+      estimateAndScroll();
     }
 
     // Horizontal (desktop only — mobile wraps long lines instead).
@@ -363,6 +410,7 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
     contentPadding,
     findStepNonce,
     gutterWidth,
+    keyboardShift,
     lineHeight,
     previewScrollRef,
   ]);
@@ -373,8 +421,10 @@ export function useFileFind(input: UseFileFindInput): UseFileFindResult {
     findCaseSensitive,
     matchCount,
     activeFindIndex,
+    activeFindLine: activeFindMatch?.line ?? null,
     displayLines,
     findInputRef,
+    activeFindLineRef,
     horizontalScrollRef,
     closeFind,
     handleFindQueryChange,

@@ -1369,6 +1369,7 @@ export const en = {
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
       find: {
+        open: "Find in file",
         placeholder: "Find",
         matchCase: "Match case",
         matchCount: "{{current}} of {{total}}",

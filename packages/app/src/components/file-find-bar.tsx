@@ -44,6 +44,12 @@ type FindBarKeyPressEvent = NativeSyntheticEvent<
 // Keep DOM focus in the query input when the nav buttons are clicked so
 // Escape-to-close and continued typing keep working (web only; press events
 // still fire with the mousedown default prevented).
+// Vertical slop reaches the 44pt native target guidance; horizontal slop is
+// capped at half the 4px button gap so adjacent buttons' hit rects never
+// overlap a neighbor's visible face (native hit-testing lets a later sibling's
+// slop win over an earlier sibling's real bounds).
+const FIND_BUTTON_HIT_SLOP = { top: 8, bottom: 8, left: 2, right: 2 } as const;
+
 const FOCUS_RETENTION_PROPS = isWeb
   ? ({
       onMouseDown: (event: { preventDefault?: () => void }) => {
@@ -64,6 +70,11 @@ export interface FileFindBarProps {
   onPrevious: () => void;
   onClose: () => void;
   inputRef: RefObject<TextInput | null>;
+  /**
+   * Full-width row pinned above the code (compact layouts) instead of the
+   * floating top-right overlay used on desktop.
+   */
+  docked: boolean;
 }
 
 function iconButtonStyle(
@@ -110,9 +121,19 @@ export function FileFindBar({
   onPrevious,
   onClose,
   inputRef,
+  docked,
 }: FileFindBarProps) {
   const { t } = useTranslation();
   const navigationDisabled = matchCount === 0;
+
+  const containerStyle = useMemo(
+    () => [styles.container, docked ? styles.containerDocked : styles.containerFloating],
+    [docked],
+  );
+  const inputRegionStyle = useMemo(
+    () => [styles.inputRegion, docked && styles.inputRegionDocked],
+    [docked],
+  );
 
   const handleKeyPress = useCallback(
     (event: FindBarKeyPressEvent) => {
@@ -154,8 +175,8 @@ export function FileFindBar({
   );
 
   return (
-    <View style={styles.container} testID="file-pane-find-bar">
-      <View style={styles.inputRegion}>
+    <View style={containerStyle} testID="file-pane-find-bar">
+      <View style={inputRegionStyle}>
         <ThemedTextInput
           ref={inputRef}
           value={query}
@@ -168,6 +189,7 @@ export function FileFindBar({
           autoCorrect={false}
           spellCheck={false}
           selectTextOnFocus
+          returnKeyType="search"
           // @ts-expect-error - outlineStyle is web-only
           style={FIND_INPUT_STYLE}
           accessibilityLabel={t("panels.file.find.placeholder")}
@@ -178,6 +200,7 @@ export function FileFindBar({
         </Text>
       </View>
       <Pressable
+        hitSlop={FIND_BUTTON_HIT_SLOP}
         accessibilityRole="button"
         accessibilityLabel={t("panels.file.find.matchCase")}
         accessibilityState={caseToggleAccessibilityState}
@@ -192,6 +215,7 @@ export function FileFindBar({
         />
       </Pressable>
       <Pressable
+        hitSlop={FIND_BUTTON_HIT_SLOP}
         accessibilityRole="button"
         accessibilityLabel={t("panels.file.find.previousMatch")}
         disabled={navigationDisabled}
@@ -203,6 +227,7 @@ export function FileFindBar({
         <ThemedChevronUp size={16} uniProps={foregroundMutedColorMapping} />
       </Pressable>
       <Pressable
+        hitSlop={FIND_BUTTON_HIT_SLOP}
         accessibilityRole="button"
         accessibilityLabel={t("panels.file.find.nextMatch")}
         disabled={navigationDisabled}
@@ -214,6 +239,7 @@ export function FileFindBar({
         <ThemedChevronDown size={16} uniProps={foregroundMutedColorMapping} />
       </Pressable>
       <Pressable
+        hitSlop={FIND_BUTTON_HIT_SLOP}
         accessibilityRole="button"
         accessibilityLabel={t("panels.file.find.close")}
         onPress={onClose}
@@ -228,19 +254,28 @@ export function FileFindBar({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    position: "absolute",
-    top: theme.spacing[2],
-    right: theme.spacing[3],
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
+  },
+  containerFloating: {
+    position: "absolute",
+    top: theme.spacing[2],
+    right: theme.spacing[3],
     backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
     ...theme.shadow.md,
+  },
+  containerDocked: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1.5],
+    backgroundColor: theme.colors.surface0,
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
   },
   // Fixed-width region shared by the input and the match counter: the counter
   // borrows typing space when it appears, so the bar itself never resizes.
@@ -248,6 +283,12 @@ const styles = StyleSheet.create((theme) => ({
     width: 232,
     flexDirection: "row",
     alignItems: "center",
+  },
+  // Docked bars span the pane, so the input region flexes instead.
+  inputRegionDocked: {
+    width: "auto",
+    flex: 1,
+    minWidth: 0,
   },
   input: {
     flex: 1,
@@ -266,8 +307,8 @@ const styles = StyleSheet.create((theme) => ({
     userSelect: "none",
   },
   iconButton: {
-    width: 24,
-    height: 24,
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,

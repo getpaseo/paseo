@@ -1400,6 +1400,7 @@ export const es: TranslationResources = {
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
       find: {
+        open: "Buscar en el archivo",
         placeholder: "Buscar",
         matchCase: "Coincidir mayúsculas y minúsculas",
         matchCount: "{{current}} de {{total}}",

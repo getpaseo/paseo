@@ -1392,6 +1392,7 @@ export const ru: TranslationResources = {
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
       find: {
+        open: "Найти в файле",
         placeholder: "Найти",
         matchCase: "Учитывать регистр",
         matchCount: "{{current}} из {{total}}",

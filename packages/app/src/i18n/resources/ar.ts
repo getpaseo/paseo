@@ -1361,6 +1361,7 @@ export const ar: TranslationResources = {
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
       find: {
+        open: "البحث في الملف",
         placeholder: "بحث",
         matchCase: "مطابقة حالة الأحرف",
         matchCount: "{{current}} من {{total}}",

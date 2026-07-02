@@ -1403,6 +1403,7 @@ export const fr: TranslationResources = {
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
       find: {
+        open: "Rechercher dans le fichier",
         placeholder: "Rechercher",
         matchCase: "Respecter la casse",
         matchCount: "{{current}} sur {{total}}",

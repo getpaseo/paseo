@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import Animated from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -35,12 +36,15 @@ import { isFileQueryEnabled } from "@/components/file-pane-enabled";
 import { FileFindBar } from "@/components/file-find-bar";
 import type { FileFindToken } from "@/components/file-find";
 import { useFileFind } from "@/components/use-file-find";
+import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 
 interface CodeLineProps {
   tokens: FileFindToken[];
   lineNumber: number;
   gutterWidth: number;
   highlighted: boolean;
+  /** Set on the active find match's line so scrolling can measure it. */
+  rowRef?: React.Ref<View>;
 }
 
 interface FilePreviewBodyProps {
@@ -135,6 +139,7 @@ const CodeLine = React.memo(function CodeLine({
   lineNumber,
   gutterWidth,
   highlighted,
+  rowRef,
 }: CodeLineProps) {
   const gutterStyle = useMemo(
     () => [codeLineStyles.gutter, inlineUnistylesStyle({ width: gutterWidth })],
@@ -149,7 +154,7 @@ const CodeLine = React.memo(function CodeLine({
     [tokens],
   );
   return (
-    <View style={lineStyle}>
+    <View ref={rowRef} style={lineStyle}>
       <View style={gutterStyle}>
         <Text numberOfLines={1} style={codeLineStyles.gutterText}>
           {String(lineNumber)}
@@ -298,6 +303,14 @@ function FilePreviewBody({
     contentPadding: theme.spacing[4],
   });
 
+  // While the docked find bar has the software keyboard up, this spacer adds
+  // scrollable room so matches near the end of the file can still be brought
+  // above the keyboard (the keyboard overlays the pane without resizing it).
+  const findKeyboardSpacer = useKeyboardShiftStyle({
+    mode: "padding",
+    enabled: isMobile && find.findOpen,
+  });
+
   if (isLoading && !preview) {
     return (
       <View style={styles.centerState}>
@@ -355,13 +368,31 @@ function FilePreviewBody({
               lineNumber >= (lineSelection?.lineStart ?? 0) &&
               lineNumber <= (lineSelection?.lineEnd ?? 0)
             }
+            rowRef={lineNumber === find.activeFindLine ? find.activeFindLineRef : undefined}
           />
         ))}
       </View>
     );
 
+    const findBar = find.findOpen ? (
+      <FileFindBar
+        query={find.findQuery}
+        onQueryChange={find.handleFindQueryChange}
+        caseSensitive={find.findCaseSensitive}
+        onToggleCaseSensitive={find.toggleFindCaseSensitive}
+        matchCount={find.matchCount}
+        activeIndex={find.activeFindIndex}
+        onNext={find.handleFindNext}
+        onPrevious={find.handleFindPrevious}
+        onClose={find.closeFind}
+        inputRef={find.findInputRef}
+        docked={isMobile}
+      />
+    ) : null;
+
     return (
       <View style={styles.previewScrollContainer}>
+        {isMobile ? findBar : null}
         <RNScrollView
           ref={previewScrollRef}
           style={styles.previewContent}
@@ -372,7 +403,10 @@ function FilePreviewBody({
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           {isMobile ? (
-            <View style={styles.previewCodeScrollContent}>{codeLines}</View>
+            <View style={styles.previewCodeScrollContent}>
+              {codeLines}
+              <Animated.View style={findKeyboardSpacer.style} />
+            </View>
           ) : (
             <RNScrollView
               ref={find.horizontalScrollRef}
@@ -390,20 +424,7 @@ function FilePreviewBody({
           )}
         </RNScrollView>
         {scrollbar.overlay}
-        {find.findOpen ? (
-          <FileFindBar
-            query={find.findQuery}
-            onQueryChange={find.handleFindQueryChange}
-            caseSensitive={find.findCaseSensitive}
-            onToggleCaseSensitive={find.toggleFindCaseSensitive}
-            matchCount={find.matchCount}
-            activeIndex={find.activeFindIndex}
-            onNext={find.handleFindNext}
-            onPrevious={find.handleFindPrevious}
-            onClose={find.closeFind}
-            inputRef={find.findInputRef}
-          />
-        ) : null}
+        {isMobile ? null : findBar}
       </View>
     );
   }

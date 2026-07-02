@@ -1378,6 +1378,7 @@ export const ja: TranslationResources = {
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       find: {
+        open: "ファイル内を検索",
         placeholder: "検索",
         matchCase: "大文字と小文字を区別",
         matchCount: "{{total}} 件中 {{current}} 件目",
