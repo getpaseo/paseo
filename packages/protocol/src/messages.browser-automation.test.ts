@@ -10,6 +10,8 @@ import {
 } from "./messages.js";
 
 describe("browser automation protocol integration", () => {
+  const browserId = "11111111-1111-4111-8111-111111111111";
+
   test("desktop automation capability parses in hello without narrowing old clients", () => {
     expect(
       WSHelloMessageSchema.parse({
@@ -39,7 +41,7 @@ describe("browser automation protocol integration", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "browser.automation.execute.request",
       requestId: "req-1",
-      command: { command: "page_info", args: { browserId: "browser-1" } },
+      command: { command: "page_info", args: { browserId } },
     });
 
     expect(parsed.type).toBe("browser.automation.execute.request");

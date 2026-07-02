@@ -3,20 +3,33 @@ import { z } from "zod";
 export const BrowserAutomationErrorCodeSchema = z.enum([
   "browser_disabled",
   "browser_no_desktop",
-  "browser_no_tab",
   "browser_tab_not_found",
   "browser_tab_closed",
   "browser_timeout",
+  "screenshot_no_frame",
   "browser_denied",
   "browser_unsupported",
   "browser_stale_ref",
   "browser_unknown_error",
 ]);
 
-const BrowserAutomationTabTargetSchema = z.object({
-  workspaceId: z.string().min(1).optional(),
-  browserId: z.string().min(1).optional(),
-});
+const BROWSER_AUTOMATION_BROWSER_ID_PATTERN =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|\d{13,}-[0-9a-f]+)$/i;
+const BROWSER_AUTOMATION_BROWSER_ID_MESSAGE =
+  "browserId must be a real id returned by browser_new_tab or browser_list_tabs";
+const BROWSER_AUTOMATION_WAIT_CONDITION_MESSAGE =
+  "browser_wait requires exactly one of text or url";
+
+export const BrowserAutomationBrowserIdSchema = z
+  .string({ error: () => BROWSER_AUTOMATION_BROWSER_ID_MESSAGE })
+  .min(1, BROWSER_AUTOMATION_BROWSER_ID_MESSAGE)
+  .regex(BROWSER_AUTOMATION_BROWSER_ID_PATTERN, BROWSER_AUTOMATION_BROWSER_ID_MESSAGE);
+
+const BrowserAutomationTabTargetSchema = z
+  .object({
+    browserId: BrowserAutomationBrowserIdSchema,
+  })
+  .strict();
 
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
 const BrowserAutomationHttpUrlSchema = z
@@ -29,31 +42,27 @@ const BrowserAutomationHttpUrlSchema = z
 
 export const BrowserAutomationListTabsCommandSchema = z.object({
   command: z.literal("list_tabs"),
-  args: z
-    .object({
-      workspaceId: z.string().min(1).optional(),
-    })
-    .default({}),
+  args: z.object({}).strict().default({}),
 });
 
 export const BrowserAutomationNewTabCommandSchema = z.object({
   command: z.literal("new_tab"),
   args: z
     .object({
-      workspaceId: z.string().min(1).optional(),
       url: BrowserAutomationHttpUrlSchema.optional(),
     })
+    .strict()
     .default({}),
 });
 
 export const BrowserAutomationPageInfoCommandSchema = z.object({
   command: z.literal("page_info"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationSnapshotCommandSchema = z.object({
   command: z.literal("snapshot"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationClickCommandSchema = z.object({
@@ -77,6 +86,8 @@ export const BrowserAutomationWaitCommandSchema = z.object({
     text: z.string().min(1).optional(),
     url: z.string().min(1).optional(),
     timeoutMs: z.number().int().positive().max(30_000).optional(),
+  }).refine((args) => Number(Boolean(args.text)) + Number(Boolean(args.url)) === 1, {
+    message: BROWSER_AUTOMATION_WAIT_CONDITION_MESSAGE,
   }),
 });
 
@@ -105,27 +116,27 @@ export const BrowserAutomationNavigateCommandSchema = z.object({
 
 export const BrowserAutomationBackCommandSchema = z.object({
   command: z.literal("back"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationForwardCommandSchema = z.object({
   command: z.literal("forward"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationReloadCommandSchema = z.object({
   command: z.literal("reload"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationScreenshotCommandSchema = z.object({
   command: z.literal("screenshot"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationFullPageScreenshotCommandSchema = z.object({
   command: z.literal("full_page_screenshot"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 export const BrowserAutomationPdfCommandSchema = z.object({
@@ -133,7 +144,7 @@ export const BrowserAutomationPdfCommandSchema = z.object({
   args: BrowserAutomationTabTargetSchema.extend({
     landscape: z.boolean().optional(),
     printBackground: z.boolean().default(true),
-  }).default({ printBackground: true }),
+  }),
 });
 
 export const BrowserAutomationDownloadCommandSchema = z.object({
@@ -201,12 +212,12 @@ export const BrowserAutomationLogsCommandSchema = z.object({
   command: z.literal("logs"),
   args: BrowserAutomationTabTargetSchema.extend({
     maxEntries: z.number().int().positive().max(200).default(50),
-  }).default({ maxEntries: 50 }),
+  }),
 });
 
 export const BrowserAutomationStorageCommandSchema = z.object({
   command: z.literal("storage"),
-  args: BrowserAutomationTabTargetSchema.default({}),
+  args: BrowserAutomationTabTargetSchema,
 });
 
 const BrowserAutomationViewportInputSchema = z.object({
@@ -226,7 +237,7 @@ export const BrowserAutomationEnvironmentCommandSchema = z.object({
   args: BrowserAutomationTabTargetSchema.extend({
     viewport: BrowserAutomationViewportInputSchema.optional(),
     geolocation: BrowserAutomationGeolocationInputSchema.optional(),
-  }).default({}),
+  }),
 });
 
 export const BrowserAutomationSetBackgroundCommandSchema = z.object({
@@ -268,7 +279,7 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
@@ -285,7 +296,7 @@ export const BrowserAutomationListTabsResultSchema = z.object({
 
 export const BrowserAutomationNewTabResultSchema = z.object({
   command: z.literal("new_tab"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1),
   url: z.string().min(1),
 });
@@ -306,7 +317,7 @@ export const BrowserAutomationSnapshotElementSchema = z.object({
 
 export const BrowserAutomationSnapshotResultSchema = z.object({
   command: z.literal("snapshot"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   workspaceId: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
@@ -315,59 +326,59 @@ export const BrowserAutomationSnapshotResultSchema = z.object({
 
 export const BrowserAutomationClickResultSchema = z.object({
   command: z.literal("click"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
 });
 
 export const BrowserAutomationFillResultSchema = z.object({
   command: z.literal("fill"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
 });
 
 export const BrowserAutomationWaitResultSchema = z.object({
   command: z.literal("wait"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   matched: z.enum(["text", "url"]),
 });
 
 export const BrowserAutomationTypeResultSchema = z.object({
   command: z.literal("type"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema.optional(),
 });
 
 export const BrowserAutomationKeypressResultSchema = z.object({
   command: z.literal("keypress"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   key: z.string().min(1),
   ref: BrowserAutomationRefSchema.optional(),
 });
 
 export const BrowserAutomationNavigateResultSchema = z.object({
   command: z.literal("navigate"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   url: z.string().min(1),
 });
 
 export const BrowserAutomationBackResultSchema = z.object({
   command: z.literal("back"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
 });
 
 export const BrowserAutomationForwardResultSchema = z.object({
   command: z.literal("forward"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
 });
 
 export const BrowserAutomationReloadResultSchema = z.object({
   command: z.literal("reload"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
 });
 
 export const BrowserAutomationScreenshotResultSchema = z.object({
   command: z.literal("screenshot"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   mimeType: z.literal("image/png"),
   dataBase64: z.string().min(1),
   width: z.number().int().nonnegative(),
@@ -376,7 +387,7 @@ export const BrowserAutomationScreenshotResultSchema = z.object({
 
 export const BrowserAutomationFullPageScreenshotResultSchema = z.object({
   command: z.literal("full_page_screenshot"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   mimeType: z.literal("image/png"),
   dataBase64: z.string().min(1),
   width: z.number().int().nonnegative(),
@@ -385,14 +396,14 @@ export const BrowserAutomationFullPageScreenshotResultSchema = z.object({
 
 export const BrowserAutomationPdfResultSchema = z.object({
   command: z.literal("pdf"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   mimeType: z.literal("application/pdf"),
   dataBase64: z.string().min(1),
 });
 
 export const BrowserAutomationDownloadResultSchema = z.object({
   command: z.literal("download"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   url: z.string().min(1),
   filePath: z.string().min(1),
   totalBytes: z.number().int().nonnegative().optional(),
@@ -401,46 +412,46 @@ export const BrowserAutomationDownloadResultSchema = z.object({
 
 export const BrowserAutomationUploadResultSchema = z.object({
   command: z.literal("upload"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
   filePaths: z.array(z.string().min(1)).min(1),
 });
 
 export const BrowserAutomationFocusResultSchema = z.object({
   command: z.literal("focus"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
 });
 
 export const BrowserAutomationClearResultSchema = z.object({
   command: z.literal("clear"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
 });
 
 export const BrowserAutomationCheckResultSchema = z.object({
   command: z.literal("check"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
   checked: z.boolean(),
 });
 
 export const BrowserAutomationSelectResultSchema = z.object({
   command: z.literal("select"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
   value: z.string(),
 });
 
 export const BrowserAutomationHoverResultSchema = z.object({
   command: z.literal("hover"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
 });
 
 export const BrowserAutomationDragResultSchema = z.object({
   command: z.literal("drag"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   sourceRef: BrowserAutomationRefSchema,
   targetRef: BrowserAutomationRefSchema,
 });
@@ -465,7 +476,7 @@ export const BrowserAutomationNetworkLogEntrySchema = z.object({
 
 export const BrowserAutomationLogsResultSchema = z.object({
   command: z.literal("logs"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   console: z.array(BrowserAutomationConsoleLogEntrySchema),
   network: z.array(BrowserAutomationNetworkLogEntrySchema),
 });
@@ -487,7 +498,7 @@ export const BrowserAutomationStorageEntrySchema = z.object({
 
 export const BrowserAutomationStorageResultSchema = z.object({
   command: z.literal("storage"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   url: z.string(),
   cookies: z.array(BrowserAutomationCookieEntrySchema),
   localStorage: z.array(BrowserAutomationStorageEntrySchema),
@@ -508,14 +519,14 @@ export const BrowserAutomationGeolocationResultSchema = z.object({
 
 export const BrowserAutomationEnvironmentResultSchema = z.object({
   command: z.literal("environment"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   viewport: BrowserAutomationViewportResultSchema,
   geolocation: BrowserAutomationGeolocationResultSchema.optional(),
 });
 
 export const BrowserAutomationSetBackgroundResultSchema = z.object({
   command: z.literal("set_background"),
-  browserId: z.string().min(1),
+  browserId: BrowserAutomationBrowserIdSchema,
   color: z.string().min(1),
 });
 
@@ -556,15 +567,16 @@ export const BrowserAutomationErrorSchema = z.object({
   retryable: z.boolean().default(false),
 });
 
-export const BrowserAutomationExecuteRequestSchema = z.object({
-  type: z.literal("browser.automation.execute.request"),
-  requestId: z.string().min(1),
-  agentId: z.string().min(1).optional(),
-  cwd: z.string().min(1).optional(),
-  workspaceId: z.string().min(1).optional(),
-  browserId: z.string().min(1).optional(),
-  command: BrowserAutomationCommandSchema,
-});
+export const BrowserAutomationExecuteRequestSchema = z
+  .object({
+    type: z.literal("browser.automation.execute.request"),
+    requestId: z.string().min(1),
+    agentId: z.string().min(1).optional(),
+    cwd: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+    command: BrowserAutomationCommandSchema,
+  })
+  .strict();
 
 export const BrowserAutomationExecuteResponseSchema = z.object({
   type: z.literal("browser.automation.execute.response"),

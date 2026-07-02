@@ -14,9 +14,7 @@ import {
   listRegisteredPaseoBrowserIds,
   listRegisteredPaseoBrowserIdsForWorkspace,
   getPaseoBrowserWebContents,
-  getWorkspaceActivePaseoBrowserWebContents,
   getWorkspaceActivePaseoBrowserId,
-  getAgentActivePaseoBrowserId,
   getPaseoBrowserWorkspaceId,
 } from "../browser-webviews/index.js";
 
@@ -43,7 +41,10 @@ function adaptWebContents(contents: WebContents): TabContents {
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    capturePage: () => contents.capturePage(),
+    capturePage: (options) => contents.capturePage(undefined, options),
+    invalidate: () => contents.invalidate(),
+    isBackgroundThrottlingAllowed: () => contents.getBackgroundThrottling(),
+    setBackgroundThrottling: (allowed) => contents.setBackgroundThrottling(allowed),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contents.id) ?? [],
     getCookies: async (url: string) =>
       (await contents.session.cookies.get({ url })).map(normalizeCookie),
@@ -146,12 +147,7 @@ function createRegistry(): BrowserRegistry {
       return contents ? adaptWebContents(contents) : null;
     },
     getBrowserWorkspaceId: getPaseoBrowserWorkspaceId,
-    getWorkspaceActiveTabContents(workspaceId: string): TabContents | null {
-      const contents = getWorkspaceActivePaseoBrowserWebContents(workspaceId);
-      return contents ? adaptWebContents(contents) : null;
-    },
     getWorkspaceActiveBrowserId: getWorkspaceActivePaseoBrowserId,
-    getAgentActiveBrowserId: getAgentActivePaseoBrowserId,
   };
 }
 

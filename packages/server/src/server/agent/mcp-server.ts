@@ -5,7 +5,6 @@ import type {
   ServerNotification,
   ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
 
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
 import type { PaseoToolResult } from "./tools/types.js";
@@ -13,39 +12,6 @@ import type { PaseoToolResult } from "./tools/types.js";
 export type AgentMcpServerOptions = PaseoToolHostDependencies;
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
-
-function isZodSchema(value: unknown): value is z.ZodType {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { safeParseAsync?: unknown }).safeParseAsync === "function"
-  );
-}
-
-function relaxMcpOutputSchema(outputSchema: unknown): unknown {
-  if (!outputSchema) {
-    return outputSchema;
-  }
-
-  if (isZodSchema(outputSchema)) {
-    return outputSchema instanceof z.ZodObject ? outputSchema.passthrough() : outputSchema;
-  }
-
-  return z.object(outputSchema as z.ZodRawShape).passthrough();
-}
-
-function relaxMcpToolOutputSchema<TConfig extends { outputSchema?: unknown }>(
-  config: TConfig,
-): TConfig {
-  if (config.outputSchema === undefined) {
-    return config;
-  }
-
-  return {
-    ...config,
-    outputSchema: relaxMcpOutputSchema(config.outputSchema),
-  } as TConfig;
-}
 
 function formatStructuredContentForModel(structuredContent: unknown): string {
   if (
@@ -115,12 +81,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   for (const tool of catalog.tools.values()) {
     server.registerTool(
       tool.name,
-      relaxMcpToolOutputSchema({
+      {
         title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
         outputSchema: tool.outputSchema,
-      }),
+      },
       async (args: unknown, context?: McpToolContext) =>
         toMcpToolResult(await catalog.executeTool(tool.name, args, { signal: context?.signal })),
     );

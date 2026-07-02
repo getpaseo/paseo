@@ -19,7 +19,6 @@ export interface BrowserToolsExecuteInput {
   agentId?: string;
   cwd?: string;
   workspaceId?: string;
-  browserId?: string;
   requestId?: string;
   timeoutMs?: number;
 }
@@ -114,7 +113,6 @@ export class BrowserToolsBroker {
       ...(input.agentId ? { agentId: input.agentId } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-      ...(input.browserId ? { browserId: input.browserId } : {}),
       command: input.command,
     });
 

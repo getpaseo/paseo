@@ -111,8 +111,6 @@ async function handleBrowserAutomationRequest(params: {
     return;
   }
 
-  await rememberAgentBrowserTarget({ request, browserHost });
-
   if (!executeAutomationCommand) {
     client.sendBrowserAutomationExecuteResponse({
       type: "browser.automation.execute.response",
@@ -159,11 +157,11 @@ async function openBrowserTabForRequest(params: {
     BrowserAutomationExecuteRequest["command"],
     { command: "new_tab" }
   >;
-  const workspaceId = request.workspaceId ?? command.args.workspaceId;
+  const workspaceId = request.workspaceId;
   if (!serverId || !workspaceId) {
     return browserAutomationFailure({
       requestId: request.requestId,
-      code: "browser_no_tab",
+      code: "browser_unsupported",
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
@@ -174,19 +172,17 @@ async function openBrowserTabForRequest(params: {
   if (!workspaceKey) {
     return browserAutomationFailure({
       requestId: request.requestId,
-      code: "browser_no_tab",
+      code: "browser_unsupported",
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTabInBackground(workspaceKey, {
+  useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, {
     kind: "browser",
     browserId,
   });
 
   await browserHost?.registerWorkspaceBrowser?.({ browserId, workspaceId });
-  if (request.agentId) {
-    await browserHost?.setAgentActiveBrowser?.({ agentId: request.agentId, browserId });
-  }
+  await browserHost?.setWorkspaceActiveBrowser?.({ browserId, workspaceId });
 
   if (browserHost?.executeAutomationCommand) {
     ensureResidentBrowserWebview({ browserId, url: normalizedUrl });
@@ -235,7 +231,7 @@ async function waitForBrowserRegistration(params: {
       agentId: params.request.agentId,
       cwd: params.request.cwd,
       workspaceId: params.workspaceId,
-      command: { command: "list_tabs", args: { workspaceId: params.workspaceId } },
+      command: { command: "list_tabs", args: {} },
     });
     if (payload.ok && payload.result.command === "list_tabs") {
       if (payload.result.tabs.some((tab) => tab.browserId === params.browserId)) {
@@ -249,28 +245,6 @@ async function waitForBrowserRegistration(params: {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function rememberAgentBrowserTarget(input: {
-  request: BrowserAutomationExecuteRequest;
-  browserHost: DesktopHostBridge["browser"] | undefined;
-}): Promise<void> {
-  if (!input.request.agentId) {
-    return;
-  }
-  const browserId = readRequestBrowserId(input.request);
-  if (!browserId) {
-    return;
-  }
-  await input.browserHost?.setAgentActiveBrowser?.({ agentId: input.request.agentId, browserId });
-}
-
-function readRequestBrowserId(request: BrowserAutomationExecuteRequest): string | null {
-  if (request.browserId) {
-    return request.browserId;
-  }
-  const args = request.command.args as { browserId?: unknown };
-  return typeof args.browserId === "string" && args.browserId.length > 0 ? args.browserId : null;
 }
 
 function normalizeBridgePayload(

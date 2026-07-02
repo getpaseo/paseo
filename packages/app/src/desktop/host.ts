@@ -132,7 +132,6 @@ export interface DesktopBrowserBridge {
     workspaceId: string;
     browserId: string | null;
   }) => Promise<void>;
-  setAgentActiveBrowser?: (input: { agentId: string; browserId: string | null }) => Promise<void>;
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearPartition?: (browserId: string) => Promise<void>;
   executeAutomationCommand?: (

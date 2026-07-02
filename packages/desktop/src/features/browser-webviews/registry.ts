@@ -8,7 +8,6 @@ export class PaseoBrowserWebviewRegistry {
   private readonly webContentsIdsByBrowserId = new Map<string, number>();
   private readonly workspaceIdsByBrowserId = new Map<string, string>();
   private readonly activeBrowserIdsByWorkspaceId = new Map<string, string>();
-  private readonly activeBrowserIdsByAgentId = new Map<string, string>();
 
   public registerWebContents(input: { webContentsId: number; browserId: string }): void {
     const previousWebContentsId = this.webContentsIdsByBrowserId.get(input.browserId) ?? null;
@@ -80,28 +79,10 @@ export class PaseoBrowserWebviewRegistry {
     return Array.from(this.activeBrowserIdsByWorkspaceId.values()).at(-1) ?? null;
   }
 
-  public setAgentActiveBrowser(input: { agentId: string; browserId: string | null }): void {
-    if (input.browserId) {
-      this.activeBrowserIdsByAgentId.delete(input.agentId);
-      this.activeBrowserIdsByAgentId.set(input.agentId, input.browserId);
-      return;
-    }
-    this.activeBrowserIdsByAgentId.delete(input.agentId);
-  }
-
-  public getAgentActiveBrowserId(agentId: string): string | null {
-    return this.activeBrowserIdsByAgentId.get(agentId) ?? null;
-  }
-
   private deleteActiveBrowserReferences(browserId: string): void {
     for (const [workspaceId, activeBrowserId] of this.activeBrowserIdsByWorkspaceId) {
       if (activeBrowserId === browserId) {
         this.activeBrowserIdsByWorkspaceId.delete(workspaceId);
-      }
-    }
-    for (const [agentId, activeBrowserId] of this.activeBrowserIdsByAgentId) {
-      if (activeBrowserId === browserId) {
-        this.activeBrowserIdsByAgentId.delete(agentId);
       }
     }
   }
