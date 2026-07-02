@@ -2009,7 +2009,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       const expiresAt = buildScheduleExpiry(expiresIn);
-      const schedule = await scheduleService.create({
+      const schedule = await scheduleService.createOrReplace({
         prompt: prompt.trim(),
         cadence: buildCronScheduleCadence({
           cron,
@@ -2058,7 +2058,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       resolveCallerAgent();
 
       const expiresAt = buildScheduleExpiry(expiresIn);
-      const schedule = await scheduleService.create({
+      const schedule = await scheduleService.createOrReplace({
         prompt: prompt.trim(),
         cadence: buildCronScheduleCadence({
           cron,

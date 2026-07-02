@@ -4,7 +4,6 @@ import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { isWeb } from "@/constants/platform";
 import {
   describeCron,
   everyMsToParts,
@@ -200,7 +199,6 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
               value={intervalUnit}
               onValueChange={handleUnitChange}
               options={UNIT_OPTIONS}
-              style={styles.unitControl}
               testID="cadence-interval-unit"
             />
           </View>
@@ -283,8 +281,6 @@ function CronPresetChip({
   );
 }
 
-const MONOSPACE_FONT = isWeb ? "ui-monospace, SFMono-Regular, Menlo, monospace" : "Menlo";
-
 const styles = StyleSheet.create((theme) => ({
   container: {
     gap: theme.spacing[3],
@@ -308,15 +304,10 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     fontSize: theme.fontSize.base,
   },
-  // Both cadence segmented controls hug their options and stand at the form's
-  // field height, so the interval row reads as input + toggle rather than a
-  // full-width track with the controls floating inside it.
+  // The mode toggle hugs its options at the left rather than stretching to a
+  // full-width track; the interval row then reads as input + toggle.
   modeControl: {
     alignSelf: "flex-start",
-    height: 44,
-  },
-  unitControl: {
-    height: 44,
   },
   presetRow: {
     flexDirection: "row",
@@ -337,9 +328,11 @@ const styles = StyleSheet.create((theme) => ({
   chipHover: {
     backgroundColor: theme.colors.surface3,
   },
+  // Selected preset reads as a chosen surface, not a second accent fill
+  // competing with the sheet's primary CTA.
   chipSelected: {
-    backgroundColor: theme.colors.accent,
-    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.surface3,
+    borderColor: theme.colors.borderAccent,
   },
   chipLabel: {
     fontSize: theme.fontSize.xs,
@@ -347,7 +340,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   chipLabelSelected: {
-    color: theme.colors.accentForeground,
+    color: theme.colors.foreground,
   },
   cronInput: {
     minHeight: 44,
@@ -358,7 +351,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     fontSize: theme.fontSize.sm,
-    fontFamily: MONOSPACE_FONT,
+    fontFamily: theme.fontFamily.mono,
   },
   preview: {
     fontSize: theme.fontSize.xs,
@@ -370,6 +363,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   error: {
     fontSize: theme.fontSize.xs,
-    color: theme.colors.destructive,
+    color: theme.colors.palette.red[300],
   },
 }));

@@ -3,44 +3,45 @@ import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ScheduleRow, type ScheduleRowPending } from "@/components/schedules/schedule-row";
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
+import type { AggregatedSchedule } from "@/hooks/use-schedules";
+import type { ScheduleDerivedState } from "@/schedules/schedule-derivation";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { resolveScheduleTitle } from "@/utils/schedule-format";
-import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
+
+/** A schedule plus the client-derived fields the row renders. */
+export interface ScheduleRowView {
+  schedule: AggregatedSchedule;
+  targetLabel: string;
+  provider: string | null;
+  state: ScheduleDerivedState;
+}
 
 interface SchedulesTableProps {
-  serverId: string;
-  schedules: ScheduleSummary[];
+  rows: ScheduleRowView[];
   /**
    * The form sheet is owned by the screen (it serves both create and edit and
    * shares the header's "New schedule" button), so the table delegates edit
    * upward rather than mounting a second sheet here.
    */
-  onEditSchedule: (schedule: ScheduleSummary) => void;
+  onEditSchedule: (schedule: AggregatedSchedule) => void;
 }
 
 /**
- * The schedules list: a single settings-style card of rows in a centered,
- * width-constrained reading column, matching the projects list. Owns row-level
- * actions (pause/resume/run/delete via the mutations hook + a destructive
- * confirm for delete) and delegates editing to the parent.
+ * The schedules list: a single settings-style card of rows across every
+ * connected host, in a centered, width-constrained reading column matching the
+ * projects list. Rows own their host-scoped mutations (pause/resume/run/delete
+ * via the mutations hook + a destructive confirm) and delegate editing upward.
  */
-export function SchedulesTable({
-  serverId,
-  schedules,
-  onEditSchedule,
-}: SchedulesTableProps): ReactElement {
-  const mutations = useScheduleMutations({ serverId });
-
+export function SchedulesTable({ rows, onEditSchedule }: SchedulesTableProps): ReactElement {
   return (
     <View style={styles.listContent} testID="schedules-table">
       <View style={settingsStyles.card}>
-        {schedules.map((schedule, index) => (
+        {rows.map((row, index) => (
           <SchedulesTableRow
-            key={schedule.id}
-            schedule={schedule}
+            key={`${row.schedule.serverId}:${row.schedule.id}`}
+            row={row}
             isFirst={index === 0}
-            mutations={mutations}
             onEditSchedule={onEditSchedule}
           />
         ))}
@@ -50,28 +51,26 @@ export function SchedulesTable({
 }
 
 // ---------------------------------------------------------------------------
-// Per-row wrapper owns local in-flight state and binds the table's mutation
-// callbacks to this schedule. Local state keeps pending precise to the acting
-// row even when several rows are acted on at once (the mutations hook exposes
-// only a single global pending flag per action).
+// Per-row wrapper owns local in-flight state and binds mutations to this
+// schedule's host. Local state keeps pending precise to the acting row even
+// when several rows are acted on at once (the mutations hook exposes only a
+// single global pending flag per action).
 // ---------------------------------------------------------------------------
-
-type ScheduleMutations = ReturnType<typeof useScheduleMutations>;
 
 const NO_PENDING: ScheduleRowPending = {};
 
 function SchedulesTableRow({
-  schedule,
+  row,
   isFirst,
-  mutations,
   onEditSchedule,
 }: {
-  schedule: ScheduleSummary;
+  row: ScheduleRowView;
   isFirst: boolean;
-  mutations: ScheduleMutations;
-  onEditSchedule: (schedule: ScheduleSummary) => void;
+  onEditSchedule: (schedule: AggregatedSchedule) => void;
 }): ReactElement {
-  const { id } = schedule;
+  const { schedule } = row;
+  const { id, serverId } = schedule;
+  const mutations = useScheduleMutations({ serverId });
   const [pending, setPending] = useState<ScheduleRowPending>(NO_PENDING);
 
   const runAction = useCallback(
@@ -127,6 +126,9 @@ function SchedulesTableRow({
   return (
     <ScheduleRow
       schedule={schedule}
+      targetLabel={row.targetLabel}
+      provider={row.provider}
+      state={row.state}
       isFirst={isFirst}
       pending={pending}
       onEdit={handleEdit}

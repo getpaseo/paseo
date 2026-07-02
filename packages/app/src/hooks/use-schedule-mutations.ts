@@ -13,7 +13,10 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { schedulesQueryBaseKey } from "@/hooks/use-schedules";
-import type { FetchAggregatedSchedulesResult } from "@/schedules/aggregated-schedules";
+import type {
+  AggregatedSchedule,
+  FetchAggregatedSchedulesResult,
+} from "@/schedules/aggregated-schedules";
 import { useSessionStore } from "@/stores/session-store";
 
 export type CreateScheduleInput = Omit<CreateScheduleOptions, "requestId">;
@@ -60,11 +63,9 @@ function restoreSchedules(queryClient: QueryClient, snapshot: ScheduleListSnapsh
   }
 }
 
-function updateScheduleSections(
+function updateSchedulesData(
   queryClient: QueryClient,
-  updateSection: (
-    section: FetchAggregatedSchedulesResult["sections"][number],
-  ) => FetchAggregatedSchedulesResult["sections"][number],
+  updateSchedules: (schedules: AggregatedSchedule[]) => AggregatedSchedule[],
 ): void {
   queryClient.setQueriesData<FetchAggregatedSchedulesResult>(
     { queryKey: schedulesQueryBaseKey },
@@ -72,7 +73,7 @@ function updateScheduleSections(
       if (!current) {
         return current;
       }
-      return { sections: current.sections.map(updateSection) };
+      return { ...current, schedules: updateSchedules(current.schedules) };
     },
   );
 }
@@ -84,26 +85,18 @@ function optimisticallySetStatus(
   status: ScheduleSummary["status"],
 ): void {
   const pausedAt = status === "paused" ? new Date().toISOString() : null;
-  updateScheduleSections(queryClient, (section) =>
-    section.serverId === serverId
-      ? {
-          ...section,
-          schedules: section.schedules.map((schedule) =>
-            schedule.id === id ? { ...schedule, status, pausedAt } : schedule,
-          ),
-        }
-      : section,
+  updateSchedulesData(queryClient, (schedules) =>
+    schedules.map((schedule) =>
+      schedule.serverId === serverId && schedule.id === id
+        ? { ...schedule, status, pausedAt }
+        : schedule,
+    ),
   );
 }
 
 function optimisticallyRemove(queryClient: QueryClient, serverId: string, id: string): void {
-  updateScheduleSections(queryClient, (section) =>
-    section.serverId === serverId
-      ? {
-          ...section,
-          schedules: section.schedules.filter((schedule) => schedule.id !== id),
-        }
-      : section,
+  updateSchedulesData(queryClient, (schedules) =>
+    schedules.filter((schedule) => !(schedule.serverId === serverId && schedule.id === id)),
   );
 }
 

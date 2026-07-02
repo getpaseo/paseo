@@ -24,7 +24,13 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { CadenceEditor } from "@/components/schedules/cadence-editor";
 import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import { useAgentFormState, type FormInitialValues } from "@/hooks/use-agent-form-state";
+import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
+import {
+  buildScheduleProjectTargets,
+  PROJECT_OPTION_PREFIX,
+  type ScheduleProjectTarget,
+} from "@/schedules/schedule-project-targets";
 import { validateCron } from "@/utils/schedule-format";
 import { toErrorMessage } from "@/utils/error-messages";
 import { shortenPath } from "@/utils/shorten-path";
@@ -32,7 +38,6 @@ import type { ProjectSummary } from "@/utils/projects";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 
 const DEFAULT_CADENCE: ScheduleCadence = { type: "every", everyMs: 60 * 60 * 1000 };
-const PROJECT_OPTION_PREFIX = "project:";
 
 export interface ScheduleFormSheetProps {
   serverId?: string;
@@ -40,15 +45,6 @@ export interface ScheduleFormSheetProps {
   onClose: () => void;
   mode: "create" | "edit";
   schedule?: ScheduleSummary;
-}
-
-interface ScheduleProjectTarget {
-  optionId: string;
-  serverId: string;
-  serverName: string;
-  projectKey: string;
-  projectName: string;
-  cwd: string;
 }
 
 interface ScheduleProjectOptions {
@@ -79,44 +75,19 @@ function buildInitialValues(schedule: ScheduleSummary | undefined): FormInitialV
   };
 }
 
-function buildProjectOptionId(serverId: string, projectKey: string): string {
-  return `${PROJECT_OPTION_PREFIX}${serverId}:${projectKey}`;
-}
-
 function buildProjectOptionTestId(optionId: string): string {
   const targetKey = optionId.slice(PROJECT_OPTION_PREFIX.length).replace(/^[^:]+:/, "");
   return `schedule-project-option-${targetKey}`;
 }
 
 function buildScheduleProjectOptions(projects: readonly ProjectSummary[]): ScheduleProjectOptions {
-  const targets: ScheduleProjectTarget[] = [];
-  const targetByOptionId = new Map<string, ScheduleProjectTarget>();
-  const options: ComboboxOption[] = [];
-
-  for (const project of projects) {
-    for (const host of project.hosts) {
-      const cwd = host.repoRoot.trim();
-      if (!host.isOnline || !cwd) {
-        continue;
-      }
-      const target: ScheduleProjectTarget = {
-        optionId: buildProjectOptionId(host.serverId, project.projectKey),
-        serverId: host.serverId,
-        serverName: host.serverName,
-        projectKey: project.projectKey,
-        projectName: project.projectName,
-        cwd,
-      };
-      targets.push(target);
-      targetByOptionId.set(target.optionId, target);
-      options.push({
-        id: target.optionId,
-        label: target.projectName,
-        description: `${target.serverName} - ${shortenPath(cwd)}`,
-      });
-    }
-  }
-
+  const targets = buildScheduleProjectTargets(projects);
+  const targetByOptionId = new Map(targets.map((target) => [target.optionId, target]));
+  const options: ComboboxOption[] = targets.map((target) => ({
+    id: target.optionId,
+    label: target.projectName,
+    description: `${target.serverName} - ${shortenPath(target.cwd)}`,
+  }));
   return { targets, options, targetByOptionId };
 }
 
@@ -153,6 +124,35 @@ function isSelectedModelValidForProviders(input: {
   return provider.modelSelection.rows.some((row) => row.modelId === selectedModel);
 }
 
+function parseMaxRuns(raw: string): number | null {
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function canSubmitScheduleForm(input: {
+  isAgentTarget: boolean;
+  isEdit: boolean;
+  promptTrimmed: string;
+  cadenceError: string | null;
+  isSubmitting: boolean;
+  selectedModelIsValid: boolean;
+  hasWorkingDir: boolean;
+  hasSelectedProject: boolean;
+}): boolean {
+  if (input.promptTrimmed.length === 0 || input.cadenceError !== null || input.isSubmitting) {
+    return false;
+  }
+  // Agent targets only edit name/prompt/cadence. New-agent edit accepts any
+  // non-empty stored cwd; create requires a matched project.
+  if (input.isAgentTarget) {
+    return true;
+  }
+  if (!input.selectedModelIsValid) {
+    return false;
+  }
+  return input.isEdit ? input.hasWorkingDir : input.hasSelectedProject;
+}
+
 export function ScheduleFormSheet({
   serverId,
   visible,
@@ -161,9 +161,25 @@ export function ScheduleFormSheet({
   schedule,
 }: ScheduleFormSheetProps): ReactElement {
   const isEdit = mode === "edit";
-  const editConfig = newAgentConfig(schedule);
+  // Agent-targeted schedules can only update name/prompt/cadence/maxRuns
+  // (service.ts rejects newAgentConfig for them), so the form drops the
+  // project/model/mode pickers and shows the target agent read-only instead.
+  const isAgentTarget = isEdit && schedule?.target.type === "agent";
   const { projects } = useProjects();
+  const { agents } = useAggregatedAgents({ includeArchived: true });
   const projectOptions = useMemo(() => buildScheduleProjectOptions(projects), [projects]);
+
+  const agentTargetLabel = useMemo(() => {
+    if (!schedule || schedule.target.type !== "agent") {
+      return null;
+    }
+    const { agentId } = schedule.target;
+    const agent = agents.find((entry) => entry.serverId === serverId && entry.id === agentId);
+    if (!agent) {
+      return "Agent unavailable";
+    }
+    return agent.title?.trim() || "Untitled agent";
+  }, [agents, schedule, serverId]);
 
   const onlineServerIds = useMemo(
     () => Array.from(new Set(projectOptions.targets.map((target) => target.serverId))),
@@ -197,7 +213,9 @@ export function ScheduleFormSheet({
     setProviderAndModelFromUser,
     clearProviderSelectionFromUser,
     setModeFromUser,
+    setSelectedServerId,
     setSelectedServerIdFromUser,
+    setWorkingDir,
     setWorkingDirFromUser,
     modeOptions,
     modelSelectorProviders,
@@ -219,7 +237,10 @@ export function ScheduleFormSheet({
 
   const handleSelectProject = useCallback(
     (target: ScheduleProjectTarget) => {
-      if (selectedProjectTarget && selectedProjectTarget.serverId !== target.serverId) {
+      // Compare against the current server, not the matched target: an unmatched
+      // stored cwd has no target but still lives on a host, and switching hosts
+      // must still clear a provider/model that may not exist on the new one.
+      if (selectedServerId && selectedServerId !== target.serverId) {
         clearProviderSelectionFromUser();
       }
       setSelectedServerIdFromUser(target.serverId);
@@ -227,7 +248,7 @@ export function ScheduleFormSheet({
     },
     [
       clearProviderSelectionFromUser,
-      selectedProjectTarget,
+      selectedServerId,
       setSelectedServerIdFromUser,
       setWorkingDirFromUser,
     ],
@@ -293,89 +314,126 @@ export function ScheduleFormSheet({
       setCadence(schedule?.cadence ?? DEFAULT_CADENCE);
       setSubmitError(null);
       setFieldResetKey((key) => key + 1);
+      // The sheet stays mounted, and the form reducer's reset-on-close only
+      // clears user-modified flags — not the picker values — so a create opened
+      // after an edit would inherit that schedule's server/cwd (including a
+      // stale ghost path). Clear them so create always starts fresh; provider
+      // and model re-resolve from preferences.
+      if (!isEdit) {
+        setSelectedServerId(null);
+        setWorkingDir("");
+      }
     }
     wasVisibleRef.current = visible;
-  }, [visible, schedule]);
+  }, [visible, schedule, isEdit, setSelectedServerId, setWorkingDir]);
 
   const promptTrimmed = prompt.trim();
+  const trimmedWorkingDir = workingDir.trim();
   const cadenceError = cadence.type === "cron" ? validateCron(cadence.expression) : null;
   const selectedModelIsValid = isSelectedModelValidForProviders({
     providers: modelSelectorProviders,
     selectedProvider,
     selectedModel,
   });
-  const canSubmit =
-    promptTrimmed.length > 0 &&
-    selectedModelIsValid &&
-    Boolean(selectedProjectTarget) &&
-    cadenceError === null &&
-    !isSubmitting;
+  const canSubmit = canSubmitScheduleForm({
+    isAgentTarget,
+    isEdit,
+    promptTrimmed,
+    cadenceError,
+    isSubmitting,
+    selectedModelIsValid,
+    hasWorkingDir: trimmedWorkingDir.length > 0,
+    hasSelectedProject: Boolean(selectedProjectTarget),
+  });
 
-  const handleSubmit = useCallback(async () => {
-    if (!selectedProvider || !selectedProjectTarget || !promptTrimmed) {
-      return;
+  // Agent target: the update RPC only accepts name/prompt/cadence/maxRuns.
+  const submitAgentTarget = useCallback(async (): Promise<boolean> => {
+    if (!schedule) {
+      return false;
     }
-    setSubmitError(null);
-    try {
-      await persistFormPreferences();
-      const parsedMaxRuns = Number.parseInt(maxRuns, 10);
-      const maxRunsValue =
-        Number.isFinite(parsedMaxRuns) && parsedMaxRuns > 0 ? parsedMaxRuns : null;
+    await updateSchedule({
+      id: schedule.id,
+      name: name.trim() || null,
+      prompt: promptTrimmed,
+      cadence,
+      maxRuns: parseMaxRuns(maxRuns),
+    });
+    return true;
+  }, [cadence, maxRuns, name, promptTrimmed, schedule, updateSchedule]);
 
-      if (isEdit && schedule) {
-        await updateSchedule({
-          id: schedule.id,
-          name: name.trim() || null,
-          prompt: promptTrimmed,
-          cadence,
-          newAgentConfig: {
-            provider: selectedProvider,
-            model: selectedModel || null,
-            modeId: selectedMode || null,
-            cwd: selectedProjectTarget.cwd,
-          },
-          maxRuns: maxRunsValue,
-        });
-      } else {
-        await createSchedule({
-          prompt: promptTrimmed,
-          name: name.trim() || undefined,
-          cadence,
-          target: {
-            type: "new-agent",
-            config: {
-              provider: selectedProvider,
-              cwd: selectedProjectTarget.cwd,
-              model: selectedModel || undefined,
-              modeId: selectedMode || undefined,
-              thinkingOptionId: selectedThinkingOptionId || undefined,
-              title: name.trim() || undefined,
-            },
-          },
-          ...(maxRunsValue != null ? { maxRuns: maxRunsValue } : {}),
-        });
-      }
-      onClose();
-    } catch (error) {
-      setSubmitError(toErrorMessage(error));
+  // New-agent target: submit the current working directory. On edit an untouched
+  // picker leaves this as the stored cwd, so it round-trips unchanged.
+  const submitNewAgent = useCallback(async (): Promise<boolean> => {
+    if (!selectedProvider || !trimmedWorkingDir) {
+      return false;
     }
+    await persistFormPreferences();
+    const maxRunsValue = parseMaxRuns(maxRuns);
+    if (isEdit && schedule) {
+      await updateSchedule({
+        id: schedule.id,
+        name: name.trim() || null,
+        prompt: promptTrimmed,
+        cadence,
+        newAgentConfig: {
+          provider: selectedProvider,
+          model: selectedModel || null,
+          modeId: selectedMode || null,
+          cwd: trimmedWorkingDir,
+        },
+        maxRuns: maxRunsValue,
+      });
+      return true;
+    }
+    await createSchedule({
+      prompt: promptTrimmed,
+      name: name.trim() || undefined,
+      cadence,
+      target: {
+        type: "new-agent",
+        config: {
+          provider: selectedProvider,
+          cwd: trimmedWorkingDir,
+          model: selectedModel || undefined,
+          modeId: selectedMode || undefined,
+          thinkingOptionId: selectedThinkingOptionId || undefined,
+          title: name.trim() || undefined,
+        },
+      },
+      ...(maxRunsValue != null ? { maxRuns: maxRunsValue } : {}),
+    });
+    return true;
   }, [
     cadence,
     createSchedule,
     isEdit,
     maxRuns,
     name,
-    onClose,
     persistFormPreferences,
     promptTrimmed,
     schedule,
     selectedMode,
     selectedModel,
-    selectedProjectTarget,
     selectedProvider,
     selectedThinkingOptionId,
+    trimmedWorkingDir,
     updateSchedule,
   ]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!promptTrimmed) {
+      return;
+    }
+    setSubmitError(null);
+    try {
+      const submitted = isAgentTarget ? await submitAgentTarget() : await submitNewAgent();
+      if (submitted) {
+        onClose();
+      }
+    } catch (error) {
+      setSubmitError(toErrorMessage(error));
+    }
+  }, [isAgentTarget, onClose, promptTrimmed, submitAgentTarget, submitNewAgent]);
 
   const handleSubmitPress = useCallback(() => {
     void handleSubmit();
@@ -454,34 +512,53 @@ export function ScheduleFormSheet({
         />
       </View>
 
-      <View style={styles.field}>
-        <Text style={styles.label}>Project</Text>
-        <ProjectField
-          options={projectOptions.options}
-          targetByOptionId={projectOptions.targetByOptionId}
-          value={selectedProjectOptionId}
-          selectedTarget={selectedProjectTarget}
-          onSelect={handleSelectProject}
-        />
-      </View>
+      {isAgentTarget ? (
+        <View style={styles.field}>
+          <Text style={styles.label}>Target</Text>
+          <View style={styles.readonlyField} testID="schedule-agent-target">
+            <Text style={styles.selectTriggerText} numberOfLines={1}>
+              {agentTargetLabel}
+            </Text>
+          </View>
+          <Text style={styles.hint}>Runs against this existing agent.</Text>
+        </View>
+      ) : (
+        <>
+          <View style={styles.field}>
+            <Text style={styles.label}>Project</Text>
+            <ProjectField
+              options={projectOptions.options}
+              targetByOptionId={projectOptions.targetByOptionId}
+              value={selectedProjectOptionId}
+              selectedTarget={selectedProjectTarget}
+              fallbackCwd={workingDir}
+              onSelect={handleSelectProject}
+            />
+          </View>
 
-      <View style={styles.field}>
-        <Text style={styles.label}>Model</Text>
-        <CombinedModelSelector
-          providers={modelSelectorProviders}
-          selectedProvider={selectedProvider ?? ""}
-          selectedModel={selectedModel}
-          onSelect={setProviderAndModelFromUser}
-          isLoading={isAllModelsLoading}
-          renderTrigger={renderModelTrigger}
-          triggerFill
-          serverId={mutationServerId}
-        />
-      </View>
+          <View style={styles.field}>
+            <Text style={styles.label}>Model</Text>
+            <CombinedModelSelector
+              providers={modelSelectorProviders}
+              selectedProvider={selectedProvider ?? ""}
+              selectedModel={selectedModel}
+              onSelect={setProviderAndModelFromUser}
+              isLoading={isAllModelsLoading}
+              renderTrigger={renderModelTrigger}
+              triggerFill
+              serverId={mutationServerId}
+            />
+          </View>
 
-      {modeOptions.length > 0 ? (
-        <ModeField options={modeOptions} selectedMode={selectedMode} onSelect={setModeFromUser} />
-      ) : null}
+          {modeOptions.length > 0 ? (
+            <ModeField
+              options={modeOptions}
+              selectedMode={selectedMode}
+              onSelect={setModeFromUser}
+            />
+          ) : null}
+        </>
+      )}
 
       <View style={styles.field}>
         <Text style={styles.label}>Cadence</Text>
@@ -503,10 +580,6 @@ export function ScheduleFormSheet({
         />
         <Text style={styles.hint}>Leave blank to run indefinitely</Text>
       </View>
-
-      {editConfig === null && isEdit ? (
-        <Text style={styles.hint}>This schedule does not target a new agent.</Text>
-      ) : null}
 
       {submitError ? <Text style={styles.error}>{submitError}</Text> : null}
     </AdaptiveModalSheet>
@@ -594,12 +667,15 @@ function ProjectField({
   targetByOptionId,
   value,
   selectedTarget,
+  fallbackCwd,
   onSelect,
 }: {
   options: ComboboxOption[];
   targetByOptionId: Map<string, ScheduleProjectTarget>;
   value: string;
   selectedTarget: ScheduleProjectTarget | null;
+  /** Stored cwd for an edited schedule whose path matches no known project. */
+  fallbackCwd: string;
   onSelect: (target: ScheduleProjectTarget) => void;
 }): ReactElement {
   const anchorRef = useRef<View>(null);
@@ -629,7 +705,13 @@ function ProjectField({
     [open],
   );
 
-  const displayValue = selectedTarget?.projectName ?? "Select project";
+  // Honest hydration: a stored cwd that matches no known project shows the
+  // shortened path itself (not the blank "Select project"), and stays put until
+  // the user deliberately picks a project.
+  const storedPath = fallbackCwd.trim();
+  const displayValue =
+    selectedTarget?.projectName ?? (storedPath ? shortenPath(storedPath) : "Select project");
+  const isPlaceholder = !selectedTarget && !storedPath;
   const description = selectedTarget
     ? `${selectedTarget.serverName} - ${shortenPath(selectedTarget.cwd)}`
     : null;
@@ -662,7 +744,7 @@ function ProjectField({
           testID="schedule-project-trigger"
         >
           <Text
-            style={selectedTarget ? styles.selectTriggerText : styles.selectTriggerPlaceholder}
+            style={isPlaceholder ? styles.selectTriggerPlaceholder : styles.selectTriggerText}
             numberOfLines={1}
           >
             {displayValue}
@@ -809,8 +891,19 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   error: {
-    color: theme.colors.destructive,
+    color: theme.colors.palette.red[300],
     fontSize: theme.fontSize.xs,
+  },
+  readonlyField: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    minHeight: 44,
   },
   selectTrigger: {
     flexDirection: "row",

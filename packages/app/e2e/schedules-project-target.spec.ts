@@ -5,7 +5,6 @@ import {
   buildFakeScheduleHostWorkspace,
   installFakeScheduleHost,
 } from "./helpers/schedule-fake-host";
-import { getServerId } from "./helpers/server-id";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 import { buildSchedulesRoute } from "../src/utils/host-routes";
@@ -82,9 +81,9 @@ test.describe("Schedules project target", () => {
     await page.getByRole("button", { name: "Schedules" }).click();
     await expect(page).toHaveURL(/\/schedules$/);
     await expect(page).not.toHaveURL(/\/h\//);
-    await expect(page.getByTestId(`schedules-section-${getServerId()}`)).toBeVisible();
+    await expect(page.getByTestId("schedules-empty")).toBeVisible();
 
-    await page.getByRole("button", { name: "New schedule" }).click();
+    await page.getByTestId("schedules-new").click();
     await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("schedule-cwd-trigger")).toHaveCount(0);
 
@@ -127,10 +126,8 @@ test.describe("Schedules project target", () => {
       label: "Fake host",
       port: fakePort,
     });
-    await expect(page.getByTestId(`schedules-section-${fakeHost.serverId}`)).toBeVisible({
-      timeout: 30_000,
-    });
-    await page.getByRole("button", { name: "New schedule" }).click();
+    await expect(page.getByTestId("schedules-empty")).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId("schedules-new").click();
     await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole("button", { name: /select project/i }).click();

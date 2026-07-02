@@ -15,7 +15,9 @@ import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
+import type { ScheduleDerivedState } from "@/schedules/schedule-derivation";
 import { formatCadence, formatNextRun, resolveScheduleTitle } from "@/utils/schedule-format";
+import { formatTimeAgo } from "@/utils/time";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 // Themed lucide wrappers — module-scope so only the icon re-renders on theme
@@ -53,43 +55,50 @@ export interface ScheduleRowActions {
 
 interface ScheduleRowProps extends ScheduleRowActions {
   schedule: ScheduleSummary;
+  /** Client-derived target line (agent title / project / shortened path). */
+  targetLabel: string;
+  /** Provider glyph, resolved from the schedule config or the target agent. */
+  provider: string | null;
+  /** Client-derived state — the single source for the badge and next-run copy. */
+  state: ScheduleDerivedState;
   pending?: ScheduleRowPending;
   isFirst: boolean;
 }
 
-function resolveProvider(schedule: ScheduleSummary): string | null {
-  return schedule.target.type === "new-agent" ? schedule.target.config.provider : null;
+function stateBadge(state: ScheduleDerivedState): {
+  label: string;
+  variant: "success" | "error" | "muted";
+} {
+  switch (state) {
+    case "active":
+      return { label: "Active", variant: "success" };
+    case "paused":
+      return { label: "Paused", variant: "muted" };
+    case "expired":
+      return { label: "Expired", variant: "muted" };
+    case "finished":
+      return { label: "Finished", variant: "muted" };
+    case "targetGone":
+      return { label: "Target gone", variant: "error" };
+  }
 }
 
-function resolveModelLabel(schedule: ScheduleSummary): string {
-  if (schedule.target.type === "new-agent" && schedule.target.config.model) {
-    return schedule.target.config.model;
+// Meta reads left-to-right as identity → history → future: how often, when it
+// was created, when it last ran, and (only while it can still run) when it runs
+// next. Status lives on the badge, never repeated here.
+function buildMeta(schedule: ScheduleSummary, state: ScheduleDerivedState): string {
+  const parts = [
+    formatCadence(schedule.cadence),
+    `Created ${formatTimeAgo(new Date(schedule.createdAt))}`,
+    schedule.lastRunAt ? `Last run ${formatTimeAgo(new Date(schedule.lastRunAt))}` : "Never run",
+  ];
+  if (state === "active") {
+    const next = formatNextRun(schedule.nextRunAt);
+    if (next) {
+      parts.push(`Next run ${next}`);
+    }
   }
-  return "Default model";
-}
-
-function statusVariant(status: ScheduleSummary["status"]): "success" | "muted" {
-  return status === "active" ? "success" : "muted";
-}
-
-function statusLabel(status: ScheduleSummary["status"]): string {
-  if (status === "active") {
-    return "Active";
-  }
-  if (status === "paused") {
-    return "Paused";
-  }
-  return "Completed";
-}
-
-function nextRunLabel(schedule: ScheduleSummary): string {
-  if (schedule.status === "paused") {
-    return "Paused";
-  }
-  if (schedule.status === "completed") {
-    return "Completed";
-  }
-  return formatNextRun(schedule.nextRunAt) || "—";
+  return parts.join(" · ");
 }
 
 /** Small provider glyph. Reads the icon color off a StyleSheet object so the
@@ -113,6 +122,9 @@ function ProviderGlyph({ provider }: { provider: string | null }): ReactElement 
  */
 export function ScheduleRow({
   schedule,
+  targetLabel,
+  provider,
+  state,
   pending,
   isFirst,
   onEdit,
@@ -126,15 +138,9 @@ export function ScheduleRow({
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
 
-  const provider = resolveProvider(schedule);
   const title = resolveScheduleTitle(schedule);
-  const meta = [
-    resolveModelLabel(schedule),
-    formatCadence(schedule.cadence),
-    nextRunLabel(schedule),
-  ]
-    .filter(Boolean)
-    .join("  ·  ");
+  const badge = stateBadge(state);
+  const meta = buildMeta(schedule, state);
 
   const rowStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
@@ -168,6 +174,9 @@ export function ScheduleRow({
             <Text style={settingsStyles.rowTitle} numberOfLines={1}>
               {title}
             </Text>
+            <Text style={styles.target} numberOfLines={1}>
+              {targetLabel}
+            </Text>
             <Text style={settingsStyles.rowHint} numberOfLines={1}>
               {meta}
             </Text>
@@ -175,10 +184,7 @@ export function ScheduleRow({
         </View>
 
         <View style={styles.trailing}>
-          <StatusBadge
-            label={statusLabel(schedule.status)}
-            variant={statusVariant(schedule.status)}
-          />
+          <StatusBadge label={badge.label} variant={badge.variant} />
           <ScheduleKebabMenu
             schedule={schedule}
             pending={pending}
@@ -217,7 +223,7 @@ function ScheduleKebabMenu({
   onResume,
   onRunNow,
   onDelete,
-}: Omit<ScheduleRowProps, "isFirst">): ReactElement {
+}: Omit<ScheduleRowProps, "isFirst" | "targetLabel" | "provider" | "state">): ReactElement {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -323,6 +329,11 @@ const styles = StyleSheet.create((theme) => ({
   textGroup: {
     flex: 1,
     minWidth: 0,
+  },
+  target: {
+    marginTop: theme.spacing[1],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   trailing: {
     flexDirection: "row",

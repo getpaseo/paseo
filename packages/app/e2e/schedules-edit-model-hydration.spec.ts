@@ -76,7 +76,7 @@ test.describe("Schedules", () => {
     await page.goto(buildSchedulesRoute());
     const row = page.getByTestId(`schedule-row-${scheduleId}`);
     await expect(row).toBeVisible({ timeout: 30_000 });
-    await expect(row).toContainText("ten-second-stream");
+    await expect(row).toContainText(workspace.projectDisplayName, { timeout: 30_000 });
 
     await row.click();
     await expect(page.getByTestId("schedule-form-sheet")).toBeVisible({ timeout: 10_000 });
