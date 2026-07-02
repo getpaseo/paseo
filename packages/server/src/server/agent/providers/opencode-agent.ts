@@ -11,6 +11,7 @@ import {
   type Session as OpenCodeSession,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
+import { OpenCodeSubsessionTracker, type OpenCodeSubsessionSeed } from "./opencode/subsessions.js";
 import fs from "node:fs/promises";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import pLimit from "p-limit";
@@ -2785,6 +2786,7 @@ class OpenCodeAgentSession implements AgentSession {
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
   private pendingChildToolPartsBySessionId = new Map<string, OpenCodeToolPartEventPart[]>();
+  private readonly subsessionTracker: OpenCodeSubsessionTracker;
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
   private eventStreamAbortController: AbortController | null = null;
@@ -2806,6 +2808,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.config = config;
     this.client = client;
     this.sessionId = sessionId;
+    this.subsessionTracker = new OpenCodeSubsessionTracker(sessionId);
     this.logger = logger.child({ agentId: this.agentId });
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
@@ -2816,6 +2819,7 @@ class OpenCodeAgentSession implements AgentSession {
       config.model,
     );
     this.startEventStream();
+    void this.hydrateSubsessions();
   }
 
   get id(): string | null {
@@ -3138,8 +3142,49 @@ class OpenCodeAgentSession implements AgentSession {
 
     return { turnId };
   }
+
+  private emitSubsessionsChanged(): void {
+    this.notifySubscribers({
+      type: "subsessions_changed",
+      provider: "opencode",
+      subsessions: this.subsessionTracker.list(),
+    });
+  }
+
+  /**
+   * Enumerate already-existing child sessions (session resume, daemon
+   * restart) so the tracker starts from the provider's persisted tree.
+   * Live updates then come from the event stream. Non-fatal on failure.
+   */
+  private async hydrateSubsessions(): Promise<void> {
+    try {
+      const seeds = await collectOpenCodeDescendantSessions(
+        this.client,
+        this.sessionId,
+        this.config.cwd,
+      );
+      if (this.closed) {
+        return;
+      }
+      if (this.subsessionTracker.seed(seeds)) {
+        this.emitSubsessionsChanged();
+      }
+    } catch (error) {
+      this.logger.debug(
+        { err: error, sessionId: this.sessionId },
+        "Failed to hydrate OpenCode subsessions",
+      );
+    }
+  }
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    // Replay the current subsession tree so late subscribers (the manager
+    // subscribes after createSession/resumeSession returns) never miss the
+    // hydrated state.
+    const subsessions = this.subsessionTracker.list();
+    if (subsessions.length > 0) {
+      callback({ type: "subsessions_changed", provider: "opencode", subsessions });
+    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -3263,6 +3308,12 @@ class OpenCodeAgentSession implements AgentSession {
     });
     if (!event) {
       return;
+    }
+    // Subsession lifecycle is tracked between turns too — a background child
+    // keeps running after the parent's turn ends — so this runs before the
+    // no-active-turn gate below drops the event.
+    if (this.subsessionTracker.handleEvent(event)) {
+      this.emitSubsessionsChanged();
     }
     if (!turnId) {
       this.traceOpenCode("provider.opencode.event.skip", {
@@ -3803,4 +3854,45 @@ class OpenCodeAgentSession implements AgentSession {
     }
     return this.modelContextWindowsByModelKey.get(modelLookupKey);
   }
+}
+
+const OPENCODE_SUBSESSION_ENUMERATION_LIMIT = 50;
+
+async function collectOpenCodeDescendantSessions(
+  client: Pick<OpencodeClient, "session">,
+  rootSessionId: string,
+  directory: string,
+): Promise<OpenCodeSubsessionSeed[]> {
+  const seeds: OpenCodeSubsessionSeed[] = [];
+  const queue = [rootSessionId];
+  const visited = new Set<string>([rootSessionId]);
+  while (queue.length > 0 && seeds.length < OPENCODE_SUBSESSION_ENUMERATION_LIMIT) {
+    const parentSessionId = queue.shift();
+    if (parentSessionId === undefined) {
+      break;
+    }
+    const response = await client.session.children({
+      sessionID: parentSessionId,
+      directory,
+    });
+    if (response.error) {
+      throw new Error(`Failed to list OpenCode child sessions: ${JSON.stringify(response.error)}`);
+    }
+    for (const child of response.data ?? []) {
+      if (seeds.length >= OPENCODE_SUBSESSION_ENUMERATION_LIMIT) {
+        break;
+      }
+      if (visited.has(child.id)) {
+        continue;
+      }
+      visited.add(child.id);
+      seeds.push({
+        id: child.id,
+        title: normalizeOpenCodeSessionTitle(child.title),
+        parentSessionId,
+      });
+      queue.push(child.id);
+    }
+  }
+  return seeds;
 }

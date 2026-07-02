@@ -38,6 +38,7 @@ import {
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
+  type AgentSubsession,
   type ImportedTimelineEntry,
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
@@ -271,6 +272,11 @@ interface ManagedAgentBase {
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
+  /**
+   * Provider-native child sessions (subagents) of this agent's root session,
+   * reported live by the provider. Absent for providers without support.
+   */
+  subsessions?: AgentSubsession[];
   createdAt: Date;
   updatedAt: Date;
   availableModes: AgentMode[];
@@ -3063,6 +3069,11 @@ export class AgentManager {
         return undefined;
       case "usage_updated":
         agent.lastUsage = event.usage;
+        this.emitState(agent);
+        return undefined;
+      case "subsessions_changed":
+        agent.subsessions = event.subsessions;
+        flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
       case "mode_changed":

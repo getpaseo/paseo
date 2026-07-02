@@ -678,6 +678,18 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   extra: z.record(z.string(), z.unknown()).optional(),
 });
 
+// COMPAT(subsessions): added in v0.1.103. Optional in both directions — old
+// clients ignore the field, old daemons never send it (absence = feature
+// absent, which renders as "no subsessions").
+export const AgentSubsessionPayloadSchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  status: z.enum(["running", "idle", "error"]),
+  parentSessionId: z.string().nullable().optional(),
+});
+
+export type AgentSubsessionPayload = z.infer<typeof AgentSubsessionPayloadSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -706,6 +718,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
+  subsessions: z.array(AgentSubsessionPayloadSchema).optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -729,6 +742,7 @@ export const AgentListItemPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   providerUnavailable: z.boolean().optional(),
+  subsessions: z.array(AgentSubsessionPayloadSchema).optional(),
 });
 
 export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
@@ -1243,6 +1257,7 @@ export const ImportAgentRequestMessageSchema = z.object({
   sessionId: z.string().optional(),
   providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
   requestId: z.string(),
 });

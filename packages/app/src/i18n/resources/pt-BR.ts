@@ -1372,6 +1372,9 @@ export const ptBR: TranslationResources = {
     detachTooltip: "Desanexar subagente",
     archiveAction: "Arquivar {{label}}",
     archiveTooltip: "Arquivar subagente",
+    toggle: "Expandir ou recolher subagentes",
+    fallbackTitle: "Subagente",
+    openFailed: "Não foi possível abrir a sessão do subagente",
   },
   panels: {
     draft: {

@@ -375,11 +375,24 @@ export type AgentTimelineItem =
   | { type: "error"; message: string }
   | CompactionTimelineItem;
 
+/**
+ * A provider-native child session (subagent) of an agent's root session.
+ * Subsessions are ordinary sessions with a parent: they carry their own live
+ * activity status and stay tracked until deleted on the provider side.
+ */
+export interface AgentSubsession {
+  id: string;
+  title: string | null;
+  status: "running" | "idle" | "error";
+  parentSessionId: string | null;
+}
+
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
+  | { type: "subsessions_changed"; provider: AgentProvider; subsessions: AgentSubsession[] }
   | {
       type: "mode_changed";
       provider: AgentProvider;

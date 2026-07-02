@@ -67,6 +67,19 @@ describe("formatHeaderLabel", () => {
   it("uses singular 'subagent' for a single row that requires attention upstream", () => {
     expect(formatHeaderLabel([row({ id: "a", requiresAttention: true })])).toBe("1 subagent");
   });
+
+  it("counts subsessions in the total and running suffix", () => {
+    expect(formatHeaderLabel([row({ id: "a" })], [{ status: "running" }, { status: "idle" }])).toBe(
+      "3 subagents · 1 running",
+    );
+  });
+
+  it("formats a subsession-only track", () => {
+    expect(formatHeaderLabel([], [{ status: "idle" }])).toBe("1 subagent");
+    expect(formatHeaderLabel([], [{ status: "running" }, { status: "error" }])).toBe(
+      "2 subagents · 1 running",
+    );
+  });
 });
 
 describe("resolveRowLabel", () => {

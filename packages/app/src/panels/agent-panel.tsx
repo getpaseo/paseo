@@ -68,7 +68,13 @@ import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import type { Theme } from "@/styles/theme";
-import { useArchiveSubagent, useDetachSubagent, useSubagentsForParent } from "@/subagents";
+import {
+  useArchiveSubagent,
+  useDetachSubagent,
+  useOpenSubsession,
+  useSubagentsForParent,
+  useSubsessionsForAgent,
+} from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -1373,6 +1379,14 @@ function ActiveAgentComposer({
     serverId,
     parentAgentId: agentId,
   });
+  const agentSubsessions = useSubsessionsForAgent({ serverId, agentId });
+  const openSubsession = useOpenSubsession();
+  const handleOpenSubsessionPress = useCallback(
+    (subsessionId: string) => {
+      openSubsession({ serverId, agentId, subsessionId });
+    },
+    [openSubsession, serverId, agentId],
+  );
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
   );
@@ -1484,6 +1498,8 @@ function ActiveAgentComposer({
         onOpenSubagent={handleOpenSubagent}
         onArchiveSubagent={handleArchiveSubagent}
         onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
+        subsessions={agentSubsessions}
+        onOpenSubsession={handleOpenSubsessionPress}
       />
       <Composer
         agentId={agentId}

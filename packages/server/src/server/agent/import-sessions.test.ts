@@ -355,6 +355,21 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
     provider: "codex",
     providerHandleId: "thread-2",
   });
+
+  expect(
+    normalizeImportAgentRequest({
+      type: "import_agent_request",
+      requestId: "with-workspace",
+      providerId: "opencode",
+      providerHandleId: "ses-1",
+      workspaceId: "wks_parent",
+    }),
+  ).toEqual({
+    requestId: "with-workspace",
+    provider: "opencode",
+    providerHandleId: "ses-1",
+    workspaceId: "wks_parent",
+  });
 });
 
 test("importProviderSession imports a selected provider session without listing", async () => {

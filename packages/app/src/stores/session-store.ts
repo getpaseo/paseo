@@ -23,6 +23,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type {
   ServerInfoStatusPayload,
+  AgentSubsessionPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
   WorkspaceDescriptorPayload,
@@ -117,6 +118,7 @@ export interface Agent {
   archivedAt?: Date | null;
   parentAgentId: string | null;
   labels: Record<string, string>;
+  subsessions?: AgentSubsessionPayload[];
   projectPlacement?: ProjectPlacementPayload | null;
 }
 
@@ -1612,6 +1614,7 @@ export const useSessionStore = create<SessionStore>()(
             attentionTimestamp: agent.attentionTimestamp ?? null,
             createdAt: agent.createdAt,
             labels: agent.labels,
+            subsessions: agent.subsessions,
           });
         }
         return entries;

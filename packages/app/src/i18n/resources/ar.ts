@@ -1347,6 +1347,9 @@ export const ar: TranslationResources = {
     detachTooltip: "فصل الوكيل الفرعي",
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
+    toggle: "توسيع أو طي الوكلاء الفرعيين",
+    fallbackTitle: "وكيل فرعي",
+    openFailed: "تعذر فتح جلسة الوكيل الفرعي",
   },
   panels: {
     draft: {

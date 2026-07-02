@@ -1355,6 +1355,9 @@ export const en = {
     detachTooltip: "Detach subagent",
     archiveAction: "Archive {{label}}",
     archiveTooltip: "Archive subagent",
+    toggle: "Expand or collapse subagents",
+    fallbackTitle: "Subagent",
+    openFailed: "Couldn't open the subagent session",
   },
   panels: {
     draft: {

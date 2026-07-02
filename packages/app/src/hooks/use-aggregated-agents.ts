@@ -87,6 +87,7 @@ export function useAggregatedAgents(options?: {
           archivedAt: agent.archivedAt,
           createdAt: agent.createdAt,
           labels: agent.labels,
+          subsessions: agent.subsessions,
           projectPlacement: agent.projectPlacement,
         };
         const cacheKey = `${serverId}:${agent.id}`;

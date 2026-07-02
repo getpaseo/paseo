@@ -1,3 +1,4 @@
+import type { AgentSubsessionPayload } from "@getpaseo/protocol/messages";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "./select";
@@ -26,15 +27,26 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
   };
 }
 
-export function formatHeaderLabel(rows: readonly SubagentRow[]): string {
+const NO_SUBSESSIONS: readonly Pick<AgentSubsessionPayload, "status">[] = [];
+
+export function formatHeaderLabel(
+  rows: readonly SubagentRow[],
+  subsessions: readonly Pick<AgentSubsessionPayload, "status">[] = NO_SUBSESSIONS,
+): string {
   let runningCount = 0;
   for (const row of rows) {
     if (row.status === "running") {
       runningCount += 1;
     }
   }
+  for (const sub of subsessions) {
+    if (sub.status === "running") {
+      runningCount += 1;
+    }
+  }
 
-  const parts = [`${rows.length} ${rows.length === 1 ? "subagent" : "subagents"}`];
+  const total = rows.length + subsessions.length;
+  const parts = [`${total} ${total === 1 ? "subagent" : "subagents"}`];
   if (runningCount > 0) {
     parts.push(`${runningCount} running`);
   }

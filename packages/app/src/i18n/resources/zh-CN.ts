@@ -1330,6 +1330,9 @@ export const zhCN: TranslationResources = {
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
+    toggle: "展开或折叠子代理",
+    fallbackTitle: "子代理",
+    openFailed: "无法打开子代理会话",
   },
   panels: {
     draft: {

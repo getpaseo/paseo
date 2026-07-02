@@ -1,6 +1,11 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSubsessionPayload } from "@getpaseo/protocol/messages";
 import { afterEach, describe, expect, it } from "vitest";
-import { selectSubagentsForParent } from "./select";
+import {
+  selectSubagentsForParent,
+  selectSubsessionsForAgent,
+  selectWorkspaceSubsessionAgents,
+} from "./select";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 
 const SERVER_ID = "server-1";
@@ -310,5 +315,115 @@ describe("selectSubagentsForParent", () => {
         EMPTY_PENDING_ARCHIVE_IDS,
       ),
     );
+  });
+});
+
+function makeSubsession(
+  id: string,
+  status: AgentSubsessionPayload["status"] = "idle",
+): AgentSubsessionPayload {
+  return { id, title: `Sub ${id}`, status, parentSessionId: null };
+}
+
+describe("selectSubsessionsForAgent", () => {
+  it("returns the agent's subsessions from the agents map", () => {
+    const subsessions = [makeSubsession("s1"), makeSubsession("s2", "running")];
+    setAgents([makeAgent({ id: "agent-a", subsessions })]);
+
+    expect(
+      selectSubsessionsForAgent(useSessionStore.getState(), {
+        serverId: SERVER_ID,
+        agentId: "agent-a",
+      }),
+    ).toEqual(subsessions);
+  });
+
+  it("falls back to agentDetails when the agent is not in the list map", () => {
+    const subsessions = [makeSubsession("s1")];
+    useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    useSessionStore
+      .getState()
+      .setAgentDetails(
+        SERVER_ID,
+        new Map([["agent-a", makeAgent({ id: "agent-a", subsessions })]]),
+      );
+
+    expect(
+      selectSubsessionsForAgent(useSessionStore.getState(), {
+        serverId: SERVER_ID,
+        agentId: "agent-a",
+      }),
+    ).toEqual(subsessions);
+  });
+
+  it("returns the shared empty array when the agent has no subsessions", () => {
+    setAgents([makeAgent({ id: "agent-a" })]);
+
+    const withoutSubsessions = selectSubsessionsForAgent(useSessionStore.getState(), {
+      serverId: SERVER_ID,
+      agentId: "agent-a",
+    });
+    const missingAgent = selectSubsessionsForAgent(useSessionStore.getState(), {
+      serverId: SERVER_ID,
+      agentId: "missing",
+    });
+
+    expect(withoutSubsessions).toEqual([]);
+    expect(withoutSubsessions).toBe(missingAgent);
+  });
+});
+
+describe("selectWorkspaceSubsessionAgents", () => {
+  it("returns only workspace agents that have subsessions, sorted by createdAt", () => {
+    const subsA = [makeSubsession("a1")];
+    const subsB = [makeSubsession("b1", "running"), makeSubsession("b2")];
+    setAgents([
+      makeAgent({
+        id: "late",
+        workspaceId: "ws-1",
+        subsessions: subsA,
+        createdAt: new Date("2026-03-08T11:00:00.000Z"),
+      }),
+      makeAgent({
+        id: "early",
+        workspaceId: "ws-1",
+        subsessions: subsB,
+        createdAt: new Date("2026-03-08T09:00:00.000Z"),
+      }),
+      makeAgent({ id: "no-subs", workspaceId: "ws-1" }),
+      makeAgent({ id: "other-ws", workspaceId: "ws-2", subsessions: subsA }),
+      makeAgent({
+        id: "archived",
+        workspaceId: "ws-1",
+        subsessions: subsA,
+        archivedAt: new Date("2026-03-08T12:00:00.000Z"),
+      }),
+    ]);
+
+    expect(
+      selectWorkspaceSubsessionAgents(useSessionStore.getState(), {
+        serverId: SERVER_ID,
+        workspaceId: "ws-1",
+      }),
+    ).toEqual([
+      { agentId: "early", subsessions: subsB },
+      { agentId: "late", subsessions: subsA },
+    ]);
+  });
+
+  it("returns the shared empty array when nothing matches", () => {
+    setAgents([makeAgent({ id: "agent-a", workspaceId: "ws-1" })]);
+
+    const noSubsessions = selectWorkspaceSubsessionAgents(useSessionStore.getState(), {
+      serverId: SERVER_ID,
+      workspaceId: "ws-1",
+    });
+    const missingServer = selectWorkspaceSubsessionAgents(useSessionStore.getState(), {
+      serverId: "missing",
+      workspaceId: "ws-1",
+    });
+
+    expect(noSubsessions).toEqual([]);
+    expect(noSubsessions).toBe(missingServer);
   });
 });

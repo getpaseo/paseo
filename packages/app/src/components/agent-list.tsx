@@ -23,6 +23,10 @@ import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useQueryClient } from "@tanstack/react-query";
 import { agentHistoryQueryKey } from "@/hooks/agent-history-query-key";
+import { SubsessionDisclosure, SubsessionRow } from "@/components/agent-list-subsessions";
+import { buildSubsessionRows } from "@/components/agent-list-subsession-rows";
+import type { AgentSubsessionPayload } from "@getpaseo/protocol/messages";
+import { useOpenSubsession } from "@/subagents";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -48,7 +52,14 @@ const DATE_SECTION_ORDER = [
 
 type FlatListItem =
   | { type: "header"; key: string; section: DateSectionKey }
-  | { type: "agent"; key: string; agent: AggregatedAgent };
+  | { type: "agent"; key: string; agent: AggregatedAgent }
+  | {
+      type: "subsession";
+      key: string;
+      agent: AggregatedAgent;
+      sub: AgentSubsessionPayload;
+      depth: number;
+    };
 
 function deriveDateSectionKey(lastActivityAt: Date): DateSectionKey {
   const now = new Date();
@@ -157,11 +168,13 @@ function SessionRowBadges({
   agent,
   archivedIcon,
   pendingPermissionCount,
+  subsessionCount,
   showDesktopAttention,
 }: {
   agent: AggregatedAgent;
   archivedIcon: ReactElement;
   pendingPermissionCount: number;
+  subsessionCount: number;
   showDesktopAttention: boolean;
 }) {
   const { t } = useTranslation();
@@ -179,6 +192,7 @@ function SessionRowBadges({
       {showDesktopAttention ? (
         <SessionBadge label={t("agentList.badges.attention")} tone="danger" />
       ) : null}
+      {subsessionCount > 0 ? <SessionBadge label={String(subsessionCount)} /> : null}
     </>
   );
 }
@@ -211,6 +225,9 @@ function SessionRow({
   showHostColumn,
   onPress,
   onLongPress,
+  expanded = false,
+  subsessionCount = 0,
+  onToggleExpand,
 }: {
   agent: AggregatedAgent;
   isMobile: boolean;
@@ -219,6 +236,9 @@ function SessionRow({
   showHostColumn: boolean;
   onPress: (agent: AggregatedAgent) => void;
   onLongPress: (agent: AggregatedAgent) => void;
+  expanded?: boolean;
+  subsessionCount?: number;
+  onToggleExpand?: (agentKey: string) => void;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -243,6 +263,9 @@ function SessionRow({
 
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
   const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
+  const handleToggleExpand = useCallback(() => {
+    onToggleExpand?.(agentKey);
+  }, [onToggleExpand, agentKey]);
 
   const sessionTitleStyle = useMemo(
     () => [styles.sessionTitle, isSelected && styles.sessionTitleHighlighted],
@@ -265,6 +288,12 @@ function SessionRow({
     >
       <View style={styles.rowContent}>
         <View style={styles.rowTitleRow}>
+          <SubsessionDisclosure
+            count={subsessionCount}
+            expanded={expanded}
+            onToggle={handleToggleExpand}
+            testID={`agent-row-disclosure-${agent.serverId}-${agent.id}`}
+          />
           <WorkspaceTitlePrefix
             visible={!isMobile && Boolean(workspaceName)}
             workspaceName={workspaceName}
@@ -283,6 +312,7 @@ function SessionRow({
             archivedIcon={archivedIcon}
             pendingPermissionCount={pendingPermissionCount}
             showDesktopAttention={showDesktopAttention}
+            subsessionCount={subsessionCount}
           />
         </View>
         {isMobile ? (
@@ -372,6 +402,7 @@ export function AgentList({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
+  const [expandedAgents, setExpandedAgents] = useState<ReadonlySet<string>>(new Set());
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
   const queryClient = useQueryClient();
@@ -382,6 +413,14 @@ export function AgentList({
 
   const isActionSheetVisible = actionAgent !== null;
   const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
+
+  const openSubsession = useOpenSubsession();
+  const handleSubsessionPress = useCallback(
+    (agent: AggregatedAgent, sub: AgentSubsessionPayload) => {
+      openSubsession({ serverId: agent.serverId, agentId: agent.id, subsessionId: sub.id });
+    },
+    [openSubsession],
+  );
 
   const handleAgentPress = useCallback(
     (agent: AggregatedAgent) => {
@@ -444,6 +483,18 @@ export function AgentList({
     setActionAgent(null);
   }, []);
 
+  const handleToggleExpand = useCallback((agentKey: string) => {
+    setExpandedAgents((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentKey)) {
+        next.delete(agentKey);
+      } else {
+        next.add(agentKey);
+      }
+      return next;
+    });
+  }, []);
+
   const handleArchiveAgent = useCallback(() => {
     if (!actionAgent || !actionClient) {
       return;
@@ -470,11 +521,24 @@ export function AgentList({
       }
       result.push({ type: "header", key: `header:${section}`, section });
       for (const agent of data) {
-        result.push({ type: "agent", key: `${agent.serverId}:${agent.id}`, agent });
+        const agentKey = `${agent.serverId}:${agent.id}`;
+        result.push({ type: "agent", key: agentKey, agent });
+        if (!expandedAgents.has(agentKey)) {
+          continue;
+        }
+        for (const row of buildSubsessionRows(agent.subsessions)) {
+          result.push({
+            type: "subsession",
+            key: `${agentKey}:sub:${row.sub.id}`,
+            agent,
+            sub: row.sub,
+            depth: row.depth,
+          });
+        }
       }
     }
     return result;
-  }, [agents]);
+  }, [agents, expandedAgents]);
 
   const renderItem: ListRenderItem<FlatListItem> = useCallback(
     ({ item }) => {
@@ -483,6 +547,16 @@ export function AgentList({
           <View style={styles.sectionHeading}>
             <Text style={styles.sectionTitle}>{formatDateSectionLabel(t, item.section)}</Text>
           </View>
+        );
+      }
+      if (item.type === "subsession") {
+        return (
+          <SubsessionRow
+            sub={item.sub}
+            depth={item.depth}
+            agent={item.agent}
+            onPressSubsession={handleSubsessionPress}
+          />
         );
       }
       return (
@@ -494,17 +568,23 @@ export function AgentList({
           showHostColumn={showHostColumn}
           onPress={handleAgentPress}
           onLongPress={handleAgentLongPress}
+          expanded={expandedAgents.has(item.key)}
+          subsessionCount={item.agent.subsessions?.length ?? 0}
+          onToggleExpand={handleToggleExpand}
         />
       );
     },
     [
       handleAgentLongPress,
       handleAgentPress,
+      handleSubsessionPress,
       isMobile,
       selectedAgentId,
       showAttentionIndicator,
       showHostColumn,
       t,
+      expandedAgents,
+      handleToggleExpand,
     ],
   );
 

@@ -2620,11 +2620,19 @@ export class Session {
       if (!normalized.cwd) {
         throw new Error("Import requires cwd from the selected provider session");
       }
-      // An imported agent mints its own workspace; ownership is its workspaceId,
-      // never an existing same-cwd workspace resolved by path.
-      const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
-        normalized.cwd,
-      );
+      // A subsession dive imports into the workspace the caller supplies (the
+      // owning agent's workspace). A plain import (Import-session sheet) mints
+      // its own workspace; ownership is its workspaceId, never an existing
+      // same-cwd workspace resolved by path.
+      const requestedWorkspace = normalized.workspaceId
+        ? await this.workspaceRegistry.get(normalized.workspaceId)
+        : null;
+      if (normalized.workspaceId && !requestedWorkspace) {
+        throw new Error(`Workspace ${normalized.workspaceId} not found`);
+      }
+      const workspace =
+        requestedWorkspace ??
+        (await this.workspaceProvisioning.createWorkspaceForDirectory(normalized.cwd));
       const { snapshot, timelineSize } = await importProviderSession({
         request: normalized,
         workspaceId: workspace.workspaceId,
@@ -2632,7 +2640,9 @@ export class Session {
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
       });
-      await this.registerWorkspaceForImportedAgent(workspace);
+      if (!requestedWorkspace) {
+        await this.registerWorkspaceForImportedAgent(workspace);
+      }
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
         type: "status",

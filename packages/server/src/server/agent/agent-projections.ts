@@ -128,6 +128,9 @@ export function toAgentPayload(
     persistence: sanitizePersistenceHandle(agent.persistence),
     title: options?.title ?? null,
     labels: agent.labels,
+    ...(agent.subsessions && agent.subsessions.length > 0
+      ? { subsessions: agent.subsessions }
+      : {}),
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
@@ -258,6 +261,9 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
     labels: agent.labels,
+    ...(agent.subsessions && agent.subsessions.length > 0
+      ? { subsessions: agent.subsessions }
+      : {}),
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };
 }

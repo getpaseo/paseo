@@ -3,6 +3,12 @@ import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } fr
 import { useTranslation } from "react-i18next";
 import { Archive, ChevronDown, ChevronRight, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { AgentSubsessionPayload } from "@getpaseo/protocol/messages";
+import {
+  buildSubsessionRows,
+  type SubsessionRowModel,
+} from "@/components/agent-list-subsession-rows";
+import { AgentStatusDot } from "@/components/agent-status-dot";
 import { getProviderIcon } from "@/components/provider-icons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor, MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -30,9 +36,12 @@ export interface SubagentsTrackProps {
   onOpenSubagent: (id: string) => void;
   onArchiveSubagent: (id: string) => void;
   onDetachSubagent?: (id: string) => void;
+  subsessions?: AgentSubsessionPayload[];
+  onOpenSubsession: (subsessionId: string) => void;
 }
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
+const EMPTY_SUBSESSIONS: AgentSubsessionPayload[] = [];
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
   return {
@@ -46,6 +55,8 @@ export function SubagentsTrack({
   onOpenSubagent,
   onArchiveSubagent,
   onDetachSubagent,
+  subsessions = EMPTY_SUBSESSIONS,
+  onOpenSubsession,
 }: SubagentsTrackProps): ReactElement | null {
   const [expanded, setExpanded] = useState(false);
 
@@ -67,11 +78,13 @@ export function SubagentsTrack({
     [expanded],
   );
 
-  if (rows.length === 0) {
+  const subsessionRows = useMemo(() => buildSubsessionRows(subsessions), [subsessions]);
+
+  if (rows.length === 0 && subsessionRows.length === 0) {
     return null;
   }
 
-  const headerLabel = formatHeaderLabel(rows);
+  const headerLabel = formatHeaderLabel(rows, subsessions);
 
   return (
     <View style={styles.outer} testID="subagents-track">
@@ -107,6 +120,13 @@ export function SubagentsTrack({
                   onOpenSubagent={onOpenSubagent}
                   onArchiveSubagent={onArchiveSubagent}
                   onDetachSubagent={onDetachSubagent}
+                />
+              ))}
+              {subsessionRows.map((model) => (
+                <SubsessionTrackRow
+                  key={model.sub.id}
+                  model={model}
+                  onOpenSubsession={onOpenSubsession}
                 />
               ))}
             </ScrollView>
@@ -178,6 +198,48 @@ function SubagentsTrackRow({
         )}
       </Pressable>
     </View>
+  );
+}
+
+const SUBSESSION_INDENT_BASE = 12;
+const SUBSESSION_INDENT_PER_LEVEL = 16;
+
+function SubsessionTrackRow({
+  model,
+  onOpenSubsession,
+}: {
+  model: SubsessionRowModel;
+  onOpenSubsession: (subsessionId: string) => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const title = model.sub.title ?? t("subagents.fallbackTitle");
+  const handlePress = useCallback(
+    () => onOpenSubsession(model.sub.id),
+    [onOpenSubsession, model.sub.id],
+  );
+  const rowStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType) => [
+      styles.row,
+      { paddingLeft: SUBSESSION_INDENT_BASE + model.depth * SUBSESSION_INDENT_PER_LEVEL },
+      (hovered || pressed) && styles.rowActive,
+    ],
+    [model.depth],
+  );
+  return (
+    <Pressable
+      style={rowStyle}
+      onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      testID={`subagents-track-subsession-${model.sub.id}`}
+    >
+      <View style={styles.subsessionDotSlot}>
+        <AgentStatusDot status={model.sub.status} requiresAttention={false} />
+      </View>
+      <Text style={styles.subsessionLabel} numberOfLines={1}>
+        {title}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -341,6 +403,20 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+  },
+  subsessionDotSlot: {
+    width: 8,
+    height: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  subsessionLabel: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    opacity: 0.76,
   },
   actionClusterVisible: {
     flexDirection: "row",

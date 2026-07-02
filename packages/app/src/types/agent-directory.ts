@@ -16,6 +16,7 @@ export type AgentDirectoryEntry = Pick<
   | "archivedAt"
   | "createdAt"
   | "labels"
+  | "subsessions"
   | "projectPlacement"
 > & {
   pendingPermissionCount?: number;

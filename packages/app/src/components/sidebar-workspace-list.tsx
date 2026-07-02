@@ -14,6 +14,9 @@ import * as Haptics from "expo-haptics";
 import { useMutation } from "@tanstack/react-query";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { SubsessionDisclosure } from "@/components/agent-list-subsessions";
+import { WorkspaceSubsessionList } from "@/components/sidebar-workspace-subsessions";
+import { useWorkspaceSubsessionAgents } from "@/subagents";
 import {
   memo,
   useCallback,
@@ -1838,27 +1841,67 @@ function WorkspaceRow({
   selected: boolean;
 }) {
   const hydratedWorkspace = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
+  const subsessionAgents = useWorkspaceSubsessionAgents({
+    serverId: workspace.serverId,
+    workspaceId: workspace.workspaceId,
+  });
+  const [subsessionsExpanded, setSubsessionsExpanded] = useState(false);
+  const toggleSubsessions = useCallback(() => {
+    setSubsessionsExpanded((current) => !current);
+  }, []);
+  const subsessionCount = useMemo(
+    () => subsessionAgents.reduce((total, agent) => total + agent.subsessions.length, 0),
+    [subsessionAgents],
+  );
 
   if (!hydratedWorkspace) {
     return null;
   }
 
   return (
-    <WorkspaceRowWithMenu
-      workspace={hydratedWorkspace}
-      subtitle={subtitle}
-      selected={selected}
-      shortcutNumber={shortcutNumber}
-      showShortcutBadge={showShortcutBadge}
-      onPress={onPress}
-      drag={drag}
-      isDragging={isDragging}
-      dragHandleProps={dragHandleProps}
-      canCopyBranchName={canCopyBranchName}
-      isCreating={isCreating}
-    />
+    <View>
+      <View style={workspaceRowLineStyle}>
+        <View style={workspaceDisclosureOverlayStyle}>
+          <SubsessionDisclosure
+            count={subsessionCount}
+            expanded={subsessionsExpanded}
+            onToggle={toggleSubsessions}
+            testID={`sidebar-workspace-subsessions-disclosure-${workspace.workspaceKey}`}
+          />
+        </View>
+        <View style={workspaceRowBodyStyle}>
+          <WorkspaceRowWithMenu
+            workspace={hydratedWorkspace}
+            subtitle={subtitle}
+            selected={selected}
+            shortcutNumber={shortcutNumber}
+            showShortcutBadge={showShortcutBadge}
+            onPress={onPress}
+            drag={drag}
+            isDragging={isDragging}
+            dragHandleProps={dragHandleProps}
+            canCopyBranchName={canCopyBranchName}
+            isCreating={isCreating}
+          />
+        </View>
+      </View>
+      {subsessionsExpanded ? (
+        <WorkspaceSubsessionList serverId={workspace.serverId} agents={subsessionAgents} />
+      ) : null}
+    </View>
   );
 }
+
+const workspaceRowLineStyle: ViewStyle = { position: "relative" };
+const workspaceDisclosureOverlayStyle: ViewStyle = {
+  position: "absolute",
+  left: 4,
+  top: 0,
+  bottom: 0,
+  justifyContent: "center",
+  zIndex: 1,
+};
+const workspaceRowBodyStyle: ViewStyle = { flex: 1, minWidth: 0 };
 
 function ProjectBlock({
   project,
