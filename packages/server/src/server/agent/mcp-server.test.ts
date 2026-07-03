@@ -39,13 +39,20 @@ import {
   createPaseoWorktree as createPaseoWorktreeService,
   type CreatePaseoWorktreeInput,
 } from "../paseo-worktree-service.js";
-import type { CreatePaseoWorktreeWorkflowFn } from "../worktree-session.js";
+import {
+  createPaseoWorktreeWorkflow,
+  type CreatePaseoWorktreeWorkflowFn,
+} from "../worktree-session.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
+import { WorkspaceAutoName } from "../workspace-auto-name.js";
+import { createGitMutationService } from "../session/git-mutation/git-mutation-service.js";
+import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
+import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -145,6 +152,30 @@ function agentsOf(response: {
   structuredContent: LooseStructuredContent;
 }): Array<Record<string, unknown>> {
   return z.array(z.record(z.string(), z.unknown())).parse(response.structuredContent.agents);
+}
+
+async function waitForWorkspaceTitle(
+  workspaceRecords: Map<string, PersistedWorkspaceRecord>,
+  workspaceId: string,
+  title: string,
+): Promise<void> {
+  await vi.waitFor(() => expect(workspaceRecords.get(workspaceId)?.title).toBe(title), {
+    timeout: 5_000,
+  });
+}
+
+async function waitForWorkspaceBranch(
+  workspaceRecords: Map<string, PersistedWorkspaceRecord>,
+  workspaceId: string,
+  branch: string,
+): Promise<void> {
+  await vi.waitFor(() => expect(workspaceRecords.get(workspaceId)?.branch).toBe(branch), {
+    timeout: 5_000,
+  });
+}
+
+async function waitForUnexpectedWorkspaceNamingSideEffects(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
 type AgentManagerSpies = ReturnType<typeof buildAgentManagerSpies>;
@@ -616,40 +647,88 @@ function createPaseoWorktreeForMcpTest(options: {
   paseoHome: string;
   broadcasts: string[];
   createdWorkspaceIds?: string[];
+  workspaceRecords?: Map<string, PersistedWorkspaceRecord>;
+  generateWorkspaceName?: () => Promise<GeneratedWorkspaceName | null>;
   setupContinuations?: Array<"workspace" | "agent" | undefined>;
   startedAgentSetupIds?: string[];
 }): CreatePaseoWorktreeWorkflowFn {
   const projects = new Map<string, PersistedProjectRecord>();
-  const workspaces = new Map<string, PersistedWorkspaceRecord>();
+  const workspaces = options.workspaceRecords ?? new Map<string, PersistedWorkspaceRecord>();
   const github = createGitHubServiceStub();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createTestLogger(),
     paseoHome: options.paseoHome,
     deps: { github },
   });
+  const workspaceRegistry = {
+    get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
+    list: async () => Array.from(workspaces.values()),
+    upsert: async (record: PersistedWorkspaceRecord) => {
+      workspaces.set(record.workspaceId, record);
+    },
+  };
+  const workspaceAutoName = new WorkspaceAutoName({
+    agentManager: buildAgentManagerSpies() as unknown as AgentManager,
+    workspaceRegistry,
+    workspaceGitService,
+    providerSnapshotManager: createOpenCodeManager().manager,
+    readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+    gitMutation: createGitMutationService({
+      workspaceGitService,
+      github,
+      logger: createTestLogger(),
+    }),
+    emitWorkspaceUpdateForCwd: async (cwd) => {
+      const workspace = Array.from(workspaces.values()).find((record) => record.cwd === cwd);
+      options.broadcasts.push(z.string().parse(workspace?.workspaceId));
+    },
+    emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+      options.broadcasts.push(workspaceId);
+    },
+    logger: createTestLogger(),
+    generateWorkspaceName: options.generateWorkspaceName ?? (async () => null),
+  });
 
   return async (input, serviceOptions) => {
     options.setupContinuations?.push(serviceOptions?.setupContinuation?.kind);
-    const result = await createPaseoWorktreeService(input, {
-      github,
-      ...(serviceOptions?.resolveDefaultBranch
-        ? { resolveDefaultBranch: serviceOptions.resolveDefaultBranch }
-        : {}),
-      projectRegistry: {
-        get: async (projectId) => projects.get(projectId) ?? null,
-        upsert: async (record) => {
-          projects.set(record.projectId, record);
+    const result = await createPaseoWorktreeWorkflow(
+      {
+        paseoHome: options.paseoHome,
+        createPaseoWorktree: (workflowInput, workflowOptions) =>
+          createPaseoWorktreeService(workflowInput, {
+            github,
+            ...(workflowOptions?.resolveDefaultBranch
+              ? { resolveDefaultBranch: workflowOptions.resolveDefaultBranch }
+              : {}),
+            projectRegistry: {
+              get: async (projectId) => projects.get(projectId) ?? null,
+              upsert: async (record) => {
+                projects.set(record.projectId, record);
+              },
+            },
+            workspaceRegistry,
+            workspaceGitService,
+          }),
+        warmWorkspaceGitData: async () => {},
+        autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
+          workspaceAutoName.scheduleForWorktree(autoNameInput),
+        emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+          options.broadcasts.push(workspaceId);
         },
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: createTestLogger(),
+        terminalManager: null,
+        archiveWorkspaceRecord: async () => {},
+        serviceProxy: null,
+        scriptRuntimeStore: null,
+        getDaemonTcpPort: null,
+        getDaemonTcpHost: null,
+        onScriptsChanged: null,
       },
-      workspaceRegistry: {
-        get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
-        list: async () => Array.from(workspaces.values()),
-        upsert: async (record) => {
-          workspaces.set(record.workspaceId, record);
-        },
-      },
-      workspaceGitService,
-    });
+      input,
+      serviceOptions,
+    );
     options.broadcasts.push(result.workspace.workspaceId);
     options.createdWorkspaceIds?.push(result.workspace.workspaceId);
     if (serviceOptions?.setupContinuation?.kind === "agent") {
@@ -1703,9 +1782,392 @@ describe("create_agent MCP tool", () => {
         .trim();
       expect(initialBranch).not.toBe("");
       expect(initialBranch).not.toBe("main");
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitForUnexpectedWorkspaceNamingSideEffects();
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(broadcasts).toHaveLength(1);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-titles and renames an agent-created branch-off worktree from the initial prompt", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-auto-title-"));
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+    const broadcasts: string[] = [];
+    const createdWorkspaceIds: string[] = [];
+    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
+
+    try {
+      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      await writeFile(join(repoDir, "README.md"), "hello\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+
+      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
+        id: "agent-auto-titled-worktree",
+        cwd: config.cwd,
+        lifecycle: "idle",
+        currentModeId: null,
+        availableModes: [],
+        config: { title: "Agent title" },
+      }));
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        paseoHome,
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({
+          paseoHome,
+          broadcasts,
+          createdWorkspaceIds,
+          workspaceRecords,
+          generateWorkspaceName: async () => ({
+            title: "Workspace Auto Title Flow",
+            branch: "workspace-auto-title-flow",
+          }),
+        }),
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+      await tool.handler({
+        ...detachedWorktreeWorkspace(repoDir, {
+          kind: "branch-off",
+          branchName: "feat/placeholder-auto-title",
+          baseBranch: "main",
+        }),
+        title: "Agent title",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Build a workspace auto title flow",
+        background: true,
+      });
+      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
+      await waitForWorkspaceTitle(workspaceRecords, workspaceId, "Workspace Auto Title Flow");
+
+      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
+      const workspace = workspaceRecords.get(workspaceId);
+      const branchName = execFileSync("git", ["branch", "--show-current"], {
+        cwd: agentCwd,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      const metadata = readPaseoWorktreeMetadata(agentCwd);
+
+      expect(metadata).toMatchObject({
+        version: 2,
+        firstAgentBranchAutoName: {
+          status: "attempted",
+          placeholderBranchName: "feat/placeholder-auto-title",
+        },
+      });
+      expect(branchName).toBe("workspace-auto-title-flow");
+      expect(workspace).toMatchObject({
+        title: "Workspace Auto Title Flow",
+        branch: "workspace-auto-title-flow",
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a manual workspace title when agent-created worktree naming finishes later", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-worktree-manual-title-"));
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+    const broadcasts: string[] = [];
+    const createdWorkspaceIds: string[] = [];
+    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
+
+    try {
+      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      await writeFile(join(repoDir, "README.md"), "hello\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+
+      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
+        id: "agent-manual-title-worktree",
+        cwd: config.cwd,
+        lifecycle: "idle",
+        currentModeId: null,
+        availableModes: [],
+        config: { title: "Agent title" },
+      }));
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        paseoHome,
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({
+          paseoHome,
+          broadcasts,
+          createdWorkspaceIds,
+          workspaceRecords,
+          generateWorkspaceName: async () => ({
+            title: "Generated Manual Race Title",
+            branch: "generated-manual-race-title",
+          }),
+        }),
+        workspaceRegistry: {
+          get: async (workspaceId) => workspaceRecords.get(workspaceId) ?? null,
+          upsert: async (record) => {
+            workspaceRecords.set(record.workspaceId, record);
+          },
+        },
+        emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
+          broadcasts.push(...workspaceIds);
+        },
+        logger,
+      });
+      const createAgentTool = registeredTool(server, "create_agent");
+      await createAgentTool.handler({
+        ...detachedWorktreeWorkspace(repoDir, {
+          kind: "branch-off",
+          branchName: "feat/manual-title-placeholder",
+          baseBranch: "main",
+        }),
+        title: "Agent title",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Keep the manually renamed workspace title",
+        background: true,
+      });
+      const renameWorkspaceTool = registeredTool(server, "rename_workspace");
+      await renameWorkspaceTool.handler({
+        workspaceId: createdWorkspaceIds[0],
+        title: "Manual Workspace Title",
+      });
+      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
+      await waitForWorkspaceBranch(workspaceRecords, workspaceId, "generated-manual-race-title");
+
+      const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
+      const workspace = workspaceRecords.get(workspaceId);
+      const branchName = execFileSync("git", ["branch", "--show-current"], {
+        cwd: agentCwd,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+
+      expect(branchName).toBe("generated-manual-race-title");
+      expect(workspace).toMatchObject({
+        title: "Manual Workspace Title",
+        branch: "generated-manual-race-title",
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses create_agent title for the agent while still auto-titling the worktree workspace", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-title-workspace-title-"));
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+    const broadcasts: string[] = [];
+    const createdWorkspaceIds: string[] = [];
+    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
+
+    try {
+      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      await writeFile(join(repoDir, "README.md"), "hello\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+
+      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
+        id: "agent-explicit-title-worktree",
+        cwd: config.cwd,
+        lifecycle: "idle",
+        currentModeId: null,
+        availableModes: [],
+        config: { title: "Explicit Agent Title" },
+      }));
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        paseoHome,
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({
+          paseoHome,
+          broadcasts,
+          createdWorkspaceIds,
+          workspaceRecords,
+          generateWorkspaceName: async () => ({
+            title: "Generated Workspace Title",
+            branch: "generated-workspace-title",
+          }),
+        }),
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+      await tool.handler({
+        ...detachedWorktreeWorkspace(repoDir, {
+          kind: "branch-off",
+          branchName: "feat/agent-title-placeholder",
+          baseBranch: "main",
+        }),
+        title: "Explicit Agent Title",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Generate the workspace title anyway",
+        background: true,
+      });
+      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
+      await waitForWorkspaceTitle(workspaceRecords, workspaceId, "Generated Workspace Title");
+
+      const workspace = workspaceRecords.get(workspaceId);
+      expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Explicit Agent Title",
+        }),
+        undefined,
+        { workspaceId },
+      );
+      expect(workspace).toMatchObject({
+        title: "Generated Workspace Title",
+        branch: "generated-workspace-title",
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-titles an agent-created directory workspace from the initial prompt", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-directory-auto-title-"));
+    const workspaceDir = join(tempDir, "workspace");
+    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
+    const broadcasts: string[] = [];
+    const workspaceGitService = new WorkspaceGitServiceImpl({
+      logger: createTestLogger(),
+      paseoHome: join(tempDir, ".paseo"),
+      deps: { github: createGitHubServiceStub() },
+    });
+    const workspaceAutoName = new WorkspaceAutoName({
+      agentManager,
+      workspaceRegistry: {
+        get: async (workspaceId) => workspaceRecords.get(workspaceId) ?? null,
+        upsert: async (record) => {
+          workspaceRecords.set(record.workspaceId, record);
+        },
+      },
+      workspaceGitService,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+      gitMutation: createGitMutationService({
+        workspaceGitService,
+        github: createGitHubServiceStub(),
+        logger: createTestLogger(),
+      }),
+      emitWorkspaceUpdateForCwd: async () => {},
+      emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+        broadcasts.push(workspaceId);
+      },
+      logger: createTestLogger(),
+      generateWorkspaceName: async () => ({
+        title: "Directory Workspace Title",
+        branch: "directory-workspace-title",
+      }),
+    });
+
+    try {
+      await mkdir(workspaceDir, { recursive: true });
+      spies.agentManager.createAgent.mockImplementation(async (config: { cwd: string }) => ({
+        id: "agent-directory-auto-title",
+        cwd: config.cwd,
+        lifecycle: "idle",
+        currentModeId: null,
+        availableModes: [],
+        config: { title: "Directory agent" },
+      }));
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        ensureWorkspaceForCreate: async (cwd, firstAgentContext) => {
+          const workspace = createPersistedWorkspaceRecord({
+            workspaceId: "workspace-directory-auto-title",
+            projectId: "project-directory-auto-title",
+            cwd,
+            kind: "directory",
+            displayName: "workspace",
+            title: firstAgentContext?.prompt ?? null,
+            createdAt: "2026-07-03T00:00:00.000Z",
+            updatedAt: "2026-07-03T00:00:00.000Z",
+          });
+          workspaceRecords.set(workspace.workspaceId, workspace);
+          if (firstAgentContext) {
+            workspaceAutoName.scheduleForDirectory({
+              workspaceId: workspace.workspaceId,
+              cwd: workspace.cwd,
+              firstAgentContext,
+            });
+          }
+          return workspace.workspaceId;
+        },
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+      await tool.handler({
+        ...detachedDirectoryWorkspace(workspaceDir),
+        title: "Directory agent",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Name a directory workspace from the prompt",
+        background: true,
+      });
+      await waitForWorkspaceTitle(
+        workspaceRecords,
+        "workspace-directory-auto-title",
+        "Directory Workspace Title",
+      );
+
+      expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: workspaceDir,
+          title: "Directory agent",
+        }),
+        undefined,
+        { workspaceId: "workspace-directory-auto-title" },
+      );
+      expect(workspaceRecords.get("workspace-directory-auto-title")).toMatchObject({
+        title: "Directory Workspace Title",
+        branch: null,
+      });
+      expect(broadcasts).toEqual(["workspace-directory-auto-title"]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1786,7 +2248,7 @@ describe("create_agent MCP tool", () => {
           .toString()
           .trim(),
       ).toBe("existing-feature");
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitForUnexpectedWorkspaceNamingSideEffects();
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(broadcasts).toHaveLength(1);
     } finally {
@@ -1888,7 +2350,7 @@ describe("create_agent MCP tool", () => {
       undefined,
       { workspaceId: "ws-pr-123" },
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForUnexpectedWorkspaceNamingSideEffects();
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   });
 

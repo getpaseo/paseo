@@ -29,6 +29,7 @@ import {
 import { WaitForAgentTracker } from "../wait-for-agent-tracker.js";
 import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
+import type { FirstAgentContext } from "../../messages.js";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
@@ -105,7 +106,10 @@ export interface PaseoToolHostDependencies {
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
+  ensureWorkspaceForCreate?: (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ) => Promise<string>;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
@@ -1181,7 +1185,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
     if (callerAgentId) {
       const parsed = agentToAgentCreateAgentArgsSchema.parse(args);
-      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace);
+      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
+        parsed.workspace,
+        parsed.initialPrompt ? { prompt: parsed.initialPrompt } : undefined,
+      );
       return {
         kind: "agent-scoped",
         parsedArgs: parsed,
@@ -1195,7 +1202,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (parsedArgs.relationship.kind === "subagent") {
       throw new Error("relationship subagent requires an agent-scoped tool session");
     }
-    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsedArgs.workspace);
+    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
+      parsedArgs.workspace,
+      parsedArgs.initialPrompt ? { prompt: parsedArgs.initialPrompt } : undefined,
+    );
     return {
       kind: "top-level",
       parsedArgs,
@@ -1309,6 +1319,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   async function resolveCreateAgentWorkspace(
     workspace: AgentToAgentCreateAgentArgs["workspace"] | TopLevelCreateAgentArgs["workspace"],
+    firstAgentContext: FirstAgentContext | undefined,
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string | undefined;
@@ -1360,7 +1371,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
         worktree: undefined,
       };
     }

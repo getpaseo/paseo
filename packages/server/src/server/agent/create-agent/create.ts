@@ -47,7 +47,10 @@ interface CreateAgentCommandDependencies {
   providerSnapshotManager: ProviderSnapshotManager;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
+  ensureWorkspaceForCreate?: (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ) => Promise<string>;
 }
 
 export interface CreateAgentFromSessionInput {
@@ -253,7 +256,7 @@ async function resolveMcpCreateAgent(
     ? createdWorkspaceId
     : (input.workspaceId ??
       parentAgent?.workspaceId ??
-      (await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd)));
+      (await ensureWorkspaceForMcpCreate(dependencies, resolvedCwd, input.initialPrompt)));
 
   const { modeId: resolvedMode, featureValues: resolvedFeatures } =
     await dependencies.providerSnapshotManager.resolveCreateConfig({
@@ -300,11 +303,15 @@ async function resolveMcpCreateAgent(
 async function ensureWorkspaceForMcpCreate(
   dependencies: CreateAgentCommandDependencies,
   cwd: string,
+  initialPrompt: string,
 ): Promise<string | undefined> {
   if (!dependencies.ensureWorkspaceForCreate) {
     return undefined;
   }
-  return dependencies.ensureWorkspaceForCreate(cwd);
+  return dependencies.ensureWorkspaceForCreate(
+    cwd,
+    initialPrompt ? { prompt: initialPrompt } : undefined,
+  );
 }
 
 async function sendInitialPrompt(

@@ -13,6 +13,7 @@ import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { z } from "zod";
 
+import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
 import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-service.js";
@@ -35,6 +36,7 @@ import { createWorktree, UnknownBranchError } from "../utils/worktree.js";
 import { WorktreeRequestError, toWorktreeRequestError } from "./worktree-errors.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
+import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { GitHubService } from "../services/github-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import {
@@ -146,10 +148,6 @@ interface SessionTestAccess {
   clearWorkspaceArchiving(workspaceIds: Iterable<string>): void;
   emitWorkspaceUpdateForCwd(...args: unknown[]): Promise<unknown>;
   emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
-  applyGeneratedWorkspaceTitle(
-    workspaceId: string,
-    input: { title: string; branch?: string | null; promptTitle?: string | null },
-  ): Promise<void>;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
   paseoHome: string;
@@ -545,6 +543,48 @@ function createSessionForWorkspaceTests(
     warn: vi.fn(),
     error: vi.fn(),
   };
+  const agentManager = asAgentManager({
+    subscribe: () => () => {},
+    listAgents: () => [],
+    getAgent: () => null,
+    archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
+    archiveSnapshot: async () => ({}),
+    unarchiveSnapshot: async () => true,
+    clearAgentAttention: async () => {},
+    notifyAgentState: () => {},
+  });
+  const workspaceRegistry = options.workspaceRegistry ?? {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => [
+      createPersistedWorkspaceRecord({
+        workspaceId: "ws-repo-running",
+        projectId: "proj-repo-running",
+        cwd: REPO_CWD,
+        kind: "directory",
+        displayName: "repo",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        updatedAt: "2026-03-01T12:00:00.000Z",
+      }),
+    ],
+    get: async (workspaceId: string) =>
+      workspaceId === "ws-repo-running"
+        ? createPersistedWorkspaceRecord({
+            workspaceId: "ws-repo-running",
+            projectId: "proj-repo-running",
+            cwd: REPO_CWD,
+            kind: "directory",
+            displayName: "repo",
+            createdAt: "2026-03-01T12:00:00.000Z",
+            updatedAt: "2026-03-01T12:00:00.000Z",
+          })
+        : null,
+    upsert: async () => {},
+    archive: async () => {},
+    remove: async () => {},
+  };
+  const workspaceGitService = options.workspaceGitService ?? createNoopWorkspaceGitService();
+  const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
 
   const session = asTestSession(
     new Session({
@@ -556,16 +596,7 @@ function createSessionForWorkspaceTests(
       pushTokenStore: asPushTokenStore(),
       paseoHome: options.paseoHome ?? "/tmp/paseo-test",
       worktreesRoot: options.worktreesRoot,
-      agentManager: asAgentManager({
-        subscribe: () => () => {},
-        listAgents: () => [],
-        getAgent: () => null,
-        archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
-        archiveSnapshot: async () => ({}),
-        unarchiveSnapshot: async () => true,
-        clearAgentAttention: async () => {},
-        notifyAgentState: () => {},
-      }),
+      agentManager,
       agentStorage: asAgentStorage({
         list: async () => [
           createPersistedWorkspaceRecord({
@@ -601,36 +632,7 @@ function createSessionForWorkspaceTests(
         archive: async () => {},
         remove: async () => {},
       },
-      workspaceRegistry: options.workspaceRegistry ?? {
-        initialize: async () => {},
-        existsOnDisk: async () => true,
-        list: async () => [
-          createPersistedWorkspaceRecord({
-            workspaceId: "ws-repo-running",
-            projectId: "proj-repo-running",
-            cwd: REPO_CWD,
-            kind: "directory",
-            displayName: "repo",
-            createdAt: "2026-03-01T12:00:00.000Z",
-            updatedAt: "2026-03-01T12:00:00.000Z",
-          }),
-        ],
-        get: async (workspaceId: string) =>
-          workspaceId === "ws-repo-running"
-            ? createPersistedWorkspaceRecord({
-                workspaceId: "ws-repo-running",
-                projectId: "proj-repo-running",
-                cwd: REPO_CWD,
-                kind: "directory",
-                displayName: "repo",
-                createdAt: "2026-03-01T12:00:00.000Z",
-                updatedAt: "2026-03-01T12:00:00.000Z",
-              })
-            : null,
-        upsert: async () => {},
-        archive: async () => {},
-        remove: async () => {},
-      },
+      workspaceRegistry,
       filesystem: { isDirectory: async () => true },
       chatService: asChatService(),
       scheduleService: asScheduleService(),
@@ -651,9 +653,20 @@ function createSessionForWorkspaceTests(
         dispose: () => {},
       }),
       github: options.github,
-      workspaceGitService: options.workspaceGitService ?? createNoopWorkspaceGitService(),
+      workspaceGitService,
+      workspaceAutoName: new WorkspaceAutoName({
+        agentManager,
+        workspaceRegistry,
+        workspaceGitService,
+        providerSnapshotManager,
+        readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+        gitMutation: { notifyGitMutation: async () => {} },
+        emitWorkspaceUpdateForCwd: async () => {},
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        logger: asSessionLogger(logger),
+        generateWorkspaceName: options.generateWorkspaceName,
+      }),
       renameCurrentBranch: options.renameCurrentBranch,
-      generateWorkspaceName: options.generateWorkspaceName,
       daemonConfigStore: asDaemonConfigStore({
         get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
         onChange: () => () => {},
@@ -661,7 +674,7 @@ function createSessionForWorkspaceTests(
       mcpBaseUrl: null,
       stt: null,
       tts: null,
-      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      providerSnapshotManager,
       terminalManager: options.terminalManager ?? null,
     }),
   );
@@ -7269,57 +7282,62 @@ test("failed local create_agent_request does not schedule workspace title genera
   }
 });
 
-// K4: applyGeneratedWorkspaceTitle re-reads from the registry before writing so a
-// concurrent upsert that happened between workspace creation and the async name
-// write is not clobbered.
-test("applyGeneratedWorkspaceTitle writes branch metadata and does not clobber concurrent title writes", async () => {
-  const session = createSessionForWorkspaceTests();
-
-  // The record at create-time: no title override.
-  const recordAtCreateTime = createPersistedWorkspaceRecord({
-    workspaceId: "ws-worktree-1",
-    projectId: "proj-1",
-    cwd: `${REPO_CWD}/worktrees/task-branch`,
-    kind: "worktree",
-    displayName: "task-branch",
+test("workspace auto-name keeps a manual title written before the scheduled title lands", async () => {
+  vi.useFakeTimers();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-manual-title",
+    projectId: "proj-manual-title",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    title: "Fix login bug",
     createdAt: "2026-03-01T12:00:00.000Z",
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
-
-  // Simulate a concurrent write that happened AFTER the workspace was created
-  // but BEFORE the async name generation completes — e.g. the user set a title.
-  const recordAfterConcurrentWrite = {
-    ...recordAtCreateTime,
-    title: "User-set title",
-    updatedAt: "2026-03-01T12:01:00.000Z",
-  };
-
-  const stored = new Map([[recordAfterConcurrentWrite.workspaceId, recordAfterConcurrentWrite]]);
-  session.workspaceRegistry.get = async (id: string) => stored.get(id) ?? null;
-  session.workspaceRegistry.upsert = async (record: unknown) => {
-    const parsed = record as typeof recordAtCreateTime;
-    stored.set(parsed.workspaceId, parsed);
-  };
-  // Silence notification side-effects.
-  session.emitWorkspaceUpdateForCwd = async () => {};
-  session.emitWorkspaceUpdatesForWorkspaceIds = async () => {};
-
-  await session.applyGeneratedWorkspaceTitle("ws-worktree-1", {
-    title: "Generated Task Title",
-    branch: "task-branch-renamed",
+  const stored = new Map([[workspace.workspaceId, workspace]]);
+  const emittedWorkspaceIds: string[] = [];
+  const workspaceAutoName = new WorkspaceAutoName({
+    agentManager: asAgentManager({}),
+    workspaceRegistry: {
+      get: async (workspaceId) => stored.get(workspaceId) ?? null,
+      upsert: async (record) => {
+        stored.set(record.workspaceId, record);
+      },
+    },
+    workspaceGitService: createNoopWorkspaceGitService(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+    gitMutation: { notifyGitMutation: async () => {} },
+    emitWorkspaceUpdateForCwd: async () => {},
+    emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+      emittedWorkspaceIds.push(workspaceId);
+    },
+    logger: asSessionLogger(createTestLogger()),
+    generateWorkspaceName: async () => ({ title: "Generated login fix", branch: null }),
   });
 
-  const saved = stored.get("ws-worktree-1");
-  // The branch-shaped display name stays branch-shaped.
-  expect(saved?.displayName).toBe("task-branch");
-  // The renamed branch is persisted into the dedicated branch field.
-  expect(saved?.branch).toBe("task-branch-renamed");
-  // The concurrent user-set title is NOT clobbered.
-  expect(saved?.title).toBe("User-set title");
+  try {
+    workspaceAutoName.scheduleForDirectory({
+      workspaceId: workspace.workspaceId,
+      cwd: workspace.cwd,
+      firstAgentContext: { prompt: "Fix login bug" },
+    });
+    stored.set(workspace.workspaceId, {
+      ...workspace,
+      title: "User rename",
+      updatedAt: "2026-03-01T12:01:00.000Z",
+    });
+    await vi.runAllTimersAsync();
+
+    expect(stored.get(workspace.workspaceId)?.title).toBe("User rename");
+    expect(emittedWorkspaceIds).toEqual([workspace.workspaceId]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
-test("applyGeneratedWorkspaceTitle replaces the unchanged prompt title", async () => {
-  const session = createSessionForWorkspaceTests();
+test("workspace auto-name replaces the unchanged prompt title", async () => {
+  vi.useFakeTimers();
   const workspace = createPersistedWorkspaceRecord({
     workspaceId: "ws-prompt-title",
     projectId: "proj-prompt-title",
@@ -7331,31 +7349,36 @@ test("applyGeneratedWorkspaceTitle replaces the unchanged prompt title", async (
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
   const stored = new Map([[workspace.workspaceId, workspace]]);
-  session.workspaceRegistry.get = async (id: string) => stored.get(id) ?? null;
-  session.workspaceRegistry.upsert = async (record: unknown) => {
-    const parsed = record as typeof workspace;
-    stored.set(parsed.workspaceId, parsed);
-  };
-
-  await session.applyGeneratedWorkspaceTitle(workspace.workspaceId, {
-    title: "Generated login fix",
-    promptTitle: "Fix login bug",
+  const workspaceAutoName = new WorkspaceAutoName({
+    agentManager: asAgentManager({}),
+    workspaceRegistry: {
+      get: async (workspaceId) => stored.get(workspaceId) ?? null,
+      upsert: async (record) => {
+        stored.set(record.workspaceId, record);
+      },
+    },
+    workspaceGitService: createNoopWorkspaceGitService(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+    gitMutation: { notifyGitMutation: async () => {} },
+    emitWorkspaceUpdateForCwd: async () => {},
+    emitWorkspaceUpdateForWorkspaceId: async () => {},
+    logger: asSessionLogger(createTestLogger()),
+    generateWorkspaceName: async () => ({ title: "Generated login fix", branch: null }),
   });
 
-  expect(stored.get(workspace.workspaceId)?.title).toBe("Generated login fix");
+  try {
+    workspaceAutoName.scheduleForDirectory({
+      workspaceId: workspace.workspaceId,
+      cwd: workspace.cwd,
+      firstAgentContext: { prompt: "Fix login bug" },
+    });
+    await vi.runAllTimersAsync();
 
-  stored.set(workspace.workspaceId, {
-    ...workspace,
-    title: "User rename",
-    updatedAt: "2026-03-01T12:01:00.000Z",
-  });
-
-  await session.applyGeneratedWorkspaceTitle(workspace.workspaceId, {
-    title: "Generated login fix",
-    promptTitle: "Fix login bug",
-  });
-
-  expect(stored.get(workspace.workspaceId)?.title).toBe("User rename");
+    expect(stored.get(workspace.workspaceId)?.title).toBe("Generated login fix");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // Phase 7: branch is a git fact derived per-descriptor from each workspace's own
