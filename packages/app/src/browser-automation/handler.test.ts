@@ -250,7 +250,7 @@ describe("mountBrowserAutomationHandler", () => {
     useWorkspaceLayoutStore.setState({ layoutByWorkspace: {} });
   });
 
-  test("browser_new_tab creates and focuses a workspace browser tab", async () => {
+  test("browser_new_tab creates a workspace browser tab without stealing focus", async () => {
     const browser = new BrowserAutomationHandlerHarness();
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: "server-1",
@@ -278,16 +278,14 @@ describe("mountBrowserAutomationHandler", () => {
     expect(layout?.root).toEqual(
       expect.objectContaining({
         kind: "pane",
-        pane: expect.objectContaining({ focusedTabId: openedTabs[0]?.tabId }),
+        pane: expect.objectContaining({ focusedTabId: previousFocusedTabId }),
       }),
     );
     expect(openedTabs[0]?.tabId).not.toBe(previousFocusedTabId);
     expect(browser.browser.registeredWorkspaceBrowsers).toEqual([
       { browserId: result.browserId, workspaceId: "wks_workspace_a" },
     ]);
-    expect(browser.browser.activeWorkspaceBrowsers).toEqual([
-      { browserId: result.browserId, workspaceId: "wks_workspace_a" },
-    ]);
+    expect(browser.browser.activeWorkspaceBrowsers).toEqual([]);
     expect(browser.resident.ensuredWebviews).toEqual([
       { browserId: result.browserId, url: "https://example.com" },
     ]);
@@ -398,7 +396,7 @@ describe("mountBrowserAutomationHandler", () => {
           ok: false,
           error: {
             code: "browser_unsupported",
-            message: "Desktop browser automation is not available in this app runtime.",
+            message: "Browser automation is not available in this app runtime.",
             retryable: false,
           },
         },
@@ -452,7 +450,7 @@ describe("mountBrowserAutomationHandler", () => {
           ok: false,
           error: {
             code: "browser_unsupported",
-            message: "Desktop browser automation is not implemented by this desktop build yet.",
+            message: "Browser automation is not implemented by this app build yet.",
             retryable: false,
           },
         },

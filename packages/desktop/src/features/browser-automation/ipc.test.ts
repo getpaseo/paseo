@@ -1,5 +1,5 @@
 import type { Rectangle } from "electron";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import type { TabImage } from "./service.js";
 import { adaptWebContents } from "./ipc.js";
 
@@ -14,79 +14,43 @@ class FakeImage implements TabImage {
 }
 
 class FakeDebugger {
+  public attachedProtocolVersions: string[] = [];
+  public commands: Array<{ command: string; params: Record<string, unknown> }> = [];
+
   public isAttached(): boolean {
-    return false;
+    return this.attachedProtocolVersions.length > 0;
   }
 
-  public attach(): void {}
-
-  public async sendCommand(): Promise<unknown> {
-    return {};
-  }
-}
-
-class FakeHostWebContents {
-  public readonly sentMessages: Array<{ channel: string; payload: unknown }> = [];
-  public destroyed = false;
-
-  public constructor(public readonly id: number) {}
-
-  public isDestroyed(): boolean {
-    return this.destroyed;
+  public attach(protocolVersion?: string): void {
+    this.attachedProtocolVersions.push(protocolVersion ?? "");
   }
 
-  public send(channel: string, payload: unknown): void {
-    this.sentMessages.push({ channel, payload });
+  public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
+    this.commands.push({ command, params: params ?? {} });
+    return { ok: true };
   }
 }
 
-interface FakeIpcEvent {
-  sender: {
-    id: number;
-  };
-}
-
-type IpcListener = (event: FakeIpcEvent, payload: unknown) => void;
-
-class FakeIpcBridge {
-  private readonly listeners = new Map<string, IpcListener[]>();
-
-  public on(channel: string, listener: IpcListener): void {
-    const listeners = this.listeners.get(channel) ?? [];
-    listeners.push(listener);
-    this.listeners.set(channel, listeners);
-  }
-
-  public removeListener(channel: string, listener: IpcListener): void {
-    const listeners = this.listeners.get(channel) ?? [];
-    this.listeners.set(
-      channel,
-      listeners.filter((candidate) => candidate !== listener),
-    );
-  }
-
-  public emit(channel: string, payload: unknown, input: { senderId?: number } = {}): void {
-    const event = { sender: { id: input.senderId ?? 10 } };
-    for (const listener of this.listeners.get(channel) ?? []) {
-      listener(event, payload);
-    }
-  }
-
-  public listenerCount(channel: string): number {
-    return this.listeners.get(channel)?.length ?? 0;
-  }
-}
+type ConsoleMessageListener = (
+  event: unknown,
+  level: unknown,
+  message: unknown,
+  line: unknown,
+  sourceId: unknown,
+) => void;
 
 class FakeWebContents {
   public readonly debugger = new FakeDebugger();
-  public readonly consoleMessages: unknown[] = [];
-  public readonly destroyedListeners: Array<() => void> = [];
+  public readonly captures: Array<{
+    rect: Rectangle | undefined;
+    options: { stayHidden?: boolean } | undefined;
+  }> = [];
+  public readonly invalidations: string[] = [];
+  private consoleMessageListener: ConsoleMessageListener | null = null;
+  private destroyedListener: (() => void) | null = null;
   public destroyed = false;
 
-  public constructor(
-    public readonly id: number,
-    public hostWebContents: FakeHostWebContents | null,
-  ) {}
+  public constructor(public readonly id: number) {}
 
   public getURL(): string {
     return "https://example.com";
@@ -125,251 +89,96 @@ class FakeWebContents {
   public reload(): void {}
 
   public async capturePage(
-    _rect?: Rectangle,
-    _options?: { stayHidden?: boolean },
+    rect?: Rectangle,
+    options?: { stayHidden?: boolean },
   ): Promise<TabImage> {
+    this.captures.push({ rect, options });
     return new FakeImage();
   }
 
-  public invalidate(): void {}
-
-  public getBackgroundThrottling(): boolean {
-    return true;
+  public invalidate(): void {
+    this.invalidations.push("invalidate");
   }
 
-  public setBackgroundThrottling(): void {}
-
-  public on(
-    event: "console-message",
-    listener: (
-      event: unknown,
-      level: unknown,
-      message: unknown,
-      line: unknown,
-      sourceId: unknown,
-    ) => void,
-  ): void {
-    this.consoleMessages.push({ event, listener });
+  public on(event: "console-message", listener: ConsoleMessageListener): void {
+    expect(event).toBe("console-message");
+    this.consoleMessageListener = listener;
   }
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListeners.push(listener);
+    this.destroyedListener = listener;
+  }
+
+  public emitConsoleMessage(input: {
+    level: unknown;
+    message: unknown;
+    line: unknown;
+    sourceId: unknown;
+  }): void {
+    if (!this.consoleMessageListener) {
+      throw new Error("Console listener was not registered");
+    }
+    this.consoleMessageListener({}, input.level, input.message, input.line, input.sourceId);
+  }
+
+  public destroy(): void {
+    this.destroyed = true;
+    this.destroyedListener?.();
   }
 }
 
 describe("browser automation IPC adapter", () => {
-  test("prepareForPixelCapture asks the embedder renderer and resolves the ack token", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => "prepare-1",
+  test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
+    const contents = new FakeWebContents(20);
+    const tab = adaptWebContents(contents);
+
+    const image = await tab.capturePage({ stayHidden: false });
+    tab.invalidate();
+
+    expect(image.getSize()).toEqual({ width: 640, height: 480 });
+    expect(contents.captures).toEqual([{ rect: undefined, options: { stayHidden: false } }]);
+    expect(contents.invalidations).toEqual(["invalidate"]);
+  });
+
+  test("collects console messages until the guest is destroyed", () => {
+    const contents = new FakeWebContents(21);
+    const tab = adaptWebContents(contents);
+
+    contents.emitConsoleMessage({
+      level: "warning",
+      message: "hello",
+      line: 12,
+      sourceId: "https://example.com/app.js",
     });
 
-    const preparation = tab.prepareForPixelCapture();
-
-    expect(host.sentMessages).toEqual([
+    expect(tab.getConsoleMessages?.()).toEqual([
       {
-        channel: "paseo:browser:capture-prepare",
-        payload: { requestId: "prepare-1", browserId: "browser-a" },
+        level: "warning",
+        message: "hello",
+        line: 12,
+        source: "https://example.com/app.js",
+        timestamp: expect.any(Number),
       },
     ]);
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "other",
-      ok: true,
-      token: "wrong-token",
-    });
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(1);
 
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
+    contents.destroy();
 
-    await expect(preparation).resolves.toEqual({ token: "token-a" });
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(0);
+    expect(tab.getConsoleMessages?.()).toEqual([]);
   });
 
-  test("restorePixelCapture sends the capture token back to the embedder renderer", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const requestIds = ["prepare-1", "restore-1"];
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => {
-        const requestId = requestIds.shift();
-        if (!requestId) {
-          throw new Error("Missing request id");
-        }
-        return requestId;
-      },
+  test("attaches the debugger before sending a CDP command", async () => {
+    const contents = new FakeWebContents(22);
+    const tab = adaptWebContents(contents);
+
+    const result = await tab.sendDebugCommand?.("Page.captureScreenshot", {
+      format: "png",
     });
 
-    const preparation = tab.prepareForPixelCapture();
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
-    await expect(preparation).resolves.toEqual({ token: "token-a" });
-
-    const restored = tab.restorePixelCapture({ token: "token-a" });
-
-    expect(host.sentMessages).toEqual([
-      {
-        channel: "paseo:browser:capture-prepare",
-        payload: { requestId: "prepare-1", browserId: "browser-a" },
-      },
-      {
-        channel: "paseo:browser:capture-restore",
-        payload: { requestId: "restore-1", browserId: "browser-a", token: "token-a" },
-      },
+    expect(result).toEqual({ ok: true });
+    expect(contents.debugger.attachedProtocolVersions).toEqual(["1.3"]);
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.captureScreenshot", params: { format: "png" } },
     ]);
-    ipc.emit("paseo:browser:capture-restored", { requestId: "restore-1", ok: true });
-
-    await expect(restored).resolves.toBeUndefined();
-  });
-
-  test("restorePixelCapture uses the host captured during preparation when the guest detaches", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const requestIds = ["prepare-1", "restore-1"];
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => {
-        const requestId = requestIds.shift();
-        if (!requestId) {
-          throw new Error("Missing request id");
-        }
-        return requestId;
-      },
-    });
-
-    const preparationPromise = tab.prepareForPixelCapture();
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
-    const preparation = await preparationPromise;
-    contents.hostWebContents = null;
-
-    const restored = tab.restorePixelCapture(preparation);
-
-    expect(host.sentMessages).toEqual([
-      {
-        channel: "paseo:browser:capture-prepare",
-        payload: { requestId: "prepare-1", browserId: "browser-a" },
-      },
-      {
-        channel: "paseo:browser:capture-restore",
-        payload: { requestId: "restore-1", browserId: "browser-a", token: "token-a" },
-      },
-    ]);
-    ipc.emit("paseo:browser:capture-restored", { requestId: "restore-1", ok: true });
-
-    await expect(restored).resolves.toBeUndefined();
-    await expect(tab.restorePixelCapture(preparation)).rejects.toThrow(
-      "Browser pixel capture preparation is no longer active.",
-    );
-  });
-
-  test("prepareForPixelCapture rejects when the renderer reports preparation failure", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => "prepare-1",
-    });
-
-    const preparation = tab.prepareForPixelCapture();
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: false,
-      message: "renderer could not prep",
-    });
-
-    await expect(preparation).rejects.toThrow("renderer could not prep");
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(0);
-  });
-
-  test("prepareForPixelCapture ignores matching responses from the wrong sender", async () => {
-    const host = new FakeHostWebContents(10);
-    const contents = new FakeWebContents(20, host);
-    const ipc = new FakeIpcBridge();
-    const tab = adaptWebContents(contents, "browser-a", {
-      ipc,
-      createRequestId: () => "prepare-1",
-    });
-
-    const preparation = tab.prepareForPixelCapture();
-    ipc.emit(
-      "paseo:browser:capture-prepared",
-      {
-        requestId: "prepare-1",
-        ok: true,
-        token: "spoofed-token",
-      },
-      { senderId: 99 },
-    );
-    expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(1);
-
-    ipc.emit("paseo:browser:capture-prepared", {
-      requestId: "prepare-1",
-      ok: true,
-      token: "token-a",
-    });
-
-    await expect(preparation).resolves.toEqual({ token: "token-a" });
-  });
-
-  test("prepareForPixelCapture cancels the renderer request when the ack times out", async () => {
-    vi.useFakeTimers();
-    try {
-      const host = new FakeHostWebContents(10);
-      const contents = new FakeWebContents(20, host);
-      const ipc = new FakeIpcBridge();
-      const tab = adaptWebContents(contents, "browser-a", {
-        ipc,
-        createRequestId: () => "prepare-1",
-        timeoutMs: 25,
-      });
-
-      const preparation = tab.prepareForPixelCapture();
-      const rejection = expect(preparation).rejects.toThrow(
-        "Browser pixel capture prepare timed out.",
-      );
-      await vi.advanceTimersByTimeAsync(25);
-
-      await rejection;
-      expect(host.sentMessages).toEqual([
-        {
-          channel: "paseo:browser:capture-prepare",
-          payload: { requestId: "prepare-1", browserId: "browser-a" },
-        },
-        {
-          channel: "paseo:browser:capture-cancel",
-          payload: { requestId: "prepare-1", browserId: "browser-a" },
-        },
-      ]);
-      expect(ipc.listenerCount("paseo:browser:capture-prepared")).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("prepareForPixelCapture rejects when the guest has no embedder renderer", async () => {
-    const contents = new FakeWebContents(20, null);
-    const tab = adaptWebContents(contents, "browser-a");
-
-    await expect(tab.prepareForPixelCapture()).rejects.toThrow(
-      "Browser host renderer is not available.",
-    );
   });
 });

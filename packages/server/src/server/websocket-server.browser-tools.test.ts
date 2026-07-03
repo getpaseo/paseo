@@ -2,9 +2,11 @@ import { createServer, type Server as HTTPServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import type {
+  BrowserAutomationCommandName,
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,18 +28,18 @@ import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 
 interface BrowserToolsDaemonHarness {
   broker: BrowserToolsBroker;
-  connectDesktopBrowserClient(
-    options?: ConnectDesktopBrowserClientOptions,
-  ): Promise<DesktopBrowserClientHandle>;
+  connectBrowserHostClient(
+    options?: ConnectBrowserHostClientOptions,
+  ): Promise<BrowserHostClientHandle>;
   stop(): Promise<void>;
 }
 
-interface ConnectDesktopBrowserClientOptions {
+interface ConnectBrowserHostClientOptions {
   clientId?: string;
-  capabilities?: Partial<Record<string, boolean>>;
+  capabilities?: Record<string, unknown>;
 }
 
-interface DesktopBrowserClientHandle {
+interface BrowserHostClientHandle {
   clientId: string;
   nextBrowserRequest(): Promise<BrowserAutomationExecuteRequest>;
   respondToBrowserRequest(response: BrowserAutomationExecuteResponse): void;
@@ -57,15 +59,26 @@ afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.stop()));
 });
 
+function browserHostCapabilities(
+  supportedCommands: readonly BrowserAutomationCommandName[] = BROWSER_AUTOMATION_COMMAND_NAMES,
+): Record<string, unknown> {
+  return {
+    [CLIENT_CAPS.browserHost]: {
+      supportedCommands: [...supportedCommands],
+      hostKind: "desktop app",
+    },
+  };
+}
+
 describe("WebSocketServer browser tools wiring", () => {
   it("registers capable clients and dispatches broker requests over the real WebSocket path", async () => {
     const harness = await startBrowserToolsDaemonHarness();
-    const desktop = await harness.connectDesktopBrowserClient();
+    const browserHost = await harness.connectBrowserHostClient();
 
     const resultPromise = harness.broker.execute({
       command: { command: "list_tabs", args: {} },
     });
-    const request = await desktop.nextBrowserRequest();
+    const request = await browserHost.nextBrowserRequest();
 
     expect(request).toMatchObject({
       type: "browser.automation.execute.request",
@@ -73,7 +86,7 @@ describe("WebSocketServer browser tools wiring", () => {
       command: { command: "list_tabs", args: {} },
     });
 
-    desktop.respondToBrowserRequest({
+    browserHost.respondToBrowserRequest({
       type: "browser.automation.execute.response",
       payload: {
         requestId: request.requestId,
@@ -91,20 +104,20 @@ describe("WebSocketServer browser tools wiring", () => {
 
   it("unregisters capable clients on disconnect and clears pending browser commands", async () => {
     const harness = await startBrowserToolsDaemonHarness();
-    const desktop = await harness.connectDesktopBrowserClient();
+    const browserHost = await harness.connectBrowserHostClient();
 
     const pendingResult = harness.broker.execute({
       command: { command: "list_tabs", args: {} },
     });
     const pendingExpectation = expect(pendingResult).resolves.toMatchObject({
       ok: false,
-      error: { code: "browser_no_desktop", retryable: true },
+      error: { code: "browser_no_host", retryable: true },
     });
-    await desktop.nextBrowserRequest();
+    await browserHost.nextBrowserRequest();
 
     expect(harness.broker.getPendingRequestCount()).toBe(1);
 
-    await desktop.disconnect();
+    await browserHost.disconnect();
 
     expect(harness.broker.getRegisteredClientCount()).toBe(0);
     expect(harness.broker.getPendingRequestCount()).toBe(0);
@@ -114,28 +127,28 @@ describe("WebSocketServer browser tools wiring", () => {
       harness.broker.execute({ command: { command: "list_tabs", args: {} } }),
     ).resolves.toMatchObject({
       ok: false,
-      error: { code: "browser_no_desktop" },
+      error: { code: "browser_no_host" },
     });
   });
 
-  it("keeps browser automation registered when a desktop browser client resumes", async () => {
+  it("keeps browser automation registered when a browser host client resumes", async () => {
     const harness = await startBrowserToolsDaemonHarness();
-    const clientId = "desktop-client-1";
-    await harness.connectDesktopBrowserClient({
+    const clientId = "browser-host-client-1";
+    await harness.connectBrowserHostClient({
       clientId,
-      capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+      capabilities: browserHostCapabilities(),
     });
 
-    const resumedDesktop = await harness.connectDesktopBrowserClient({
+    const resumedBrowserHost = await harness.connectBrowserHostClient({
       clientId,
-      capabilities: { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+      capabilities: browserHostCapabilities(),
     });
 
     const resultPromise = harness.broker.execute({
       command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
     });
-    const request = await resumedDesktop.nextBrowserRequest();
-    resumedDesktop.respondToBrowserRequest({
+    const request = await resumedBrowserHost.nextBrowserRequest();
+    resumedBrowserHost.respondToBrowserRequest({
       type: "browser.automation.execute.response",
       payload: {
         requestId: request.requestId,
@@ -148,6 +161,33 @@ describe("WebSocketServer browser tools wiring", () => {
       ok: true,
       result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
     });
+  });
+
+  it("clears pending browser commands when a browser host changes capabilities", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const clientId = "browser-host-client-1";
+    const browserHost = await harness.connectBrowserHostClient({
+      clientId,
+      capabilities: browserHostCapabilities(),
+    });
+
+    const pendingResult = harness.broker.execute({
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+    });
+    await browserHost.nextBrowserRequest();
+    expect(harness.broker.getPendingRequestCount()).toBe(1);
+
+    await harness.connectBrowserHostClient({
+      clientId,
+      capabilities: browserHostCapabilities(["list_tabs"]),
+    });
+
+    await expect(pendingResult).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_host", retryable: true },
+    });
+    expect(harness.broker.getRegisteredClientCount()).toBe(1);
+    expect(harness.broker.getPendingRequestCount()).toBe(0);
   });
 });
 
@@ -162,7 +202,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
   const harness: BrowserToolsDaemonHarness = {
     broker,
-    async connectDesktopBrowserClient(options = {}) {
+    async connectBrowserHostClient(options = {}) {
       const clientId = options.clientId;
       const client = new DaemonClient({
         url,
@@ -170,7 +210,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
         clientType: "browser",
         connectTimeoutMs: 500,
         reconnect: { enabled: false },
-        capabilities: options.capabilities ?? { [CLIENT_CAPS.desktopBrowserAutomation]: true },
+        capabilities: options.capabilities ?? browserHostCapabilities(),
       });
       clients.add(client);
 

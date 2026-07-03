@@ -1,9 +1,6 @@
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { getDesktopHost, type DesktopHostBridge } from "@/desktop/host";
-import {
-  ensureResidentBrowserWebview as ensureResidentBrowserWebviewDefault,
-  installResidentBrowserCaptureBridge,
-} from "@/components/browser-webview-resident";
+import { ensureResidentBrowserWebview as ensureResidentBrowserWebviewDefault } from "@/components/browser-webview-resident";
 import { createWorkspaceBrowser } from "@/stores/browser-store";
 import {
   buildWorkspaceTabPersistenceKey,
@@ -43,7 +40,6 @@ export function mountBrowserAutomationHandler(
   options: BrowserAutomationHandlerOptions,
 ): () => void {
   const getHost = options.getHost ?? getDesktopHost;
-  const uninstallCaptureBridge = installResidentBrowserCaptureBridge();
   const unsubscribe = options.client.on("browser.automation.execute.request", (request) => {
     void handleBrowserAutomationRequest({
       client: options.client,
@@ -62,7 +58,6 @@ export function mountBrowserAutomationHandler(
   });
   return () => {
     unsubscribe();
-    uninstallCaptureBridge();
   };
 }
 
@@ -125,7 +120,7 @@ async function handleBrowserAutomationRequest(params: {
       payload: browserAutomationFailure({
         requestId: request.requestId,
         code: "browser_unsupported",
-        message: "Desktop browser automation is not available in this app runtime.",
+        message: "Browser automation is not available in this app runtime.",
       }),
     });
     return;
@@ -184,13 +179,12 @@ async function openBrowserTabForRequest(params: {
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, {
+  useWorkspaceLayoutStore.getState().openTabInBackground(workspaceKey, {
     kind: "browser",
     browserId,
   });
 
   await browserHost?.registerWorkspaceBrowser?.({ browserId, workspaceId });
-  await browserHost?.setWorkspaceActiveBrowser?.({ browserId, workspaceId });
 
   if (browserHost?.executeAutomationCommand) {
     ensureResidentBrowserWebview({ browserId, url: normalizedUrl });
@@ -208,7 +202,7 @@ async function openBrowserTabForRequest(params: {
       return browserAutomationFailure({
         requestId: request.requestId,
         code: "browser_timeout",
-        message: `Timed out waiting for browser tab ${browserId} to register with desktop automation. Try browser_new_tab again.`,
+        message: `Timed out waiting for browser tab ${browserId} to register with the browser automation host. Try browser_new_tab again.`,
         retryable: true,
       });
     }
@@ -276,14 +270,14 @@ function normalizeThrownBridgeError(
     return browserAutomationFailure({
       requestId,
       code: "browser_unsupported",
-      message: "Desktop browser automation is not implemented by this desktop build yet.",
+      message: "Browser automation is not implemented by this app build yet.",
     });
   }
 
   return browserAutomationFailure({
     requestId,
     code: "browser_unknown_error",
-    message: message || "Desktop browser automation failed.",
+    message: message || "Browser automation failed.",
   });
 }
 

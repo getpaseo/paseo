@@ -11,6 +11,16 @@ export type { BrowserWorkspaceRegistration };
 
 const browserRegistry = new PaseoBrowserWebviewRegistry();
 
+interface BrowserWebContentsIdentity {
+  readonly id: number;
+  isDestroyed(): boolean;
+}
+
+interface RegisteredBrowserWebContents extends BrowserWebContentsIdentity {
+  setBackgroundThrottling(allowed: boolean): void;
+  once(event: "destroyed", listener: () => void): void;
+}
+
 function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
   const prefix = "persist:paseo-browser-";
   if (!partition?.startsWith(prefix)) {
@@ -36,14 +46,20 @@ export function listRegisteredPaseoBrowserIds(): string[] {
     .filter((browserId) => getPaseoBrowserWebContents(browserId));
 }
 
-export function registerPaseoBrowserWebContents(contents: WebContents, browserId: string): void {
+export function registerPaseoBrowserWebContents(
+  contents: RegisteredBrowserWebContents,
+  browserId: string,
+): void {
+  contents.setBackgroundThrottling(false);
   browserRegistry.registerWebContents({ webContentsId: contents.id, browserId });
   contents.once("destroyed", () => {
     browserRegistry.unregisterWebContents(contents.id);
   });
 }
 
-export function getPaseoBrowserIdForWebContents(contents: WebContents | null): string | null {
+export function getPaseoBrowserIdForWebContents(
+  contents: BrowserWebContentsIdentity | null,
+): string | null {
   if (!contents || contents.isDestroyed()) {
     return null;
   }

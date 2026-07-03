@@ -370,7 +370,7 @@ const brokerErrorCases = [
     content: [
       {
         type: "text",
-        text: "Browser tools are disabled. Enable desktop browser tools on the host, then try again.",
+        text: "Browser tools are disabled. Enable browser tools on the host, then try again.",
       },
     ],
     context: { agentId: "agent-1", cwd: "/repo", workspaceId: "wks_workspace_a" },
@@ -391,7 +391,7 @@ const brokerErrorCases = [
     content: [
       {
         type: "text",
-        text: "The browser did not respond before the timeout. Try again or check the desktop app.",
+        text: "The browser did not respond before the timeout. Try again or check the browser host.",
       },
     ],
     context: {
@@ -410,14 +410,14 @@ const brokerErrorCases = [
       ok: false,
       error: {
         code: "screenshot_no_frame",
-        message: "The browser tab has no painted frame. Focus the tab in the app, then try again.",
-        retryable: false,
+        message: "The tab has not painted yet. Retry the screenshot.",
+        retryable: true,
       },
     },
     content: [
       {
         type: "text",
-        text: "The browser tab has no painted frame. Focus the tab in the app, then try again.",
+        text: "The tab has not painted yet. Retry the screenshot.",
       },
     ],
     context: {

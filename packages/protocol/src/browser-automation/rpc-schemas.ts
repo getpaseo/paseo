@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const BrowserAutomationErrorCodeSchema = z.enum([
   "browser_disabled",
-  "browser_no_desktop",
+  "browser_no_host",
   "browser_tab_not_found",
   "browser_tab_closed",
   "browser_timeout",
@@ -19,6 +19,29 @@ const BROWSER_AUTOMATION_BROWSER_ID_MESSAGE =
   "browserId must be a real id returned by browser_new_tab or browser_list_tabs";
 const BROWSER_AUTOMATION_WAIT_CONDITION_MESSAGE =
   "browser_wait requires exactly one of text or url";
+
+export const BROWSER_AUTOMATION_COMMAND_NAMES = [
+  "list_tabs",
+  "new_tab",
+  "snapshot",
+  "click",
+  "fill",
+  "wait",
+  "type",
+  "keypress",
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "screenshot",
+  "upload",
+  "select",
+  "hover",
+  "drag",
+  "logs",
+] as const;
+
+export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
 
 export const BrowserAutomationBrowserIdSchema = z
   .string({ error: () => BROWSER_AUTOMATION_BROWSER_ID_MESSAGE })
@@ -399,6 +422,7 @@ export const BrowserAutomationExecuteResponseSchema = z.object({
 });
 
 export type BrowserAutomationErrorCode = z.infer<typeof BrowserAutomationErrorCodeSchema>;
+export type BrowserAutomationCommandName = z.infer<typeof BrowserAutomationCommandNameSchema>;
 export type BrowserAutomationCommand = z.infer<typeof BrowserAutomationCommandSchema>;
 export type BrowserAutomationResult = z.infer<typeof BrowserAutomationResultSchema>;
 export type BrowserAutomationConsoleLogEntry = z.infer<
