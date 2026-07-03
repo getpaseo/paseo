@@ -100,6 +100,28 @@ describe("browser automation protocol integration", () => {
     });
   });
 
+  test("browser host capability accepts evaluate as a supported command", () => {
+    expect(
+      WSHelloMessageSchema.parse({
+        type: "hello",
+        clientId: "client-1",
+        clientType: "mobile",
+        protocolVersion: 1,
+        capabilities: {
+          [CLIENT_CAPS.browserHost]: {
+            supportedCommands: ["evaluate"],
+            hostKind: "desktop app",
+          },
+        },
+      }).capabilities,
+    ).toMatchObject({
+      [CLIENT_CAPS.browserHost]: {
+        supportedCommands: ["evaluate"],
+        hostKind: "desktop app",
+      },
+    });
+  });
+
   test("hello remains valid when no browser host capability is advertised", () => {
     expect(
       WSHelloMessageSchema.parse({

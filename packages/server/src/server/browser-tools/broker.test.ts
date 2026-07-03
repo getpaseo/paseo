@@ -546,6 +546,22 @@ describe("BrowserToolsBroker", () => {
         retryable: false,
       },
     });
+    await expect(
+      broker.execute({
+        command: {
+          command: "evaluate",
+          args: { browserId: BROWSER_ID, function: "() => document.title" },
+        },
+      }),
+    ).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: 'Browser automation command "evaluate" is not supported by the desktop app.',
+        retryable: false,
+      },
+    });
     expect(client.receivedRequests).toEqual([]);
   });
 

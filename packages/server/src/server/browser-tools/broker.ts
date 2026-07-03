@@ -482,6 +482,7 @@ function getBrowserIdForCommand(command: BrowserAutomationCommand): string | nul
     case "hover":
     case "drag":
     case "logs":
+    case "evaluate":
       return command.args.browserId;
   }
 }

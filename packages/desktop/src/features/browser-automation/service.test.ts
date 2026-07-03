@@ -51,6 +51,9 @@ class FakeTab implements TabContents {
     children?: unknown[];
   }> = [];
   public actionScriptResult: unknown = true;
+  public evaluateScriptResult: unknown = { ok: true, resultJson: "null" };
+  public evaluateScriptThrows = false;
+  public evaluateScriptErrorMessage = "page failed";
   public actionabilityResult: unknown = {
     ok: true,
     target: { point: { x: 40, y: 30 }, rect: { x: 20, y: 10, width: 40, height: 40 } },
@@ -117,6 +120,12 @@ class FakeTab implements TabContents {
     }
     if (code.includes("performance.getEntriesByType")) {
       return JSON.stringify(this.networkEntries);
+    }
+    if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
+      if (this.evaluateScriptThrows) {
+        throw new Error(this.evaluateScriptErrorMessage);
+      }
+      return this.evaluateScriptResult;
     }
     return this.actionScriptResult;
   }
@@ -1163,6 +1172,140 @@ describe("executeAutomationCommand", () => {
             transferSize: 123,
           },
         ],
+      },
+    });
+  });
+
+  test("evaluate returns primitive JSON from the page context", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.evaluateScriptResult = { ok: true, resultJson: "42" };
+
+    const result = await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, function: "() => 42" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_A,
+        resultJson: "42",
+        truncated: false,
+      },
+    });
+    expect(containsScript(browser.tab, "__PASEO_BROWSER_EVALUATE__", "() => 42")).toBe(true);
+  });
+
+  test("evaluate returns object JSON from the page context", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.evaluateScriptResult = {
+      ok: true,
+      resultJson: '{"title":"Fixture","ready":true}',
+    };
+
+    const result = await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, function: "() => ({ title: document.title, ready: true })" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_A,
+        resultJson: '{"title":"Fixture","ready":true}',
+        truncated: false,
+      },
+    });
+  });
+
+  test("evaluate passes the resolved ref element as the first argument", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.evaluateScriptResult = { ok: true, resultJson: '"Name"' };
+
+    requireSnapshotRefs(await browser.snapshot());
+    const result = await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, ref: "@e1", function: "(element) => element.name" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_A,
+        resultJson: '"Name"',
+        truncated: false,
+      },
+    });
+    expect(containsScript(browser.tab, '"@e1"', "__PASEO_BROWSER_AUTOMATION__?.resolve")).toBe(
+      true,
+    );
+  });
+
+  test("evaluate returns stale ref when the target ref cannot be resolved", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+
+    requireSnapshotRefs(await browser.snapshot());
+    const result = await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, ref: "@e9", function: "(element) => element.name" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-evaluate",
+      ok: false,
+      error: {
+        code: "browser_stale_ref",
+        message: "Browser element reference @e9 is stale. Take a new snapshot and try again.",
+        retryable: false,
+      },
+    });
+  });
+
+  test("evaluate converts thrown page code into a bounded unknown error", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.evaluateScriptResult = { error: `${"x".repeat(2_100)}boom` };
+
+    const result = await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, function: "() => { throw new Error('boom'); }" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-evaluate",
+      ok: false,
+      error: {
+        code: "browser_unknown_error",
+        message: "x".repeat(2_000),
+        retryable: false,
+      },
+    });
+  });
+
+  test("evaluate returns oversized results with explicit truncation", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.evaluateScriptResult = { ok: true, resultJson: "x".repeat(80_010) };
+
+    const result = await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, function: "() => 'large'" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_A,
+        resultJson: "x".repeat(80_000),
+        truncated: true,
       },
     });
   });

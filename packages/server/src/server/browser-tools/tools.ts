@@ -625,6 +625,39 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       return browserToolResult({ payload, context: { ...context, browserId } });
     },
   );
+
+  options.registerTool(
+    "browser_evaluate",
+    {
+      title: "Evaluate browser JavaScript",
+      description:
+        "Evaluate a JavaScript function in a Paseo browser tab. Use browserId from browser_new_tab or browser_list_tabs; when ref is provided, refs come from the latest browser_snapshot and the resolved element is passed as the first argument.",
+      inputSchema: {
+        function: z.string().min(1),
+        ref: BrowserRefInputSchema.optional(),
+        browserId: BrowserAutomationBrowserIdSchema,
+      },
+      outputSchema: BrowserToolOutputSchema,
+    },
+    async ({ function: functionSource, ref, browserId }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+
+        command: {
+          command: "evaluate",
+          args: {
+            browserId,
+            function: functionSource,
+            ...(ref ? { ref } : {}),
+          },
+        },
+      });
+      return browserToolResult({ payload, context: { ...context, browserId } });
+    },
+  );
 }
 
 function resolveBrowserToolContext(options: RegisterBrowserToolsOptions): {
@@ -892,9 +925,18 @@ function summarizeBrowserNavigationSuccess(
 function summarizeBrowserDiagnosticsSuccess(
   result: Extract<BrowserToolsResponsePayload, { ok: true }>["result"],
 ): string | null {
+  if (result.command === "evaluate") {
+    return [
+      "Browser evaluate returned:",
+      result.resultJson,
+      ...(result.truncated ? ["Result was truncated."] : []),
+    ].join("\n");
+  }
+
   if (result.command !== "logs") {
     return null;
   }
+
   const consoleCount = result.console.length;
   const networkCount = result.network.length;
   return `Read ${consoleCount} console log${consoleCount === 1 ? "" : "s"} and ${networkCount} network entr${networkCount === 1 ? "y" : "ies"}.`;

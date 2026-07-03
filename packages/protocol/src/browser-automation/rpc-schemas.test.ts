@@ -155,6 +155,28 @@ const commandParseCases = [
     command: { command: "logs", args: { browserId: BROWSER_ID } },
     expected: { command: "logs", args: { browserId: BROWSER_ID, maxEntries: 50 } },
   },
+  {
+    name: "evaluate",
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "() => document.title" },
+    },
+    expected: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "() => document.title" },
+    },
+  },
+  {
+    name: "evaluate with ref",
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+    expected: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+  },
 ] as const;
 
 const resultParseCases = [
@@ -323,6 +345,21 @@ const resultParseCases = [
           duration: 2,
         },
       ],
+    },
+  },
+  {
+    name: "evaluate",
+    result: {
+      command: "evaluate",
+      browserId: BROWSER_ID,
+      resultJson: '{"title":"Fixture"}',
+      truncated: false,
+    },
+    expected: {
+      command: "evaluate",
+      browserId: BROWSER_ID,
+      resultJson: '{"title":"Fixture"}',
+      truncated: false,
     },
   },
 ] as const;

@@ -1422,6 +1422,24 @@ async function automationType(guest, refEntry, text) {
   await send("Input.insertText", { text });
 }
 
+async function automationEvaluate(guest, functionSource, refEntry) {
+  return guest.executeJavaScript(
+    String.raw`(async () => {
+      const userFunction = (0, eval)(${JSON.stringify(`(${functionSource})`)});
+      const args = [];
+      ${
+        refEntry
+          ? `const resolved = window.__PASEO_BROWSER_AUTOMATION__.resolve(${JSON.stringify(refEntry.ref)}, ${JSON.stringify(refEntry.fingerprint)});
+      if (!resolved.ok) return { ok: false, reason: "stale_ref" };
+      args.push(resolved.element);`
+          : ""
+      }
+      return JSON.stringify(await userFunction(...args));
+    })()`,
+    true,
+  );
+}
+
 const AUTOMATION_DIALOG_POLICY = {
   alert: { action: "accepted", accept: true },
   confirm: { action: "dismissed", accept: false },
@@ -1603,6 +1621,21 @@ async function runAutomationGroup() {
     }
     pass("automation ref resolves after pushState");
     results.push({ group: "automation", check: "pushState-ref", pass: true });
+
+    const pageEvaluate = await automationEvaluate(guest, "() => ({ title: document.title })");
+    const refEvaluate = await automationEvaluate(
+      guest,
+      "(element) => ({ text: element.textContent.trim(), tag: element.tagName.toLowerCase() })",
+      saveRef,
+    );
+    if (
+      pageEvaluate !== '{"title":"Automation Fixture"}' ||
+      refEvaluate !== '{"text":"Save changes","tag":"button"}'
+    ) {
+      fail(`automation evaluate returned page=${pageEvaluate} ref=${refEvaluate}`);
+    }
+    pass("automation evaluate runs in page context and receives ref element");
+    results.push({ group: "automation", check: "evaluate", pass: true });
 
     const nameRef = automationRefByName(first, "Name");
     await automationType(guest, nameRef, " Ada");

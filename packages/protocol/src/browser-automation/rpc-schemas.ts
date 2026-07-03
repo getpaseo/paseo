@@ -39,6 +39,7 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "hover",
   "drag",
   "logs",
+  "evaluate",
 ] as const;
 
 export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
@@ -197,6 +198,14 @@ export const BrowserAutomationLogsCommandSchema = z.object({
   }),
 });
 
+export const BrowserAutomationEvaluateCommandSchema = z.object({
+  command: z.literal("evaluate"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    function: z.string().min(1),
+    ref: BrowserAutomationRefSchema.optional(),
+  }),
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
@@ -216,6 +225,7 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationHoverCommandSchema,
   BrowserAutomationDragCommandSchema,
   BrowserAutomationLogsCommandSchema,
+  BrowserAutomationEvaluateCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
@@ -388,6 +398,13 @@ export const BrowserAutomationLogsResultSchema = z.object({
   network: z.array(BrowserAutomationNetworkLogEntrySchema),
 });
 
+export const BrowserAutomationEvaluateResultSchema = z.object({
+  command: z.literal("evaluate"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  resultJson: z.string(),
+  truncated: z.boolean(),
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
@@ -407,6 +424,7 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationHoverResultSchema,
   BrowserAutomationDragResultSchema,
   BrowserAutomationLogsResultSchema,
+  BrowserAutomationEvaluateResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({

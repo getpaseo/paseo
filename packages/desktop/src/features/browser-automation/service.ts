@@ -69,6 +69,8 @@ const PIXEL_CAPTURE_TIMEOUT_MS = 5_000;
 const PIXEL_CAPTURE_RETRY_INTERVAL_MS = 200;
 const SCREENSHOT_NO_FRAME_MESSAGE = "The tab has not painted yet. Retry the screenshot.";
 const ALLOWED_PAGE_URL_PROTOCOLS = new Set(["http:", "https:"]);
+const MAX_EVALUATE_RESULT_JSON_LENGTH = 80_000;
+const MAX_EVALUATE_ERROR_MESSAGE_LENGTH = 2_000;
 let pixelCaptureQueue: Promise<void> = Promise.resolve();
 
 function fail(
@@ -433,6 +435,18 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       registry,
     );
   },
+  evaluate: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
+    const evaluateCommand = command as Extract<BrowserAutomationCommand, { command: "evaluate" }>;
+    return executeEvaluate(
+      requestId,
+      workspaceId,
+      evaluateCommand.args.browserId,
+      evaluateCommand.args.function,
+      evaluateCommand.args.ref,
+      registry,
+      snapshotEngine,
+    );
+  },
 };
 
 interface ResolvedTabTarget {
@@ -745,6 +759,63 @@ async function executeLogs(
         browserId: target.browserId,
         console: consoleMessages.slice(-maxEntries),
         network: networkEntries.slice(-maxEntries),
+      },
+    };
+  });
+}
+
+async function executeEvaluate(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  functionSource: string,
+  ref: string | undefined,
+  registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  return withDialogCapture(target.contents, async () => {
+    let elementExpression: string | undefined;
+    if (ref) {
+      const expression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof expression !== "string") {
+        return staleRefFailure(requestId, ref);
+      }
+      elementExpression = expression;
+    }
+
+    let rawResult: unknown;
+    try {
+      rawResult = await target.contents.executeJavaScript(
+        buildEvaluateScript(functionSource, elementExpression),
+      );
+    } catch (error) {
+      return fail(requestId, "browser_unknown_error", evaluateErrorMessage(error));
+    }
+
+    const result = readEvaluateScriptResult(rawResult);
+    if (result.status === "stale_ref") {
+      return staleRefFailure(requestId, ref ?? "unknown");
+    }
+    if (result.status === "error") {
+      return fail(requestId, "browser_unknown_error", capEvaluateErrorMessage(result.message));
+    }
+
+    const capped = capEvaluateResultJson(result.resultJson);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: target.browserId,
+        resultJson: capped.resultJson,
+        truncated: capped.truncated,
       },
     };
   });
@@ -1286,6 +1357,76 @@ function parseNetworkEntries(value: unknown): BrowserAutomationNetworkLogEntry[]
       },
     ];
   });
+}
+
+type EvaluateScriptResult =
+  | { status: "ok"; resultJson: string }
+  | { status: "stale_ref" }
+  | { status: "error"; message: string };
+
+function readEvaluateScriptResult(value: unknown): EvaluateScriptResult {
+  if (!value || typeof value !== "object") {
+    return { status: "error", message: "Browser evaluate returned an invalid result." };
+  }
+  const record = value as Record<string, unknown>;
+  if (record.ok === true && typeof record.resultJson === "string") {
+    return { status: "ok", resultJson: record.resultJson };
+  }
+  if (record.staleRef === true) {
+    return { status: "stale_ref" };
+  }
+  if (typeof record.error === "string") {
+    return { status: "error", message: record.error };
+  }
+  return { status: "error", message: "Browser evaluate returned an invalid result." };
+}
+
+function capEvaluateResultJson(resultJson: string): { resultJson: string; truncated: boolean } {
+  if (resultJson.length <= MAX_EVALUATE_RESULT_JSON_LENGTH) {
+    return { resultJson, truncated: false };
+  }
+  return {
+    resultJson: resultJson.slice(0, MAX_EVALUATE_RESULT_JSON_LENGTH),
+    truncated: true,
+  };
+}
+
+function evaluateErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return capEvaluateErrorMessage(message);
+}
+
+function capEvaluateErrorMessage(message: string): string {
+  return message.length <= MAX_EVALUATE_ERROR_MESSAGE_LENGTH
+    ? message
+    : message.slice(0, MAX_EVALUATE_ERROR_MESSAGE_LENGTH);
+}
+
+function buildEvaluateScript(
+  functionSource: string,
+  elementExpression: string | undefined,
+): string {
+  return String.raw`(async () => {
+    const __PASEO_BROWSER_EVALUATE__ = true;
+    try {
+      const userFunction = (0, eval)(${JSON.stringify(`(${functionSource})`)});
+      if (typeof userFunction !== 'function') {
+        throw new Error('browser_evaluate input must evaluate to a function.');
+      }
+      const args = [];
+      ${
+        elementExpression
+          ? `const element = ${elementExpression};
+      if (!element) return { staleRef: true };
+      args.push(element);`
+          : ""
+      }
+      const value = await userFunction(...args);
+      return { ok: true, resultJson: JSON.stringify(value) ?? 'null' };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  })()`;
 }
 
 function readString(value: unknown): string | null {

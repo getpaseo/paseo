@@ -383,6 +383,26 @@ const routedToolCases = [
     },
     content: [{ type: "text", text: "Dragged browser element @e4 to @e5." }],
   },
+  {
+    name: "evaluate",
+    toolName: "browser_evaluate",
+    input: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    command: {
+      command: "evaluate",
+      args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
+    },
+    payload: {
+      requestId: "req-evaluate",
+      ok: true,
+      result: {
+        command: "evaluate",
+        browserId: BROWSER_ID,
+        resultJson: '"Save"',
+        truncated: false,
+      },
+    },
+    content: [{ type: "text", text: 'Browser evaluate returned:\n"Save"' }],
+  },
 ] satisfies Array<{
   name: string;
   toolName: string;
@@ -498,6 +518,7 @@ describe("registerBrowserTools", () => {
       "browser_select",
       "browser_drag",
       "browser_logs",
+      "browser_evaluate",
     ]);
   });
 
