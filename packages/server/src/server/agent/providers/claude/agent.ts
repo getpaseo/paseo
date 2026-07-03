@@ -33,6 +33,7 @@ import {
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveClaudeConfigDir,
 } from "./models.js";
 import { CLAUDE_ULTRACODE_THINKING_OPTION_ID } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
@@ -1604,7 +1605,7 @@ export class ClaudeAgentClient implements AgentClient {
       );
     }
 
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    const configDir = resolveClaudeConfigDir(this.configDir);
     const sessionFile = path.join(
       claudeProjectDirSync(cwd, { configDir }),
       `${handle.sessionId}.jsonl`,

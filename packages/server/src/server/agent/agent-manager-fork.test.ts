@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { AgentManager } from "./agent-manager.js";
-import type { AgentClient } from "./agent-sdk-types.js";
 
 function createManager(clients = createTestAgentClients()): AgentManager {
   return new AgentManager({
@@ -67,13 +66,8 @@ test("forkAgent creates an independent parallel session that preserves full cont
 test("forkAgent throws for a provider that does not support a real fork (no snapshot fallback)", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "paseo-fork-nofork-"));
   try {
-    const clients = createTestAgentClients();
     // Disable native fork on this provider for this manager instance.
-    const claude = clients.claude as AgentClient;
-    Object.defineProperty(claude, "capabilities", {
-      value: { ...claude.capabilities, supportsFork: false },
-      configurable: true,
-    });
+    const clients = createTestAgentClients({ claude: { supportsFork: false } });
     const manager = createManager(clients);
     const source = await manager.createAgent({ provider: "claude", cwd });
     await manager.runAgent(source.id, "say 'state saved'");

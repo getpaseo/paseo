@@ -1156,8 +1156,13 @@ class FakeAgentSession implements AgentSession {
 }
 
 class FakeAgentClient implements AgentClient {
-  readonly capabilities = TEST_CAPABILITIES;
-  constructor(public readonly provider: string) {}
+  readonly capabilities: AgentCapabilityFlags;
+  constructor(
+    public readonly provider: string,
+    capabilitiesOverride?: Partial<AgentCapabilityFlags>,
+  ) {
+    this.capabilities = { ...TEST_CAPABILITIES, ...capabilitiesOverride };
+  }
 
   async createSession(
     config: AgentSessionConfig,
@@ -1249,10 +1254,14 @@ class FakeAgentClient implements AgentClient {
   }
 }
 
-export function createTestAgentClients(): Record<string, AgentClient> {
+export function createTestAgentClients(overrides?: {
+  claude?: Partial<AgentCapabilityFlags>;
+  codex?: Partial<AgentCapabilityFlags>;
+  opencode?: Partial<AgentCapabilityFlags>;
+}): Record<string, AgentClient> {
   return {
-    claude: new FakeAgentClient("claude"),
-    codex: new FakeAgentClient("codex"),
-    opencode: new FakeAgentClient("opencode"),
+    claude: new FakeAgentClient("claude", overrides?.claude),
+    codex: new FakeAgentClient("codex", overrides?.codex),
+    opencode: new FakeAgentClient("opencode", overrides?.opencode),
   };
 }
