@@ -768,6 +768,89 @@ describe("registerBrowserTools", () => {
     },
   );
 
+  test("success responses include handled dialog metadata and a text note", async () => {
+    const harness = new BrowserToolHarness();
+    const payload: Extract<BrowserToolsResponsePayload, { ok: true }> = {
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+      dialogs: [
+        {
+          type: "confirm",
+          message: "Delete item?",
+          action: "dismissed",
+          timestamp: 123,
+        },
+      ],
+    };
+    harness.broker.setResponse(payload);
+
+    const response = await harness.execute("browser_click", { browserId: BROWSER_ID, ref: "@e1" });
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: 'Clicked browser element @e1.\nHandled browser dialog: dismissed confirm "Delete item?".',
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: true,
+      result: payload.result,
+      dialogs: payload.dialogs,
+      context: {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+      },
+    });
+  });
+
+  test("failure responses include handled dialog metadata and a text note", async () => {
+    const harness = new BrowserToolHarness();
+    const payload: Extract<BrowserToolsResponsePayload, { ok: false }> = {
+      requestId: "req-wait",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser URL: /next",
+        retryable: true,
+      },
+      dialogs: [
+        {
+          type: "beforeunload",
+          message: "Leave site?",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    };
+    harness.broker.setResponse(payload);
+
+    const response = await harness.execute("browser_wait", {
+      browserId: BROWSER_ID,
+      url: "/next",
+    });
+
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: 'The browser did not respond before the timeout. Try again or check the browser host.\nHandled browser dialog: dismissed beforeunload "Leave site?".',
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: false,
+      error: payload.error,
+      dialogs: payload.dialogs,
+      context: {
+        agentId: "agent-1",
+        cwd: "/repo",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+      },
+    });
+  });
+
   test("wait rejects calls without a condition", () => {
     const harness = new BrowserToolHarness();
 

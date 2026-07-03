@@ -415,6 +415,15 @@ export const BrowserAutomationErrorSchema = z.object({
   retryable: z.boolean().default(false),
 });
 
+export const BrowserAutomationDialogEventSchema = z.object({
+  type: z.enum(["alert", "confirm", "prompt", "beforeunload"]),
+  message: z.string(),
+  defaultValue: z.string().optional(),
+  action: z.enum(["accepted", "dismissed"]),
+  promptText: z.string().optional(),
+  timestamp: z.number(),
+});
+
 export const BrowserAutomationExecuteRequestSchema = z
   .object({
     type: z.literal("browser.automation.execute.request"),
@@ -433,11 +442,13 @@ export const BrowserAutomationExecuteResponseSchema = z.object({
       requestId: z.string().min(1),
       ok: z.literal(true),
       result: BrowserAutomationResultSchema,
+      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
     }),
     z.object({
       requestId: z.string().min(1),
       ok: z.literal(false),
       error: BrowserAutomationErrorSchema,
+      dialogs: z.array(BrowserAutomationDialogEventSchema).optional(),
     }),
   ]),
 });
@@ -452,6 +463,7 @@ export type BrowserAutomationConsoleLogEntry = z.infer<
 export type BrowserAutomationNetworkLogEntry = z.infer<
   typeof BrowserAutomationNetworkLogEntrySchema
 >;
+export type BrowserAutomationDialogEvent = z.infer<typeof BrowserAutomationDialogEventSchema>;
 export type BrowserAutomationExecuteRequest = z.infer<typeof BrowserAutomationExecuteRequestSchema>;
 export type BrowserAutomationExecuteResponse = z.infer<
   typeof BrowserAutomationExecuteResponseSchema

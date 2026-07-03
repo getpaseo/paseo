@@ -45,6 +45,18 @@ const BrowserToolOutputSchema = {
       retryable: z.boolean(),
     })
     .optional(),
+  dialogs: z
+    .array(
+      z.object({
+        type: z.enum(["alert", "confirm", "prompt", "beforeunload"]),
+        message: z.string(),
+        defaultValue: z.string().optional(),
+        action: z.enum(["accepted", "dismissed"]),
+        promptText: z.string().optional(),
+        timestamp: z.number(),
+      }),
+    )
+    .optional(),
   context: z
     .object({
       agentId: z.string().optional(),
@@ -689,16 +701,23 @@ function browserToolResult(params: {
       structuredContent: {
         ok: true,
         result: browserToolStructuredResult(payload.result),
+        ...(payload.dialogs ? { dialogs: payload.dialogs } : {}),
         context,
       },
     };
   }
 
   return {
-    content: [{ type: "text", text: summarizeBrowserError(payload.error) }],
+    content: [
+      {
+        type: "text",
+        text: appendDialogSummary(summarizeBrowserError(payload.error), payload.dialogs),
+      },
+    ],
     structuredContent: {
       ok: false,
       error: payload.error,
+      ...(payload.dialogs ? { dialogs: payload.dialogs } : {}),
       context,
     },
   };
@@ -740,34 +759,35 @@ function browserToolImageContent(
 function summarizeBrowserSuccess(
   payload: Extract<BrowserToolsResponsePayload, { ok: true }>,
 ): string {
+  const withDialogs = (summary: string) => appendDialogSummary(summary, payload.dialogs);
   const controlSummary = summarizeBrowserControlSuccess(payload.result);
   if (controlSummary) {
-    return controlSummary;
+    return withDialogs(controlSummary);
   }
 
   const refActionSummary = summarizeBrowserRefActionSuccess(payload.result);
   if (refActionSummary) {
-    return refActionSummary;
+    return withDialogs(refActionSummary);
   }
 
   const diagnosticsSummary = summarizeBrowserDiagnosticsSuccess(payload.result);
   if (diagnosticsSummary) {
-    return diagnosticsSummary;
+    return withDialogs(diagnosticsSummary);
   }
 
   const keyboardSummary = summarizeBrowserKeyboardSuccess(payload.result);
   if (keyboardSummary) {
-    return keyboardSummary;
+    return withDialogs(keyboardSummary);
   }
 
   const navigationSummary = summarizeBrowserNavigationSuccess(payload.result);
   if (navigationSummary) {
-    return navigationSummary;
+    return withDialogs(navigationSummary);
   }
 
   const mediaSummary = summarizeBrowserMediaSuccess(payload.result);
   if (mediaSummary) {
-    return mediaSummary;
+    return withDialogs(mediaSummary);
   }
 
   if (payload.result.command === "list_tabs") {
@@ -779,31 +799,49 @@ function summarizeBrowserSuccess(
       const active = tab.isActive ? " active" : "";
       return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
     });
-    return [
-      `Found ${count} Paseo browser tab${count === 1 ? "" : "s"}. Use these browserId values for tab-scoped browser tools.`,
-      ...tabLines,
-    ].join("\n");
+    return withDialogs(
+      [
+        `Found ${count} Paseo browser tab${count === 1 ? "" : "s"}. Use these browserId values for tab-scoped browser tools.`,
+        ...tabLines,
+      ].join("\n"),
+    );
   }
 
   if (payload.result.command === "new_tab") {
-    return `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}. Use this browserId for tab-scoped browser tools.`;
+    return withDialogs(
+      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}. Use this browserId for tab-scoped browser tools.`,
+    );
   }
 
   if (payload.result.command === "snapshot") {
-    return [
-      `Snapshot captured ${payload.result.stats.nodeCount} node${payload.result.stats.nodeCount === 1 ? "" : "s"} with ${payload.result.stats.refCount} ref${payload.result.stats.refCount === 1 ? "" : "s"}.`,
-      `Title: ${payload.result.title || "Untitled"}`,
-      `URL: ${payload.result.url}`,
-      "",
-      payload.result.snapshot,
-    ].join("\n");
+    return withDialogs(
+      [
+        `Snapshot captured ${payload.result.stats.nodeCount} node${payload.result.stats.nodeCount === 1 ? "" : "s"} with ${payload.result.stats.refCount} ref${payload.result.stats.refCount === 1 ? "" : "s"}.`,
+        `Title: ${payload.result.title || "Untitled"}`,
+        `URL: ${payload.result.url}`,
+        "",
+        payload.result.snapshot,
+      ].join("\n"),
+    );
   }
 
   if (payload.result.command === "wait") {
-    return `Browser wait matched ${payload.result.matched}.`;
+    return withDialogs(`Browser wait matched ${payload.result.matched}.`);
   }
 
-  return `Browser ${payload.result.command} complete.`;
+  return withDialogs(`Browser ${payload.result.command} complete.`);
+}
+
+function appendDialogSummary(
+  summary: string,
+  dialogs: BrowserToolsResponsePayload["dialogs"],
+): string {
+  if (!dialogs || dialogs.length === 0) {
+    return summary;
+  }
+  return `${summary}\nHandled browser dialog${dialogs.length === 1 ? "" : "s"}: ${dialogs
+    .map((dialog) => `${dialog.action} ${dialog.type} ${JSON.stringify(dialog.message)}`)
+    .join("; ")}.`;
 }
 
 function summarizeBrowserMediaSuccess(

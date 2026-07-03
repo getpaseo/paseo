@@ -4,6 +4,7 @@ import { describe, expect, test, vi } from "vitest";
 import type {
   BrowserAutomationCommand,
   BrowserAutomationConsoleLogEntry,
+  BrowserAutomationDialogEvent,
   BrowserAutomationExecuteRequest,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
@@ -56,6 +57,7 @@ class FakeTab implements TabContents {
   };
   public networkEntries: unknown[] = [];
   public consoleMessages: BrowserAutomationConsoleLogEntry[] = [];
+  public dialogsToCapture: BrowserAutomationDialogEvent[] = [];
   public captureNeverPaints = false;
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
@@ -163,6 +165,12 @@ class FakeTab implements TabContents {
 
   public getConsoleMessages(): BrowserAutomationConsoleLogEntry[] {
     return this.consoleMessages;
+  }
+
+  public async captureDialogs<T>(
+    task: () => Promise<T>,
+  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
+    return { result: await task(), dialogs: this.dialogsToCapture };
   }
 
   public async sendDebugCommand(
@@ -670,6 +678,39 @@ describe("executeAutomationCommand", () => {
     });
   });
 
+  test("commands include dialogs handled during the command", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+
+    requireSnapshotRefs(await browser.snapshot());
+    browser.tab.dialogsToCapture = [
+      {
+        type: "alert",
+        message: "Saved",
+        action: "accepted",
+        timestamp: 123,
+      },
+    ];
+    const click = await browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e1" },
+    });
+
+    expect(click).toEqual({
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
+      dialogs: [
+        {
+          type: "alert",
+          message: "Saved",
+          action: "accepted",
+          timestamp: 123,
+        },
+      ],
+    });
+  });
+
   test.each([
     {
       name: "fill updates a ref from the latest snapshot",
@@ -860,6 +901,46 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.debugCommands).toEqual([]);
   });
 
+  test("command failures include dialogs handled before the failure", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
+
+    requireSnapshotRefs(await browser.snapshot());
+    browser.tab.dialogsToCapture = [
+      {
+        type: "prompt",
+        message: "Name?",
+        defaultValue: "Maya",
+        action: "dismissed",
+        timestamp: 124,
+      },
+    ];
+    const click = await browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e2" },
+    });
+
+    expect(click).toEqual({
+      requestId: "req-click",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser element @e2 to become actionable.",
+        retryable: true,
+      },
+      dialogs: [
+        {
+          type: "prompt",
+          message: "Name?",
+          defaultValue: "Maya",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    });
+  });
+
   test("wait resolves when the explicit tab contains the requested text", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.bodyText = "Ready";
@@ -997,24 +1078,24 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.loadedUrls).toEqual([]);
   });
 
-  test("navigation actions dispatch to the explicit tab", () => {
+  test("navigation actions dispatch to the explicit tab", async () => {
     const browser = new BrowserAutomationHarness();
 
-    const back = executeAutomationCommand(
+    const back = await executeAutomationCommand(
       automationRequest(
         { command: "back", args: { browserId: BROWSER_A } },
         { requestId: "req-back" },
       ),
       browser.registry,
     );
-    const forward = executeAutomationCommand(
+    const forward = await executeAutomationCommand(
       automationRequest(
         { command: "forward", args: { browserId: BROWSER_A } },
         { requestId: "req-forward" },
       ),
       browser.registry,
     );
-    const reload = executeAutomationCommand(
+    const reload = await executeAutomationCommand(
       automationRequest(
         { command: "reload", args: { browserId: BROWSER_A } },
         { requestId: "req-reload" },

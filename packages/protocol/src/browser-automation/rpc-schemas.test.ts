@@ -580,6 +580,53 @@ describe("browser automation execute RPC schemas", () => {
     },
   );
 
+  test("success responses can report handled dialogs", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-click",
+        ok: true,
+        result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+        dialogs: [
+          {
+            type: "alert",
+            message: "Saved",
+            action: "accepted",
+            timestamp: 123,
+          },
+          {
+            type: "prompt",
+            message: "Name?",
+            defaultValue: "Maya",
+            action: "dismissed",
+            timestamp: 124,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload).toEqual({
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
+      dialogs: [
+        {
+          type: "alert",
+          message: "Saved",
+          action: "accepted",
+          timestamp: 123,
+        },
+        {
+          type: "prompt",
+          message: "Name?",
+          defaultValue: "Maya",
+          action: "dismissed",
+          timestamp: 124,
+        },
+      ],
+    });
+  });
+
   test("error responses keep stable codes, messages, and retry defaults", () => {
     const parsed = BrowserAutomationExecuteResponseSchema.parse({
       type: "browser.automation.execute.response",
@@ -601,6 +648,46 @@ describe("browser automation execute RPC schemas", () => {
         message: "No browser automation host is connected.",
         retryable: false,
       },
+    });
+  });
+
+  test("failure responses can report handled dialogs", () => {
+    const parsed = BrowserAutomationExecuteResponseSchema.parse({
+      type: "browser.automation.execute.response",
+      payload: {
+        requestId: "req-navigate",
+        ok: false,
+        error: {
+          code: "browser_timeout",
+          message: "Timed out waiting for browser URL: /next",
+        },
+        dialogs: [
+          {
+            type: "beforeunload",
+            message: "Leave site?",
+            action: "dismissed",
+            timestamp: 200,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.payload).toEqual({
+      requestId: "req-navigate",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser URL: /next",
+        retryable: false,
+      },
+      dialogs: [
+        {
+          type: "beforeunload",
+          message: "Leave site?",
+          action: "dismissed",
+          timestamp: 200,
+        },
+      ],
     });
   });
 });

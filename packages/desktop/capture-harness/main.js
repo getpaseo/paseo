@@ -1131,6 +1131,10 @@ function automationFixtureUrl() {
             <button id="hover-target">Revealed action</button>
             <button id="drag-source">Drag source</button>
             <span id="drag-target">Drop target</span>
+            <button id="dialog-alert">Open alert</button>
+            <button id="dialog-confirm">Open confirm</button>
+            <button id="dialog-prompt">Open prompt</button>
+            <button id="dialog-beforeunload">Arm beforeunload</button>
             <input id="upload" type="file" aria-label="Upload receipt">
           </section>
         </main>
@@ -1170,6 +1174,26 @@ function automationFixtureUrl() {
           });
           document.getElementById("drag-target").addEventListener("pointerup", (event) => {
             window.fixtureLog.push({ event: "drag-up", trusted: event.isTrusted });
+          });
+          document.getElementById("dialog-alert").addEventListener("click", () => {
+            alert("Alert opened");
+            window.fixtureLog.push({ event: "alert-returned" });
+          });
+          document.getElementById("dialog-confirm").addEventListener("click", () => {
+            window.fixtureLog.push({ event: "confirm-result", value: confirm("Confirm action?") });
+          });
+          document.getElementById("dialog-prompt").addEventListener("click", () => {
+            window.fixtureLog.push({ event: "prompt-result", value: prompt("Prompt value?", "Maya") });
+          });
+          window.beforeUnloadEnabled = false;
+          document.getElementById("dialog-beforeunload").addEventListener("click", () => {
+            window.beforeUnloadEnabled = true;
+            window.fixtureLog.push({ event: "beforeunload-armed" });
+          });
+          window.addEventListener("beforeunload", (event) => {
+            if (!window.beforeUnloadEnabled) return;
+            event.preventDefault();
+            event.returnValue = "Leave fixture?";
           });
           setTimeout(() => {
             document.getElementById("delayed").disabled = false;
@@ -1398,6 +1422,97 @@ async function automationType(guest, refEntry, text) {
   await send("Input.insertText", { text });
 }
 
+const AUTOMATION_DIALOG_POLICY = {
+  alert: { action: "accepted", accept: true },
+  confirm: { action: "dismissed", accept: false },
+  prompt: { action: "dismissed", accept: false },
+  beforeunload: { action: "dismissed", accept: false },
+};
+
+const AUTOMATION_PROMPT_SHIM_INSTALL = String.raw`(() => {
+  const stateKey = "__PASEO_BROWSER_AUTOMATION_DIALOG_STATE__";
+  const state = window[stateKey] || { prompts: [], installed: false };
+  window[stateKey] = state;
+  if (state.installed) return true;
+  window.prompt = (message = "", defaultValue = "") => {
+    state.prompts.push({
+      type: "prompt",
+      message: String(message ?? ""),
+      defaultValue: String(defaultValue ?? ""),
+      action: "dismissed",
+      timestamp: Date.now(),
+    });
+    return null;
+  };
+  state.installed = true;
+  return true;
+})()`;
+
+const AUTOMATION_PROMPT_SHIM_DRAIN = String.raw`(() => {
+  const state = window.__PASEO_BROWSER_AUTOMATION_DIALOG_STATE__;
+  if (!state || !Array.isArray(state.prompts)) return [];
+  return state.prompts.splice(0);
+})()`;
+
+async function captureAutomationDialogs(guest, action, expectedCount) {
+  const send = await attachAutomationDebugger(guest);
+  await send("Page.enable");
+  await send("Runtime.evaluate", {
+    expression: AUTOMATION_PROMPT_SHIM_INSTALL,
+    returnByValue: true,
+  });
+  const dialogs = [];
+  const listener = (_event, method, params = {}) => {
+    if (method !== "Page.javascriptDialogOpening") return;
+    const type = AUTOMATION_DIALOG_POLICY[params.type] ? params.type : "alert";
+    const policy = AUTOMATION_DIALOG_POLICY[type];
+    dialogs.push({
+      type,
+      message: String(params.message || ""),
+      ...(typeof params.defaultPrompt === "string" ? { defaultValue: params.defaultPrompt } : {}),
+      action: policy.action,
+      timestamp: Date.now(),
+    });
+    void send("Page.handleJavaScriptDialog", { accept: policy.accept });
+  };
+  guest.debugger.on("message", listener);
+  try {
+    await action();
+    const promptResult = await send("Runtime.evaluate", {
+      expression: AUTOMATION_PROMPT_SHIM_DRAIN,
+      returnByValue: true,
+    });
+    if (Array.isArray(promptResult.result?.value)) {
+      dialogs.push(...promptResult.result.value);
+    }
+    await waitForDialogCount(dialogs, expectedCount);
+    return dialogs;
+  } finally {
+    guest.debugger.removeListener?.("message", listener);
+  }
+}
+
+async function waitForDialogCount(dialogs, expectedCount) {
+  const deadline = Date.now() + 1000;
+  do {
+    if (dialogs.length >= expectedCount) return;
+    await delay(25);
+  } while (Date.now() < deadline);
+  fail(`automation observed ${dialogs.length}/${expectedCount} dialogs`);
+}
+
+function assertAutomationDialog(dialogs, expected) {
+  const dialog = dialogs.find((entry) => entry.type === expected.type);
+  if (!dialog) {
+    fail(`automation did not report ${expected.type} dialog: ${JSON.stringify(dialogs)}`);
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    if (dialog[key] !== value) {
+      fail(`automation ${expected.type} dialog ${key}=${JSON.stringify(dialog[key])}`);
+    }
+  }
+}
+
 function automationButtonMask(button) {
   if (button === "right") return 2;
   if (button === "middle") return 4;
@@ -1569,6 +1684,80 @@ async function runAutomationGroup() {
     }
     pass("automation click options affect button modifiers and double-click count");
     results.push({ group: "automation", check: "click-options", pass: true });
+
+    const alertRef = automationRefByName(first, "Open alert");
+    const alertDialogs = await captureAutomationDialogs(
+      guest,
+      () => automationClick(guest, alertRef),
+      1,
+    );
+    assertAutomationDialog(alertDialogs, {
+      type: "alert",
+      message: "Alert opened",
+      action: "accepted",
+    });
+    await waitForAutomationLog(guest, (entry) => entry.event === "alert-returned", "alert return");
+    pass("automation alert dialogs are accepted and reported");
+    results.push({ group: "automation", check: "dialog-alert", pass: true });
+
+    const confirmRef = automationRefByName(first, "Open confirm");
+    const confirmDialogs = await captureAutomationDialogs(
+      guest,
+      () => automationClick(guest, confirmRef),
+      1,
+    );
+    assertAutomationDialog(confirmDialogs, {
+      type: "confirm",
+      message: "Confirm action?",
+      action: "dismissed",
+    });
+    await waitForAutomationLog(
+      guest,
+      (entry) => entry.event === "confirm-result" && entry.value === false,
+      "confirm dismissal",
+    );
+    pass("automation confirm dialogs are dismissed and reported");
+    results.push({ group: "automation", check: "dialog-confirm", pass: true });
+
+    const promptRef = automationRefByName(first, "Open prompt");
+    const promptDialogs = await captureAutomationDialogs(
+      guest,
+      () => automationClick(guest, promptRef),
+      1,
+    );
+    assertAutomationDialog(promptDialogs, {
+      type: "prompt",
+      message: "Prompt value?",
+      defaultValue: "Maya",
+      action: "dismissed",
+    });
+    await waitForAutomationLog(
+      guest,
+      (entry) => entry.event === "prompt-result" && entry.value === null,
+      "prompt dismissal",
+    );
+    pass("automation prompt dialogs are dismissed and reported");
+    results.push({ group: "automation", check: "dialog-prompt", pass: true });
+
+    const beforeUnloadRef = automationRefByName(first, "Arm beforeunload");
+    await automationClick(guest, beforeUnloadRef);
+    const beforeUrl = guest.getURL();
+    const beforeUnloadDialogs = await captureAutomationDialogs(
+      guest,
+      async () => {
+        await guest.loadURL(automationFixtureUrl()).catch(() => {});
+      },
+      1,
+    );
+    assertAutomationDialog(beforeUnloadDialogs, {
+      type: "beforeunload",
+      action: "dismissed",
+    });
+    if (guest.getURL() !== beforeUrl) {
+      fail("automation beforeunload dismissal did not cancel navigation");
+    }
+    pass("automation beforeunload dialogs are dismissed and reported");
+    results.push({ group: "automation", check: "dialog-beforeunload", pass: true });
 
     await guest.executeJavaScript("window.sameUrlRerender()", true);
     const rerenderResult = await guest.executeJavaScript(

@@ -17,6 +17,9 @@ class FakeDebugger {
   public attachedProtocolVersions: string[] = [];
   public commands: Array<{ command: string; params: Record<string, unknown> }> = [];
   public blockCommands = false;
+  private messageListener:
+    | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
+    | null = null;
   private readonly blockedCommands: Array<() => void> = [];
 
   public isAttached(): boolean {
@@ -35,6 +38,21 @@ class FakeDebugger {
       });
     }
     return { ok: true };
+  }
+
+  public on(
+    event: "message",
+    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+  ): void {
+    expect(event).toBe("message");
+    this.messageListener = listener;
+  }
+
+  public emitMessage(method: string, params?: Record<string, unknown>): void {
+    if (!this.messageListener) {
+      throw new Error("Debugger message listener was not registered");
+    }
+    this.messageListener({}, method, params);
   }
 
   public finishNextCommand(): void {
@@ -221,6 +239,63 @@ describe("browser automation IPC adapter", () => {
     contents.debugger.finishNextCommand();
     await expect(first).resolves.toEqual({ ok: true });
     await expect(second).resolves.toEqual({ ok: true });
+  });
+
+  test("handles JavaScript dialogs through the per-tab CDP queue", async () => {
+    const contents = new FakeWebContents(24);
+    const tab = adaptWebContents(contents);
+
+    const captured = tab.captureDialogs?.(async () => {
+      contents.debugger.blockCommands = true;
+      const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseReleased" });
+      await flushMicrotasks();
+
+      contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+        type: "confirm",
+        message: "Delete item?",
+      });
+      await flushMicrotasks();
+
+      expect(contents.debugger.commands).toEqual([
+        { command: "Page.enable", params: {} },
+        {
+          command: "Runtime.evaluate",
+          params: { expression: expect.any(String), returnByValue: true },
+        },
+        { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
+      ]);
+
+      contents.debugger.blockCommands = false;
+      contents.debugger.finishNextCommand();
+      await input;
+      await flushMicrotasks();
+      return "done";
+    });
+
+    await expect(captured).resolves.toEqual({
+      result: "done",
+      dialogs: [
+        {
+          type: "confirm",
+          message: "Delete item?",
+          action: "dismissed",
+          timestamp: expect.any(Number),
+        },
+      ],
+    });
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.enable", params: {} },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
+      { command: "Page.handleJavaScriptDialog", params: { accept: false } },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+    ]);
   });
 });
 

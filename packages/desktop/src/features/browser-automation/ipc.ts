@@ -1,9 +1,19 @@
 import type { Rectangle } from "electron";
 import { ipcMain } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { BrowserAutomationConsoleLogEntry } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type {
+  BrowserAutomationConsoleLogEntry,
+  BrowserAutomationDialogEvent,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
+import {
+  dialogAcceptValue,
+  handledDialogEvent,
+  MAX_DIALOGS_PER_COMMAND,
+  promptShimDrainScript,
+  promptShimInstallScript,
+} from "./dialog-handling.js";
 import { executeAutomationCommand } from "./service.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -16,6 +26,7 @@ import {
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
 const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
+const dialogMonitorsByContentsId = new Map<number, DialogMonitor>();
 const observedContentsIds = new Set<number>();
 
 interface IpcHandlerRegistry {
@@ -26,6 +37,10 @@ interface WebContentsDebugger {
   isAttached(): boolean;
   attach(protocolVersion?: string): void;
   sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
+  on?(
+    event: "message",
+    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+  ): void;
 }
 
 interface ConsoleMessageEmitter {
@@ -63,6 +78,7 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
   observeConsoleMessages(contents);
   const cdpQueue = getCdpQueue(contents.id);
+  const dialogMonitor = getDialogMonitor(contents, cdpQueue);
   return {
     id: contents.id,
     getURL: () => contents.getURL(),
@@ -79,6 +95,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contents.id) ?? [],
+    captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
       cdpQueue.run(async () => {
         if (!contents.debugger.isAttached()) {
@@ -114,6 +131,140 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents): void {
     observedContentsIds.delete(contents.id);
     consoleMessagesByContentsId.delete(contents.id);
     cdpQueuesByContentsId.delete(contents.id);
+    dialogMonitorsByContentsId.delete(contents.id);
+  });
+}
+
+function getDialogMonitor(
+  contents: BrowserAutomationWebContents,
+  cdpQueue: CdpSessionQueue,
+): DialogMonitor {
+  const existing = dialogMonitorsByContentsId.get(contents.id);
+  if (existing) {
+    return existing;
+  }
+  const monitor = new DialogMonitor(contents, cdpQueue);
+  dialogMonitorsByContentsId.set(contents.id, monitor);
+  return monitor;
+}
+
+class DialogMonitor {
+  private enabled = false;
+  private readonly activeCollectors: DialogCollector[] = [];
+
+  public constructor(
+    private readonly contents: BrowserAutomationWebContents,
+    private readonly cdpQueue: CdpSessionQueue,
+  ) {}
+
+  public async capture<T>(
+    task: () => Promise<T>,
+  ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
+    await this.enable();
+    await this.installPromptShim();
+    const collector: DialogCollector = { dialogs: [] };
+    this.activeCollectors.push(collector);
+    try {
+      const result = await task();
+      this.recordDialogs(collector, await this.drainPromptShim());
+      return { result, dialogs: collector.dialogs };
+    } finally {
+      const index = this.activeCollectors.indexOf(collector);
+      if (index >= 0) {
+        this.activeCollectors.splice(index, 1);
+      }
+    }
+  }
+
+  private async enable(): Promise<void> {
+    if (this.enabled) {
+      return;
+    }
+    if (!this.contents.debugger.on) {
+      return;
+    }
+    this.enabled = true;
+    this.contents.debugger.on("message", (_event, method, params) => {
+      if (method !== "Page.javascriptDialogOpening") {
+        return;
+      }
+      void this.handleOpening(params ?? {});
+    });
+    await this.sendDebugCommand("Page.enable");
+  }
+
+  private async handleOpening(params: Record<string, unknown>): Promise<void> {
+    const event = handledDialogEvent(params);
+    for (const collector of this.activeCollectors) {
+      this.recordDialogs(collector, [event]);
+    }
+    await this.sendDebugCommand("Page.handleJavaScriptDialog", {
+      accept: dialogAcceptValue(event.type),
+    });
+  }
+
+  private async installPromptShim(): Promise<void> {
+    await this.sendDebugCommand("Runtime.evaluate", {
+      expression: promptShimInstallScript(),
+      returnByValue: true,
+    });
+  }
+
+  private async drainPromptShim(): Promise<BrowserAutomationDialogEvent[]> {
+    const result = (await this.sendDebugCommand("Runtime.evaluate", {
+      expression: promptShimDrainScript(),
+      returnByValue: true,
+    })) as { result?: { value?: unknown } };
+    return parsePromptShimDialogs(result.result?.value);
+  }
+
+  private recordDialogs(collector: DialogCollector, dialogs: BrowserAutomationDialogEvent[]): void {
+    for (const dialog of dialogs) {
+      if (collector.dialogs.length >= MAX_DIALOGS_PER_COMMAND) {
+        return;
+      }
+      collector.dialogs.push(dialog);
+    }
+  }
+
+  private async sendDebugCommand(
+    command: string,
+    params?: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.cdpQueue.run(async () => {
+      if (!this.contents.debugger.isAttached()) {
+        this.contents.debugger.attach("1.3");
+      }
+      return this.contents.debugger.sendCommand(command, params ?? {});
+    });
+  }
+}
+
+interface DialogCollector {
+  dialogs: BrowserAutomationDialogEvent[];
+}
+
+function parsePromptShimDialogs(value: unknown): BrowserAutomationDialogEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry): BrowserAutomationDialogEvent[] => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (record.type !== "prompt" || record.action !== "dismissed") {
+      return [];
+    }
+    return [
+      {
+        type: "prompt",
+        message: typeof record.message === "string" ? record.message : "",
+        ...(typeof record.defaultValue === "string" ? { defaultValue: record.defaultValue } : {}),
+        action: "dismissed",
+        timestamp: typeof record.timestamp === "number" ? record.timestamp : Date.now(),
+      },
+    ];
   });
 }
 
