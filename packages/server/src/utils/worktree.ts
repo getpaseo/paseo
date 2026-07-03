@@ -39,6 +39,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -1412,9 +1413,13 @@ async function resolveWorktreeSourcePlan({
         };
       }
 
+      // The branch itself isn't a base to diff against — fall back to the
+      // repository's default branch so the diff panel has a real comparison target.
+      const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
+
       return {
         branchName: source.branchName,
-        metadataBaseRefName: source.branchName,
+        metadataBaseRefName: defaultBranch ?? source.branchName,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.branchName,
           localBranchName: source.branchName,
