@@ -34,6 +34,7 @@ import {
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
 } from "./models.js";
+import { CLAUDE_ULTRACODE_THINKING_OPTION_ID } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
@@ -373,7 +374,7 @@ interface ClaudeAgentSessionOptions {
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
-type ClaudeThinkingOption = ClaudeThinkingEffort | "ultracode";
+type ClaudeThinkingOption = ClaudeThinkingEffort | typeof CLAUDE_ULTRACODE_THINKING_OPTION_ID;
 
 function resolvePathEnvKey(): "Path" | "PATH" | null {
   if (process.env["Path"] !== undefined) return "Path";
@@ -421,7 +422,7 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
 }
 
 function isClaudeThinkingOption(value: string | null | undefined): value is ClaudeThinkingOption {
-  return value === "ultracode" || isClaudeThinkingEffort(value);
+  return value === CLAUDE_ULTRACODE_THINKING_OPTION_ID || isClaudeThinkingEffort(value);
 }
 
 interface ClaudeOptionsLogSummary {
@@ -2864,7 +2865,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
         : undefined;
-    if (thinkingOptionId === "ultracode") {
+    if (thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) {
       return { thinking: { type: "adaptive" }, effort: "xhigh", ultracode: true };
     }
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {

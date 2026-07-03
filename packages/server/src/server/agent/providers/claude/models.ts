@@ -4,117 +4,7 @@ import * as path from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
-
-const CLAUDE_THINKING_OPTIONS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "max", label: "Max" },
-] as const;
-
-const CLAUDE_EXTENDED_THINKING_OPTIONS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra High" },
-  { id: "max", label: "Max" },
-] as const;
-
-const CLAUDE_ULTRACODE_THINKING_OPTIONS = [
-  ...CLAUDE_EXTENDED_THINKING_OPTIONS,
-  { id: "ultracode", label: "Ultracode" },
-] as const;
-
-const CLAUDE_MODELS: AgentModelDefinition[] = [
-  {
-    provider: "claude",
-    id: "claude-fable-5",
-    label: "Fable 5",
-    description: "Fable 5 · Most powerful model",
-    contextWindowMaxTokens: 1_000_000,
-    thinkingOptions: [...CLAUDE_ULTRACODE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-8[1m]",
-    label: "Opus 4.8 1M",
-    description: "Opus 4.8 with 1M context window",
-    contextWindowMaxTokens: 1_000_000,
-    thinkingOptions: [...CLAUDE_ULTRACODE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-8",
-    label: "Opus 4.8",
-    description: "Opus 4.8 · Latest release",
-    isDefault: true,
-    contextWindowMaxTokens: 200_000,
-    thinkingOptions: [...CLAUDE_ULTRACODE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-5",
-    label: "Sonnet 5",
-    description: "Sonnet 5 · Best for everyday tasks",
-    contextWindowMaxTokens: 1_000_000,
-    thinkingOptions: [...CLAUDE_EXTENDED_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-7[1m]",
-    label: "Opus 4.7 1M",
-    description: "Opus 4.7 with 1M context window",
-    contextWindowMaxTokens: 1_000_000,
-    thinkingOptions: [...CLAUDE_EXTENDED_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-7",
-    label: "Opus 4.7",
-    description: "Opus 4.7 · Previous release",
-    contextWindowMaxTokens: 200_000,
-    thinkingOptions: [...CLAUDE_EXTENDED_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-6[1m]",
-    label: "Opus 4.6 1M",
-    description: "Opus 4.6 with 1M context window",
-    contextWindowMaxTokens: 1_000_000,
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-6",
-    label: "Opus 4.6",
-    description: "Opus 4.6 · Most capable for complex work",
-    contextWindowMaxTokens: 200_000,
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-4-6[1m]",
-    label: "Sonnet 4.6 1M",
-    description: "Sonnet 4.6 with 1M context window",
-    contextWindowMaxTokens: 1_000_000,
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-4-6",
-    label: "Sonnet 4.6",
-    description: "Sonnet 4.6 · Best for everyday tasks",
-    contextWindowMaxTokens: 200_000,
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-haiku-4-5",
-    label: "Haiku 4.5",
-    description: "Haiku 4.5 · Fastest for quick answers",
-    contextWindowMaxTokens: 200_000,
-  },
-];
+import { getClaudeManifestModels, isClaudeManifestModelId } from "./model-manifest.js";
 
 const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
@@ -125,7 +15,7 @@ const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
 ] as const;
 
 export function getClaudeModels(): AgentModelDefinition[] {
-  return CLAUDE_MODELS.map((model) => ({ ...model }));
+  return getClaudeManifestModels();
 }
 
 export function findClaudeModel(
@@ -135,7 +25,7 @@ export function findClaudeModel(
   if (!normalizedModelId) {
     return undefined;
   }
-  return CLAUDE_MODELS.find((model) => model.id === normalizedModelId);
+  return getClaudeModels().find((model) => model.id === normalizedModelId);
 }
 
 export async function getClaudeModelsWithSettings(
@@ -242,7 +132,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
   }
 
   // Check for exact match first (handles claude-opus-4-6[1m] directly)
-  if (CLAUDE_MODELS.some((model) => model.id === trimmed)) {
+  if (isClaudeManifestModelId(trimmed)) {
     return trimmed;
   }
 
@@ -255,7 +145,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     const suffix = trimmed.toLowerCase().includes("[1m]") ? "[1m]" : "";
     const candidates = [`claude-${family}-${major}${suffix}`, `claude-${family}-${major}`];
     for (const candidate of candidates) {
-      if (CLAUDE_MODELS.some((model) => model.id === candidate)) {
+      if (isClaudeManifestModelId(candidate)) {
         return candidate;
       }
     }

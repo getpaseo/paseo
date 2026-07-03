@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { CLAUDE_ULTRACODE_THINKING_OPTION_ID } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
@@ -76,6 +77,41 @@ describe("getClaudeModels", () => {
         ["claude-haiku-4-5", 200_000],
       ]),
     );
+  });
+
+  it("derives thinking options from model effort capabilities", () => {
+    const models = new Map(getClaudeModels().map((model) => [model.id, model]));
+
+    expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(
+      models
+        .get("claude-sonnet-5")
+        ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
+        ?.label,
+    ).toBe("Ultra Code");
+
+    expect(models.get("claude-opus-4-7")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
   });
 
   it("returns fresh copies each call", () => {
