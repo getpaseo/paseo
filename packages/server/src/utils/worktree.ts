@@ -26,7 +26,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
-import { resolveRepositoryDefaultBranch } from "./checkout-git.js";
+import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -1300,13 +1300,9 @@ async function resolveWorktreeSourcePlan({
         throw new BranchAlreadyCheckedOutError(source.branchName);
       }
 
-      // The branch itself isn't a base to diff against — fall back to the
-      // repository's default branch so the diff panel has a real comparison target.
-      const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
-
       return {
         branchName: source.branchName,
-        metadataBaseRefName: defaultBranch ?? source.branchName,
+        metadataBaseRefName: await resolveCheckoutBranchBaseRef(cwd, source.branchName),
         addArguments: [source.branchName],
       };
     }
@@ -1494,6 +1490,21 @@ function normalizeRequiredBaseBranch(baseBranch: string): string {
     throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
   }
   return normalizedBaseBranch;
+}
+
+// The checked-out branch itself isn't a base to diff against — resolve the
+// repository's default branch so the diff panel has a real comparison target.
+// If the default branch can't be determined (no origin/HEAD, no local
+// main/master — e.g. a local-only repo based on "develop"), fall back to
+// whichever branch is currently checked out in the main repo, since that's
+// almost always the branch this one was intended to be compared against.
+async function resolveCheckoutBranchBaseRef(cwd: string, branchName: string): Promise<string> {
+  const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
+  if (defaultBranch) {
+    return defaultBranch;
+  }
+  const currentBranch = await getCurrentBranch(cwd);
+  return currentBranch && currentBranch !== branchName ? currentBranch : branchName;
 }
 
 async function resolveBaseBranchForWorktree(
