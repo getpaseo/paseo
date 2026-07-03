@@ -54,7 +54,7 @@ export class BrowserToolsBroker {
   private readonly clients = new Map<string, RegisteredBrowserHost>();
   private readonly pending = new Map<string, PendingBrowserToolsRequest>();
   private readonly browserHostByBrowserId = new Map<string, string>();
-  private readonly strandedBrowserIds = new Set<string>();
+  private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
@@ -86,7 +86,7 @@ export class BrowserToolsBroker {
         continue;
       }
       this.browserHostByBrowserId.delete(browserId);
-      this.strandedBrowserIds.add(browserId);
+      this.strandedBrowserHostByBrowserId.set(browserId, clientId);
     }
 
     for (const [requestId, pending] of this.pending) {
@@ -306,7 +306,14 @@ export class BrowserToolsBroker {
       };
     }
 
-    if (this.strandedBrowserIds.has(browserId)) {
+    const strandedOwnerClientId = this.strandedBrowserHostByBrowserId.get(browserId);
+    if (strandedOwnerClientId) {
+      const reconnectedHost = this.clients.get(strandedOwnerClientId);
+      if (reconnectedHost) {
+        this.strandedBrowserHostByBrowserId.delete(browserId);
+        this.browserHostByBrowserId.set(browserId, strandedOwnerClientId);
+        return { ok: true, value: reconnectedHost };
+      }
       return {
         ok: false,
         payload: this.strandedBrowserTabFailure({ requestId, browserId }),
@@ -389,14 +396,14 @@ export class BrowserToolsBroker {
     if (payload.result.command === "list_tabs") {
       for (const tab of payload.result.tabs) {
         this.browserHostByBrowserId.set(tab.browserId, clientId);
-        this.strandedBrowserIds.delete(tab.browserId);
+        this.strandedBrowserHostByBrowserId.delete(tab.browserId);
       }
       return;
     }
 
     if ("browserId" in payload.result) {
       this.browserHostByBrowserId.set(payload.result.browserId, clientId);
-      this.strandedBrowserIds.delete(payload.result.browserId);
+      this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
     }
   }
 

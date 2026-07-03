@@ -576,6 +576,63 @@ describe("BrowserToolsBroker", () => {
     expect(replacement.receivedRequests).toEqual([]);
   });
 
+  test("reconnecting the same host reclaims its stranded browser ids", async () => {
+    const broker = createBroker({ enabled: true });
+    const owner = new FakeBrowserHostClient("host-1");
+    const unregisterOwner = broker.registerClient(owner);
+
+    const newTabPromise = broker.execute({
+      command: { command: "new_tab", args: {} },
+      workspaceId: "workspace-1",
+    });
+    owner.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      },
+    });
+    await newTabPromise;
+
+    unregisterOwner();
+    const reconnectedOwner = new FakeBrowserHostClient("host-1");
+    broker.registerClient(reconnectedOwner);
+
+    const snapshotPromise = broker.execute({
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+      workspaceId: "workspace-1",
+    });
+
+    expect(reconnectedOwner.receivedRequests).toEqual([
+      {
+        type: "browser.automation.execute.request",
+        requestId: "req-1",
+        workspaceId: "workspace-1",
+        command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+      },
+    ]);
+    reconnectedOwner.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+        title: "Example",
+        elements: [],
+      },
+    });
+
+    await expect(snapshotPromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "snapshot", browserId: BROWSER_ID },
+    });
+  });
+
   test("timeout resolves browser_timeout and clears pending state", async () => {
     vi.useFakeTimers();
     const broker = createBroker({ enabled: true, timeoutMs: 50 });
