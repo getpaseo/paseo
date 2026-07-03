@@ -17,6 +17,7 @@ class FakeDebugger {
   public attachedProtocolVersions: string[] = [];
   public commands: Array<{ command: string; params: Record<string, unknown> }> = [];
   public blockCommands = false;
+  public readonly blockedCommandNames = new Set<string>();
   private messageListener:
     | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
     | null = null;
@@ -32,7 +33,7 @@ class FakeDebugger {
 
   public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
     this.commands.push({ command, params: params ?? {} });
-    if (this.blockCommands) {
+    if (this.blockCommands || this.blockedCommandNames.has(command)) {
       await new Promise<void>((resolve) => {
         this.blockedCommands.push(resolve);
       });
@@ -263,6 +264,7 @@ describe("browser automation IPC adapter", () => {
           params: { expression: expect.any(String), returnByValue: true },
         },
         { command: "Input.dispatchMouseEvent", params: { type: "mouseReleased" } },
+        { command: "Page.handleJavaScriptDialog", params: { accept: false } },
       ]);
 
       contents.debugger.blockCommands = false;
@@ -295,7 +297,62 @@ describe("browser automation IPC adapter", () => {
         command: "Runtime.evaluate",
         params: { expression: expect.any(String), returnByValue: true },
       },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
     ]);
+  });
+
+  test("handles JavaScript dialogs while the triggering CDP input command is still in flight", async () => {
+    const contents = new FakeWebContents(25);
+    const tab = adaptWebContents(contents);
+
+    const captured = tab.captureDialogs?.(async () => {
+      contents.debugger.blockedCommandNames.add("Input.dispatchMouseEvent");
+      const input = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mousePressed" });
+      await flushMicrotasks();
+
+      contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+        type: "alert",
+        message: "Saved",
+      });
+      await flushMicrotasks();
+
+      expect(contents.debugger.commands).toEqual([
+        { command: "Page.enable", params: {} },
+        {
+          command: "Runtime.evaluate",
+          params: { expression: expect.any(String), returnByValue: true },
+        },
+        { command: "Input.dispatchMouseEvent", params: { type: "mousePressed" } },
+        { command: "Page.handleJavaScriptDialog", params: { accept: true } },
+      ]);
+
+      contents.debugger.blockedCommandNames.clear();
+      contents.debugger.finishNextCommand();
+      await input;
+      return "done";
+    });
+
+    await expect(captured).resolves.toEqual({
+      result: "done",
+      dialogs: [
+        {
+          type: "alert",
+          message: "Saved",
+          action: "accepted",
+          timestamp: expect.any(Number),
+        },
+      ],
+    });
+    expect(contents.debugger.commands.at(-1)).toEqual({
+      command: "Runtime.evaluate",
+      params: {
+        expression: expect.stringContaining("delete window[stateKey]"),
+        returnByValue: true,
+      },
+    });
   });
 });
 

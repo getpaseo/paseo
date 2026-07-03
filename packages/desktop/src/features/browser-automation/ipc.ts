@@ -13,6 +13,7 @@ import {
   MAX_DIALOGS_PER_COMMAND,
   promptShimDrainScript,
   promptShimInstallScript,
+  promptShimRestoreScript,
 } from "./dialog-handling.js";
 import { executeAutomationCommand } from "./service.js";
 import {
@@ -169,6 +170,7 @@ class DialogMonitor {
       this.recordDialogs(collector, await this.drainPromptShim());
       return { result, dialogs: collector.dialogs };
     } finally {
+      await this.restorePromptShim();
       const index = this.activeCollectors.indexOf(collector);
       if (index >= 0) {
         this.activeCollectors.splice(index, 1);
@@ -198,7 +200,7 @@ class DialogMonitor {
     for (const collector of this.activeCollectors) {
       this.recordDialogs(collector, [event]);
     }
-    await this.sendDebugCommand("Page.handleJavaScriptDialog", {
+    await this.sendDialogResponseCommand("Page.handleJavaScriptDialog", {
       accept: dialogAcceptValue(event.type),
     });
   }
@@ -216,6 +218,17 @@ class DialogMonitor {
       returnByValue: true,
     })) as { result?: { value?: unknown } };
     return parsePromptShimDialogs(result.result?.value);
+  }
+
+  private async restorePromptShim(): Promise<void> {
+    try {
+      await this.sendDebugCommand("Runtime.evaluate", {
+        expression: promptShimRestoreScript(),
+        returnByValue: true,
+      });
+    } catch {
+      // Navigation can destroy the execution context before cleanup runs; the next page has no shim.
+    }
   }
 
   private recordDialogs(collector: DialogCollector, dialogs: BrowserAutomationDialogEvent[]): void {
@@ -237,6 +250,18 @@ class DialogMonitor {
       }
       return this.contents.debugger.sendCommand(command, params ?? {});
     });
+  }
+
+  private async sendDialogResponseCommand(
+    command: string,
+    params?: Record<string, unknown>,
+  ): Promise<unknown> {
+    // Dialogs can block the CDP command that opened them, so the unblocker must not wait behind
+    // the per-tab command queue.
+    if (!this.contents.debugger.isAttached()) {
+      this.contents.debugger.attach("1.3");
+    }
+    return this.contents.debugger.sendCommand(command, params ?? {});
   }
 }
 

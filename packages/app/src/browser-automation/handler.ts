@@ -122,7 +122,7 @@ async function handleBrowserAutomationRequest(params: {
   if (request.command.command === "resize") {
     client.sendBrowserAutomationExecuteResponse({
       type: "browser.automation.execute.response",
-      payload: resizeBrowserTabForRequest(request),
+      payload: resizeBrowserTabForRequest({ request, serverId }),
     });
     return;
   }
@@ -172,15 +172,26 @@ async function handleBrowserAutomationRequest(params: {
   }
 }
 
-function resizeBrowserTabForRequest(
-  request: BrowserAutomationExecuteRequest,
-): BrowserAutomationResponsePayload {
+function resizeBrowserTabForRequest(params: {
+  request: BrowserAutomationExecuteRequest;
+  serverId?: string;
+}): BrowserAutomationResponsePayload {
+  const { request, serverId } = params;
   const command = request.command as Extract<
     BrowserAutomationExecuteRequest["command"],
     { command: "resize" }
   >;
   const browserId = command.args.browserId;
   if (!getBrowserRecord(browserId)) {
+    return browserAutomationFailure({
+      requestId: request.requestId,
+      code: "browser_tab_not_found",
+      message: `No browser tab found for ID: ${browserId}`,
+    });
+  }
+
+  const workspaceId = request.workspaceId;
+  if (serverId && workspaceId && !findWorkspaceBrowserTab({ serverId, workspaceId, browserId })) {
     return browserAutomationFailure({
       requestId: request.requestId,
       code: "browser_tab_not_found",
@@ -225,23 +236,17 @@ async function closeBrowserTabForRequest(params: {
   >;
   const browserId = command.args.browserId;
   const workspaceId = request.workspaceId;
-  const workspaceKey =
-    serverId && workspaceId ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId }) : null;
-  if (!workspaceKey) {
+  const workspaceTab = serverId
+    ? findWorkspaceBrowserTab({ serverId, workspaceId, browserId })
+    : null;
+  if (!workspaceTab && (!serverId || !workspaceId)) {
     return browserAutomationFailure({
       requestId: request.requestId,
       code: "browser_unsupported",
       message: "Cannot close a browser tab without a workspace context.",
     });
   }
-
-  const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-  const tab = layout
-    ? collectAllTabs(layout.root).find((candidate) => {
-        return candidate.target.kind === "browser" && candidate.target.browserId === browserId;
-      })
-    : null;
-  if (!tab || !getBrowserRecord(browserId)) {
+  if (!workspaceTab || !getBrowserRecord(browserId)) {
     return browserAutomationFailure({
       requestId: request.requestId,
       code: "browser_tab_not_found",
@@ -249,16 +254,43 @@ async function closeBrowserTabForRequest(params: {
     });
   }
 
-  useWorkspaceLayoutStore.getState().closeTab(workspaceKey, tab.tabId);
+  useWorkspaceLayoutStore.getState().closeTab(workspaceTab.workspaceKey, workspaceTab.tabId);
   useBrowserStore.getState().removeBrowser(browserId);
   removeResidentBrowserWebview(browserId);
   await browserHost?.unregisterWorkspaceBrowser?.(browserId);
+  await browserHost?.clearPartition?.(browserId);
 
   return {
     requestId: request.requestId,
     ok: true,
     result: { command: "close_tab", browserId },
   };
+}
+
+function findWorkspaceBrowserTab(input: {
+  serverId: string;
+  workspaceId: string | undefined;
+  browserId: string;
+}): { workspaceKey: string; tabId: string } | null {
+  if (!input.workspaceId) {
+    return null;
+  }
+  const workspaceKey = buildWorkspaceTabPersistenceKey({
+    serverId: input.serverId,
+    workspaceId: input.workspaceId,
+  });
+  if (!workspaceKey) {
+    return null;
+  }
+  const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+  const tab = layout
+    ? collectAllTabs(layout.root).find((candidate) => {
+        return (
+          candidate.target.kind === "browser" && candidate.target.browserId === input.browserId
+        );
+      })
+    : null;
+  return tab ? { workspaceKey, tabId: tab.tabId } : null;
 }
 
 async function openBrowserTabForRequest(params: {

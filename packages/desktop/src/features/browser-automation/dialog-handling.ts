@@ -44,7 +44,7 @@ export function promptShimInstallScript(): string {
     if (state.installed) return true;
     const originalPrompt = window.prompt;
     Object.defineProperty(state, "originalPrompt", { configurable: true, value: originalPrompt });
-    window.prompt = (message = "", defaultValue = "") => {
+    const promptShim = (message = "", defaultValue = "") => {
       state.prompts.push({
         type: "prompt",
         message: String(message ?? ""),
@@ -54,6 +54,8 @@ export function promptShimInstallScript(): string {
       });
       return null;
     };
+    Object.defineProperty(state, "promptShim", { configurable: true, value: promptShim });
+    window.prompt = promptShim;
     state.installed = true;
     return true;
   })()`;
@@ -64,6 +66,19 @@ export function promptShimDrainScript(): string {
     const state = window.__PASEO_BROWSER_AUTOMATION_DIALOG_STATE__;
     if (!state || !Array.isArray(state.prompts)) return [];
     return state.prompts.splice(0);
+  })()`;
+}
+
+export function promptShimRestoreScript(): string {
+  return String.raw`(() => {
+    const stateKey = "__PASEO_BROWSER_AUTOMATION_DIALOG_STATE__";
+    const state = window[stateKey];
+    if (!state || !state.installed) return true;
+    if (window.prompt === state.promptShim && typeof state.originalPrompt === "function") {
+      window.prompt = state.originalPrompt;
+    }
+    delete window[stateKey];
+    return true;
   })()`;
 }
 

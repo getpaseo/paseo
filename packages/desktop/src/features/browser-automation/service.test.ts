@@ -646,7 +646,7 @@ describe("executeAutomationCommand", () => {
     ]);
   });
 
-  test("click options choose the trusted mouse button, click count, and modifiers", async () => {
+  test("click options choose the trusted mouse button, double-click count, and modifiers", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = [
       {
@@ -674,20 +674,45 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "click", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
-    expect(browser.tab.debugCommands.at(1)?.params).toMatchObject({
-      type: "mousePressed",
-      button: "right",
-      buttons: 2,
-      clickCount: 2,
-      modifiers: 10,
-    });
-    expect(browser.tab.debugCommands.at(2)?.params).toMatchObject({
-      type: "mouseReleased",
-      button: "right",
-      buttons: 0,
-      clickCount: 2,
-      modifiers: 10,
-    });
+    expect(browser.tab.debugCommands.map((entry) => entry.params)).toEqual([
+      { type: "mouseMoved", x: 40, y: 30, button: "none", modifiers: 10 },
+      {
+        type: "mousePressed",
+        x: 40,
+        y: 30,
+        button: "right",
+        buttons: 2,
+        clickCount: 1,
+        modifiers: 10,
+      },
+      {
+        type: "mouseReleased",
+        x: 40,
+        y: 30,
+        button: "right",
+        buttons: 0,
+        clickCount: 1,
+        modifiers: 10,
+      },
+      {
+        type: "mousePressed",
+        x: 40,
+        y: 30,
+        button: "right",
+        buttons: 2,
+        clickCount: 2,
+        modifiers: 10,
+      },
+      {
+        type: "mouseReleased",
+        x: 40,
+        y: 30,
+        button: "right",
+        buttons: 0,
+        clickCount: 2,
+        modifiers: 10,
+      },
+    ]);
   });
 
   test("commands include dialogs handled during the command", async () => {

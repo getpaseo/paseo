@@ -401,6 +401,12 @@ export class BrowserToolsBroker {
       return;
     }
 
+    if (payload.result.command === "close_tab") {
+      this.browserHostByBrowserId.delete(payload.result.browserId);
+      this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      return;
+    }
+
     if ("browserId" in payload.result) {
       this.browserHostByBrowserId.set(payload.result.browserId, clientId);
       this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);

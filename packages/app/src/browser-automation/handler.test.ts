@@ -76,6 +76,7 @@ class FakeBrowserBridge {
   public readonly registeredWorkspaceBrowsers: Array<{ browserId: string; workspaceId: string }> =
     [];
   public readonly unregisteredWorkspaceBrowsers: string[] = [];
+  public readonly clearedPartitions: string[] = [];
   public readonly activeWorkspaceBrowsers: Array<{
     browserId: string | null;
     workspaceId: string;
@@ -102,6 +103,10 @@ class FakeBrowserBridge {
 
   public unregisterWorkspaceBrowser = async (browserId: string): Promise<void> => {
     this.unregisteredWorkspaceBrowsers.push(browserId);
+  };
+
+  public clearPartition = async (browserId: string): Promise<void> => {
+    this.clearedPartitions.push(browserId);
   };
 
   public setWorkspaceActiveBrowser = async (input: {
@@ -180,12 +185,15 @@ function browserNewTabRequest(): BrowserAutomationExecuteRequest {
   };
 }
 
-function browserResizeRequest(browserId: string): BrowserAutomationExecuteRequest {
+function browserResizeRequest(
+  browserId: string,
+  input: { workspaceId?: string } = {},
+): BrowserAutomationExecuteRequest {
   return {
     type: "browser.automation.execute.request",
     requestId: "req-resize",
     agentId: "agent-1",
-    workspaceId: "wks_workspace_a",
+    workspaceId: input.workspaceId ?? "wks_workspace_a",
     command: {
       command: "resize",
       args: { browserId, width: 1024, height: 768 },
@@ -410,7 +418,29 @@ describe("mountBrowserAutomationHandler", () => {
     expect(browser.browser.executedRequests).toHaveLength(1);
   });
 
-  test("browser_close_tab removes the workspace tab, browser record, resident webview, and registry entry", async () => {
+  test("browser_resize returns not found for a tab outside the request workspace", async () => {
+    const browser = new BrowserAutomationHandlerHarness();
+    browser.mount({ serverId: "server-1" });
+
+    browser.receive(browserNewTabRequest());
+    await flushAsyncWork();
+    const result = newTabResultFrom(browser.client.payloadAt(0));
+
+    browser.receive(browserResizeRequest(result.browserId, { workspaceId: "wks_workspace_b" }));
+    await flushAsyncWork();
+
+    expect(browser.client.payloadAt(1)).toEqual({
+      requestId: "req-resize",
+      ok: false,
+      error: {
+        code: "browser_tab_not_found",
+        message: `No browser tab found for ID: ${result.browserId}`,
+        retryable: false,
+      },
+    });
+  });
+
+  test("browser_close_tab removes the workspace tab, browser record, resident webview, registry entry, and partition", async () => {
     const browser = new BrowserAutomationHandlerHarness();
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: "server-1",
@@ -436,6 +466,7 @@ describe("mountBrowserAutomationHandler", () => {
     expect(workspaceBrowserTabs(workspaceKey, result.browserId)).toEqual([]);
     expect(useBrowserStore.getState().browsersById[result.browserId]).toBeUndefined();
     expect(browser.browser.unregisteredWorkspaceBrowsers).toEqual([result.browserId]);
+    expect(browser.browser.clearedPartitions).toEqual([result.browserId]);
     expect(currentBrowserTabs()).toEqual([]);
   });
 

@@ -51,6 +51,21 @@ export async function dispatchTrustedClick(
     button: "none",
     modifiers,
   });
+  if (options.doubleClick) {
+    await dispatchTrustedMouseClick(send, point, button, modifiers, 1);
+    await dispatchTrustedMouseClick(send, point, button, modifiers, 2);
+    return;
+  }
+  await dispatchTrustedMouseClick(send, point, button, modifiers, clickCount);
+}
+
+async function dispatchTrustedMouseClick(
+  send: CdpCommandSender,
+  point: ActionablePoint,
+  button: MouseButton,
+  modifiers: number,
+  clickCount: number,
+): Promise<void> {
   await send("Input.dispatchMouseEvent", {
     type: "mousePressed",
     x: point.x,

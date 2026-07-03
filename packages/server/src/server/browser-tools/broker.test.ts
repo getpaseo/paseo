@@ -530,6 +530,61 @@ describe("BrowserToolsBroker", () => {
     });
   });
 
+  test("successful close_tab clears browser id host affinity", async () => {
+    const broker = createBroker({ enabled: true });
+    const other = new FakeBrowserHostClient("host-1");
+    const owner = new FakeBrowserHostClient("host-2");
+    broker.registerClient(other);
+    broker.registerClient(owner);
+
+    const newTabPromise = broker.execute({ command: { command: "new_tab", args: {} } });
+    owner.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://one.example",
+      },
+    });
+    await newTabPromise;
+
+    const closePromise = broker.execute({
+      command: { command: "close_tab", args: { browserId: BROWSER_ID } },
+      requestId: "req-close",
+    });
+    owner.resolveLatestWith(broker, {
+      requestId: "req-close",
+      ok: true,
+      result: { command: "close_tab", browserId: BROWSER_ID },
+    });
+    await expect(closePromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "close_tab", browserId: BROWSER_ID },
+    });
+
+    await expect(
+      broker.execute({
+        command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+        requestId: "req-after-close",
+      }),
+    ).resolves.toEqual({
+      requestId: "req-after-close",
+      ok: false,
+      error: {
+        code: "browser_tab_not_found",
+        message: `Browser tab ${BROWSER_ID} is not associated with a connected browser automation host. Call browser_list_tabs and use one of the returned browserId values.`,
+        retryable: false,
+      },
+    });
+    expect(owner.receivedRequests.at(-1)?.command).toEqual({
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    });
+    expect(other.receivedRequests).toEqual([]);
+  });
+
   test("failed list tabs aggregation does not seed browser id affinity", async () => {
     const broker = createBroker({ enabled: true });
     const firstHost = new FakeBrowserHostClient("host-1");
