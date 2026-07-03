@@ -183,7 +183,9 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
     return trimmed;
   }
 
-  const singleSegmentMatch = trimmed.match(/(?:claude-)?(fable|opus|sonnet|haiku)[-_ ]+(\d+)/i);
+  const singleSegmentMatch = trimmed.match(
+    /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?(?:[-_ ]+\d{8})?$/i,
+  );
   if (singleSegmentMatch) {
     const family = singleSegmentMatch[1].toLowerCase();
     const major = singleSegmentMatch[2];
@@ -197,7 +199,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
   }
 
   const runtimeMatch = trimmed.match(
-    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+    /^(?:claude[-_ ])?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?(?:[-_ ]+\d{8})?$/i,
   );
   if (!runtimeMatch) {
     return null;
