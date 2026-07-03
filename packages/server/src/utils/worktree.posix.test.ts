@@ -266,9 +266,12 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         .trim();
       expect(currentBranch).toBe("dev");
 
+      // baseRefName must be the repo's default branch, not the checked-out branch
+      // itself — otherwise the diff panel compares the branch against itself and
+      // always shows no changes.
       const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
       const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-      expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
+      expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
     });
 
     it("checks out an existing local branch whose name contains uppercase letters and dots", async () => {

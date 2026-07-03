@@ -72,7 +72,10 @@ export async function createPaseoWorktree(
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
     worktree: createdWorktree.worktree,
-    baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
+    baseBranch: resolveIntentBaseBranch(
+      createdWorktree.intent,
+      createdWorktree.worktree.worktreePath,
+    ),
     title: resolveFirstAgentPromptTitle(input.firstAgentContext),
     deps,
   });
@@ -200,15 +203,22 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
 }
 
 // The base branch is normalized to match worktree.json's baseRefName (origin/
-// stripped). checkout-branch worktrees have no distinct base, so they stay null.
-function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null {
+// stripped). checkout-branch worktrees resolve their base at creation time
+// (see resolveWorktreeSourcePlan), so read it back from the metadata that was
+// just written rather than re-deriving it here.
+function resolveIntentBaseBranch(
+  intent: WorktreeCreationIntent,
+  worktreePath: string,
+): string | null {
   switch (intent.kind) {
     case "branch-off":
       return normalizeBaseRefName(intent.baseBranch);
     case "checkout-github-pr":
       return normalizeBaseRefName(intent.baseRefName);
-    case "checkout-branch":
-      return null;
+    case "checkout-branch": {
+      const metadata = readPaseoWorktreeMetadata(worktreePath);
+      return metadata ? normalizeBaseRefName(metadata.baseRefName) : null;
+    }
   }
 }
 
