@@ -74,6 +74,22 @@ Both fields accept a multiline shell script or an array of commands; commands ru
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
+## .worktreeinclude
+
+For local files that every new worktree should receive, add a `.worktreeinclude` file at the source checkout root. Paseo reads it from the current source checkout, copies the listed paths after `git worktree add`, and finishes before `worktree.setup` runs.
+
+Each nonblank line is a file path, folder path, or glob pattern relative to the source checkout. Whole-line `#` comments are ignored. A `**` path segment matches recursively; for example, `**/.runtime.env` copies every `.runtime.env` file, and `.cache-dev/**` copies the whole `.cache-dev` folder.
+
+```gitignore
+# copied from the source checkout into each new worktree
+.credentials.local.json
+**/.runtime.env
+.cache-dev/**
+.tool-state/**
+```
+
+Absolute paths, `..` segments, and `.git` metadata paths are rejected.
+
 ## Scripts and services
 
 `scripts` are named commands you can run inside a worktree on demand. Mark one as a _service_ and Paseo supervises it as a long-running process, assigns it a port, and routes HTTP traffic to it through the daemon's reverse proxy.

@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
-import { copyFile, rm, stat } from "fs/promises";
+import { copyFile, cp, mkdir, readFile, readdir, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -39,6 +39,7 @@ const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
+const WORKTREE_INCLUDE_FILE_NAME = ".worktreeinclude";
 
 export interface WorktreeConfig {
   branchName: string;
@@ -628,14 +629,7 @@ export async function runWorktreeSetupCommands(options: {
 
     if (result.exitCode !== 0) {
       if (options.cleanupOnFailure) {
-        try {
-          await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
-            cwd: options.worktreePath,
-            timeout: 120_000,
-          });
-        } catch {
-          rmSync(options.worktreePath, { recursive: true, force: true });
-        }
+        await removeFailedWorktree(options.worktreePath);
       }
       throw new WorktreeSetupError(
         `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
@@ -1165,6 +1159,205 @@ async function removeDirectoryWithRetries(path: string): Promise<void> {
   }
 }
 
+async function removeFailedWorktree(worktreePath: string): Promise<void> {
+  try {
+    await runGitCommand(["worktree", "remove", worktreePath, "--force"], {
+      cwd: worktreePath,
+      timeout: 120_000,
+    });
+  } catch {
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+}
+
+interface WorktreeIncludeEntry {
+  raw: string;
+  path: string;
+}
+
+function parseWorktreeIncludeEntries(contents: string): WorktreeIncludeEntry[] {
+  return contents
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .map(normalizeWorktreeIncludeEntry);
+}
+
+function normalizeWorktreeIncludeEntry(entry: string): WorktreeIncludeEntry {
+  const fail = (reason: string): never => {
+    throw new Error(`Invalid ${WORKTREE_INCLUDE_FILE_NAME} entry '${entry}': ${reason}`);
+  };
+
+  if (isAbsolute(entry)) {
+    fail("absolute paths are not allowed");
+  }
+
+  const segments = entry.split(/[\\/]+/).filter((segment) => segment.length > 0 && segment !== ".");
+
+  if (segments.length === 0) {
+    fail("path must not be empty");
+  }
+  if (segments.includes("..")) {
+    fail("parent-directory segments are not allowed");
+  }
+  if (segments.includes(".git")) {
+    fail("git metadata cannot be copied");
+  }
+
+  return {
+    raw: entry,
+    path: join(...segments),
+  };
+}
+
+async function readWorktreeIncludeEntries(sourceRoot: string): Promise<WorktreeIncludeEntry[]> {
+  try {
+    const contents = await readFile(join(sourceRoot, WORKTREE_INCLUDE_FILE_NAME), "utf8");
+    return parseWorktreeIncludeEntries(contents);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function splitRelativePathSegments(relativePath: string): string[] {
+  return relativePath.split(/[\\/]+/).filter((segment) => segment.length > 0);
+}
+
+function getRecursiveDirectoryIncludePath(entry: WorktreeIncludeEntry): string | null {
+  const segments = splitRelativePathSegments(entry.path);
+  if (
+    segments.length > 1 &&
+    segments.at(-1) === "**" &&
+    segments.slice(0, -1).every((segment) => !segment.includes("*"))
+  ) {
+    return join(...segments.slice(0, -1));
+  }
+  return null;
+}
+
+function segmentGlobMatches(pattern: string, value: string): boolean {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*");
+  return new RegExp(`^${escaped}$`).test(value);
+}
+
+function worktreeIncludeGlobMatches(pattern: string, candidate: string): boolean {
+  const patternSegments = splitRelativePathSegments(pattern);
+  const candidateSegments = splitRelativePathSegments(candidate);
+
+  function match(patternIndex: number, candidateIndex: number): boolean {
+    const patternSegment = patternSegments[patternIndex];
+    if (patternSegment === undefined) {
+      return candidateIndex === candidateSegments.length;
+    }
+    if (patternSegment === "**") {
+      return (
+        match(patternIndex + 1, candidateIndex) ||
+        (candidateIndex < candidateSegments.length && match(patternIndex, candidateIndex + 1))
+      );
+    }
+
+    const candidateSegment = candidateSegments[candidateIndex];
+    return (
+      candidateSegment !== undefined &&
+      segmentGlobMatches(patternSegment, candidateSegment) &&
+      match(patternIndex + 1, candidateIndex + 1)
+    );
+  }
+
+  return match(0, 0);
+}
+
+async function collectWorktreeIncludeCandidates(sourceRoot: string): Promise<string[]> {
+  const candidates: string[] = [];
+
+  async function visit(directoryPath: string, directorySegments: string[]): Promise<void> {
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.name === ".git") {
+        continue;
+      }
+
+      const pathSegments = [...directorySegments, entry.name];
+      const relativePath = join(...pathSegments);
+      candidates.push(relativePath);
+
+      if (entry.isDirectory()) {
+        await visit(join(directoryPath, entry.name), pathSegments);
+      }
+    }
+  }
+
+  await visit(sourceRoot, []);
+  return candidates;
+}
+
+function resolveWorktreeIncludeGlobMatches(
+  entry: WorktreeIncludeEntry,
+  candidates: string[],
+): string[] {
+  const recursiveDirectoryPath = getRecursiveDirectoryIncludePath(entry);
+  if (recursiveDirectoryPath) {
+    return [recursiveDirectoryPath];
+  }
+
+  return candidates.filter((candidate) => worktreeIncludeGlobMatches(entry.path, candidate)).sort();
+}
+
+async function copyWorktreeIncludeEntries(options: {
+  sourceRoot: string;
+  worktreePath: string;
+  entries: WorktreeIncludeEntry[];
+}): Promise<void> {
+  const needsCandidates = options.entries.some(
+    (entry) => entry.path.includes("*") && !getRecursiveDirectoryIncludePath(entry),
+  );
+  const candidates = needsCandidates
+    ? await collectWorktreeIncludeCandidates(options.sourceRoot)
+    : [];
+
+  for (const entry of options.entries) {
+    const paths = entry.path.includes("*")
+      ? resolveWorktreeIncludeGlobMatches(entry, candidates)
+      : [entry.path];
+    await copyWorktreeIncludeEntryPaths({
+      sourceRoot: options.sourceRoot,
+      worktreePath: options.worktreePath,
+      entry,
+      relativePaths: paths,
+    });
+  }
+}
+
+async function copyWorktreeIncludeEntryPaths(options: {
+  sourceRoot: string;
+  worktreePath: string;
+  entry: WorktreeIncludeEntry;
+  relativePaths: string[];
+}): Promise<void> {
+  let copied = false;
+  for (const relativePath of options.relativePaths) {
+    const sourcePath = resolve(options.sourceRoot, relativePath);
+    if (!(await pathExists(sourcePath))) {
+      continue;
+    }
+    const destinationPath = resolve(options.worktreePath, relativePath);
+    await mkdir(dirname(destinationPath), { recursive: true });
+    await cp(sourcePath, destinationPath, {
+      recursive: true,
+      force: true,
+    });
+    copied = true;
+  }
+
+  if (!copied) {
+    throw new Error(`No paths matched ${WORKTREE_INCLUDE_FILE_NAME} entry '${options.entry.raw}'`);
+  }
+}
+
 /**
  * Create a git worktree with proper naming conventions
  */
@@ -1177,6 +1370,7 @@ export const createWorktree = async ({
   worktreesRoot,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
+  const worktreeIncludeEntries = await readWorktreeIncludeEntries(cwd);
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
@@ -1223,6 +1417,17 @@ export const createWorktree = async ({
     await copyFile(mainConfigPath, worktreeConfigPath).catch((err) => {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     });
+  }
+
+  try {
+    await copyWorktreeIncludeEntries({
+      sourceRoot: cwd,
+      worktreePath,
+      entries: worktreeIncludeEntries,
+    });
+  } catch (error) {
+    await removeFailedWorktree(worktreePath);
+    throw error;
   }
 
   if (runSetup) {
