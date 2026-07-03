@@ -19,6 +19,7 @@ export interface ScheduleCreateOptions extends ScheduleCommandOptions {
   provider?: string;
   mode?: string;
   cwd?: string;
+  keepAlive?: boolean;
   maxRuns?: string;
   expiresIn?: string;
   runNow?: boolean;
@@ -41,6 +42,7 @@ export async function runCreateCommand(
     provider: options.provider,
     mode: options.mode,
     cwd: options.cwd,
+    keepAlive: options.keepAlive,
     host: options.host,
     maxRuns: options.maxRuns,
     expiresIn: options.expiresIn,

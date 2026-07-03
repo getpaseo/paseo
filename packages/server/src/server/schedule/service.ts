@@ -735,7 +735,9 @@ export class ScheduleService {
       throw error;
     }
 
-    await this.agentManager.archiveAgent(agent.id);
+    if (!targetConfig.keepAlive) {
+      await this.agentManager.archiveAgent(agent.id);
+    }
     const timelineText = curateAgentActivity(result.timeline);
     return {
       agentId: agent.id,
