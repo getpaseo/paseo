@@ -370,7 +370,7 @@ const brokerErrorCases = [
     content: [
       {
         type: "text",
-        text: "Browser tools are disabled. Enable desktop browser tools on the host, then try again.",
+        text: "Browser tools are disabled. Enable browser tools on the host, then try again.",
       },
     ],
     context: { agentId: "agent-1", cwd: "/repo", workspaceId: "wks_workspace_a" },
@@ -391,7 +391,7 @@ const brokerErrorCases = [
     content: [
       {
         type: "text",
-        text: "The browser did not respond before the timeout. Try again or check the desktop app.",
+        text: "The browser did not respond before the timeout. Try again or check the browser host.",
       },
     ],
     context: {

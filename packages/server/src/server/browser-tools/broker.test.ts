@@ -1,18 +1,32 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
   BrowserAutomationCommand,
+  BrowserAutomationCommandName,
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import { BrowserToolsBroker, type BrowserToolsDesktopClient } from "./broker.js";
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { BrowserToolsBroker, type BrowserHostClient } from "./broker.js";
 import { StaticBrowserToolsPolicy } from "./policy.js";
 
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
+const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
 
-class FakeDesktopClient implements BrowserToolsDesktopClient {
+class FakeBrowserHostClient implements BrowserHostClient {
   public readonly receivedRequests: BrowserAutomationExecuteRequest[] = [];
+  public readonly hostKind: string;
+  public readonly supportedCommands: readonly BrowserAutomationCommandName[];
 
-  public constructor(public readonly id: string) {}
+  public constructor(
+    public readonly id: string,
+    options: {
+      hostKind?: string;
+      supportedCommands?: readonly BrowserAutomationCommandName[];
+    } = {},
+  ) {
+    this.hostKind = options.hostKind ?? "desktop app";
+    this.supportedCommands = options.supportedCommands ?? [...BROWSER_AUTOMATION_COMMAND_NAMES];
+  }
 
   public sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void {
     this.receivedRequests.push(request);
@@ -22,15 +36,29 @@ class FakeDesktopClient implements BrowserToolsDesktopClient {
     broker: BrowserToolsBroker,
     responsePayload: BrowserAutomationExecuteResponse["payload"],
   ): boolean {
+    const latest = this.receivedRequests.at(-1);
+    if (!latest) {
+      throw new Error(`Host ${this.id} has not received a browser request.`);
+    }
+    return this.resolveRequestWith(broker, latest, responsePayload);
+  }
+
+  public resolveRequestWith(
+    broker: BrowserToolsBroker,
+    request: BrowserAutomationExecuteRequest,
+    responsePayload: BrowserAutomationExecuteResponse["payload"],
+  ): boolean {
     return broker.receiveResponse({
       type: "browser.automation.execute.response",
-      payload: responsePayload,
+      payload: { ...responsePayload, requestId: request.requestId },
     });
   }
 }
 
-class FailingDesktopClient implements BrowserToolsDesktopClient {
-  public readonly id = "desktop-1";
+class FailingBrowserHostClient implements BrowserHostClient {
+  public readonly id = "host-1";
+  public readonly hostKind = "desktop app";
+  public readonly supportedCommands = [...BROWSER_AUTOMATION_COMMAND_NAMES];
 
   public sendBrowserAutomationRequest(): void {
     throw new Error("websocket send failed");
@@ -68,23 +96,23 @@ describe("BrowserToolsBroker", () => {
     });
   });
 
-  test("no capable desktop returns browser_no_desktop", async () => {
+  test("no connected browser host returns a retryable browser_no_host error", async () => {
     const broker = createBroker({ enabled: true });
 
     await expect(broker.execute({ command: snapshotCommand() })).resolves.toEqual({
       requestId: "req-1",
       ok: false,
       error: {
-        code: "browser_no_desktop",
-        message: "No desktop browser automation client is connected.",
+        code: "browser_no_host",
+        message: "No browser automation host is connected.",
         retryable: true,
       },
     });
   });
 
-  test("invalid browser requests return structured failures without contacting desktop", async () => {
+  test("invalid browser requests return structured failures without contacting a host", async () => {
     const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
+    const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
     await expect(
@@ -107,9 +135,9 @@ describe("BrowserToolsBroker", () => {
     expect(broker.getPendingRequestCount()).toBe(0);
   });
 
-  test("capable fake desktop receives request and returns response", async () => {
+  test("capable browser host receives request and returns response", async () => {
     const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
+    const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
     const resultPromise = broker.execute({
@@ -165,9 +193,9 @@ describe("BrowserToolsBroker", () => {
     expect(broker.getPendingRequestCount()).toBe(0);
   });
 
-  test("desktop receives snapshot requests", async () => {
+  test("single browser host receives snapshot requests", async () => {
     const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
+    const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
     const resultPromise = broker.execute({
@@ -211,10 +239,282 @@ describe("BrowserToolsBroker", () => {
     });
   });
 
+  test("new tabs target the most recently registered host and tab commands stay with that host", async () => {
+    const broker = createBroker({ enabled: true });
+    const firstHost = new FakeBrowserHostClient("host-1");
+    const recentHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(firstHost);
+    broker.registerClient(recentHost);
+
+    const newTabPromise = broker.execute({
+      command: { command: "new_tab", args: { url: "https://example.com" } },
+      workspaceId: "workspace-1",
+    });
+
+    expect(firstHost.receivedRequests).toEqual([]);
+    expect(recentHost.receivedRequests).toEqual([
+      {
+        type: "browser.automation.execute.request",
+        requestId: "req-1",
+        workspaceId: "workspace-1",
+        command: { command: "new_tab", args: { url: "https://example.com" } },
+      },
+    ]);
+
+    recentHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      },
+    });
+
+    await expect(newTabPromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "new_tab", browserId: BROWSER_ID },
+    });
+
+    const snapshotPromise = broker.execute({
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+      workspaceId: "workspace-1",
+    });
+
+    expect(firstHost.receivedRequests).toEqual([]);
+    expect(recentHost.receivedRequests.at(-1)).toEqual({
+      type: "browser.automation.execute.request",
+      requestId: "req-1",
+      workspaceId: "workspace-1",
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+    });
+
+    recentHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+        title: "Example",
+        elements: [],
+      },
+    });
+
+    await expect(snapshotPromise).resolves.toMatchObject({
+      ok: true,
+      result: { command: "snapshot", browserId: BROWSER_ID },
+    });
+  });
+
+  test("list tabs aggregates all hosts and seeds browser id affinity", async () => {
+    const broker = createBroker({ enabled: true });
+    const firstHost = new FakeBrowserHostClient("host-1");
+    const secondHost = new FakeBrowserHostClient("host-2");
+    broker.registerClient(firstHost);
+    broker.registerClient(secondHost);
+
+    const listPromise = broker.execute({
+      command: { command: "list_tabs", args: {} },
+      workspaceId: "workspace-1",
+    });
+
+    expect(firstHost.receivedRequests).toEqual([
+      {
+        type: "browser.automation.execute.request",
+        requestId: "req-1:host-1",
+        workspaceId: "workspace-1",
+        command: { command: "list_tabs", args: {} },
+      },
+    ]);
+    expect(secondHost.receivedRequests).toEqual([
+      {
+        type: "browser.automation.execute.request",
+        requestId: "req-1:host-2",
+        workspaceId: "workspace-1",
+        command: { command: "list_tabs", args: {} },
+      },
+    ]);
+
+    firstHost.resolveLatestWith(broker, {
+      requestId: "req-1:host-1",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [
+          {
+            browserId: BROWSER_ID,
+            workspaceId: "workspace-1",
+            url: "https://one.example",
+            title: "One",
+          },
+        ],
+      },
+    });
+    secondHost.resolveLatestWith(broker, {
+      requestId: "req-1:host-2",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [
+          {
+            browserId: SECOND_BROWSER_ID,
+            workspaceId: "workspace-1",
+            url: "https://two.example",
+            title: "Two",
+          },
+        ],
+      },
+    });
+
+    await expect(listPromise).resolves.toEqual({
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [
+          {
+            browserId: BROWSER_ID,
+            workspaceId: "workspace-1",
+            url: "https://one.example",
+            title: "One",
+            isActive: false,
+            isLoading: false,
+          },
+          {
+            browserId: SECOND_BROWSER_ID,
+            workspaceId: "workspace-1",
+            url: "https://two.example",
+            title: "Two",
+            isActive: false,
+            isLoading: false,
+          },
+        ],
+      },
+    });
+
+    const firstSnapshot = broker.execute({
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+      workspaceId: "workspace-1",
+    });
+    const secondSnapshot = broker.execute({
+      command: { command: "snapshot", args: { browserId: SECOND_BROWSER_ID } },
+      workspaceId: "workspace-1",
+      requestId: "req-2",
+    });
+
+    expect(firstHost.receivedRequests.at(-1)?.command).toEqual({
+      command: "snapshot",
+      args: { browserId: BROWSER_ID },
+    });
+    expect(secondHost.receivedRequests.at(-1)?.command).toEqual({
+      command: "snapshot",
+      args: { browserId: SECOND_BROWSER_ID },
+    });
+
+    firstHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://one.example",
+        title: "One",
+        elements: [],
+      },
+    });
+    secondHost.resolveLatestWith(broker, {
+      requestId: "req-2",
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: SECOND_BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://two.example",
+        title: "Two",
+        elements: [],
+      },
+    });
+
+    await expect(firstSnapshot).resolves.toMatchObject({
+      ok: true,
+      result: { command: "snapshot", browserId: BROWSER_ID },
+    });
+    await expect(secondSnapshot).resolves.toMatchObject({
+      ok: true,
+      result: { command: "snapshot", browserId: SECOND_BROWSER_ID },
+    });
+  });
+
+  test("unsupported commands are rejected before sending to the routed host", async () => {
+    const broker = createBroker({ enabled: true });
+    const client = new FakeBrowserHostClient("host-1", {
+      supportedCommands: ["list_tabs"],
+      hostKind: "desktop app",
+    });
+    broker.registerClient(client);
+
+    await expect(broker.execute({ command: snapshotCommand() })).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: 'Browser automation command "snapshot" is not supported by the desktop app.',
+        retryable: false,
+      },
+    });
+    expect(client.receivedRequests).toEqual([]);
+  });
+
+  test("unregistering a host strands its browser ids instead of routing them to another host", async () => {
+    const broker = createBroker({ enabled: true });
+    const owner = new FakeBrowserHostClient("host-1");
+    const unregisterOwner = broker.registerClient(owner);
+
+    const newTabPromise = broker.execute({
+      command: { command: "new_tab", args: {} },
+      workspaceId: "workspace-1",
+    });
+    owner.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      },
+    });
+    await newTabPromise;
+
+    unregisterOwner();
+    const replacement = new FakeBrowserHostClient("host-2");
+    broker.registerClient(replacement);
+
+    await expect(
+      broker.execute({
+        command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+        workspaceId: "workspace-1",
+      }),
+    ).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_no_host",
+        message: `The app hosting browser tab ${BROWSER_ID} disconnected.`,
+        retryable: true,
+      },
+    });
+    expect(replacement.receivedRequests).toEqual([]);
+  });
+
   test("timeout resolves browser_timeout and clears pending state", async () => {
     vi.useFakeTimers();
     const broker = createBroker({ enabled: true, timeoutMs: 50 });
-    broker.registerClient(new FakeDesktopClient("desktop-1"));
+    broker.registerClient(new FakeBrowserHostClient("host-1"));
 
     const resultPromise = broker.execute({ command: snapshotCommand() });
     expect(broker.getPendingRequestCount()).toBe(1);
@@ -235,7 +535,7 @@ describe("BrowserToolsBroker", () => {
 
   test("disconnect resolves retryable failure and clears pending request", async () => {
     const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
+    const client = new FakeBrowserHostClient("host-1");
     const unregister = broker.registerClient(client);
 
     const resultPromise = broker.execute({ command: snapshotCommand() });
@@ -247,17 +547,17 @@ describe("BrowserToolsBroker", () => {
       requestId: "req-1",
       ok: false,
       error: {
-        code: "browser_no_desktop",
-        message: "The desktop browser automation client disconnected before responding.",
+        code: "browser_no_host",
+        message: "The browser automation host disconnected before responding.",
         retryable: true,
       },
     });
     expect(broker.getPendingRequestCount()).toBe(0);
   });
 
-  test("desktop send failure resolves structured failure and clears pending request", async () => {
+  test("browser host send failure resolves structured failure and clears pending request", async () => {
     const broker = createBroker({ enabled: true });
-    broker.registerClient(new FailingDesktopClient());
+    broker.registerClient(new FailingBrowserHostClient());
 
     await expect(broker.execute({ command: snapshotCommand() })).resolves.toEqual({
       requestId: "req-1",
@@ -273,7 +573,7 @@ describe("BrowserToolsBroker", () => {
 
   test("explicit browser failure response propagates typed error", async () => {
     const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
+    const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
     const resultPromise = broker.execute({ command: snapshotCommand() });
@@ -302,7 +602,7 @@ describe("BrowserToolsBroker", () => {
 
   test("invalid browser response resolves a structured failure and clears pending state", async () => {
     const broker = createBroker({ enabled: true });
-    const client = new FakeDesktopClient("desktop-1");
+    const client = new FakeBrowserHostClient("host-1");
     broker.registerClient(client);
 
     const resultPromise = broker.execute({ command: snapshotCommand() });

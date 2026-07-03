@@ -120,7 +120,7 @@ async function handleBrowserAutomationRequest(params: {
       payload: browserAutomationFailure({
         requestId: request.requestId,
         code: "browser_unsupported",
-        message: "Desktop browser automation is not available in this app runtime.",
+        message: "Browser automation is not available in this app runtime.",
       }),
     });
     return;
@@ -202,7 +202,7 @@ async function openBrowserTabForRequest(params: {
       return browserAutomationFailure({
         requestId: request.requestId,
         code: "browser_timeout",
-        message: `Timed out waiting for browser tab ${browserId} to register with desktop automation. Try browser_new_tab again.`,
+        message: `Timed out waiting for browser tab ${browserId} to register with the browser automation host. Try browser_new_tab again.`,
         retryable: true,
       });
     }
@@ -270,14 +270,14 @@ function normalizeThrownBridgeError(
     return browserAutomationFailure({
       requestId,
       code: "browser_unsupported",
-      message: "Desktop browser automation is not implemented by this desktop build yet.",
+      message: "Browser automation is not implemented by this app build yet.",
     });
   }
 
   return browserAutomationFailure({
     requestId,
     code: "browser_unknown_error",
-    message: message || "Desktop browser automation failed.",
+    message: message || "Browser automation failed.",
   });
 }
 

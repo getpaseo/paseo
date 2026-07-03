@@ -396,7 +396,7 @@ describe("mountBrowserAutomationHandler", () => {
           ok: false,
           error: {
             code: "browser_unsupported",
-            message: "Desktop browser automation is not available in this app runtime.",
+            message: "Browser automation is not available in this app runtime.",
             retryable: false,
           },
         },
@@ -450,7 +450,7 @@ describe("mountBrowserAutomationHandler", () => {
           ok: false,
           error: {
             code: "browser_unsupported",
-            message: "Desktop browser automation is not implemented by this desktop build yet.",
+            message: "Browser automation is not implemented by this app build yet.",
             retryable: false,
           },
         },

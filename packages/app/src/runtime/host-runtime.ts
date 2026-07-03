@@ -39,6 +39,7 @@ import {
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -522,10 +523,15 @@ function probeIntervalForConnection(
 }
 
 function createDefaultDeps(): HostRuntimeControllerDeps {
-  const desktopBrowserAutomationAvailable =
+  const browserHostAvailable =
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
-  const browserAutomationCapabilities = desktopBrowserAutomationAvailable
-    ? { [CLIENT_CAPS.desktopBrowserAutomation]: true }
+  const browserAutomationCapabilities = browserHostAvailable
+    ? {
+        [CLIENT_CAPS.browserHost]: {
+          supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+          hostKind: "desktop app",
+        },
+      }
     : undefined;
 
   return {
