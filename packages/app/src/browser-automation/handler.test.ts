@@ -285,9 +285,7 @@ describe("mountBrowserAutomationHandler", () => {
     expect(browser.browser.registeredWorkspaceBrowsers).toEqual([
       { browserId: result.browserId, workspaceId: "wks_workspace_a" },
     ]);
-    expect(browser.browser.activeWorkspaceBrowsers).toEqual([
-      { browserId: result.browserId, workspaceId: "wks_workspace_a" },
-    ]);
+    expect(browser.browser.activeWorkspaceBrowsers).toEqual([]);
     expect(browser.resident.ensuredWebviews).toEqual([
       { browserId: result.browserId, url: "https://example.com" },
     ]);
