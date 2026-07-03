@@ -558,20 +558,22 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
     const explicitWorkspaceId = requestedWorkspaceId?.trim();
+    if (callerAgentId) {
+      const callerAgent = resolveCallerAgent();
+      if (!callerAgent?.workspaceId) {
+        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      }
+      const callerWorkspaceId = callerAgent.workspaceId;
+      if (explicitWorkspaceId && explicitWorkspaceId !== callerWorkspaceId) {
+        throw new Error(`Workspace ${explicitWorkspaceId} is outside your current workspace`);
+      }
+      return callerWorkspaceId;
+    }
+
     if (explicitWorkspaceId) {
       return explicitWorkspaceId;
     }
-
-    const callerAgent = resolveCallerAgent();
-    if (callerAgent?.workspaceId) {
-      return callerAgent.workspaceId;
-    }
-
-    throw new Error(
-      callerAgentId
-        ? `Caller agent ${callerAgentId} has no current workspace`
-        : "workspaceId is required outside an agent-scoped session",
-    );
+    throw new Error("workspaceId is required outside an agent-scoped session");
   }
 
   const buildCallerAgentScheduleConfigExtras = (
@@ -1838,6 +1840,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const existing = await options.workspaceRegistry.get(workspaceId);
       if (!existing) {
         throw new Error(`Workspace ${workspaceId} not found`);
+      }
+      if (existing.archivedAt) {
+        throw new Error(`Workspace ${workspaceId} is archived`);
       }
 
       await options.workspaceRegistry.upsert({

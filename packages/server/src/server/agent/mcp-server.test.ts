@@ -3135,6 +3135,118 @@ describe("rename_workspace MCP tool", () => {
     });
     expect(emittedWorkspaceIds).toEqual([["wks_parent"]]);
   });
+
+  it("rejects an explicit workspace outside the caller workspace", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_parent",
+      projectId: "proj_parent",
+      cwd: REPO_CWD,
+      kind: "local_checkout",
+      displayName: "main",
+      createdAt: "2026-07-03T09:00:00.000Z",
+      updatedAt: "2026-07-03T09:00:00.000Z",
+    });
+    const otherWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_other",
+      projectId: "proj_other",
+      cwd: TARGET_CWD,
+      kind: "local_checkout",
+      displayName: "other",
+      createdAt: "2026-07-03T09:00:00.000Z",
+      updatedAt: "2026-07-03T09:00:00.000Z",
+    });
+    const workspaces = new Map([
+      [parentWorkspace.workspaceId, parentWorkspace],
+      [otherWorkspace.workspaceId, otherWorkspace],
+    ]);
+    const upsertedWorkspaces: PersistedWorkspaceRecord[] = [];
+    const emittedWorkspaceIds: string[][] = [];
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({
+        id: "parent-agent",
+        cwd: REPO_CWD,
+        workspaceId: parentWorkspace.workspaceId,
+      }),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      workspaceRegistry: {
+        get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+        upsert: async (record) => {
+          upsertedWorkspaces.push(record);
+          workspaces.set(record.workspaceId, record);
+        },
+      },
+      emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
+        emittedWorkspaceIds.push(Array.from(workspaceIds));
+      },
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "rename_workspace");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        workspaceId: "wks_other",
+        title: "Payments flow",
+      }),
+    ).rejects.toThrow("Workspace wks_other is outside your current workspace");
+    expect(upsertedWorkspaces).toEqual([]);
+    expect(emittedWorkspaceIds).toEqual([]);
+  });
+
+  it("rejects archived workspaces", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_archived",
+      projectId: "proj_parent",
+      cwd: REPO_CWD,
+      kind: "local_checkout",
+      displayName: "main",
+      archivedAt: "2026-07-03T10:00:00.000Z",
+      createdAt: "2026-07-03T09:00:00.000Z",
+      updatedAt: "2026-07-03T10:00:00.000Z",
+    });
+    const workspaces = new Map([[workspace.workspaceId, workspace]]);
+    const upsertedWorkspaces: PersistedWorkspaceRecord[] = [];
+    const emittedWorkspaceIds: string[][] = [];
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({
+        id: "parent-agent",
+        cwd: REPO_CWD,
+        workspaceId: workspace.workspaceId,
+      }),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      workspaceRegistry: {
+        get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+        upsert: async (record) => {
+          upsertedWorkspaces.push(record);
+          workspaces.set(record.workspaceId, record);
+        },
+      },
+      emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
+        emittedWorkspaceIds.push(Array.from(workspaceIds));
+      },
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "rename_workspace");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        title: "Payments flow",
+      }),
+    ).rejects.toThrow("Workspace wks_archived is archived");
+    expect(upsertedWorkspaces).toEqual([]);
+    expect(emittedWorkspaceIds).toEqual([]);
+  });
 });
 
 describe("create_schedule MCP tool", () => {
