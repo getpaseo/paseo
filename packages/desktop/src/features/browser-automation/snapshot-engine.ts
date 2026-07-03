@@ -89,14 +89,6 @@ export class BrowserSnapshotEngine {
     };
   }
 
-  async click(input: {
-    browserId: string;
-    page: SnapshotPage;
-    ref: string;
-  }): Promise<BrowserRefActionResult> {
-    return this.runRefScript(input, (ref) => buildClickScript(ref));
-  }
-
   async fill(input: {
     browserId: string;
     page: SnapshotPage;
@@ -106,38 +98,6 @@ export class BrowserSnapshotEngine {
     return this.runRefScript(input, (ref) => buildFillScript(ref, input.value));
   }
 
-  async typeText(input: {
-    browserId: string;
-    page: SnapshotPage;
-    ref?: string;
-    text: string;
-  }): Promise<BrowserRefActionResult> {
-    const resolved = this.resolveOptionalRef(input);
-    if (!resolved.ok) {
-      return resolved;
-    }
-    const result = await input.page.executeJavaScript(
-      buildTypeScript(resolved.metadata, input.text),
-    );
-    return readActionResult(result, Boolean(input.ref));
-  }
-
-  async keypress(input: {
-    browserId: string;
-    page: SnapshotPage;
-    ref?: string;
-    key: string;
-  }): Promise<BrowserRefActionResult> {
-    const resolved = this.resolveOptionalRef(input);
-    if (!resolved.ok) {
-      return resolved;
-    }
-    const result = await input.page.executeJavaScript(
-      buildKeypressScript(resolved.metadata, input.key),
-    );
-    return readActionResult(result, Boolean(input.ref));
-  }
-
   async select(input: {
     browserId: string;
     page: SnapshotPage;
@@ -145,40 +105,6 @@ export class BrowserSnapshotEngine {
     value: string;
   }): Promise<BrowserRefActionResult> {
     return this.runRefScript(input, (ref) => buildSelectScript(ref, input.value));
-  }
-
-  async hover(input: {
-    browserId: string;
-    page: SnapshotPage;
-    ref: string;
-  }): Promise<BrowserRefActionResult> {
-    return this.runRefScript(input, (ref) => buildHoverScript(ref));
-  }
-
-  async drag(input: {
-    browserId: string;
-    page: SnapshotPage;
-    sourceRef: string;
-    targetRef: string;
-  }): Promise<BrowserRefActionResult> {
-    const source = this.resolveRef({
-      browserId: input.browserId,
-      ref: input.sourceRef,
-    });
-    if (!source.ok) {
-      return source;
-    }
-    const target = this.resolveRef({
-      browserId: input.browserId,
-      ref: input.targetRef,
-    });
-    if (!target.ok) {
-      return target;
-    }
-    const result = await input.page.executeJavaScript(
-      buildDragScript(source.metadata, target.metadata),
-    );
-    return readActionResult(result, true);
   }
 
   clearBrowser(browserId: string): void {
@@ -215,23 +141,6 @@ export class BrowserSnapshotEngine {
       return { ok: false, reason: "missing_ref" };
     }
     return { ok: true, metadata };
-  }
-
-  private resolveOptionalRef(input: {
-    browserId: string;
-    ref?: string;
-  }): { ok: true; metadata: BrowserRefMetadata | null } | BrowserRefFailure {
-    if (!input.ref) {
-      return { ok: true, metadata: null };
-    }
-    const resolved = this.resolveRef({
-      browserId: input.browserId,
-      ref: input.ref,
-    });
-    if (!resolved.ok) {
-      return resolved;
-    }
-    return { ok: true, metadata: resolved.metadata };
   }
 }
 
@@ -395,17 +304,6 @@ function capRenderedSnapshot(
   return { snapshot: `${capped}\n${TRUNCATION_MARKER}`, truncated: true };
 }
 
-function buildClickScript(metadata: BrowserRefMetadata): string {
-  return String.raw`(() => {
-    const resolved = ${buildResolveExpression(metadata)};
-    if (!resolved.ok) return resolved;
-    const element = resolved.element;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
-    element.click();
-    return { ok: true };
-  })()`;
-}
-
 function buildFillScript(metadata: BrowserRefMetadata, value: string): string {
   return String.raw`(() => {
     const resolved = ${buildResolveExpression(metadata)};
@@ -426,43 +324,6 @@ function buildFillScript(metadata: BrowserRefMetadata, value: string): string {
   })()`;
 }
 
-function buildTypeScript(metadata: BrowserRefMetadata | null, text: string): string {
-  return String.raw`(() => {
-    const resolved = ${metadata ? buildResolveExpression(metadata) : "{ ok: true, element: document.activeElement }"};
-    if (!resolved.ok) return resolved;
-    const element = resolved.element;
-    if (!element) return false;
-    element.scrollIntoView?.({ block: 'center', inline: 'center' });
-    element.focus?.();
-    const text = ${JSON.stringify(text)};
-    if ('value' in element) {
-      element.value = String(element.value || '') + text;
-      element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true };
-    }
-    element.textContent = String(element.textContent || '') + text;
-    element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-    return { ok: true };
-  })()`;
-}
-
-function buildKeypressScript(metadata: BrowserRefMetadata | null, key: string): string {
-  return String.raw`(() => {
-    const resolved = ${metadata ? buildResolveExpression(metadata) : "{ ok: true, element: document.activeElement }"};
-    if (!resolved.ok) return resolved;
-    const element = resolved.element;
-    if (!element) return false;
-    element.focus?.();
-    const key = ${JSON.stringify(key)};
-    const eventInit = { bubbles: true, cancelable: true, key };
-    element.dispatchEvent(new KeyboardEvent('keydown', eventInit));
-    element.dispatchEvent(new KeyboardEvent('keypress', eventInit));
-    element.dispatchEvent(new KeyboardEvent('keyup', eventInit));
-    return { ok: true };
-  })()`;
-}
-
 function buildSelectScript(metadata: BrowserRefMetadata, value: string): string {
   return String.raw`(() => {
     const resolved = ${buildResolveExpression(metadata)};
@@ -478,65 +339,6 @@ function buildSelectScript(metadata: BrowserRefMetadata, value: string): string 
       return { ok: true };
     }
     return false;
-  })()`;
-}
-
-function buildHoverScript(metadata: BrowserRefMetadata): string {
-  return String.raw`(() => {
-    const resolved = ${buildResolveExpression(metadata)};
-    if (!resolved.ok) return resolved;
-    const element = resolved.element;
-    element.scrollIntoView?.({ block: 'center', inline: 'center' });
-    const rect = element.getBoundingClientRect();
-    const eventInit = {
-      bubbles: true,
-      cancelable: true,
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2,
-      screenX: window.screenX + rect.left + rect.width / 2,
-      screenY: window.screenY + rect.top + rect.height / 2,
-      view: window,
-    };
-    element.dispatchEvent(new MouseEvent('mouseover', eventInit));
-    element.dispatchEvent(new MouseEvent('mouseenter', eventInit));
-    element.dispatchEvent(new MouseEvent('mousemove', eventInit));
-    return { ok: true };
-  })()`;
-}
-
-function buildDragScript(source: BrowserRefMetadata, target: BrowserRefMetadata): string {
-  return String.raw`(() => {
-    const sourceResolved = ${buildResolveExpression(source)};
-    if (!sourceResolved.ok) return sourceResolved;
-    const targetResolved = ${buildResolveExpression(target)};
-    if (!targetResolved.ok) return targetResolved;
-    const source = sourceResolved.element;
-    const target = targetResolved.element;
-    source.scrollIntoView?.({ block: 'center', inline: 'center' });
-    target.scrollIntoView?.({ block: 'center', inline: 'center' });
-    const data = new DataTransfer();
-    const sourceRect = source.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    function eventInit(rect) {
-      return {
-        bubbles: true,
-        cancelable: true,
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top + rect.height / 2,
-        screenX: window.screenX + rect.left + rect.width / 2,
-        screenY: window.screenY + rect.top + rect.height / 2,
-        dataTransfer: data,
-        view: window,
-      };
-    }
-    source.dispatchEvent(new MouseEvent('mousedown', eventInit(sourceRect)));
-    source.dispatchEvent(new DragEvent('dragstart', eventInit(sourceRect)));
-    target.dispatchEvent(new DragEvent('dragenter', eventInit(targetRect)));
-    target.dispatchEvent(new DragEvent('dragover', eventInit(targetRect)));
-    target.dispatchEvent(new DragEvent('drop', eventInit(targetRect)));
-    source.dispatchEvent(new DragEvent('dragend', eventInit(sourceRect)));
-    target.dispatchEvent(new MouseEvent('mouseup', eventInit(targetRect)));
-    return { ok: true };
   })()`;
 }
 

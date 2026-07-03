@@ -16,6 +16,8 @@ class FakeImage implements TabImage {
 class FakeDebugger {
   public attachedProtocolVersions: string[] = [];
   public commands: Array<{ command: string; params: Record<string, unknown> }> = [];
+  public blockCommands = false;
+  private readonly blockedCommands: Array<() => void> = [];
 
   public isAttached(): boolean {
     return this.attachedProtocolVersions.length > 0;
@@ -27,7 +29,20 @@ class FakeDebugger {
 
   public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
     this.commands.push({ command, params: params ?? {} });
+    if (this.blockCommands) {
+      await new Promise<void>((resolve) => {
+        this.blockedCommands.push(resolve);
+      });
+    }
     return { ok: true };
+  }
+
+  public finishNextCommand(): void {
+    const resolve = this.blockedCommands.shift();
+    if (!resolve) {
+      throw new Error("No command is blocked");
+    }
+    resolve();
   }
 }
 
@@ -181,4 +196,37 @@ describe("browser automation IPC adapter", () => {
       { command: "Page.captureScreenshot", params: { format: "png" } },
     ]);
   });
+
+  test("serializes CDP commands per guest contents", async () => {
+    const contents = new FakeWebContents(23);
+    contents.debugger.blockCommands = true;
+    const tab = adaptWebContents(contents);
+
+    const first = tab.sendDebugCommand?.("Input.dispatchMouseEvent", { type: "mouseMoved" });
+    const second = tab.sendDebugCommand?.("Page.captureScreenshot", { format: "png" });
+    await flushMicrotasks();
+
+    expect(contents.debugger.commands).toEqual([
+      { command: "Input.dispatchMouseEvent", params: { type: "mouseMoved" } },
+    ]);
+
+    contents.debugger.finishNextCommand();
+    await flushMicrotasks();
+
+    expect(contents.debugger.commands).toEqual([
+      { command: "Input.dispatchMouseEvent", params: { type: "mouseMoved" } },
+      { command: "Page.captureScreenshot", params: { format: "png" } },
+    ]);
+
+    contents.debugger.finishNextCommand();
+    await expect(first).resolves.toEqual({ ok: true });
+    await expect(second).resolves.toEqual({ ok: true });
+  });
 });
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}

@@ -86,28 +86,26 @@ describe("BrowserSnapshotEngine", () => {
     });
   });
 
-  it("resolves refs after SPA pushState when the page runtime still matches the fingerprint", async () => {
+  it("builds a runtime ref expression with the snapshot fingerprint", async () => {
     const page = new SnapshotFixture();
     const engine = new BrowserSnapshotEngine();
     await engine.snapshot({ browserId: "browser-1", page });
 
     page.currentUrl = "https://example.com/form?panel=advanced";
 
-    await expect(engine.click({ browserId: "browser-1", page, ref: "@e1" })).resolves.toEqual({
-      ok: true,
-    });
+    expect(engine.runtimeElementExpression({ browserId: "browser-1", ref: "@e1" })).toContain(
+      '"name":"Save changes"',
+    );
   });
 
-  it("treats a same-URL page-runtime mismatch as a stale ref", async () => {
+  it("treats missing host-side ref metadata as a stale ref", async () => {
     const page = new SnapshotFixture();
     const engine = new BrowserSnapshotEngine();
     await engine.snapshot({ browserId: "browser-1", page });
 
-    page.actionResult = { ok: false, reason: "stale_ref" };
-
-    await expect(engine.click({ browserId: "browser-1", page, ref: "@e1" })).resolves.toEqual({
+    expect(engine.runtimeElementExpression({ browserId: "browser-1", ref: "@e2" })).toEqual({
       ok: false,
-      reason: "stale_ref",
+      reason: "missing_ref",
     });
   });
 

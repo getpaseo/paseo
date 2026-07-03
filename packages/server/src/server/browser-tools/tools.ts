@@ -70,6 +70,8 @@ const BrowserHttpUrlInputSchema = z
     return normalized;
   });
 const BrowserRefInputSchema = z.string().regex(/^@e\d+$/);
+const BrowserClickButtonInputSchema = z.enum(["left", "right", "middle"]);
+const BrowserClickModifierInputSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
 const BrowserWaitInputSchema = z
   .object({
     text: z.string().min(1).optional(),
@@ -178,10 +180,13 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       inputSchema: {
         ref: BrowserRefInputSchema,
         browserId: BrowserAutomationBrowserIdSchema,
+        button: BrowserClickButtonInputSchema.optional(),
+        doubleClick: z.boolean().optional(),
+        modifiers: z.array(BrowserClickModifierInputSchema).optional(),
       },
       outputSchema: BrowserToolOutputSchema,
     },
-    async ({ ref, browserId }) => {
+    async ({ ref, browserId, button, doubleClick, modifiers }) => {
       const context = resolveBrowserToolContext(options);
       const payload = await options.broker.execute({
         agentId: context.agentId,
@@ -193,6 +198,9 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
           args: {
             browserId,
             ref,
+            button: button ?? "left",
+            doubleClick: doubleClick ?? false,
+            modifiers: modifiers ?? [],
           },
         },
       });

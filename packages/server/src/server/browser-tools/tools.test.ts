@@ -161,7 +161,43 @@ const routedToolCases = [
     name: "click",
     toolName: "browser_click",
     input: { browserId: BROWSER_ID, ref: "@e2" },
-    command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e2" } },
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e2",
+        button: "left",
+        doubleClick: false,
+        modifiers: [],
+      },
+    },
+    payload: {
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_ID, ref: "@e2" },
+    },
+    content: [{ type: "text", text: "Clicked browser element @e2." }],
+  },
+  {
+    name: "click options",
+    toolName: "browser_click",
+    input: {
+      browserId: BROWSER_ID,
+      ref: "@e2",
+      button: "right",
+      doubleClick: true,
+      modifiers: ["Control", "Shift"],
+    },
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e2",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Control", "Shift"],
+      },
+    },
     payload: {
       requestId: "req-click",
       ok: true,

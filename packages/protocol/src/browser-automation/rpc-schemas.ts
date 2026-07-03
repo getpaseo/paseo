@@ -55,6 +55,8 @@ const BrowserAutomationTabTargetSchema = z
   .strict();
 
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
+const BrowserAutomationMouseButtonSchema = z.enum(["left", "right", "middle"]);
+const BrowserAutomationInputModifierSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
 const BrowserAutomationHttpUrlSchema = z
   .string()
   .url()
@@ -87,6 +89,9 @@ export const BrowserAutomationClickCommandSchema = z.object({
   command: z.literal("click"),
   args: BrowserAutomationTabTargetSchema.extend({
     ref: BrowserAutomationRefSchema,
+    button: BrowserAutomationMouseButtonSchema.default("left"),
+    doubleClick: z.boolean().default(false),
+    modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
   }),
 });
 
@@ -262,6 +267,8 @@ export const BrowserAutomationClickResultSchema = z.object({
   command: z.literal("click"),
   browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationFillResultSchema = z.object({
@@ -280,6 +287,8 @@ export const BrowserAutomationTypeResultSchema = z.object({
   command: z.literal("type"),
   browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema.optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationKeypressResultSchema = z.object({
@@ -287,6 +296,8 @@ export const BrowserAutomationKeypressResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   key: z.string().min(1),
   ref: BrowserAutomationRefSchema.optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationNavigateResultSchema = z.object({
@@ -337,6 +348,8 @@ export const BrowserAutomationHoverResultSchema = z.object({
   command: z.literal("hover"),
   browserId: BrowserAutomationBrowserIdSchema,
   ref: BrowserAutomationRefSchema,
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export const BrowserAutomationDragResultSchema = z.object({
@@ -344,6 +357,10 @@ export const BrowserAutomationDragResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
   sourceRef: BrowserAutomationRefSchema,
   targetRef: BrowserAutomationRefSchema,
+  sourceX: z.number().optional(),
+  sourceY: z.number().optional(),
+  targetX: z.number().optional(),
+  targetY: z.number().optional(),
 });
 
 export const BrowserAutomationConsoleLogEntrySchema = z.object({

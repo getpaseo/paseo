@@ -15,7 +15,39 @@ const commandParseCases = [
   {
     name: "click",
     command: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
-    expected: { command: "click", args: { browserId: BROWSER_ID, ref: "@e1" } },
+    expected: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "left",
+        doubleClick: false,
+        modifiers: [],
+      },
+    },
+  },
+  {
+    name: "click options",
+    command: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Meta", "Shift"],
+      },
+    },
+    expected: {
+      command: "click",
+      args: {
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Meta", "Shift"],
+      },
+    },
   },
   {
     name: "fill",

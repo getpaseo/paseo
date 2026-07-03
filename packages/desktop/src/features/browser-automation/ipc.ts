@@ -3,6 +3,7 @@ import { ipcMain } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserAutomationConsoleLogEntry } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
+import { CdpSessionQueue } from "./cdp-session-queue.js";
 import { executeAutomationCommand } from "./service.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -14,6 +15,7 @@ import {
 
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
+const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const observedContentsIds = new Set<number>();
 
 interface IpcHandlerRegistry {
@@ -60,6 +62,7 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
   observeConsoleMessages(contents);
+  const cdpQueue = getCdpQueue(contents.id);
   return {
     id: contents.id,
     getURL: () => contents.getURL(),
@@ -76,13 +79,24 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contents.id) ?? [],
-    sendDebugCommand: async (command: string, params?: Record<string, unknown>) => {
-      if (!contents.debugger.isAttached()) {
-        contents.debugger.attach("1.3");
-      }
-      return contents.debugger.sendCommand(command, params ?? {});
-    },
+    sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
+      cdpQueue.run(async () => {
+        if (!contents.debugger.isAttached()) {
+          contents.debugger.attach("1.3");
+        }
+        return contents.debugger.sendCommand(command, params ?? {});
+      }),
   };
+}
+
+function getCdpQueue(contentsId: number): CdpSessionQueue {
+  const existing = cdpQueuesByContentsId.get(contentsId);
+  if (existing) {
+    return existing;
+  }
+  const queue = new CdpSessionQueue();
+  cdpQueuesByContentsId.set(contentsId, queue);
+  return queue;
 }
 
 function observeConsoleMessages(contents: BrowserAutomationWebContents): void {
@@ -99,6 +113,7 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents): void {
   contents.once("destroyed", () => {
     observedContentsIds.delete(contents.id);
     consoleMessagesByContentsId.delete(contents.id);
+    cdpQueuesByContentsId.delete(contents.id);
   });
 }
 

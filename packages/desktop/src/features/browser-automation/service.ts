@@ -8,7 +8,16 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
+import {
+  dispatchTrustedClick,
+  dispatchTrustedDrag,
+  dispatchTrustedHover,
+  dispatchTrustedKey,
+  dispatchTrustedText,
+  type ClickInputOptions,
+} from "./trusted-input.js";
 
 export interface TabContents {
   readonly id: number;
@@ -236,6 +245,11 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       workspaceId,
       clickCommand.args.browserId,
       clickCommand.args.ref,
+      {
+        button: clickCommand.args.button,
+        doubleClick: clickCommand.args.doubleClick,
+        modifiers: clickCommand.args.modifiers,
+      },
       registry,
       snapshotEngine,
     );
@@ -482,6 +496,7 @@ async function executeClick(
   workspaceId: string | undefined,
   browserId: string,
   ref: string,
+  options: ClickInputOptions,
   registry: BrowserRegistry,
   snapshotEngine: BrowserSnapshotEngine,
 ): Promise<AutomationCommandPayload> {
@@ -489,15 +504,35 @@ async function executeClick(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.click({
+  if (!target.contents.sendDebugCommand) {
+    return fail(requestId, "browser_unsupported", "browser_click requires trusted browser input");
+  }
+  const elementExpression = snapshotEngine.runtimeElementExpression({
     browserId: target.browserId,
-    page: target.contents,
     ref,
   });
-  if (!result.ok) {
+  if (typeof elementExpression !== "string") {
     return staleRefFailure(requestId, ref);
   }
-  return { requestId, ok: true, result: { command: "click", browserId: target.browserId, ref } };
+  const actionable = await waitForActionableTarget({
+    page: target.contents,
+    elementExpression,
+  });
+  if (!actionable.ok) {
+    return actionabilityFailure(requestId, ref, actionable);
+  }
+  await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point, options);
+  return {
+    requestId,
+    ok: true,
+    result: {
+      command: "click",
+      browserId: target.browserId,
+      ref,
+      x: actionable.target.point.x,
+      y: actionable.target.point.y,
+    },
+  };
 }
 
 async function executeFill(
@@ -566,15 +601,35 @@ async function executeHover(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.hover({
+  if (!target.contents.sendDebugCommand) {
+    return fail(requestId, "browser_unsupported", "browser_hover requires trusted browser input");
+  }
+  const elementExpression = snapshotEngine.runtimeElementExpression({
     browserId: target.browserId,
-    page: target.contents,
     ref,
   });
-  if (!result.ok) {
+  if (typeof elementExpression !== "string") {
     return staleRefFailure(requestId, ref);
   }
-  return { requestId, ok: true, result: { command: "hover", browserId: target.browserId, ref } };
+  const actionable = await waitForActionableTarget({
+    page: target.contents,
+    elementExpression,
+  });
+  if (!actionable.ok) {
+    return actionabilityFailure(requestId, ref, actionable);
+  }
+  await dispatchTrustedHover(cdpSender(target.contents), actionable.target.point);
+  return {
+    requestId,
+    ok: true,
+    result: {
+      command: "hover",
+      browserId: target.browserId,
+      ref,
+      x: actionable.target.point.x,
+      y: actionable.target.point.y,
+    },
+  };
 }
 
 async function executeDrag(
@@ -590,19 +645,52 @@ async function executeDrag(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.drag({
+  if (!target.contents.sendDebugCommand) {
+    return fail(requestId, "browser_unsupported", "browser_drag requires trusted browser input");
+  }
+  const sourceExpression = snapshotEngine.runtimeElementExpression({
     browserId: target.browserId,
-    page: target.contents,
-    sourceRef,
-    targetRef,
+    ref: sourceRef,
   });
-  if (!result.ok) {
+  const targetExpression = snapshotEngine.runtimeElementExpression({
+    browserId: target.browserId,
+    ref: targetRef,
+  });
+  if (typeof sourceExpression !== "string" || typeof targetExpression !== "string") {
     return staleRefFailure(requestId, `${sourceRef}/${targetRef}`);
   }
+  const source = await waitForActionableTarget({
+    page: target.contents,
+    elementExpression: sourceExpression,
+  });
+  if (!source.ok) {
+    return actionabilityFailure(requestId, sourceRef, source);
+  }
+  const dropTarget = await waitForActionableTarget({
+    page: target.contents,
+    elementExpression: targetExpression,
+  });
+  if (!dropTarget.ok) {
+    return actionabilityFailure(requestId, targetRef, dropTarget);
+  }
+  await dispatchTrustedDrag(
+    cdpSender(target.contents),
+    source.target.point,
+    dropTarget.target.point,
+  );
   return {
     requestId,
     ok: true,
-    result: { command: "drag", browserId: target.browserId, sourceRef, targetRef },
+    result: {
+      command: "drag",
+      browserId: target.browserId,
+      sourceRef,
+      targetRef,
+      sourceX: source.target.point.x,
+      sourceY: source.target.point.y,
+      targetX: dropTarget.target.point.x,
+      targetY: dropTarget.target.point.y,
+    },
   };
 }
 
@@ -639,6 +727,26 @@ function staleRefFailure(requestId: string, ref: string): FailurePayload {
     "browser_stale_ref",
     `Browser element reference ${ref} is stale. Take a new snapshot and try again.`,
   );
+}
+
+function actionabilityFailure(
+  requestId: string,
+  ref: string,
+  result: Exclude<ActionabilityResult, { ok: true }>,
+): FailurePayload {
+  if (result.reason === "stale_ref") {
+    return staleRefFailure(requestId, ref);
+  }
+  return fail(
+    requestId,
+    "browser_timeout",
+    `Timed out waiting for browser element ${ref} to become actionable.`,
+    true,
+  );
+}
+
+function cdpSender(contents: TabContents): NonNullable<TabContents["sendDebugCommand"]> {
+  return contents.sendDebugCommand?.bind(contents) as NonNullable<TabContents["sendDebugCommand"]>;
 }
 
 async function executeWait(
@@ -712,19 +820,38 @@ async function executeType(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.typeText({
-    browserId: target.browserId,
-    page: target.contents,
-    ...(ref ? { ref } : {}),
-    text,
-  });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref ?? "@e0");
+  if (!target.contents.sendDebugCommand) {
+    return fail(requestId, "browser_unsupported", "browser_type requires trusted browser input");
   }
+  let actionable: ActionabilityResult | null = null;
+  if (ref) {
+    const elementExpression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref,
+    });
+    if (typeof elementExpression !== "string") {
+      return staleRefFailure(requestId, ref);
+    }
+    actionable = await waitForActionableTarget({
+      page: target.contents,
+      elementExpression,
+      editable: true,
+    });
+    if (!actionable.ok) {
+      return actionabilityFailure(requestId, ref, actionable);
+    }
+    await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+  }
+  await dispatchTrustedText(cdpSender(target.contents), text);
   return {
     requestId,
     ok: true,
-    result: { command: "type", browserId: target.browserId, ...(ref ? { ref } : {}) },
+    result: {
+      command: "type",
+      browserId: target.browserId,
+      ...(ref ? { ref } : {}),
+      ...(actionable?.ok ? { x: actionable.target.point.x, y: actionable.target.point.y } : {}),
+    },
   };
 }
 
@@ -741,19 +868,43 @@ async function executeKeypress(
   if ("ok" in target) {
     return target;
   }
-  const result = await snapshotEngine.keypress({
-    browserId: target.browserId,
-    page: target.contents,
-    ...(ref ? { ref } : {}),
-    key,
-  });
-  if (!result.ok) {
-    return staleRefFailure(requestId, ref ?? "@e0");
+  if (!target.contents.sendDebugCommand) {
+    return fail(
+      requestId,
+      "browser_unsupported",
+      "browser_keypress requires trusted browser input",
+    );
   }
+  let actionable: ActionabilityResult | null = null;
+  if (ref) {
+    const elementExpression = snapshotEngine.runtimeElementExpression({
+      browserId: target.browserId,
+      ref,
+    });
+    if (typeof elementExpression !== "string") {
+      return staleRefFailure(requestId, ref);
+    }
+    actionable = await waitForActionableTarget({
+      page: target.contents,
+      elementExpression,
+      editable: true,
+    });
+    if (!actionable.ok) {
+      return actionabilityFailure(requestId, ref, actionable);
+    }
+    await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+  }
+  await dispatchTrustedKey(cdpSender(target.contents), key);
   return {
     requestId,
     ok: true,
-    result: { command: "keypress", browserId: target.browserId, key, ...(ref ? { ref } : {}) },
+    result: {
+      command: "keypress",
+      browserId: target.browserId,
+      key,
+      ...(ref ? { ref } : {}),
+      ...(actionable?.ok ? { x: actionable.target.point.x, y: actionable.target.point.y } : {}),
+    },
   };
 }
 

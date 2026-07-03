@@ -50,6 +50,10 @@ class FakeTab implements TabContents {
     children?: unknown[];
   }> = [];
   public actionScriptResult: unknown = true;
+  public actionabilityResult: unknown = {
+    ok: true,
+    target: { point: { x: 40, y: 30 }, rect: { x: 20, y: 10, width: 40, height: 40 } },
+  };
   public networkEntries: unknown[] = [];
   public consoleMessages: BrowserAutomationConsoleLogEntry[] = [];
   public captureNeverPaints = false;
@@ -105,6 +109,9 @@ class FakeTab implements TabContents {
     }
     if (code.includes("__PASEO_ARIA_SNAPSHOT__")) {
       return JSON.stringify(snapshotResult(this.snapshotNodes));
+    }
+    if (code.includes("Timed out waiting") || code.includes("performance.now()")) {
+      return this.actionabilityResult;
     }
     if (code.includes("performance.getEntriesByType")) {
       return JSON.stringify(this.networkEntries);
@@ -585,9 +592,82 @@ describe("executeAutomationCommand", () => {
     expect(click).toEqual({
       requestId: "req-click",
       ok: true,
-      result: { command: "click", browserId: BROWSER_A, ref: "@e1" },
+      result: { command: "click", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
-    expect(containsScript(browser.tab, '"@e1"', ".click()")).toBe(true);
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: { type: "mouseMoved", x: 40, y: 30, button: "none", modifiers: 0 },
+      },
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mousePressed",
+          x: 40,
+          y: 30,
+          button: "left",
+          buttons: 1,
+          clickCount: 1,
+          modifiers: 0,
+        },
+      },
+      {
+        command: "Input.dispatchMouseEvent",
+        params: {
+          type: "mouseReleased",
+          x: 40,
+          y: 30,
+          button: "left",
+          buttons: 0,
+          clickCount: 1,
+          modifiers: 0,
+        },
+      },
+    ]);
+  });
+
+  test("click options choose the trusted mouse button, click count, and modifiers", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = [
+      {
+        role: "button",
+        tagName: "button",
+        name: "Open menu",
+        ref: "@e1",
+      },
+    ];
+
+    await browser.snapshot();
+    const click = await browser.execute({
+      command: "click",
+      args: {
+        browserId: BROWSER_A,
+        ref: "@e1",
+        button: "right",
+        doubleClick: true,
+        modifiers: ["Control", "Shift"],
+      },
+    });
+
+    expect(click).toEqual({
+      requestId: "req-click",
+      ok: true,
+      result: { command: "click", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
+    });
+    expect(browser.tab.debugCommands.at(1)?.params).toMatchObject({
+      type: "mousePressed",
+      button: "right",
+      buttons: 2,
+      clickCount: 2,
+      modifiers: 10,
+    });
+    expect(browser.tab.debugCommands.at(2)?.params).toMatchObject({
+      type: "mouseReleased",
+      button: "right",
+      buttons: 0,
+      clickCount: 2,
+      modifiers: 10,
+    });
   });
 
   test.each([
@@ -603,21 +683,6 @@ describe("executeAutomationCommand", () => {
       result: { command: "select", browserId: BROWSER_A, ref: "@e3", value: "us" },
       scriptParts: ['"@e3"', "us"],
     },
-    {
-      name: "hover dispatches hover events to a ref",
-      command: { command: "hover", args: { browserId: BROWSER_A, ref: "@e4" } },
-      result: { command: "hover", browserId: BROWSER_A, ref: "@e4" },
-      scriptParts: ['"@e4"', "mouseover"],
-    },
-    {
-      name: "drag dispatches drag events between refs",
-      command: {
-        command: "drag",
-        args: { browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
-      },
-      result: { command: "drag", browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
-      scriptParts: ['"@e4"', '"@e5"', "dragstart"],
-    },
   ] as const)("$name", async ({ command, result, scriptParts }) => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
@@ -631,6 +696,80 @@ describe("executeAutomationCommand", () => {
       result,
     });
     expect(containsScript(browser.tab, ...scriptParts)).toBe(true);
+  });
+
+  test("hover moves the trusted browser pointer to the actionable point", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+
+    requireSnapshotRefs(await browser.snapshot());
+    const action = await browser.execute({
+      command: "hover",
+      args: { browserId: BROWSER_A, ref: "@e4" },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-hover",
+      ok: true,
+      result: { command: "hover", browserId: BROWSER_A, ref: "@e4", x: 40, y: 30 },
+    });
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: { type: "mouseMoved", x: 40, y: 30, button: "none" },
+      },
+    ]);
+  });
+
+  test("drag sends trusted pointer input between actionable points", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.actionabilityResult = {
+      ok: true,
+      target: { point: { x: 100, y: 50 }, rect: { x: 80, y: 30, width: 40, height: 40 } },
+    };
+
+    requireSnapshotRefs(await browser.snapshot());
+    const action = await browser.execute({
+      command: "drag",
+      args: { browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-drag",
+      ok: true,
+      result: {
+        command: "drag",
+        browserId: BROWSER_A,
+        sourceRef: "@e4",
+        targetRef: "@e5",
+        sourceX: 100,
+        sourceY: 50,
+        targetX: 100,
+        targetY: 50,
+      },
+    });
+    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+    ]);
+    expect(browser.tab.debugCommands.at(1)?.params).toMatchObject({
+      type: "mousePressed",
+      x: 100,
+      y: 50,
+      button: "left",
+      buttons: 1,
+    });
+    expect(browser.tab.debugCommands.at(-1)?.params).toMatchObject({
+      type: "mouseReleased",
+      x: 100,
+      y: 50,
+      button: "left",
+      buttons: 0,
+    });
   });
 
   test("fill with an empty string clears a ref through the regular fill path", async () => {
@@ -698,6 +837,29 @@ describe("executeAutomationCommand", () => {
     });
   });
 
+  test("click returns a retryable browser timeout when the ref never becomes actionable", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.actionabilityResult = { ok: false, reason: "timeout", detail: "disabled" };
+
+    requireSnapshotRefs(await browser.snapshot());
+    const click = await browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e2" },
+    });
+
+    expect(click).toEqual({
+      requestId: "req-click",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser element @e2 to become actionable.",
+        retryable: true,
+      },
+    });
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
   test("wait resolves when the explicit tab contains the requested text", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.bodyText = "Ready";
@@ -734,36 +896,69 @@ describe("executeAutomationCommand", () => {
     });
   });
 
-  test.each([
-    {
-      name: "type writes text into a ref",
-      command: { command: "type", args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" } },
-      result: { command: "type", browserId: BROWSER_A, ref: "@e1" },
-      scriptParts: ['"@e1"', "Ada"],
-      needsSnapshot: true,
-    },
-    {
-      name: "keypress dispatches a key to the focused element when ref is omitted",
-      command: { command: "keypress", args: { browserId: BROWSER_A, key: "Enter" } },
-      result: { command: "keypress", browserId: BROWSER_A, key: "Enter" },
-      scriptParts: ["document.activeElement", "Enter"],
-      needsSnapshot: false,
-    },
-  ] as const)("$name", async ({ command, result, scriptParts, needsSnapshot }) => {
+  test("type writes trusted text into a ref", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
-    if (needsSnapshot) {
-      requireSnapshotRefs(await browser.snapshot());
-    }
 
-    const action = await browser.execute(command);
+    requireSnapshotRefs(await browser.snapshot());
+    const action = await browser.execute({
+      command: "type",
+      args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+    });
 
     expect(action).toEqual({
-      requestId: `req-${command.command}`,
+      requestId: "req-type",
       ok: true,
-      result,
+      result: { command: "type", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
-    expect(containsScript(browser.tab, ...scriptParts)).toBe(true);
+    expect(browser.tab.debugCommands.at(-1)).toEqual({
+      command: "Input.insertText",
+      params: { text: "Ada" },
+    });
+    expect(browser.tab.debugCommands.slice(0, 3).map((entry) => entry.command)).toEqual([
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+    ]);
+  });
+
+  test("keypress dispatches a trusted key to the focused element when ref is omitted", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    const action = await browser.execute({
+      command: "keypress",
+      args: { browserId: BROWSER_A, key: "Enter" },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-keypress",
+      ok: true,
+      result: { command: "keypress", browserId: BROWSER_A, key: "Enter" },
+    });
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyDown",
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+          nativeVirtualKeyCode: 13,
+          text: "\r",
+          unmodifiedText: "\r",
+        },
+      },
+      {
+        command: "Input.dispatchKeyEvent",
+        params: {
+          type: "keyUp",
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+          nativeVirtualKeyCode: 13,
+        },
+      },
+    ]);
   });
 
   test("navigate loads the requested HTTP URL in the explicit tab", async () => {
