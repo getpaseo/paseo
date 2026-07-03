@@ -71,6 +71,10 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import {
+  BrowserAutomationHostCapabilitySchema,
+  type BrowserAutomationHostCapability,
+} from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
@@ -307,10 +311,13 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
   return Buffer.from(data);
 }
 
-function hasDesktopBrowserAutomationCapability(
+function getBrowserHostCapability(
   capabilities: Record<string, unknown> | null,
-): boolean {
-  return capabilities?.[CLIENT_CAPS.desktopBrowserAutomation] === true;
+): BrowserAutomationHostCapability | null {
+  const parsed = BrowserAutomationHostCapabilitySchema.safeParse(
+    capabilities?.[CLIENT_CAPS.browserHost],
+  );
+  return parsed.success ? parsed.data : null;
 }
 
 interface WebSocketLike {
@@ -333,6 +340,7 @@ interface SessionConnection {
 }
 
 interface BrowserToolsRegistration {
+  capabilitySignature: string;
   unregister: () => void;
 }
 
@@ -1412,22 +1420,31 @@ export class VoiceAssistantWebSocketServer {
     if (!this.browserToolsBroker) {
       return;
     }
-    if (!hasDesktopBrowserAutomationCapability(connection.clientCapabilities)) {
+    const browserHostCapability = getBrowserHostCapability(connection.clientCapabilities);
+    if (!browserHostCapability) {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
+    const capabilitySignature = JSON.stringify(browserHostCapability);
     const existing = this.browserToolsRegistrations.get(connection.clientId);
-    if (existing) {
+    if (existing?.capabilitySignature === capabilitySignature) {
       return;
+    }
+    if (existing) {
+      this.browserToolsRegistrations.delete(connection.clientId);
+      existing.unregister();
     }
 
     const unregister = this.browserToolsBroker.registerClient({
       id: connection.clientId,
+      hostKind: browserHostCapability.hostKind,
+      supportedCommands: browserHostCapability.supportedCommands,
       sendBrowserAutomationRequest: (request) => {
         this.sendToConnection(connection, wrapSessionMessage(request));
       },
     });
     this.browserToolsRegistrations.set(connection.clientId, {
+      capabilitySignature,
       unregister,
     });
   }

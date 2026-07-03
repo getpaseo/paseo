@@ -65,6 +65,7 @@ import {
 } from "../lifecycle-command.js";
 import type { GitHubService } from "../../../services/github-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../../workspace-registry.js";
 import { WorktreeRequestError } from "../../worktree-errors.js";
 import {
   archiveCommand,
@@ -99,6 +100,7 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "upsert">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
@@ -552,6 +554,22 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
 
     return options.ensureWorkspaceForCreate(resolvedCwd);
+  }
+
+  function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
+    const explicitWorkspaceId = requestedWorkspaceId?.trim();
+    if (explicitWorkspaceId) {
+      return explicitWorkspaceId;
+    }
+
+    if (callerAgentId) {
+      const callerAgent = resolveCallerAgent();
+      if (!callerAgent?.workspaceId) {
+        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      }
+      return callerAgent.workspaceId;
+    }
+    throw new Error("workspaceId is required outside an agent-scoped session");
   }
 
   const buildCallerAgentScheduleConfigExtras = (
@@ -1777,6 +1795,66 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson({ success: true }),
+      };
+    },
+  );
+
+  registerTool(
+    "rename_workspace",
+    {
+      title: "Rename workspace",
+      description:
+        "Rename a workspace by setting its user-visible title. Omit workspaceId to rename your current workspace.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Workspace id to rename. Omit to rename your current workspace."),
+        title: z
+          .string()
+          .trim()
+          .min(1, "title is required")
+          .describe("New user-visible workspace title."),
+      },
+      outputSchema: {
+        success: z.boolean(),
+        workspaceId: z.string(),
+        title: z.string(),
+      },
+    },
+    async ({ workspaceId: requestedWorkspaceId, title }) => {
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is required to rename workspaces");
+      }
+      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+        throw new Error("Workspace update emitter is required to rename workspaces");
+      }
+
+      const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+      const existing = await options.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        throw new Error(`Workspace ${workspaceId} not found`);
+      }
+      if (existing.archivedAt) {
+        throw new Error(`Workspace ${workspaceId} is archived`);
+      }
+
+      await options.workspaceRegistry.upsert({
+        ...existing,
+        title,
+        updatedAt: new Date().toISOString(),
+      });
+      await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          success: true,
+          workspaceId,
+          title,
+        }),
       };
     },
   );

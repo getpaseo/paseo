@@ -564,8 +564,8 @@ describe("browser automation execute RPC schemas", () => {
         requestId: "req-error",
         ok: false,
         error: {
-          code: "browser_no_desktop",
-          message: "No desktop browser automation client is connected.",
+          code: "browser_no_host",
+          message: "No browser automation host is connected.",
         },
       },
     });
@@ -574,8 +574,8 @@ describe("browser automation execute RPC schemas", () => {
       requestId: "req-error",
       ok: false,
       error: {
-        code: "browser_no_desktop",
-        message: "No desktop browser automation client is connected.",
+        code: "browser_no_host",
+        message: "No browser automation host is connected.",
         retryable: false,
       },
     });
