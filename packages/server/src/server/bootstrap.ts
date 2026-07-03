@@ -808,12 +808,20 @@ export async function createPaseoDaemon(
   });
   await loopService.initialize();
   logger.info({ elapsed: elapsed() }, "Loop service initialized");
+  const ensureWorkspaceForCreateExternal = async (cwd: string): Promise<string> => {
+    const workspace = await createLocalCheckoutWorkspace(
+      { cwd },
+      { projectRegistry, workspaceRegistry, workspaceGitService },
+    );
+    return workspace.workspaceId;
+  };
   const scheduleService = new ScheduleService({
     paseoHome: config.paseoHome,
     logger,
     agentManager,
     agentStorage,
     providerSnapshotManager,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
   });
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {
@@ -853,13 +861,6 @@ export async function createPaseoDaemon(
   // arrive with a worktree path and no workspaceId (old clients / CLI).
   const findWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
     return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.list());
-  };
-  const ensureWorkspaceForCreateExternal = async (cwd: string): Promise<string> => {
-    const workspace = await createLocalCheckoutWorkspace(
-      { cwd },
-      { projectRegistry, workspaceRegistry, workspaceGitService },
-    );
-    return workspace.workspaceId;
   };
   const listActiveWorkspacesExternal = async (): Promise<ActiveWorkspaceRef[]> => {
     const workspaces = await workspaceRegistry.list();

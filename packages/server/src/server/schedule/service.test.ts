@@ -284,6 +284,51 @@ describe("ScheduleService", () => {
     expect(storedAgent?.title).toBe("Audit flaky checkout flow");
   });
 
+  test("stamps the resolved workspaceId on scheduled new agents", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    let capturedCwd: string | undefined;
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      ensureWorkspaceForCreate: async (cwd) => {
+        capturedCwd = cwd;
+        return "ws-scheduled";
+      },
+    });
+
+    const created = await service.create({
+      prompt: "Respond with exactly hello",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          approvalPolicy: "never",
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    const agentId = inspected.runs[0]?.agentId;
+    expect(agentId).toMatch(/^[0-9a-f-]{36}$/);
+    const storedAgent = await agentStorage.get(agentId!);
+    expect(storedAgent?.workspaceId).toBe("ws-scheduled");
+    expect(capturedCwd).toBe(tempDir);
+  });
+
   test("shows scheduled new-agent prompts as normal user turns", async () => {
     class PromptEchoScheduleSession implements AgentSession {
       readonly provider = "claude";

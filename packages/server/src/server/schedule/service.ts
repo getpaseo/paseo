@@ -187,6 +187,7 @@ export interface ScheduleServiceOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   providerSnapshotManager: CreateConfigResolver;
+  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -197,6 +198,7 @@ export class ScheduleService {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly createConfigResolver: CreateConfigResolver;
+  private readonly ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -211,6 +213,7 @@ export class ScheduleService {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.createConfigResolver = options.providerSnapshotManager;
+    this.ensureWorkspaceForCreate = options.ensureWorkspaceForCreate;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
@@ -638,6 +641,25 @@ export class ScheduleService {
     await this.store.put(updated);
   }
 
+  private async resolveScheduledWorkspaceId(
+    cwd: string,
+    scheduleId: string,
+    runId: string,
+  ): Promise<string | undefined> {
+    if (!this.ensureWorkspaceForCreate) {
+      return undefined;
+    }
+    try {
+      return await this.ensureWorkspaceForCreate(cwd);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, scheduleId, runId, cwd },
+        "Failed to resolve workspace for scheduled agent; continuing without workspace association",
+      );
+      return undefined;
+    }
+  }
+
   private async executeSchedule(
     schedule: StoredSchedule,
     runId: string,
@@ -715,10 +737,12 @@ export class ScheduleService {
       "paseo.schedule-id": schedule.id,
       "paseo.schedule-run": runId,
     };
+    const workspaceId = await this.resolveScheduledWorkspaceId(targetConfig.cwd, schedule.id, runId);
     const agent = await this.agentManager.createAgent(config, undefined, {
       labels,
       initialPrompt: schedule.prompt,
       initialTitle: provisionalTitle,
+      workspaceId,
     });
     let result;
     try {
