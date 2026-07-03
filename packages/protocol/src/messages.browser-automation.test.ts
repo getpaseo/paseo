@@ -100,7 +100,7 @@ describe("browser automation protocol integration", () => {
     });
   });
 
-  test("browser host capability accepts evaluate as a supported command", () => {
+  test("browser host capability accepts new tool commands as supported commands", () => {
     expect(
       WSHelloMessageSchema.parse({
         type: "hello",
@@ -109,14 +109,14 @@ describe("browser automation protocol integration", () => {
         protocolVersion: 1,
         capabilities: {
           [CLIENT_CAPS.browserHost]: {
-            supportedCommands: ["evaluate"],
+            supportedCommands: ["evaluate", "scroll", "resize", "close_tab"],
             hostKind: "desktop app",
           },
         },
       }).capabilities,
     ).toMatchObject({
       [CLIENT_CAPS.browserHost]: {
-        supportedCommands: ["evaluate"],
+        supportedCommands: ["evaluate", "scroll", "resize", "close_tab"],
         hostKind: "desktop app",
       },
     });

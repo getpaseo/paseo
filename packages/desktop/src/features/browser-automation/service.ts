@@ -16,6 +16,7 @@ import {
   dispatchTrustedDrag,
   dispatchTrustedHover,
   dispatchTrustedKey,
+  dispatchTrustedScroll,
   dispatchTrustedText,
   type ClickInputOptions,
 } from "./trusted-input.js";
@@ -447,6 +448,23 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       snapshotEngine,
     );
   },
+  scroll: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
+    const scrollCommand = command as Extract<BrowserAutomationCommand, { command: "scroll" }>;
+    return executeScroll(
+      requestId,
+      workspaceId,
+      scrollCommand.args.browserId,
+      scrollCommand.args.ref,
+      scrollCommand.args.deltaX,
+      scrollCommand.args.deltaY,
+      registry,
+      snapshotEngine,
+    );
+  },
+  resize: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_resize is handled by the app runtime."),
+  close_tab: ({ requestId }) =>
+    fail(requestId, "browser_unsupported", "browser_close_tab is handled by the app runtime."),
 };
 
 interface ResolvedTabTarget {
@@ -819,6 +837,81 @@ async function executeEvaluate(
       },
     };
   });
+}
+
+async function executeScroll(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  ref: string | undefined,
+  deltaX: number,
+  deltaY: number,
+  registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  return withDialogCapture(target.contents, async () => {
+    if (!target.contents.sendDebugCommand) {
+      return fail(
+        requestId,
+        "browser_unsupported",
+        "browser_scroll requires trusted browser input",
+      );
+    }
+
+    let point: { x: number; y: number };
+    if (ref) {
+      const elementExpression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref,
+      });
+      if (typeof elementExpression !== "string") {
+        return staleRefFailure(requestId, ref);
+      }
+      const actionable = await waitForActionableTarget({
+        page: target.contents,
+        elementExpression,
+      });
+      if (!actionable.ok) {
+        return actionabilityFailure(requestId, ref, actionable);
+      }
+      point = actionable.target.point;
+    } else {
+      point = await readViewportCenter(target.contents);
+    }
+
+    await dispatchTrustedScroll(cdpSender(target.contents), point, deltaX, deltaY);
+    return {
+      requestId,
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: target.browserId,
+        ...(ref ? { ref } : {}),
+        deltaX,
+        deltaY,
+        x: point.x,
+        y: point.y,
+      },
+    };
+  });
+}
+
+async function readViewportCenter(contents: TabContents): Promise<{ x: number; y: number }> {
+  const value = await contents.executeJavaScript(
+    "({ x: Math.max(0, (window.innerWidth || 1) / 2), y: Math.max(0, (window.innerHeight || 1) / 2) })",
+  );
+  if (!value || typeof value !== "object") {
+    return { x: 0, y: 0 };
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    x: readNumber(record.x) ?? 0,
+    y: readNumber(record.y) ?? 0,
+  };
 }
 
 function staleRefFailure(requestId: string, ref: string): FailurePayload {

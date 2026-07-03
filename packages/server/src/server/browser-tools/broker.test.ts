@@ -464,6 +464,72 @@ describe("BrowserToolsBroker", () => {
     });
   });
 
+  test.each([
+    {
+      name: "scroll",
+      command: { command: "scroll", args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 } },
+      result: { command: "scroll", browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+    {
+      name: "resize",
+      command: { command: "resize", args: { browserId: BROWSER_ID, width: 1024, height: 768 } },
+      result: { command: "resize", browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    {
+      name: "close_tab",
+      command: { command: "close_tab", args: { browserId: BROWSER_ID } },
+      result: { command: "close_tab", browserId: BROWSER_ID },
+    },
+  ] satisfies Array<{
+    name: string;
+    command: BrowserAutomationCommand;
+    result: BrowserAutomationExecuteResponse["payload"] extends infer Payload
+      ? Payload extends { ok: true }
+        ? Payload["result"]
+        : never
+      : never;
+  }>)("routes $name to the host that owns the browser id", async ({ command, result }) => {
+    const broker = createBroker({ enabled: true });
+    const other = new FakeBrowserHostClient("host-1");
+    const owner = new FakeBrowserHostClient("host-2");
+    broker.registerClient(other);
+    broker.registerClient(owner);
+
+    const newTabPromise = broker.execute({ command: { command: "new_tab", args: {} } });
+    owner.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://one.example",
+      },
+    });
+    await newTabPromise;
+
+    const resultPromise = broker.execute({ command, requestId: "req-command" });
+
+    expect(owner.receivedRequests.at(-1)).toEqual({
+      type: "browser.automation.execute.request",
+      requestId: "req-command",
+      command,
+    });
+    expect(other.receivedRequests).toEqual([]);
+
+    owner.resolveLatestWith(broker, {
+      requestId: "req-command",
+      ok: true,
+      result,
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      requestId: "req-command",
+      ok: true,
+      result,
+    });
+  });
+
   test("failed list tabs aggregation does not seed browser id affinity", async () => {
     const broker = createBroker({ enabled: true });
     const firstHost = new FakeBrowserHostClient("host-1");
@@ -559,6 +625,19 @@ describe("BrowserToolsBroker", () => {
       error: {
         code: "browser_unsupported",
         message: 'Browser automation command "evaluate" is not supported by the desktop app.',
+        retryable: false,
+      },
+    });
+    await expect(
+      broker.execute({
+        command: { command: "scroll", args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 } },
+      }),
+    ).resolves.toEqual({
+      requestId: "req-1",
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: 'Browser automation command "scroll" is not supported by the desktop app.',
         retryable: false,
       },
     });

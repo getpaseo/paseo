@@ -177,6 +177,50 @@ const commandParseCases = [
       args: { browserId: BROWSER_ID, function: "(element) => element.textContent", ref: "@e1" },
     },
   },
+  {
+    name: "scroll",
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+    expected: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, deltaX: 0, deltaY: 400 },
+    },
+  },
+  {
+    name: "scroll with ref",
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 10, deltaY: -20 },
+    },
+    expected: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 10, deltaY: -20 },
+    },
+  },
+  {
+    name: "resize",
+    command: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    expected: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+  },
+  {
+    name: "close_tab",
+    command: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+    expected: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+  },
 ] as const;
 
 const resultParseCases = [
@@ -360,6 +404,53 @@ const resultParseCases = [
       browserId: BROWSER_ID,
       resultJson: '{"title":"Fixture"}',
       truncated: false,
+    },
+  },
+  {
+    name: "scroll",
+    result: {
+      command: "scroll",
+      browserId: BROWSER_ID,
+      ref: "@e1",
+      deltaX: 10,
+      deltaY: 400,
+      x: 40,
+      y: 30,
+    },
+    expected: {
+      command: "scroll",
+      browserId: BROWSER_ID,
+      ref: "@e1",
+      deltaX: 10,
+      deltaY: 400,
+      x: 40,
+      y: 30,
+    },
+  },
+  {
+    name: "resize",
+    result: {
+      command: "resize",
+      browserId: BROWSER_ID,
+      width: 1024,
+      height: 768,
+    },
+    expected: {
+      command: "resize",
+      browserId: BROWSER_ID,
+      width: 1024,
+      height: 768,
+    },
+  },
+  {
+    name: "close_tab",
+    result: {
+      command: "close_tab",
+      browserId: BROWSER_ID,
+    },
+    expected: {
+      command: "close_tab",
+      browserId: BROWSER_ID,
     },
   },
 ] as const;

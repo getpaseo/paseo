@@ -403,6 +403,65 @@ const routedToolCases = [
     },
     content: [{ type: "text", text: 'Browser evaluate returned:\n"Save"' }],
   },
+  {
+    name: "scroll",
+    toolName: "browser_scroll",
+    input: { browserId: BROWSER_ID, ref: "@e1", deltaX: 0, deltaY: 400 },
+    command: {
+      command: "scroll",
+      args: { browserId: BROWSER_ID, ref: "@e1", deltaX: 0, deltaY: 400 },
+    },
+    payload: {
+      requestId: "req-scroll",
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: BROWSER_ID,
+        ref: "@e1",
+        deltaX: 0,
+        deltaY: 400,
+      },
+    },
+    content: [{ type: "text", text: "Scrolled browser element @e1 by 0, 400." }],
+  },
+  {
+    name: "resize",
+    toolName: "browser_resize",
+    input: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    command: {
+      command: "resize",
+      args: { browserId: BROWSER_ID, width: 1024, height: 768 },
+    },
+    payload: {
+      requestId: "req-resize",
+      ok: true,
+      result: {
+        command: "resize",
+        browserId: BROWSER_ID,
+        width: 1024,
+        height: 768,
+      },
+    },
+    content: [{ type: "text", text: "Resized browser viewport to 1024x768." }],
+  },
+  {
+    name: "close_tab",
+    toolName: "browser_close_tab",
+    input: { browserId: BROWSER_ID },
+    command: {
+      command: "close_tab",
+      args: { browserId: BROWSER_ID },
+    },
+    payload: {
+      requestId: "req-close-tab",
+      ok: true,
+      result: {
+        command: "close_tab",
+        browserId: BROWSER_ID,
+      },
+    },
+    content: [{ type: "text", text: `Closed browser tab ${BROWSER_ID}.` }],
+  },
 ] satisfies Array<{
   name: string;
   toolName: string;
@@ -519,6 +578,9 @@ describe("registerBrowserTools", () => {
       "browser_drag",
       "browser_logs",
       "browser_evaluate",
+      "browser_scroll",
+      "browser_resize",
+      "browser_close_tab",
     ]);
   });
 

@@ -126,6 +126,21 @@ export async function dispatchTrustedDrag(
   });
 }
 
+export async function dispatchTrustedScroll(
+  send: CdpCommandSender,
+  point: ActionablePoint,
+  deltaX: number,
+  deltaY: number,
+): Promise<void> {
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x: point.x,
+    y: point.y,
+    deltaX,
+    deltaY,
+  });
+}
+
 export async function dispatchTrustedText(send: CdpCommandSender, text: string): Promise<void> {
   if (text.length === 0) {
     return;

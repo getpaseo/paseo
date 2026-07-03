@@ -462,29 +462,10 @@ export class BrowserToolsBroker {
 }
 
 function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
-  switch (command.command) {
-    case "list_tabs":
-    case "new_tab":
-      return null;
-    case "snapshot":
-    case "click":
-    case "fill":
-    case "wait":
-    case "type":
-    case "keypress":
-    case "navigate":
-    case "back":
-    case "forward":
-    case "reload":
-    case "screenshot":
-    case "upload":
-    case "select":
-    case "hover":
-    case "drag":
-    case "logs":
-    case "evaluate":
-      return command.args.browserId;
+  if (command.command === "list_tabs" || command.command === "new_tab") {
+    return null;
   }
+  return command.args.browserId;
 }
 
 function describeBrowserHost(host: RegisteredBrowserHost): string {

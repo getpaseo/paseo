@@ -40,6 +40,9 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "drag",
   "logs",
   "evaluate",
+  "scroll",
+  "resize",
+  "close_tab",
 ] as const;
 
 export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
@@ -206,6 +209,28 @@ export const BrowserAutomationEvaluateCommandSchema = z.object({
   }),
 });
 
+export const BrowserAutomationScrollCommandSchema = z.object({
+  command: z.literal("scroll"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    ref: BrowserAutomationRefSchema.optional(),
+    deltaX: z.number(),
+    deltaY: z.number(),
+  }),
+});
+
+export const BrowserAutomationResizeCommandSchema = z.object({
+  command: z.literal("resize"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  }),
+});
+
+export const BrowserAutomationCloseTabCommandSchema = z.object({
+  command: z.literal("close_tab"),
+  args: BrowserAutomationTabTargetSchema,
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
@@ -226,6 +251,9 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationDragCommandSchema,
   BrowserAutomationLogsCommandSchema,
   BrowserAutomationEvaluateCommandSchema,
+  BrowserAutomationScrollCommandSchema,
+  BrowserAutomationResizeCommandSchema,
+  BrowserAutomationCloseTabCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
@@ -405,6 +433,28 @@ export const BrowserAutomationEvaluateResultSchema = z.object({
   truncated: z.boolean(),
 });
 
+export const BrowserAutomationScrollResultSchema = z.object({
+  command: z.literal("scroll"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  ref: BrowserAutomationRefSchema.optional(),
+  deltaX: z.number(),
+  deltaY: z.number(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+});
+
+export const BrowserAutomationResizeResultSchema = z.object({
+  command: z.literal("resize"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+export const BrowserAutomationCloseTabResultSchema = z.object({
+  command: z.literal("close_tab"),
+  browserId: BrowserAutomationBrowserIdSchema,
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
@@ -425,6 +475,9 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationDragResultSchema,
   BrowserAutomationLogsResultSchema,
   BrowserAutomationEvaluateResultSchema,
+  BrowserAutomationScrollResultSchema,
+  BrowserAutomationResizeResultSchema,
+  BrowserAutomationCloseTabResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({

@@ -4,6 +4,7 @@ const RESIDENT_VIEWPORT_WIDTH = 1280;
 const RESIDENT_VIEWPORT_HEIGHT = 800;
 
 const residentWebviewsByBrowserId = new Map<string, HTMLElement>();
+const residentWebviewSizesByBrowserId = new Map<string, { width: number; height: number }>();
 
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
@@ -66,11 +67,24 @@ function findBrowserWebview(browserId: string, ownerDocument: Document): HTMLEle
   return null;
 }
 
-function applyResidentWebviewStyle(webview: HTMLElement): void {
+function dimensionsForBrowser(browserId: string | null): { width: number; height: number } {
+  if (!browserId) {
+    return { width: RESIDENT_VIEWPORT_WIDTH, height: RESIDENT_VIEWPORT_HEIGHT };
+  }
+  return (
+    residentWebviewSizesByBrowserId.get(browserId) ?? {
+      width: RESIDENT_VIEWPORT_WIDTH,
+      height: RESIDENT_VIEWPORT_HEIGHT,
+    }
+  );
+}
+
+function applyResidentWebviewStyle(webview: HTMLElement, browserId: string | null): void {
+  const dimensions = dimensionsForBrowser(browserId);
   webview.style.display = "inline-flex";
   webview.style.flex = "0 0 auto";
-  webview.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
-  webview.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
+  webview.style.width = `${dimensions.width}px`;
+  webview.style.height = `${dimensions.height}px`;
   webview.style.border = "0";
   webview.style.background = "transparent";
   webview.style.position = "absolute";
@@ -163,8 +177,31 @@ export function releaseResidentBrowserWebview(browserId: string, webview: HTMLEl
   }
 
   residentWebviewsByBrowserId.set(normalizedBrowserId, webview);
-  applyResidentWebviewStyle(webview);
+  applyResidentWebviewStyle(webview, normalizedBrowserId);
   getResidentBrowserHost(ownerDocument).appendChild(webview);
+}
+
+export function resizeResidentBrowserWebview(input: {
+  browserId: string;
+  width: number;
+  height: number;
+}): { width: number; height: number } | null {
+  const normalizedBrowserId = trimNonEmpty(input.browserId);
+  if (!normalizedBrowserId) {
+    return null;
+  }
+  const width = Math.max(1, Math.round(input.width));
+  const height = Math.max(1, Math.round(input.height));
+  residentWebviewSizesByBrowserId.set(normalizedBrowserId, { width, height });
+
+  const ownerDocument = readDocument();
+  const webview = ownerDocument ? findBrowserWebview(normalizedBrowserId, ownerDocument) : null;
+  if (webview) {
+    webview.style.width = `${width}px`;
+    webview.style.height = `${height}px`;
+  }
+
+  return { width, height };
 }
 
 export function removeResidentBrowserWebview(browserId: string): void {
@@ -175,6 +212,7 @@ export function removeResidentBrowserWebview(browserId: string): void {
 
   const resident = residentWebviewsByBrowserId.get(normalizedBrowserId) ?? null;
   residentWebviewsByBrowserId.delete(normalizedBrowserId);
+  residentWebviewSizesByBrowserId.delete(normalizedBrowserId);
   resident?.remove();
 }
 
@@ -183,5 +221,6 @@ export function clearResidentBrowserWebviewsForTests(): void {
     webview.remove();
   }
   residentWebviewsByBrowserId.clear();
+  residentWebviewSizesByBrowserId.clear();
   readDocument()?.getElementById(RESIDENT_BROWSER_HOST_ID)?.remove();
 }

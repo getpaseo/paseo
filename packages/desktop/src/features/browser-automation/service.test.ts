@@ -121,6 +121,9 @@ class FakeTab implements TabContents {
     if (code.includes("performance.getEntriesByType")) {
       return JSON.stringify(this.networkEntries);
     }
+    if (code.includes("window.innerWidth") && code.includes("window.innerHeight")) {
+      return { x: 640, y: 400 };
+    }
     if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
       if (this.evaluateScriptThrows) {
         throw new Error(this.evaluateScriptErrorMessage);
@@ -771,6 +774,63 @@ describe("executeAutomationCommand", () => {
     ]);
   });
 
+  test("scroll sends trusted wheel input at the viewport center", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    const action = await browser.execute({
+      command: "scroll",
+      args: { browserId: BROWSER_A, deltaX: 10, deltaY: 400 },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-scroll",
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: BROWSER_A,
+        deltaX: 10,
+        deltaY: 400,
+        x: 640,
+        y: 400,
+      },
+    });
+    expect(browser.tab.debugCommands).toEqual([
+      {
+        command: "Input.dispatchMouseEvent",
+        params: { type: "mouseWheel", x: 640, y: 400, deltaX: 10, deltaY: 400 },
+      },
+    ]);
+  });
+
+  test("scroll with a ref sends trusted wheel input at the actionable point", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+
+    requireSnapshotRefs(await browser.snapshot());
+    const action = await browser.execute({
+      command: "scroll",
+      args: { browserId: BROWSER_A, ref: "@e4", deltaX: 0, deltaY: -120 },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-scroll",
+      ok: true,
+      result: {
+        command: "scroll",
+        browserId: BROWSER_A,
+        ref: "@e4",
+        deltaX: 0,
+        deltaY: -120,
+        x: 40,
+        y: 30,
+      },
+    });
+    expect(browser.tab.debugCommands.at(-1)).toEqual({
+      command: "Input.dispatchMouseEvent",
+      params: { type: "mouseWheel", x: 40, y: 30, deltaX: 0, deltaY: -120 },
+    });
+  });
+
   test("drag sends trusted pointer input between actionable points", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
@@ -1129,6 +1189,32 @@ describe("executeAutomationCommand", () => {
     });
     expect(browser.tab.actions).toEqual(["back", "forward", "reload"]);
   });
+
+  test.each([
+    {
+      command: { command: "resize", args: { browserId: BROWSER_A, width: 1024, height: 768 } },
+      message: "browser_resize is handled by the app runtime.",
+    },
+    {
+      command: { command: "close_tab", args: { browserId: BROWSER_A } },
+      message: "browser_close_tab is handled by the app runtime.",
+    },
+  ] satisfies Array<{ command: BrowserAutomationCommand; message: string }>)(
+    "$command.command is app-runtime owned",
+    async ({ command, message }) => {
+      const browser = new BrowserAutomationHarness();
+
+      await expect(browser.execute(command)).resolves.toEqual({
+        requestId: `req-${command.command}`,
+        ok: false,
+        error: {
+          code: "browser_unsupported",
+          message,
+          retryable: false,
+        },
+      });
+    },
+  );
 
   test("logs returns bounded console messages and network entries from the explicit tab", async () => {
     const browser = new BrowserAutomationHarness();

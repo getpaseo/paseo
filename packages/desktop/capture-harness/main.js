@@ -1100,6 +1100,7 @@ function automationFixtureUrl() {
     <html>
       <head><meta charset="utf-8"><title>Automation Fixture</title></head>
       <style>
+        body { min-height: 1800px; }
         #hover-target { display: none; }
         #hover-source:hover + #hover-target { display: inline-block; }
         #moving {
@@ -1381,6 +1382,21 @@ async function automationHover(guest, refEntry) {
   });
 }
 
+async function automationScroll(guest, deltaX, deltaY) {
+  const send = await attachAutomationDebugger(guest);
+  const point = await guest.executeJavaScript(
+    "({ x: Math.max(0, (window.innerWidth || 1) / 2), y: Math.max(0, (window.innerHeight || 1) / 2) })",
+    true,
+  );
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x: point.x,
+    y: point.y,
+    deltaX,
+    deltaY,
+  });
+}
+
 async function automationDrag(guest, sourceRef, targetRef) {
   const send = await attachAutomationDebugger(guest);
   const source = await automationRefPoint(guest, sourceRef.ref, sourceRef.fingerprint);
@@ -1438,6 +1454,37 @@ async function automationEvaluate(guest, functionSource, refEntry) {
     })()`,
     true,
   );
+}
+
+async function assertAutomationResize({ win, guest, targetIndex, results }) {
+  const resizedWidth = 960;
+  const resizedHeight = 540;
+  await renderer(
+    win,
+    `(() => {
+      const webview = document.getElementById(${JSON.stringify(`target-webview-${targetIndex + 1}`)});
+      webview.style.width = ${JSON.stringify(`${resizedWidth}px`)};
+      webview.style.height = ${JSON.stringify(`${resizedHeight}px`)};
+    })()`,
+  );
+  await delay(250);
+  const resizedMetrics = await readGuestMetrics(guest);
+  const resizedImage = await capturePageSequence(guest);
+  const resizedImageSize = resizedImage.getSize();
+  const expectedPixelWidth = Math.round(resizedWidth * resizedMetrics.devicePixelRatio);
+  const expectedPixelHeight = Math.round(resizedHeight * resizedMetrics.devicePixelRatio);
+  if (
+    resizedMetrics.innerWidth !== resizedWidth ||
+    resizedMetrics.innerHeight !== resizedHeight ||
+    resizedImageSize.width !== expectedPixelWidth ||
+    resizedImageSize.height !== expectedPixelHeight
+  ) {
+    fail(
+      `automation resize returned inner=${resizedMetrics.innerWidth}x${resizedMetrics.innerHeight} screenshot=${resizedImageSize.width}x${resizedImageSize.height} expected=${resizedWidth}x${resizedHeight} pixels=${expectedPixelWidth}x${expectedPixelHeight}`,
+    );
+  }
+  pass("automation resize changes viewport and screenshot dimensions");
+  results.push({ group: "automation", check: "resize", pass: true });
 }
 
 const AUTOMATION_DIALOG_POLICY = {
@@ -1594,7 +1641,7 @@ async function runAutomationGroup() {
       "automation harness window loadFile",
     );
     await waitForInactiveReveal(handle, "automation harness window");
-    const { guest } = await appendPermanentWebview({
+    const { guest, targetIndex } = await appendPermanentWebview({
       win,
       tracker,
       state: { id: "p1-overflow-1x1" },
@@ -1636,6 +1683,16 @@ async function runAutomationGroup() {
     }
     pass("automation evaluate runs in page context and receives ref element");
     results.push({ group: "automation", check: "evaluate", pass: true });
+
+    await guest.executeJavaScript("window.scrollTo(0, 0)", true);
+    await automationScroll(guest, 0, 500);
+    await delay(100);
+    const scrollY = await guest.executeJavaScript("window.scrollY", true);
+    if (!(scrollY > 0)) {
+      fail(`automation scroll did not change window.scrollY: ${scrollY}`);
+    }
+    pass("automation scroll changes the viewport scroll position");
+    results.push({ group: "automation", check: "scroll", pass: true });
 
     const nameRef = automationRefByName(first, "Name");
     await automationType(guest, nameRef, " Ada");
@@ -1824,6 +1881,8 @@ async function runAutomationGroup() {
     }
     pass("automation upload ref resolves to backendNodeId");
     results.push({ group: "automation", check: "upload-backend-node", pass: true });
+
+    await assertAutomationResize({ win, guest, targetIndex, results });
 
     await fsp.writeFile(
       path.join(OUT_DIR, "automation-results.json"),

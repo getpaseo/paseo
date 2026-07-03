@@ -658,6 +658,103 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       return browserToolResult({ payload, context: { ...context, browserId } });
     },
   );
+
+  options.registerTool(
+    "browser_scroll",
+    {
+      title: "Scroll browser",
+      description:
+        "Scroll a Paseo browser tab by deltaX/deltaY CSS pixels. Use browserId from browser_new_tab or browser_list_tabs; optional ref comes from the latest browser_snapshot and centers the wheel input over that element.",
+      inputSchema: {
+        browserId: BrowserAutomationBrowserIdSchema,
+        ref: BrowserRefInputSchema.optional(),
+        deltaX: z.number(),
+        deltaY: z.number(),
+      },
+      outputSchema: BrowserToolOutputSchema,
+    },
+    async ({ browserId, ref, deltaX, deltaY }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+
+        command: {
+          command: "scroll",
+          args: {
+            browserId,
+            ...(ref ? { ref } : {}),
+            deltaX,
+            deltaY,
+          },
+        },
+      });
+      return browserToolResult({ payload, context: { ...context, browserId } });
+    },
+  );
+
+  options.registerTool(
+    "browser_resize",
+    {
+      title: "Resize browser viewport",
+      description:
+        "Resize a Paseo browser tab's resident webview viewport. Use browserId from browser_new_tab or browser_list_tabs.",
+      inputSchema: {
+        browserId: BrowserAutomationBrowserIdSchema,
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+      },
+      outputSchema: BrowserToolOutputSchema,
+    },
+    async ({ browserId, width, height }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+
+        command: {
+          command: "resize",
+          args: {
+            browserId,
+            width,
+            height,
+          },
+        },
+      });
+      return browserToolResult({ payload, context: { ...context, browserId } });
+    },
+  );
+
+  options.registerTool(
+    "browser_close_tab",
+    {
+      title: "Close browser tab",
+      description:
+        "Close a Paseo browser tab, remove its resident webview, and unregister it from the browser automation host. Use browserId from browser_new_tab or browser_list_tabs.",
+      inputSchema: {
+        browserId: BrowserAutomationBrowserIdSchema,
+      },
+      outputSchema: BrowserToolOutputSchema,
+    },
+    async ({ browserId }) => {
+      const context = resolveBrowserToolContext(options);
+      const payload = await options.broker.execute({
+        agentId: context.agentId,
+        cwd: context.cwd,
+        ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+
+        command: {
+          command: "close_tab",
+          args: {
+            browserId,
+          },
+        },
+      });
+      return browserToolResult({ payload, context: { ...context, browserId } });
+    },
+  );
 }
 
 function resolveBrowserToolContext(options: RegisterBrowserToolsOptions): {
@@ -969,6 +1066,20 @@ function summarizeBrowserControlSuccess(
 
   if (result.command === "drag") {
     return `Dragged browser element ${result.sourceRef} to ${result.targetRef}.`;
+  }
+
+  if (result.command === "scroll") {
+    return result.ref
+      ? `Scrolled browser element ${result.ref} by ${result.deltaX}, ${result.deltaY}.`
+      : `Scrolled browser by ${result.deltaX}, ${result.deltaY}.`;
+  }
+
+  if (result.command === "resize") {
+    return `Resized browser viewport to ${result.width}x${result.height}.`;
+  }
+
+  if (result.command === "close_tab") {
+    return `Closed browser tab ${result.browserId}.`;
   }
 
   return null;

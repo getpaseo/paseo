@@ -70,6 +70,10 @@ export function registerPaseoBrowserWorkspace(input: BrowserWorkspaceRegistratio
   browserRegistry.registerWorkspace(input);
 }
 
+export function unregisterPaseoBrowser(browserId: string): void {
+  browserRegistry.unregisterBrowser(browserId);
+}
+
 export function getPaseoBrowserWorkspaceId(browserId: string): string | null {
   return browserRegistry.getWorkspaceId(browserId);
 }

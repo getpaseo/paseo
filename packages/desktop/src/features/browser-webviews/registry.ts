@@ -51,6 +51,16 @@ export class PaseoBrowserWebviewRegistry {
     this.workspaceIdsByBrowserId.set(input.browserId, input.workspaceId);
   }
 
+  public unregisterBrowser(browserId: string): void {
+    const webContentsId = this.webContentsIdsByBrowserId.get(browserId) ?? null;
+    if (webContentsId !== null) {
+      this.browserIdsByWebContentsId.delete(webContentsId);
+      this.webContentsIdsByBrowserId.delete(browserId);
+    }
+    this.workspaceIdsByBrowserId.delete(browserId);
+    this.deleteActiveBrowserReferences(browserId);
+  }
+
   public getWorkspaceId(browserId: string): string | null {
     return this.workspaceIdsByBrowserId.get(browserId) ?? null;
   }
