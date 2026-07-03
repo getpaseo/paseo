@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
-import { getClaudeManifestModels, isClaudeManifestModelId } from "./model-manifest.js";
+import { getClaudeManifestModels, normalizeClaudeManifestModelId } from "./model-manifest.js";
 
 const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
@@ -126,42 +126,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Handles the `[1m]` suffix that the SDK appends for 1M context sessions.
  */
 export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (!trimmed) {
-    return null;
-  }
-
-  // Check for exact match first (handles claude-opus-4-6[1m] directly)
-  if (isClaudeManifestModelId(trimmed)) {
-    return trimmed;
-  }
-
-  // Match single-segment major-version model names such as claude-fable-5
-  // and claude-sonnet-5, including dated runtime strings from the SDK.
-  const singleSegmentMatch = trimmed.match(/(?:claude-)?(fable|opus|sonnet|haiku)[-_ ]+(\d+)/i);
-  if (singleSegmentMatch) {
-    const family = singleSegmentMatch[1].toLowerCase();
-    const major = singleSegmentMatch[2];
-    const suffix = trimmed.toLowerCase().includes("[1m]") ? "[1m]" : "";
-    const candidates = [`claude-${family}-${major}${suffix}`, `claude-${family}-${major}`];
-    for (const candidate of candidates) {
-      if (isClaudeManifestModelId(candidate)) {
-        return candidate;
-      }
-    }
-  }
-
-  // Match: claude-{family}-{major}-{minor}[1m]? possibly followed by a date suffix
-  const runtimeMatch = trimmed.match(
-    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
-  );
-  if (!runtimeMatch) {
-    return null;
-  }
-
-  const family = runtimeMatch[1].toLowerCase();
-  const major = runtimeMatch[2];
-  const minor = runtimeMatch[3];
-  const suffix = runtimeMatch[4] ?? "";
-  return `claude-${family}-${major}-${minor}${suffix}`;
+  return normalizeClaudeManifestModelId(value);
 }

@@ -156,7 +156,7 @@ export function isClaudeManifestModelId(modelId: string): boolean {
 }
 
 export function claudeManifestModelSupportsFastMode(modelId: string | null | undefined): boolean {
-  const normalizedModelId = typeof modelId === "string" ? modelId.trim() : "";
+  const normalizedModelId = normalizeClaudeManifestModelId(modelId);
   if (!normalizedModelId) {
     return false;
   }
@@ -166,4 +166,47 @@ export function claudeManifestModelSupportsFastMode(modelId: string | null | und
       "supportsFastMode" in model &&
       model.supportsFastMode === true,
   );
+}
+
+/**
+ * Normalize a runtime model string from Claude Code to a known manifest ID.
+ * Handles dated model IDs and the `[1m]` suffix Claude Code reports for 1M
+ * context sessions.
+ */
+export function normalizeClaudeManifestModelId(value: string | null | undefined): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+
+  if (isClaudeManifestModelId(trimmed)) {
+    return trimmed;
+  }
+
+  const singleSegmentMatch = trimmed.match(/(?:claude-)?(fable|opus|sonnet|haiku)[-_ ]+(\d+)/i);
+  if (singleSegmentMatch) {
+    const family = singleSegmentMatch[1].toLowerCase();
+    const major = singleSegmentMatch[2];
+    const suffix = trimmed.toLowerCase().includes("[1m]") ? "[1m]" : "";
+    const candidates = [`claude-${family}-${major}${suffix}`, `claude-${family}-${major}`];
+    for (const candidate of candidates) {
+      if (isClaudeManifestModelId(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  const runtimeMatch = trimmed.match(
+    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+  );
+  if (!runtimeMatch) {
+    return null;
+  }
+
+  const family = runtimeMatch[1].toLowerCase();
+  const major = runtimeMatch[2];
+  const minor = runtimeMatch[3];
+  const suffix = runtimeMatch[4] ?? "";
+  const candidate = `claude-${family}-${major}-${minor}${suffix}`;
+  return isClaudeManifestModelId(candidate) ? candidate : null;
 }
