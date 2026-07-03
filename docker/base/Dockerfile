@@ -58,7 +58,7 @@ RUN set -eux; \
 
 COPY --from=source-pack /tmp/paseo-packs /tmp/paseo-packs
 RUN set -eux; \
-    npm install -g --omit=optional /tmp/paseo-packs/*.tgz; \
+	npm install -g /tmp/paseo-packs/*.tgz; \
     rm -rf /tmp/paseo-packs; \
     npm cache clean --force; \
     server_entry="$(npm root -g)/@getpaseo/server/dist/scripts/supervisor-entrypoint.js"; \
