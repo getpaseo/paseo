@@ -1432,6 +1432,7 @@ export class VoiceAssistantWebSocketServer {
     }
     if (existing) {
       this.browserToolsRegistrations.delete(connection.clientId);
+      existing.unregister();
     }
 
     const unregister = this.browserToolsBroker.registerClient({

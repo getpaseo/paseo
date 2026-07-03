@@ -3,7 +3,7 @@ import { BrowserAutomationCommandNameSchema } from "./rpc-schemas.js";
 
 export const BrowserAutomationHostCapabilitySchema = z
   .object({
-    supportedCommands: z.array(BrowserAutomationCommandNameSchema).default([]),
+    supportedCommands: z.array(BrowserAutomationCommandNameSchema).min(1),
     hostKind: z.string().min(1).default("browser host"),
   })
   .passthrough();

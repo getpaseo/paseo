@@ -35,6 +35,35 @@ describe("browser automation protocol integration", () => {
     });
   });
 
+  test("browser host capability requires at least one supported command", () => {
+    expect(() =>
+      WSHelloMessageSchema.parse({
+        type: "hello",
+        clientId: "client-1",
+        clientType: "mobile",
+        protocolVersion: 1,
+        capabilities: {
+          [CLIENT_CAPS.browserHost]: {
+            supportedCommands: [],
+            hostKind: "desktop app",
+          },
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      WSHelloMessageSchema.parse({
+        type: "hello",
+        clientId: "client-2",
+        clientType: "mobile",
+        protocolVersion: 1,
+        capabilities: {
+          [CLIENT_CAPS.browserHost]: {},
+        },
+      }),
+    ).toThrow();
+  });
+
   test("hello remains valid when no browser host capability is advertised", () => {
     expect(
       WSHelloMessageSchema.parse({

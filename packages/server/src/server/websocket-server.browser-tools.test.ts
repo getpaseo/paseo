@@ -2,6 +2,7 @@ import { createServer, type Server as HTTPServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import type {
+  BrowserAutomationCommandName,
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
@@ -58,10 +59,12 @@ afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.stop()));
 });
 
-function browserHostCapabilities(): Record<string, unknown> {
+function browserHostCapabilities(
+  supportedCommands: readonly BrowserAutomationCommandName[] = BROWSER_AUTOMATION_COMMAND_NAMES,
+): Record<string, unknown> {
   return {
     [CLIENT_CAPS.browserHost]: {
-      supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+      supportedCommands: [...supportedCommands],
       hostKind: "desktop app",
     },
   };
@@ -158,6 +161,33 @@ describe("WebSocketServer browser tools wiring", () => {
       ok: true,
       result: { command: "click", browserId: BROWSER_ID, ref: "@e1" },
     });
+  });
+
+  it("clears pending browser commands when a browser host changes capabilities", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const clientId = "browser-host-client-1";
+    const browserHost = await harness.connectBrowserHostClient({
+      clientId,
+      capabilities: browserHostCapabilities(),
+    });
+
+    const pendingResult = harness.broker.execute({
+      command: { command: "snapshot", args: { browserId: BROWSER_ID } },
+    });
+    await browserHost.nextBrowserRequest();
+    expect(harness.broker.getPendingRequestCount()).toBe(1);
+
+    await harness.connectBrowserHostClient({
+      clientId,
+      capabilities: browserHostCapabilities(["list_tabs"]),
+    });
+
+    await expect(pendingResult).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_host", retryable: true },
+    });
+    expect(harness.broker.getRegisteredClientCount()).toBe(1);
+    expect(harness.broker.getPendingRequestCount()).toBe(0);
   });
 });
 

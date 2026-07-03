@@ -28,6 +28,7 @@ export interface BrowserToolsExecuteInput {
 
 interface PendingBrowserToolsRequest {
   clientId: string;
+  rememberAffinity: boolean;
   timeout: ReturnType<typeof setTimeout>;
   resolve: (payload: BrowserToolsResponsePayload) => void;
 }
@@ -63,7 +64,7 @@ export class BrowserToolsBroker {
   }
 
   public registerClient(client: BrowserHostClient): () => void {
-    this.clients.delete(client.id);
+    this.unregisterClient(client.id);
     const registeredAt = ++this.registrationSequence;
     this.clients.set(client.id, {
       client,
@@ -201,7 +202,9 @@ export class BrowserToolsBroker {
 
     this.pending.delete(parsed.data.payload.requestId);
     clearTimeout(pending.timeout);
-    this.rememberBrowserHostForPayload(pending.clientId, parsed.data.payload);
+    if (pending.rememberAffinity) {
+      this.rememberBrowserHostForPayload(pending.clientId, parsed.data.payload);
+    }
     pending.resolve(parsed.data.payload);
     return true;
   }
@@ -243,6 +246,7 @@ export class BrowserToolsBroker {
             ...params.request,
             requestId: `${params.request.requestId}:${host.client.id}`,
           },
+          rememberAffinity: false,
           timeoutMs: params.timeoutMs,
         }),
       })),
@@ -251,6 +255,10 @@ export class BrowserToolsBroker {
     const failed = hostResponses.find(({ payload }) => !payload.ok);
     if (failed) {
       return withBrowserToolsRequestId(failed.payload, params.request.requestId);
+    }
+
+    for (const { host, payload } of hostResponses) {
+      this.rememberBrowserHostForPayload(host.client.id, payload);
     }
 
     return {
@@ -395,6 +403,7 @@ export class BrowserToolsBroker {
   private sendRequest(params: {
     host: RegisteredBrowserHost;
     request: BrowserAutomationExecuteRequest;
+    rememberAffinity?: boolean;
     timeoutMs: number;
   }): Promise<BrowserToolsResponsePayload> {
     const { host, request, timeoutMs } = params;
@@ -417,6 +426,7 @@ export class BrowserToolsBroker {
 
       this.pending.set(request.requestId, {
         clientId: client.id,
+        rememberAffinity: params.rememberAffinity ?? true,
         timeout,
         resolve,
       });
