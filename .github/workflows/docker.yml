@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - "docker/**"
+      - ".dockerignore"
       - ".github/workflows/docker.yml"
       - "package.json"
       - "package-lock.json"
+      - "patches/**"
       - "scripts/**"
+      - "tsconfig.json"
+      - "tsconfig.base.json"
       - "packages/app/**"
       - "packages/cli/**"
       - "packages/client/**"

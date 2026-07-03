@@ -6,6 +6,13 @@
 .wrangler
 **/.wrangler
 **/.tanstack
+.env*
+**/.env*
+.dev.vars
+**/.dev.vars
+*.pem
+**/*.pem
+**/.secrets
 **/node_modules
 **/dist
 **/build
