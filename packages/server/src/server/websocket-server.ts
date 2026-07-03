@@ -475,6 +475,7 @@ export class VoiceAssistantWebSocketServer {
     daemonConfigStore: DaemonConfigStore,
     mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
+    workspaceAutoName: WorkspaceAutoName,
     auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
@@ -500,7 +501,6 @@ export class VoiceAssistantWebSocketServer {
     getDaemonTcpHost?: () => string | null,
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
     workspaceGitService?: WorkspaceGitService,
-    workspaceAutoName?: WorkspaceAutoName,
     github?: GitHubService,
     pushNotificationSender?: PushNotificationSender,
     providerSnapshotManager?: ProviderSnapshotManager,
@@ -543,9 +543,6 @@ export class VoiceAssistantWebSocketServer {
     this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
-    if (!workspaceAutoName) {
-      throw new Error("workspaceAutoName is required");
-    }
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;

@@ -178,6 +178,10 @@ async function waitForUnexpectedWorkspaceNamingSideEffects(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
+async function removeTempDir(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
 type AgentManagerSpies = ReturnType<typeof buildAgentManagerSpies>;
 type AgentStorageSpies = ReturnType<typeof buildAgentStorageSpies>;
 
@@ -1708,7 +1712,7 @@ describe("create_agent MCP tool", () => {
         { workspaceId: createdWorkspaceIds[0] },
       );
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -1786,7 +1790,7 @@ describe("create_agent MCP tool", () => {
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(broadcasts).toHaveLength(1);
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -1879,7 +1883,7 @@ describe("create_agent MCP tool", () => {
         branch: "workspace-auto-title-flow",
       });
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -1978,7 +1982,7 @@ describe("create_agent MCP tool", () => {
         branch: "generated-manual-race-title",
       });
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2061,7 +2065,7 @@ describe("create_agent MCP tool", () => {
         branch: "generated-workspace-title",
       });
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2169,7 +2173,7 @@ describe("create_agent MCP tool", () => {
       });
       expect(broadcasts).toEqual(["workspace-directory-auto-title"]);
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2252,7 +2256,7 @@ describe("create_agent MCP tool", () => {
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
       expect(broadcasts).toHaveLength(1);
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2422,7 +2426,7 @@ describe("create_agent MCP tool", () => {
       expect(broadcasts).toHaveLength(1);
       expect(broadcasts[0]).toMatch(/^wks_[0-9a-f]{16}$/);
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2518,7 +2522,7 @@ describe("create_agent MCP tool", () => {
         "ws-archive-tool-worktree",
       ]);
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2605,7 +2609,7 @@ describe("create_agent MCP tool", () => {
       expect(archivedWorkspaceIds).toContain("ws-mcp-B");
       await expect(access(worktreePath)).rejects.toThrow();
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
@@ -2683,7 +2687,7 @@ describe("create_agent MCP tool", () => {
         access(z.string().parse(created.structuredContent.worktreePath)),
       ).rejects.toThrow();
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await removeTempDir(tempDir);
     }
   });
 
