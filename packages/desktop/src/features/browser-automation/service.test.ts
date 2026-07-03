@@ -41,7 +41,14 @@ class FakeTab implements TabContents {
 
   public destroyed = false;
   public bodyText = "";
-  public snapshotElements: unknown[] = [];
+  public snapshotNodes: Array<{
+    role: string;
+    name: string;
+    tagName: string;
+    ref?: string;
+    attributes?: string[];
+    children?: unknown[];
+  }> = [];
   public actionScriptResult: unknown = true;
   public networkEntries: unknown[] = [];
   public consoleMessages: BrowserAutomationConsoleLogEntry[] = [];
@@ -96,8 +103,8 @@ class FakeTab implements TabContents {
     if (code.includes("document.body.innerText")) {
       return this.bodyText;
     }
-    if (code.includes("CANDIDATE_SELECTOR")) {
-      return JSON.stringify(this.snapshotElements);
+    if (code.includes("__PASEO_ARIA_SNAPSHOT__")) {
+      return JSON.stringify(snapshotResult(this.snapshotNodes));
     }
     if (code.includes("performance.getEntriesByType")) {
       return JSON.stringify(this.networkEntries);
@@ -170,11 +177,11 @@ class FakeTab implements TabContents {
       }
       return { data: this.fullPageScreenshotData };
     }
-    if (command === "DOM.getDocument") {
-      return { root: { nodeId: this.documentNodeId } };
+    if (command === "Runtime.evaluate") {
+      return { result: { objectId: "object-1" } };
     }
-    if (command === "DOM.querySelector") {
-      return { nodeId: this.queriedNodeId };
+    if (command === "DOM.describeNode") {
+      return { node: { backendNodeId: this.queriedNodeId, nodeName: "INPUT" } };
     }
     return {};
   }
@@ -293,39 +300,84 @@ function formElements() {
     {
       role: "textbox",
       tagName: "input",
-      text: "Name",
-      selector: "#name",
-      attributes: { id: "name", type: "text" },
+      name: "Name",
+      ref: "@e1",
     },
     {
       role: "checkbox",
       tagName: "input",
-      text: "Agree",
-      selector: "#agree",
-      attributes: { id: "agree", type: "checkbox" },
+      name: "Agree",
+      ref: "@e2",
+      attributes: ["checked=false"],
     },
     {
       role: "combobox",
       tagName: "select",
-      text: "Country",
-      selector: "#country",
-      attributes: { id: "country" },
+      name: "Country",
+      ref: "@e3",
     },
     {
       role: "button",
       tagName: "button",
-      text: "Source",
-      selector: "#source",
-      attributes: { id: "source" },
+      name: "Source",
+      ref: "@e4",
     },
     {
       role: "button",
       tagName: "button",
-      text: "Target",
-      selector: "#target",
-      attributes: { id: "target" },
+      name: "Target",
+      ref: "@e5",
     },
   ];
+}
+
+function snapshotResult(nodes: FakeTab["snapshotNodes"]) {
+  const refs = nodes.flatMap((node) =>
+    node.ref
+      ? [
+          {
+            ref: node.ref,
+            fingerprint: {
+              role: node.role,
+              name: node.name,
+              tagName: node.tagName,
+              type: "",
+              ariaLabel: "",
+            },
+          },
+        ]
+      : [],
+  );
+  return {
+    marker: "__PASEO_ARIA_SNAPSHOT__",
+    root: {
+      kind: "role",
+      role: "document",
+      name: "Fixture",
+      tagName: "document",
+      attributes: [],
+      children: nodes.map((node) => ({
+        kind: "role",
+        role: node.role,
+        name: node.name,
+        tagName: node.tagName,
+        attributes: node.attributes ?? [],
+        ...(node.ref
+          ? { ref: node.ref, fingerprint: refs.find((ref) => ref.ref === node.ref)?.fingerprint }
+          : {}),
+        children: node.children ?? [],
+      })),
+    },
+    refs,
+    truncated: false,
+    stats: {
+      nodeCount: nodes.length + 1,
+      refCount: refs.length,
+      textLength: 0,
+      iframeCount: 0,
+      maxDepth: 1,
+    },
+  };
 }
 
 function containsScript(tab: FakeTab, ...parts: string[]): boolean {
@@ -342,48 +394,17 @@ function requireSnapshotRefs(result: Awaited<ReturnType<BrowserAutomationHarness
       workspaceId: WORKSPACE_A,
       url: "https://a.test/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-        {
-          ref: "@e2",
-          role: "checkbox",
-          tagName: "input",
-          text: "Agree",
-          selector: "#agree",
-          attributes: { id: "agree", type: "checkbox" },
-        },
-        {
-          ref: "@e3",
-          role: "combobox",
-          tagName: "select",
-          text: "Country",
-          selector: "#country",
-          attributes: { id: "country" },
-        },
-        {
-          ref: "@e4",
-          role: "button",
-          tagName: "button",
-          text: "Source",
-          selector: "#source",
-          attributes: { id: "source" },
-        },
-        {
-          ref: "@e5",
-          role: "button",
-          tagName: "button",
-          text: "Target",
-          selector: "#target",
-          attributes: { id: "target" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: [
+        '- document "Fixture"',
+        '  - textbox "Name" [ref=@e1]',
+        '  - checkbox "Agree" [checked=false ref=@e2]',
+        '  - combobox "Country" [ref=@e3]',
+        '  - button "Source" [ref=@e4]',
+        '  - button "Target" [ref=@e5]',
+      ].join("\n"),
+      truncated: false,
+      stats: { nodeCount: 6, refCount: 5, textLength: 187, iframeCount: 0, maxDepth: 1 },
     },
   });
 }
@@ -531,13 +552,12 @@ describe("executeAutomationCommand", () => {
 
   test("snapshot and click use refs from the same explicit tab", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = [
+    browser.tab.snapshotNodes = [
       {
         role: "button",
         tagName: "button",
-        text: "Submit",
-        selector: "#submit",
-        attributes: { id: "submit" },
+        name: "Submit",
+        ref: "@e1",
       },
     ];
 
@@ -556,16 +576,10 @@ describe("executeAutomationCommand", () => {
         workspaceId: WORKSPACE_A,
         url: "https://a.test/form",
         title: "Fixture",
-        elements: [
-          {
-            ref: "@e1",
-            role: "button",
-            tagName: "button",
-            text: "Submit",
-            selector: "#submit",
-            attributes: { id: "submit" },
-          },
-        ],
+        format: "aria-yaml",
+        snapshot: '- document "Fixture"\n  - button "Submit" [ref=@e1]',
+        truncated: false,
+        stats: { nodeCount: 2, refCount: 1, textLength: 50, iframeCount: 0, maxDepth: 1 },
       },
     });
     expect(click).toEqual({
@@ -573,7 +587,7 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "click", browserId: BROWSER_A, ref: "@e1" },
     });
-    expect(containsScript(browser.tab, "#submit", ".click()")).toBe(true);
+    expect(containsScript(browser.tab, '"@e1"', ".click()")).toBe(true);
   });
 
   test.each([
@@ -581,19 +595,19 @@ describe("executeAutomationCommand", () => {
       name: "fill updates a ref from the latest snapshot",
       command: { command: "fill", args: { browserId: BROWSER_A, ref: "@e1", value: "Ada" } },
       result: { command: "fill", browserId: BROWSER_A, ref: "@e1" },
-      scriptParts: ["#name", "Ada"],
+      scriptParts: ['"@e1"', "Ada"],
     },
     {
       name: "select sets the requested value on a ref",
       command: { command: "select", args: { browserId: BROWSER_A, ref: "@e3", value: "us" } },
       result: { command: "select", browserId: BROWSER_A, ref: "@e3", value: "us" },
-      scriptParts: ["#country", "us"],
+      scriptParts: ['"@e3"', "us"],
     },
     {
       name: "hover dispatches hover events to a ref",
       command: { command: "hover", args: { browserId: BROWSER_A, ref: "@e4" } },
       result: { command: "hover", browserId: BROWSER_A, ref: "@e4" },
-      scriptParts: ["#source", "mouseover"],
+      scriptParts: ['"@e4"', "mouseover"],
     },
     {
       name: "drag dispatches drag events between refs",
@@ -602,11 +616,11 @@ describe("executeAutomationCommand", () => {
         args: { browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
       },
       result: { command: "drag", browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
-      scriptParts: ["#source", "#target", "dragstart"],
+      scriptParts: ['"@e4"', '"@e5"', "dragstart"],
     },
   ] as const)("$name", async ({ command, result, scriptParts }) => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = formElements();
+    browser.tab.snapshotNodes = formElements();
 
     requireSnapshotRefs(await browser.snapshot());
     const action = await browser.execute(command);
@@ -621,7 +635,7 @@ describe("executeAutomationCommand", () => {
 
   test("fill with an empty string clears a ref through the regular fill path", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = formElements();
+    browser.tab.snapshotNodes = formElements();
 
     requireSnapshotRefs(await browser.snapshot());
     const action = await browser.execute({
@@ -634,12 +648,12 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "fill", browserId: BROWSER_A, ref: "@e1" },
     });
-    expect(containsScript(browser.tab, "#name", 'const nextValue = "";')).toBe(true);
+    expect(containsScript(browser.tab, '"@e1"', 'const nextValue = "";')).toBe(true);
   });
 
   test("refs become stale after navigation changes the tab URL", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = formElements();
+    browser.tab.snapshotNodes = formElements();
 
     requireSnapshotRefs(await browser.snapshot());
     await browser.execute({
@@ -664,7 +678,7 @@ describe("executeAutomationCommand", () => {
 
   test("refs become stale when the same URL no longer contains the element", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = formElements();
+    browser.tab.snapshotNodes = formElements();
 
     requireSnapshotRefs(await browser.snapshot());
     browser.tab.actionScriptResult = false;
@@ -725,7 +739,7 @@ describe("executeAutomationCommand", () => {
       name: "type writes text into a ref",
       command: { command: "type", args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" } },
       result: { command: "type", browserId: BROWSER_A, ref: "@e1" },
-      scriptParts: ["#name", "Ada"],
+      scriptParts: ['"@e1"', "Ada"],
       needsSnapshot: true,
     },
     {
@@ -737,7 +751,7 @@ describe("executeAutomationCommand", () => {
     },
   ] as const)("$name", async ({ command, result, scriptParts, needsSnapshot }) => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = formElements();
+    browser.tab.snapshotNodes = formElements();
     if (needsSnapshot) {
       requireSnapshotRefs(await browser.snapshot());
     }
@@ -1209,13 +1223,12 @@ describe("executeAutomationCommand", () => {
 
   test("upload resolves workspace files before setting them on the file input", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = [
+    browser.tab.snapshotNodes = [
       {
         role: "textbox",
         tagName: "input",
-        text: "",
-        selector: "#file",
-        attributes: { id: "file", type: "file" },
+        name: "Upload",
+        ref: "@e1",
       },
     ];
     const workspaceRoot = resolvePath("/workspace/project");
@@ -1240,24 +1253,30 @@ describe("executeAutomationCommand", () => {
       },
     });
     expect(browser.tab.debugCommands).toEqual([
-      { command: "DOM.getDocument", params: { depth: -1, pierce: true } },
-      { command: "DOM.querySelector", params: { nodeId: 1, selector: "#file" } },
+      {
+        command: "Runtime.evaluate",
+        params: {
+          expression: expect.stringContaining('"@e1"'),
+          objectGroup: "paseo-browser-automation",
+          returnByValue: false,
+        },
+      },
+      { command: "DOM.describeNode", params: { objectId: "object-1" } },
       {
         command: "DOM.setFileInputFiles",
-        params: { nodeId: 2, files: [resolvePath(workspaceRoot, "uploads/a.txt")] },
+        params: { backendNodeId: 2, files: [resolvePath(workspaceRoot, "uploads/a.txt")] },
       },
     ]);
   });
 
   test("upload denies paths outside the agent workspace", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = [
+    browser.tab.snapshotNodes = [
       {
         role: "textbox",
         tagName: "input",
-        text: "",
-        selector: "#file",
-        attributes: { id: "file", type: "file" },
+        name: "Upload",
+        ref: "@e1",
       },
     ];
     const workspaceRoot = resolvePath("/workspace/project");
@@ -1281,20 +1300,26 @@ describe("executeAutomationCommand", () => {
       },
     });
     expect(browser.tab.debugCommands).toEqual([
-      { command: "DOM.getDocument", params: { depth: -1, pierce: true } },
-      { command: "DOM.querySelector", params: { nodeId: 1, selector: "#file" } },
+      {
+        command: "Runtime.evaluate",
+        params: {
+          expression: expect.stringContaining('"@e1"'),
+          objectGroup: "paseo-browser-automation",
+          returnByValue: false,
+        },
+      },
+      { command: "DOM.describeNode", params: { objectId: "object-1" } },
     ]);
   });
 
   test("upload reports missing cwd before setting files on the file input", async () => {
     const browser = new BrowserAutomationHarness();
-    browser.tab.snapshotElements = [
+    browser.tab.snapshotNodes = [
       {
         role: "textbox",
         tagName: "input",
-        text: "",
-        selector: "#file",
-        attributes: { id: "file", type: "file" },
+        name: "Upload",
+        ref: "@e1",
       },
     ];
 
@@ -1314,8 +1339,15 @@ describe("executeAutomationCommand", () => {
       },
     });
     expect(browser.tab.debugCommands).toEqual([
-      { command: "DOM.getDocument", params: { depth: -1, pierce: true } },
-      { command: "DOM.querySelector", params: { nodeId: 1, selector: "#file" } },
+      {
+        command: "Runtime.evaluate",
+        params: {
+          expression: expect.stringContaining('"@e1"'),
+          objectGroup: "paseo-browser-automation",
+          returnByValue: false,
+        },
+      },
+      { command: "DOM.describeNode", params: { objectId: "object-1" } },
     ]);
   });
 });

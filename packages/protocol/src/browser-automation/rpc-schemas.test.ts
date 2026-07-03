@@ -134,16 +134,10 @@ const resultParseCases = [
       workspaceId: "workspace-1",
       url: "https://example.com/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: '- document "Fixture"\n  - textbox "Name" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 52, iframeCount: 0, maxDepth: 1 },
     },
     expected: {
       command: "snapshot",
@@ -151,16 +145,10 @@ const resultParseCases = [
       workspaceId: "workspace-1",
       url: "https://example.com/form",
       title: "Fixture",
-      elements: [
-        {
-          ref: "@e1",
-          role: "textbox",
-          tagName: "input",
-          text: "Name",
-          selector: "#name",
-          attributes: { id: "name", type: "text" },
-        },
-      ],
+      format: "aria-yaml",
+      snapshot: '- document "Fixture"\n  - textbox "Name" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 52, iframeCount: 0, maxDepth: 1 },
     },
   },
   {
@@ -526,7 +514,10 @@ describe("browser automation execute RPC schemas", () => {
           workspaceId: "workspace-1",
           url: "https://example.com",
           title: "Example",
-          elements: [],
+          format: "aria-yaml",
+          snapshot: "- document",
+          truncated: false,
+          stats: { nodeCount: 1, refCount: 0, textLength: 10 },
         },
       },
     });

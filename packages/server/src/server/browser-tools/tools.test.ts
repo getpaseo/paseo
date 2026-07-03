@@ -133,7 +133,10 @@ function snapshotPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       workspaceId: "wks_workspace_a",
       url: "https://example.com",
       title: "Example",
-      elements: [],
+      format: "aria-yaml",
+      snapshot: '- document "Example"\n  - button "Save" [ref=@e1]',
+      truncated: false,
+      stats: { nodeCount: 2, refCount: 1, textLength: 50 },
     },
   };
 }
@@ -668,7 +671,10 @@ describe("registerBrowserTools", () => {
         workspaceId: "wks_workspace_a",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: '- document "Example"\n  - button "Save" [ref=@e1]',
+        truncated: false,
+        stats: { nodeCount: 2, refCount: 1, textLength: 50 },
       },
       context: {
         agentId: "agent-1",

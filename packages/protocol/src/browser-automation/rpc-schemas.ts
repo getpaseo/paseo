@@ -236,14 +236,15 @@ export const BrowserAutomationNewTabResultSchema = z.object({
   url: z.string().min(1),
 });
 
-export const BrowserAutomationSnapshotElementSchema = z.object({
-  ref: z.string().regex(/^@e\d+$/),
-  role: z.string(),
-  tagName: z.string(),
-  text: z.string(),
-  selector: z.string(),
-  attributes: z.record(z.string(), z.string()).default({}),
-});
+export const BrowserAutomationSnapshotStatsSchema = z
+  .object({
+    nodeCount: z.number().int().nonnegative(),
+    refCount: z.number().int().nonnegative(),
+    textLength: z.number().int().nonnegative(),
+    iframeCount: z.number().int().nonnegative().optional(),
+    maxDepth: z.number().int().nonnegative().optional(),
+  })
+  .strict();
 
 export const BrowserAutomationSnapshotResultSchema = z.object({
   command: z.literal("snapshot"),
@@ -251,7 +252,10 @@ export const BrowserAutomationSnapshotResultSchema = z.object({
   workspaceId: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
-  elements: z.array(BrowserAutomationSnapshotElementSchema),
+  format: z.literal("aria-yaml"),
+  snapshot: z.string(),
+  truncated: z.boolean(),
+  stats: BrowserAutomationSnapshotStatsSchema,
 });
 
 export const BrowserAutomationClickResultSchema = z.object({

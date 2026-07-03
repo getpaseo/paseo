@@ -1095,10 +1095,248 @@ async function runPermanentParkingGroup() {
   return results;
 }
 
+function automationFixtureUrl() {
+  const html = `<!doctype html>
+    <html>
+      <head><meta charset="utf-8"><title>Automation Fixture</title></head>
+      <body>
+        <main>
+          <h1>Settings</h1>
+          <section aria-label="Account">
+            <p>Connected as Maya</p>
+            <label for="name">Name</label>
+            <input id="name" value="Maya">
+            <a href="#docs">Read docs</a>
+            <button id="save">Save changes</button>
+            <input id="upload" type="file" aria-label="Upload receipt">
+          </section>
+        </main>
+        <script>
+          window.fixtureLog = [];
+          document.getElementById("save").addEventListener("click", () => {
+            window.fixtureLog.push("clicked-save");
+          });
+          window.pushFixtureState = () => history.pushState({}, "", "#advanced");
+          window.sameUrlRerender = () => {
+            const oldSave = document.getElementById("save");
+            const nextSave = document.createElement("button");
+            nextSave.id = "save";
+            nextSave.textContent = "Save later";
+            oldSave.replaceWith(nextSave);
+          };
+        </script>
+      </body>
+    </html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+const AUTOMATION_SNAPSHOT_PROBE = String.raw`(() => {
+  const refs = new Map();
+  const lines = ['- document "Automation Fixture"'];
+  let nextRef = 1;
+  function text(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+  function fingerprint(element, role, name) {
+    return { role, name, tagName: element.tagName.toLowerCase(), type: element.getAttribute('type') || '', ariaLabel: element.getAttribute('aria-label') || '' };
+  }
+  function runtime() {
+    const api = {
+      refs,
+      resolve(ref, expected) {
+        const element = refs.get(ref);
+        if (!element || !element.isConnected) return { ok: false, reason: 'stale_ref' };
+        const role = roleFor(element);
+        const name = nameFor(element, role);
+        const current = fingerprint(element, role, name);
+        return current.role === expected.role && current.name === expected.name && current.tagName === expected.tagName && current.type === expected.type && current.ariaLabel === expected.ariaLabel
+          ? { ok: true, element }
+          : { ok: false, reason: 'stale_ref' };
+      }
+    };
+    Object.defineProperty(window, '__PASEO_BROWSER_AUTOMATION__', { configurable: true, value: api });
+    return api;
+  }
+  function roleFor(element) {
+    const tag = element.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(tag)) return 'heading';
+    if (tag === 'input') return element.type === 'file' ? 'button' : 'textbox';
+    if (tag === 'button') return 'button';
+    if (tag === 'a') return 'link';
+    if (tag === 'section') return 'region';
+    return '';
+  }
+  function nameFor(element, role) {
+    if (element.getAttribute('aria-label')) return element.getAttribute('aria-label');
+    if (element.id) {
+      const label = document.querySelector('label[for="' + element.id + '"]');
+      if (label) return text(label.textContent);
+    }
+    return role === 'textbox' ? text(element.value || element.placeholder) : text(element.textContent);
+  }
+  const api = runtime();
+  const heading = document.querySelector('h1');
+  lines.push('  - heading "' + nameFor(heading, 'heading') + '" [level=1]');
+  lines.push('  - text: "Connected as Maya"');
+  for (const element of document.querySelectorAll('input, a, button')) {
+    const role = roleFor(element);
+    const name = nameFor(element, role);
+    const ref = '@e' + nextRef++;
+    const fp = fingerprint(element, role, name);
+    api.refs.set(ref, element);
+    lines.push('  - ' + role + ' "' + name + '" [ref=' + ref + ']');
+  }
+  return {
+    snapshot: lines.join('\n'),
+    refs: Array.from(api.refs.entries()).map(([ref, element]) => {
+      const role = roleFor(element);
+      return { ref, fingerprint: fingerprint(element, role, nameFor(element, role)) };
+    })
+  };
+})()`;
+
+async function runAutomationGroup() {
+  const results = [];
+  const handle = createInactiveHarnessWindow({
+    width: 1000,
+    height: 700,
+    backgroundColor: "#202020",
+    webPreferences: {
+      webviewTag: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  const { win } = handle;
+  installHarnessWebviewGuards(win);
+  const tracker = trackAttachedGuests(win, { disableGuestBackgroundThrottlingAtAttach: true });
+  try {
+    await withTimeout(
+      win.loadFile(path.join(ROOT, "index.html"), {
+        query: {
+          webviewCount: "0",
+          permanentParkingState: "p1-overflow-1x1",
+          targetUrl: automationFixtureUrl(),
+        },
+      }),
+      "automation harness window loadFile",
+    );
+    await waitForInactiveReveal(handle, "automation harness window");
+    const { guest } = await appendPermanentWebview({
+      win,
+      tracker,
+      state: { id: "p1-overflow-1x1" },
+      sourceUrl: automationFixtureUrl(),
+    });
+    await waitForGuestLoad(guest);
+
+    const first = await guest.executeJavaScript(AUTOMATION_SNAPSHOT_PROBE, true);
+    assertAutomationSnapshot(first);
+    pass("automation snapshot renders headings static text controls and refs");
+    results.push({ group: "automation", check: "snapshot", pass: true });
+
+    const saveRef = first.refs.find((ref) => ref.fingerprint.name === "Save changes");
+    if (!saveRef) {
+      fail("automation save ref missing");
+    }
+    await guest.executeJavaScript("window.pushFixtureState()", true);
+    const pushStateResult = await guest.executeJavaScript(
+      `window.__PASEO_BROWSER_AUTOMATION__.resolve(${JSON.stringify(saveRef.ref)}, ${JSON.stringify(saveRef.fingerprint)}).ok`,
+      true,
+    );
+    if (pushStateResult !== true) {
+      fail("automation ref did not survive pushState");
+    }
+    pass("automation ref resolves after pushState");
+    results.push({ group: "automation", check: "pushState-ref", pass: true });
+
+    await guest.executeJavaScript("window.sameUrlRerender()", true);
+    const rerenderResult = await guest.executeJavaScript(
+      `window.__PASEO_BROWSER_AUTOMATION__.resolve(${JSON.stringify(saveRef.ref)}, ${JSON.stringify(saveRef.fingerprint)}).reason`,
+      true,
+    );
+    if (rerenderResult !== "stale_ref") {
+      fail(`automation same-url rerender returned ${rerenderResult}`);
+    }
+    pass("automation same-url rerender stales old ref");
+    results.push({ group: "automation", check: "same-url-stale-ref", pass: true });
+
+    const second = await guest.executeJavaScript(AUTOMATION_SNAPSHOT_PROBE, true);
+    const uploadRef = second.refs.find((ref) => ref.fingerprint.name === "Upload receipt");
+    if (!uploadRef) {
+      fail("automation upload ref missing");
+    }
+    if (!guest.debugger.isAttached()) {
+      guest.debugger.attach("1.3");
+    }
+    const evaluated = await guest.debugger.sendCommand("Runtime.evaluate", {
+      expression: `(() => window.__PASEO_BROWSER_AUTOMATION__.resolve(${JSON.stringify(uploadRef.ref)}, ${JSON.stringify(uploadRef.fingerprint)}).element)()`,
+      objectGroup: "paseo-browser-automation",
+      returnByValue: false,
+    });
+    const described = await guest.debugger.sendCommand("DOM.describeNode", {
+      objectId: evaluated.result.objectId,
+    });
+    if (!described.node || typeof described.node.backendNodeId !== "number") {
+      fail("automation upload ref did not resolve to backendNodeId");
+    }
+    pass("automation upload ref resolves to backendNodeId");
+    results.push({ group: "automation", check: "upload-backend-node", pass: true });
+
+    await fsp.writeFile(
+      path.join(OUT_DIR, "automation-results.json"),
+      `${JSON.stringify({ generatedAt: new Date().toISOString(), results }, null, 2)}\n`,
+    );
+    return results;
+  } finally {
+    await closeHarnessWindow(win);
+  }
+}
+
+function assertAutomationSnapshot(snapshot) {
+  const text = snapshot && snapshot.snapshot;
+  if (typeof text !== "string") {
+    fail("automation snapshot returned no text");
+  }
+  for (const expected of [
+    'heading "Settings"',
+    'text: "Connected as Maya"',
+    'textbox "Name" [ref=@e1]',
+    'link "Read docs"',
+    'button "Save changes"',
+    'button "Upload receipt"',
+  ]) {
+    if (!text.includes(expected)) {
+      fail(`automation snapshot missing ${expected}`);
+    }
+  }
+  if (text.includes("selector")) {
+    fail("automation snapshot exposed selector text");
+  }
+}
+
 async function main() {
   ensureDirSync(OUT_DIR);
-  if (!["all", "existing", "permanent-parking"].includes(HARNESS_GROUP)) {
+  if (!["all", "existing", "permanent-parking", "automation"].includes(HARNESS_GROUP)) {
     fail(`unknown harness group ${HARNESS_GROUP}`);
+  }
+
+  if (HARNESS_GROUP === "automation") {
+    const automationResults = await runAutomationGroup();
+    await fsp.writeFile(
+      path.join(OUT_DIR, "results.json"),
+      `${JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          automationResults,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    pass(`capture harness automation complete output=${OUT_DIR}`);
+    return;
   }
 
   if (HARNESS_GROUP === "permanent-parking") {

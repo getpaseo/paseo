@@ -221,7 +221,10 @@ describe("BrowserToolsBroker", () => {
         workspaceId: "workspace-1",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: "- document",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 10 },
       },
     });
 
@@ -234,7 +237,10 @@ describe("BrowserToolsBroker", () => {
         workspaceId: "workspace-1",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: "- document",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 10 },
       },
     });
   });
@@ -299,7 +305,10 @@ describe("BrowserToolsBroker", () => {
         workspaceId: "workspace-1",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: "- document",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 10 },
       },
     });
 
@@ -423,7 +432,10 @@ describe("BrowserToolsBroker", () => {
         workspaceId: "workspace-1",
         url: "https://one.example",
         title: "One",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: "- document",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 10 },
       },
     });
     secondHost.resolveLatestWith(broker, {
@@ -435,7 +447,10 @@ describe("BrowserToolsBroker", () => {
         workspaceId: "workspace-1",
         url: "https://two.example",
         title: "Two",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: "- document",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 10 },
       },
     });
 
@@ -623,7 +638,10 @@ describe("BrowserToolsBroker", () => {
         workspaceId: "workspace-1",
         url: "https://example.com",
         title: "Example",
-        elements: [],
+        format: "aria-yaml",
+        snapshot: "- document",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 10 },
       },
     });
 

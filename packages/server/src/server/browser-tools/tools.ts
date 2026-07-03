@@ -782,8 +782,13 @@ function summarizeBrowserSuccess(
   }
 
   if (payload.result.command === "snapshot") {
-    const count = payload.result.elements.length;
-    return `Snapshot captured ${count} element${count === 1 ? "" : "s"}.`;
+    return [
+      `Snapshot captured ${payload.result.stats.nodeCount} node${payload.result.stats.nodeCount === 1 ? "" : "s"} with ${payload.result.stats.refCount} ref${payload.result.stats.refCount === 1 ? "" : "s"}.`,
+      `Title: ${payload.result.title || "Untitled"}`,
+      `URL: ${payload.result.url}`,
+      "",
+      payload.result.snapshot,
+    ].join("\n");
   }
 
   if (payload.result.command === "wait") {

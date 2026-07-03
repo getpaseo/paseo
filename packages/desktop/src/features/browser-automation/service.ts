@@ -290,7 +290,7 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       snapshotEngine,
     );
   },
-  navigate: ({ command, requestId, workspaceId, registry }) => {
+  navigate: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const navigateCommand = command as Extract<BrowserAutomationCommand, { command: "navigate" }>;
     return executeNavigate(
       requestId,
@@ -298,9 +298,10 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       navigateCommand.args.browserId,
       navigateCommand.args.url,
       registry,
+      snapshotEngine,
     );
   },
-  back: ({ command, requestId, workspaceId, registry }) => {
+  back: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const backCommand = command as Extract<BrowserAutomationCommand, { command: "back" }>;
     return executeNavigationAction(
       requestId,
@@ -308,9 +309,10 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       backCommand.args.browserId,
       "back",
       registry,
+      snapshotEngine,
     );
   },
-  forward: ({ command, requestId, workspaceId, registry }) => {
+  forward: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const forwardCommand = command as Extract<BrowserAutomationCommand, { command: "forward" }>;
     return executeNavigationAction(
       requestId,
@@ -318,9 +320,10 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       forwardCommand.args.browserId,
       "forward",
       registry,
+      snapshotEngine,
     );
   },
-  reload: ({ command, requestId, workspaceId, registry }) => {
+  reload: ({ command, requestId, workspaceId, registry, snapshotEngine }) => {
     const reloadCommand = command as Extract<BrowserAutomationCommand, { command: "reload" }>;
     return executeNavigationAction(
       requestId,
@@ -328,6 +331,7 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       reloadCommand.args.browserId,
       "reload",
       registry,
+      snapshotEngine,
     );
   },
   screenshot: ({ command, requestId, workspaceId, registry }) => {
@@ -452,7 +456,7 @@ async function executeSnapshot(
     return target;
   }
 
-  const elements = await snapshotEngine.snapshot({
+  const snapshot = await snapshotEngine.snapshot({
     browserId: target.browserId,
     page: target.contents,
   });
@@ -468,7 +472,7 @@ async function executeSnapshot(
         : {}),
       url: target.contents.getURL(),
       title: target.contents.getTitle(),
-      elements,
+      ...snapshot,
     },
   };
 }
@@ -759,6 +763,7 @@ async function executeNavigate(
   browserId: string,
   url: string,
   registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
 ): Promise<AutomationCommandPayload> {
   const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
   if ("ok" in target) {
@@ -771,6 +776,7 @@ async function executeNavigate(
       "Browser navigation only supports http and https URLs.",
     );
   }
+  snapshotEngine.clearBrowser(browserId);
   await target.contents.loadURL(url);
   return { requestId, ok: true, result: { command: "navigate", browserId: target.browserId, url } };
 }
@@ -781,19 +787,23 @@ function executeNavigationAction(
   browserId: string,
   action: "back" | "forward" | "reload",
   registry: BrowserRegistry,
+  snapshotEngine: BrowserSnapshotEngine,
 ): AutomationCommandPayload {
   const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
   if ("ok" in target) {
     return target;
   }
   if (action === "back") {
+    snapshotEngine.clearBrowser(browserId);
     target.contents.goBack();
     return { requestId, ok: true, result: { command: "back", browserId: target.browserId } };
   }
   if (action === "forward") {
+    snapshotEngine.clearBrowser(browserId);
     target.contents.goForward();
     return { requestId, ok: true, result: { command: "forward", browserId: target.browserId } };
   }
+  snapshotEngine.clearBrowser(browserId);
   target.contents.reload();
   return { requestId, ok: true, result: { command: "reload", browserId: target.browserId } };
 }
@@ -858,6 +868,21 @@ interface CdpLayoutMetrics {
 
 interface CdpCaptureScreenshotResult {
   data?: string;
+}
+
+interface CdpRuntimeEvaluateResult {
+  result?: {
+    objectId?: string;
+    subtype?: string;
+  };
+}
+
+interface CdpDescribeNodeResult {
+  node?: {
+    backendNodeId?: number;
+    nodeId?: number;
+    nodeName?: string;
+  };
 }
 
 async function getCdpLayoutMetrics(contents: TabContents): Promise<{
@@ -955,27 +980,27 @@ async function executeUpload(
   if (!target.contents.sendDebugCommand) {
     return fail(requestId, "browser_unsupported", "browser_upload requires CDP");
   }
-  const resolved = snapshotEngine.selectorForRef({
+  const expression = snapshotEngine.runtimeElementExpression({
     browserId: target.browserId,
-    page: target.contents,
     ref: input.ref,
   });
-  if (!resolved.ok) {
+  if (typeof expression !== "string") {
     return staleRefFailure(requestId, input.ref);
   }
-  const document = (await target.contents.sendDebugCommand("DOM.getDocument", {
-    depth: -1,
-    pierce: true,
-  })) as { root?: { nodeId?: number } };
-  const rootNodeId = document.root?.nodeId;
-  if (typeof rootNodeId !== "number") {
-    return fail(requestId, "browser_unsupported", "browser_upload could not read DOM");
+  const evaluated = (await target.contents.sendDebugCommand("Runtime.evaluate", {
+    expression,
+    objectGroup: "paseo-browser-automation",
+    returnByValue: false,
+  })) as CdpRuntimeEvaluateResult;
+  const objectId = evaluated.result?.objectId;
+  if (!objectId || evaluated.result?.subtype === "null") {
+    return staleRefFailure(requestId, input.ref);
   }
-  const queried = (await target.contents.sendDebugCommand("DOM.querySelector", {
-    nodeId: rootNodeId,
-    selector: resolved.selector,
-  })) as { nodeId?: number };
-  if (typeof queried.nodeId !== "number" || queried.nodeId <= 0) {
+  const described = (await target.contents.sendDebugCommand("DOM.describeNode", {
+    objectId,
+  })) as CdpDescribeNodeResult;
+  const backendNodeId = described.node?.backendNodeId;
+  if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
     return staleRefFailure(requestId, input.ref);
   }
   const workspaceRoot = resolveUploadWorkspaceRoot(cwd);
@@ -992,7 +1017,7 @@ async function executeUpload(
   }
 
   await target.contents.sendDebugCommand("DOM.setFileInputFiles", {
-    nodeId: queried.nodeId,
+    backendNodeId,
     files: filePaths,
   });
   return {
