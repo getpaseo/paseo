@@ -179,7 +179,7 @@ async function openBrowserTabForRequest(params: {
       message: "Cannot create a browser tab without a workspace context.",
     });
   }
-  useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, {
+  useWorkspaceLayoutStore.getState().openTabInBackground(workspaceKey, {
     kind: "browser",
     browserId,
   });
