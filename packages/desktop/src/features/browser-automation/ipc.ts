@@ -151,6 +151,7 @@ function getDialogMonitor(
 
 class DialogMonitor {
   private enabled = false;
+  private listenerRegistered = false;
   private readonly activeCollectors: DialogCollector[] = [];
 
   public constructor(
@@ -161,19 +162,29 @@ class DialogMonitor {
   public async capture<T>(
     task: () => Promise<T>,
   ): Promise<{ result: T; dialogs: BrowserAutomationDialogEvent[] }> {
-    await this.enable();
-    await this.installPromptShim();
     const collector: DialogCollector = { dialogs: [] };
+    try {
+      await this.enable();
+      await this.installPromptShim();
+    } catch (error) {
+      console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
+        contentsId: this.contents.id,
+        error,
+      });
+      return { result: await task(), dialogs: [] };
+    }
     this.activeCollectors.push(collector);
     try {
       const result = await task();
-      this.recordDialogs(collector, await this.drainPromptShim());
+      this.recordPromptShimDialogs(await this.drainPromptShim());
       return { result, dialogs: collector.dialogs };
     } finally {
-      await this.restorePromptShim();
       const index = this.activeCollectors.indexOf(collector);
       if (index >= 0) {
         this.activeCollectors.splice(index, 1);
+      }
+      if (this.activeCollectors.length === 0) {
+        await this.restorePromptShim();
       }
     }
   }
@@ -185,14 +196,17 @@ class DialogMonitor {
     if (!this.contents.debugger.on) {
       return;
     }
-    this.enabled = true;
-    this.contents.debugger.on("message", (_event, method, params) => {
-      if (method !== "Page.javascriptDialogOpening") {
-        return;
-      }
-      void this.handleOpening(params ?? {});
-    });
+    if (!this.listenerRegistered) {
+      this.listenerRegistered = true;
+      this.contents.debugger.on("message", (_event, method, params) => {
+        if (method !== "Page.javascriptDialogOpening") {
+          return;
+        }
+        void this.handleOpening(params ?? {});
+      });
+    }
     await this.sendDebugCommand("Page.enable");
+    this.enabled = true;
   }
 
   private async handleOpening(params: Record<string, unknown>): Promise<void> {
@@ -237,6 +251,12 @@ class DialogMonitor {
         return;
       }
       collector.dialogs.push(dialog);
+    }
+  }
+
+  private recordPromptShimDialogs(dialogs: BrowserAutomationDialogEvent[]): void {
+    for (const collector of this.activeCollectors) {
+      this.recordDialogs(collector, dialogs);
     }
   }
 

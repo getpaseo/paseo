@@ -1084,7 +1084,6 @@ async function executeKeypress(
       actionable = await waitForActionableTarget({
         page: target.contents,
         elementExpression,
-        editable: true,
       });
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);

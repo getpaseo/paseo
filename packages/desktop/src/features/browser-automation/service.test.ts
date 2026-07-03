@@ -54,6 +54,7 @@ class FakeTab implements TabContents {
   public evaluateScriptResult: unknown = { ok: true, resultJson: "null" };
   public evaluateScriptThrows = false;
   public evaluateScriptErrorMessage = "page failed";
+  public rejectEditableActionability = false;
   public actionabilityResult: unknown = {
     ok: true,
     target: { point: { x: 40, y: 30 }, rect: { x: 20, y: 10, width: 40, height: 40 } },
@@ -116,6 +117,9 @@ class FakeTab implements TabContents {
       return JSON.stringify(snapshotResult(this.snapshotNodes));
     }
     if (code.includes("Timed out waiting") || code.includes("performance.now()")) {
+      if (this.rejectEditableActionability && code.includes("const requiresEditable = true")) {
+        return { ok: false, reason: "timeout", detail: "not editable" };
+      }
       return this.actionabilityResult;
     }
     if (code.includes("performance.getEntriesByType")) {
@@ -1134,6 +1138,41 @@ describe("executeAutomationCommand", () => {
         },
       },
     ]);
+  });
+
+  test("keypress dispatches a trusted key to an actionable button ref", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.rejectEditableActionability = true;
+
+    requireSnapshotRefs(await browser.snapshot());
+    const action = await browser.execute({
+      command: "keypress",
+      args: { browserId: BROWSER_A, ref: "@e4", key: "Enter" },
+    });
+
+    expect(action).toEqual({
+      requestId: "req-keypress",
+      ok: true,
+      result: { command: "keypress", browserId: BROWSER_A, key: "Enter", ref: "@e4", x: 40, y: 30 },
+    });
+    expect(browser.tab.debugCommands.slice(0, 3).map((entry) => entry.command)).toEqual([
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+      "Input.dispatchMouseEvent",
+    ]);
+    expect(browser.tab.debugCommands.at(-2)).toEqual({
+      command: "Input.dispatchKeyEvent",
+      params: {
+        type: "keyDown",
+        key: "Enter",
+        code: "Enter",
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13,
+        text: "\r",
+        unmodifiedText: "\r",
+      },
+    });
   });
 
   test("navigate loads the requested HTTP URL in the explicit tab", async () => {

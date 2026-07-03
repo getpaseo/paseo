@@ -43,7 +43,6 @@ export async function dispatchTrustedClick(
 ): Promise<void> {
   const button = options.button ?? "left";
   const modifiers = modifierMask(options.modifiers);
-  const clickCount = options.doubleClick ? 2 : 1;
   await send("Input.dispatchMouseEvent", {
     type: "mouseMoved",
     x: point.x,
@@ -56,7 +55,7 @@ export async function dispatchTrustedClick(
     await dispatchTrustedMouseClick(send, point, button, modifiers, 2);
     return;
   }
-  await dispatchTrustedMouseClick(send, point, button, modifiers, clickCount);
+  await dispatchTrustedMouseClick(send, point, button, modifiers, 1);
 }
 
 async function dispatchTrustedMouseClick(

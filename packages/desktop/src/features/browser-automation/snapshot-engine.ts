@@ -299,6 +299,9 @@ function capRenderedSnapshot(
   if (snapshot.length <= MAX_RENDERED_TEXT_LENGTH && !alreadyTruncated) {
     return { snapshot, truncated: false };
   }
+  if (snapshot.length + 1 + TRUNCATION_MARKER.length <= MAX_RENDERED_TEXT_LENGTH) {
+    return { snapshot: `${snapshot}\n${TRUNCATION_MARKER}`, truncated: true };
+  }
   const availableLength = MAX_RENDERED_TEXT_LENGTH - TRUNCATION_MARKER.length - 1;
   const capped = snapshot.slice(0, Math.max(0, availableLength)).replace(/\n[^\n]*$/, "");
   return { snapshot: `${capped}\n${TRUNCATION_MARKER}`, truncated: true };

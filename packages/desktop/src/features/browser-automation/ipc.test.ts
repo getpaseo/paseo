@@ -1,5 +1,5 @@
 import type { Rectangle } from "electron";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
 import { adaptWebContents } from "./ipc.js";
 
@@ -18,6 +18,8 @@ class FakeDebugger {
   public commands: Array<{ command: string; params: Record<string, unknown> }> = [];
   public blockCommands = false;
   public readonly blockedCommandNames = new Set<string>();
+  public readonly failedCommandNames = new Set<string>();
+  public readonly promptDialogs: unknown[] = [];
   private messageListener:
     | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
     | null = null;
@@ -33,10 +35,19 @@ class FakeDebugger {
 
   public async sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown> {
     this.commands.push({ command, params: params ?? {} });
+    if (this.failedCommandNames.has(command)) {
+      throw new Error(`${command} failed`);
+    }
     if (this.blockCommands || this.blockedCommandNames.has(command)) {
       await new Promise<void>((resolve) => {
         this.blockedCommands.push(resolve);
       });
+    }
+    if (command === "Runtime.evaluate" && typeof params?.expression === "string") {
+      if (params.expression.includes("state.prompts.splice(0)")) {
+        return { result: { value: this.promptDialogs.splice(0) } };
+      }
+      return { result: { value: true } };
     }
     return { ok: true };
   }
@@ -354,6 +365,121 @@ describe("browser automation IPC adapter", () => {
       },
     });
   });
+
+  test("keeps the prompt shim installed until overlapping captures finish", async () => {
+    const contents = new FakeWebContents(26);
+    const tab = adaptWebContents(contents);
+    const firstStarted = deferred<void>();
+    const secondStarted = deferred<void>();
+    const finishFirst = deferred<void>();
+    const finishSecond = deferred<void>();
+
+    const first = tab.captureDialogs?.(async () => {
+      firstStarted.resolve();
+      await finishFirst.promise;
+      return "first";
+    });
+    await firstStarted.promise;
+
+    const second = tab.captureDialogs?.(async () => {
+      secondStarted.resolve();
+      await finishSecond.promise;
+      return "second";
+    });
+    await secondStarted.promise;
+
+    contents.debugger.promptDialogs.push(
+      {
+        type: "prompt",
+        message: "First?",
+        defaultValue: "one",
+        action: "dismissed",
+        timestamp: 1,
+      },
+      {
+        type: "prompt",
+        message: "Second?",
+        defaultValue: "two",
+        action: "dismissed",
+        timestamp: 2,
+      },
+    );
+
+    finishFirst.resolve();
+    await expect(first).resolves.toEqual({
+      result: "first",
+      dialogs: [
+        {
+          type: "prompt",
+          message: "First?",
+          defaultValue: "one",
+          action: "dismissed",
+          timestamp: 1,
+        },
+        {
+          type: "prompt",
+          message: "Second?",
+          defaultValue: "two",
+          action: "dismissed",
+          timestamp: 2,
+        },
+      ],
+    });
+    expect(
+      contents.debugger.commands.some(
+        (entry) =>
+          entry.command === "Runtime.evaluate" &&
+          typeof entry.params.expression === "string" &&
+          entry.params.expression.includes("delete window[stateKey]"),
+      ),
+    ).toBe(false);
+
+    finishSecond.resolve();
+    await expect(second).resolves.toEqual({
+      result: "second",
+      dialogs: [
+        {
+          type: "prompt",
+          message: "First?",
+          defaultValue: "one",
+          action: "dismissed",
+          timestamp: 1,
+        },
+        {
+          type: "prompt",
+          message: "Second?",
+          defaultValue: "two",
+          action: "dismissed",
+          timestamp: 2,
+        },
+      ],
+    });
+    expect(contents.debugger.commands.at(-1)).toEqual({
+      command: "Runtime.evaluate",
+      params: {
+        expression: expect.stringContaining("delete window[stateKey]"),
+        returnByValue: true,
+      },
+    });
+  });
+
+  test("runs the command without dialog capture when CDP setup fails", async () => {
+    const contents = new FakeWebContents(27);
+    contents.debugger.failedCommandNames.add("Page.enable");
+    const tab = adaptWebContents(contents);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(tab.captureDialogs?.(async () => "done")).resolves.toEqual({
+      result: "done",
+      dialogs: [],
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      "[browser-automation] Dialog capture unavailable; running command without it",
+      { contentsId: 27, error: expect.any(Error) },
+    );
+    warn.mockRestore();
+  });
 });
 
 async function flushMicrotasks(): Promise<void> {
@@ -361,4 +487,12 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

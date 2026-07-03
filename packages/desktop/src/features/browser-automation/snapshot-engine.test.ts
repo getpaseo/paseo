@@ -4,6 +4,7 @@ import { BrowserSnapshotEngine, type SnapshotPage } from "./snapshot-engine.js";
 class SnapshotFixture implements SnapshotPage {
   public currentUrl = "https://example.com/form";
   public actionResult: unknown = { ok: true };
+  public alreadyTruncated = false;
   public snapshotNodes: unknown[] = [
     {
       kind: "role",
@@ -60,7 +61,7 @@ class SnapshotFixture implements SnapshotPage {
             },
           },
         ],
-        truncated: false,
+        truncated: this.alreadyTruncated,
         stats: { nodeCount: 4, refCount: 1, textLength: 0, iframeCount: 0, maxDepth: 1 },
       });
     }
@@ -124,5 +125,40 @@ describe("BrowserSnapshotEngine", () => {
     expect(snapshot.truncated).toBe(true);
     expect(snapshot.snapshot.endsWith('- text: "Snapshot truncated."')).toBe(true);
     expect(snapshot.stats.textLength).toBeLessThanOrEqual(80_000);
+  });
+
+  it("keeps the last rendered node when a short snapshot was capped by node count", async () => {
+    const page = new SnapshotFixture();
+    page.alreadyTruncated = true;
+    page.snapshotNodes = [
+      {
+        kind: "role",
+        role: "button",
+        name: "Final action",
+        tagName: "button",
+        attributes: [],
+        ref: "@e1",
+        fingerprint: {
+          role: "button",
+          name: "Final action",
+          tagName: "button",
+          type: "",
+          ariaLabel: "",
+        },
+        children: [],
+      },
+    ];
+    const engine = new BrowserSnapshotEngine();
+
+    const snapshot = await engine.snapshot({ browserId: "browser-1", page });
+
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.snapshot).toBe(
+      [
+        '- document "Fixture"',
+        '  - button "Final action" [ref=@e1]',
+        '- text: "Snapshot truncated."',
+      ].join("\n"),
+    );
   });
 });
