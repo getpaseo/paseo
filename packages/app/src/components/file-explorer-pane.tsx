@@ -48,6 +48,7 @@ import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "@/file-explorer/visibility";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { isWeb } from "@/constants/platform";
+import { subscribeToDirtyStateChange } from "@/git/checkout-status-cache";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
@@ -412,6 +413,20 @@ export function FileExplorerPane({
   const handleRefresh = useCallback(() => {
     void refetchExplorer();
   }, [refetchExplorer]);
+
+  // Auto-refresh expanded directories when isDirty flips (push-driven from daemon FS watcher
+  // during agent tool-use). Debounce guard: skip if already fetching a manual or automatic refresh.
+  useEffect(() => {
+    if (!hasWorkspaceScope) return;
+
+    let cancelled = false;
+    const onDirtyChange = () => {
+      if (cancelled || isRefreshFetching) return;
+      void refetchExplorer();
+    };
+
+    return subscribeToDirtyStateChange(serverId, workspaceRoot.trim(), onDirtyChange);
+  }, [serverId, hasWorkspaceScope, workspaceRoot, isRefreshFetching, refetchExplorer]);
 
   const sortLabels = useMemo(
     () => ({

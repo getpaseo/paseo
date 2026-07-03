@@ -50,6 +50,10 @@ export function applyCheckoutStatusUpdateFromEvent({
     isDirty: payload.isGit && payload.isDirty,
   });
 
+  // Notify dirty-state subscribers so panes that don't use React Query (file explorer)
+  // can refresh when files change during tool-use.
+  notifyDirtyStateChanges(serverId, payload.cwd, !!payload.isDirty);
+
   const prStatus = payload.prStatus;
   if (!prStatus) {
     return;
@@ -83,4 +87,69 @@ function hasPrStatusChanged(
     return true;
   }
   return !equal(prStatusWithoutVolatileFields(previous), prStatusWithoutVolatileFields(next));
+}
+
+// ---------------------------------------------------------------------------
+// Dirty-state change notifications — push-driven refresh trigger for panes
+// that don't use React Query (file explorer). Subscribers get called once per
+// isDirty flip (clean→dirty or dirty→clean) for their serverId/cwd pair.
+// ---------------------------------------------------------------------------
+type DirtyStateCallback = () => void;
+
+interface DirtyListenerEntry {
+  callback: DirtyStateCallback;
+  serverId: string;
+  cwd: string;
+}
+
+const dirtyListeners = new Map<string, Set<DirtyListenerEntry>>();
+
+export function subscribeToDirtyStateChange(
+  serverId: string,
+  cwd: string,
+  callback: DirtyStateCallback,
+): () => void {
+  const key = `${serverId}::${cwd}`;
+  let set = dirtyListeners.get(key);
+  if (!set) {
+    set = new Set();
+    dirtyListeners.set(key, set);
+  }
+  set.add({ callback, serverId, cwd });
+
+  return () => {
+    const currentSet = dirtyListeners.get(key);
+    currentSet?.delete({ callback, serverId, cwd });
+    if (currentSet?.size === 0) {
+      dirtyListeners.delete(key);
+    }
+  };
+}
+
+// Last-known dirty flip per checkout, keyed by serverId::cwd. Cleared when all listeners
+// unsubscribe so we don't leak across checkouts or stale subscriptions.
+const lastDirtyFlip = new Map<string, boolean>();
+
+function notifyDirtyStateChanges(serverId: string, cwd: string, isDirty: boolean): void {
+  const key = `${serverId}::${cwd}`;
+  const entrySet = dirtyListeners.get(key);
+  if (!entrySet || entrySet.size === 0) {
+    return;
+  }
+
+  const prev = lastDirtyFlip.get(key);
+  lastDirtyFlip.set(key, isDirty);
+
+  // Only fire on flip (first observation always fires).
+  if (prev !== undefined && prev === isDirty) {
+    return;
+  }
+
+  for (const entry of entrySet) {
+    try {
+      entry.callback();
+    } catch {
+      // Don't let a crashing listener break the update chain.
+    }
+  }
 }
