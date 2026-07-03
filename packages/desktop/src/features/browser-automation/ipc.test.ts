@@ -20,6 +20,7 @@ class FakeDebugger {
   public readonly blockedCommandNames = new Set<string>();
   public readonly failedCommandNames = new Set<string>();
   public readonly promptDialogs: unknown[] = [];
+  public failPromptDrain = false;
   private messageListener:
     | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
     | null = null;
@@ -45,6 +46,9 @@ class FakeDebugger {
     }
     if (command === "Runtime.evaluate" && typeof params?.expression === "string") {
       if (params.expression.includes("state.prompts.splice(0)")) {
+        if (this.failPromptDrain) {
+          throw new Error("execution context destroyed");
+        }
         return { result: { value: this.promptDialogs.splice(0) } };
       }
       return { result: { value: true } };
@@ -463,8 +467,58 @@ describe("browser automation IPC adapter", () => {
     });
   });
 
+  test("leaves JavaScript dialogs alone when no capture is active", async () => {
+    const contents = new FakeWebContents(28);
+    const tab = adaptWebContents(contents);
+
+    await expect(tab.captureDialogs?.(async () => "done")).resolves.toEqual({
+      result: "done",
+      dialogs: [],
+    });
+    contents.debugger.emitMessage("Page.javascriptDialogOpening", {
+      type: "confirm",
+      message: "Unsaved changes?",
+    });
+    await flushMicrotasks();
+
+    expect(contents.debugger.commands).not.toContainEqual({
+      command: "Page.handleJavaScriptDialog",
+      params: { accept: false },
+    });
+  });
+
+  test("treats prompt shim drain failures after navigation as no dialogs", async () => {
+    const contents = new FakeWebContents(29);
+    contents.debugger.failPromptDrain = true;
+    const tab = adaptWebContents(contents);
+
+    await expect(tab.captureDialogs?.(async () => "navigated")).resolves.toEqual({
+      result: "navigated",
+      dialogs: [],
+    });
+
+    expect(contents.debugger.commands).toEqual([
+      { command: "Page.enable", params: {} },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      {
+        command: "Runtime.evaluate",
+        params: { expression: expect.any(String), returnByValue: true },
+      },
+      {
+        command: "Runtime.evaluate",
+        params: {
+          expression: expect.stringContaining("delete window[stateKey]"),
+          returnByValue: true,
+        },
+      },
+    ]);
+  });
+
   test("runs the command without dialog capture when CDP setup fails", async () => {
-    const contents = new FakeWebContents(27);
+    const contents = new FakeWebContents(30);
     contents.debugger.failedCommandNames.add("Page.enable");
     const tab = adaptWebContents(contents);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -476,7 +530,7 @@ describe("browser automation IPC adapter", () => {
 
     expect(warn).toHaveBeenCalledWith(
       "[browser-automation] Dialog capture unavailable; running command without it",
-      { contentsId: 27, error: expect.any(Error) },
+      { contentsId: 30, error: expect.any(Error) },
     );
     warn.mockRestore();
   });

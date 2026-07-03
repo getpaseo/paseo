@@ -71,6 +71,7 @@ const PIXEL_CAPTURE_RETRY_INTERVAL_MS = 200;
 const SCREENSHOT_NO_FRAME_MESSAGE = "The tab has not painted yet. Retry the screenshot.";
 const ALLOWED_PAGE_URL_PROTOCOLS = new Set(["http:", "https:"]);
 const MAX_EVALUATE_RESULT_JSON_LENGTH = 80_000;
+const MAX_EVALUATE_RESULT_PREVIEW_LENGTH = 79_000;
 const MAX_EVALUATE_ERROR_MESSAGE_LENGTH = 2_000;
 let pixelCaptureQueue: Promise<void> = Promise.resolve();
 
@@ -833,7 +834,7 @@ async function executeEvaluate(
         command: "evaluate",
         browserId: target.browserId,
         resultJson: capped.resultJson,
-        truncated: capped.truncated,
+        truncated: result.truncated || capped.truncated,
       },
     };
   });
@@ -1088,7 +1089,13 @@ async function executeKeypress(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+      const focused = await focusKeypressTarget(target.contents, elementExpression);
+      if (focused === "stale_ref") {
+        return staleRefFailure(requestId, ref);
+      }
+      if (focused === "editable") {
+        await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+      }
     }
     await dispatchTrustedKey(cdpSender(target.contents), key);
     return {
@@ -1149,11 +1156,17 @@ async function executeNavigationAction(
   }
   return withDialogCapture(target.contents, async () => {
     if (action === "back") {
+      if (!target.contents.canGoBack()) {
+        return fail(requestId, "browser_denied", "There is nothing to go back to.");
+      }
       snapshotEngine.clearBrowser(browserId);
       target.contents.goBack();
       return { requestId, ok: true, result: { command: "back", browserId: target.browserId } };
     }
     if (action === "forward") {
+      if (!target.contents.canGoForward()) {
+        return fail(requestId, "browser_denied", "There is nothing to go forward to.");
+      }
       snapshotEngine.clearBrowser(browserId);
       target.contents.goForward();
       return { requestId, ok: true, result: { command: "forward", browserId: target.browserId } };
@@ -1452,7 +1465,7 @@ function parseNetworkEntries(value: unknown): BrowserAutomationNetworkLogEntry[]
 }
 
 type EvaluateScriptResult =
-  | { status: "ok"; resultJson: string }
+  | { status: "ok"; resultJson: string; truncated: boolean }
   | { status: "stale_ref" }
   | { status: "error"; message: string };
 
@@ -1462,7 +1475,7 @@ function readEvaluateScriptResult(value: unknown): EvaluateScriptResult {
   }
   const record = value as Record<string, unknown>;
   if (record.ok === true && typeof record.resultJson === "string") {
-    return { status: "ok", resultJson: record.resultJson };
+    return { status: "ok", resultJson: record.resultJson, truncated: record.truncated === true };
   }
   if (record.staleRef === true) {
     return { status: "stale_ref" };
@@ -1478,7 +1491,7 @@ function capEvaluateResultJson(resultJson: string): { resultJson: string; trunca
     return { resultJson, truncated: false };
   }
   return {
-    resultJson: resultJson.slice(0, MAX_EVALUATE_RESULT_JSON_LENGTH),
+    resultJson: JSON.stringify(resultJson.slice(0, MAX_EVALUATE_RESULT_PREVIEW_LENGTH)),
     truncated: true,
   };
 }
@@ -1513,12 +1526,47 @@ function buildEvaluateScript(
       args.push(element);`
           : ""
       }
-      const value = await userFunction(...args);
-      return { ok: true, resultJson: JSON.stringify(value) ?? 'null' };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
+	      const value = await userFunction(...args);
+	      const resultJson = JSON.stringify(value) ?? 'null';
+	      if (resultJson.length <= ${MAX_EVALUATE_RESULT_JSON_LENGTH}) {
+	        return { ok: true, resultJson, truncated: false };
+	      }
+	      return {
+	        ok: true,
+	        resultJson: JSON.stringify(resultJson.slice(0, ${MAX_EVALUATE_RESULT_PREVIEW_LENGTH})),
+	        truncated: true
+	      };
+	    } catch (error) {
+	      return { error: error instanceof Error ? error.message : String(error) };
+	    }
+	  })()`;
+}
+
+async function focusKeypressTarget(
+  contents: TabContents,
+  elementExpression: string,
+): Promise<"editable" | "focused" | "stale_ref"> {
+  const result = await contents.executeJavaScript(String.raw`(() => {
+    const element = ${elementExpression};
+    if (!element) return { staleRef: true };
+    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
+    const inputType = tagName === 'input' ? String(element.getAttribute('type') || 'text').toLowerCase() : '';
+    const editableInput = tagName === 'textarea' ||
+      (tagName === 'input' && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
+    const editable = editableInput || element.isContentEditable === true;
+    if (!editable && typeof element.focus === 'function') {
+      element.focus({ preventScroll: true });
     }
-  })()`;
+    return { editable };
+  })()`);
+  if (!result || typeof result !== "object") {
+    return "stale_ref";
+  }
+  const record = result as Record<string, unknown>;
+  if (record.staleRef === true) {
+    return "stale_ref";
+  }
+  return record.editable === true ? "editable" : "focused";
 }
 
 function readString(value: unknown): string | null {

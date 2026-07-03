@@ -22,6 +22,7 @@ const SPECIAL_KEY_DEFINITIONS: Record<
   { key: string; code: string; windowsVirtualKeyCode: number; text?: string }
 > = {
   Enter: { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
+  Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
   Tab: { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, text: "\t" },
   Escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
   Backspace: { key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 },

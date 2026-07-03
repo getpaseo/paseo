@@ -202,6 +202,9 @@ class DialogMonitor {
         if (method !== "Page.javascriptDialogOpening") {
           return;
         }
+        if (this.activeCollectors.length === 0) {
+          return;
+        }
         void this.handleOpening(params ?? {});
       });
     }
@@ -227,11 +230,15 @@ class DialogMonitor {
   }
 
   private async drainPromptShim(): Promise<BrowserAutomationDialogEvent[]> {
-    const result = (await this.sendDebugCommand("Runtime.evaluate", {
-      expression: promptShimDrainScript(),
-      returnByValue: true,
-    })) as { result?: { value?: unknown } };
-    return parsePromptShimDialogs(result.result?.value);
+    try {
+      const result = (await this.sendDebugCommand("Runtime.evaluate", {
+        expression: promptShimDrainScript(),
+        returnByValue: true,
+      })) as { result?: { value?: unknown } };
+      return parsePromptShimDialogs(result.result?.value);
+    } catch {
+      return [];
+    }
   }
 
   private async restorePromptShim(): Promise<void> {

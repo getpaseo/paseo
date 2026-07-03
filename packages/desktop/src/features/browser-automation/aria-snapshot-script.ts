@@ -28,12 +28,12 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
     return String(value || '').replace(/[\u200b\u00ad]/g, '').replace(/[\r\n\s\t]+/g, ' ').trim();
   }
 
-  function visible(element) {
+  function visibilityFor(element) {
     if (!(element instanceof Element)) return false;
     const style = window.getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
     const rect = element.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    return rect.width > 0 && rect.height > 0 ? 'box' : 'boxless';
   }
 
   function explicitRole(element) {
@@ -49,6 +49,7 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
     if (tag === 'button') return 'button';
     if (tag === 'select') return 'combobox';
     if (tag === 'textarea') return 'textbox';
+    if (element instanceof HTMLElement && element.isContentEditable) return 'textbox';
     if (tag === 'summary') return 'button';
     if (tag === 'main') return 'main';
     if (tag === 'nav') return 'navigation';
@@ -108,22 +109,39 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
       element.getAttribute('title'),
       tag === 'input' || tag === 'textarea' ? element.getAttribute('placeholder') : null,
       tag === 'input' || tag === 'textarea' ? element.value : null,
-      role === 'button' || role === 'link' || role === 'heading' ? element.textContent : null
+      role === 'button' || role === 'link' || role === 'heading' || ACTIONABLE_ROLES.has(role)
+        ? element.textContent
+        : null
     ];
     return normalizeText(pieces.find((piece) => normalizeText(piece).length > 0) || '');
   }
 
+  function fingerprintNameFor(element, role, name) {
+    const tag = element.tagName.toLowerCase();
+    if (tag !== 'input' && tag !== 'textarea') return name;
+    const mutableValue = normalizeText(element.value);
+    if (!mutableValue || name !== mutableValue) return name;
+    return '';
+  }
+
+  function inheritedDisabled(element) {
+    if (!(element instanceof Element)) return false;
+    if (element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true') return true;
+    if (element.closest('fieldset[disabled]')) return true;
+    return element.closest('[aria-disabled="true"]') !== null;
+  }
+
   function isActionable(element, role) {
     if (!role || !ACTIONABLE_ROLES.has(role)) return false;
-    if (!visible(element)) return false;
-    if (element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true') return false;
+    if (visibilityFor(element) !== 'box') return false;
+    if (inheritedDisabled(element)) return false;
     return true;
   }
 
   function fingerprintFor(element, role, name) {
     return {
       role,
-      name,
+      name: fingerprintNameFor(element, role, name),
       tagName: element.tagName.toLowerCase(),
       type: element.getAttribute('type') || '',
       ariaLabel: element.getAttribute('aria-label') || ''
@@ -197,21 +215,40 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
   let iframeCount = 0;
   let maxDepth = 0;
   let truncated = false;
+  let textBudget = MAX_TEXT_LENGTH;
   const runtime = ensureRuntime();
 
-  function visitNode(domNode, depth) {
+  function countNode(depth) {
     if (nodeCount >= MAX_NODES) {
       truncated = true;
-      return null;
+      return false;
     }
+    nodeCount += 1;
+    maxDepth = Math.max(maxDepth, depth);
+    return true;
+  }
+
+  function cappedText(text) {
+    if (text.length <= textBudget) {
+      textBudget -= text.length;
+      return text;
+    }
+    truncated = true;
+    const capped = text.slice(0, Math.max(0, textBudget));
+    textBudget = 0;
+    return capped;
+  }
+
+  function visitNode(domNode, depth) {
+    if (!countNode(depth)) return null;
     if (domNode.nodeType === Node.TEXT_NODE) {
-      const text = normalizeText(domNode.textContent);
+      const text = cappedText(normalizeText(domNode.textContent));
       if (!text) return null;
-      nodeCount += 1;
-      maxDepth = Math.max(maxDepth, depth);
       return textNode(text);
     }
-    if (!(domNode instanceof Element) || !visible(domNode)) return null;
+    if (!(domNode instanceof Element)) return null;
+    const visibility = visibilityFor(domNode);
+    if (!visibility) return null;
     if (domNode.getAttribute('aria-hidden') === 'true') return null;
 
     const role = roleFor(domNode);
@@ -227,6 +264,9 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
       iframeCount += 1;
     }
 
+    if (visibility === 'boxless') {
+      return children.length > 0 ? { kind: 'group', children } : null;
+    }
     if (!role && children.length === 0) return null;
     const snapshotNode = role ? elementNode(domNode, role, name) : { kind: 'group', children: [] };
     snapshotNode.children = children;
@@ -240,8 +280,6 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
     } else if (role && isActionable(domNode, role)) {
       truncated = true;
     }
-    nodeCount += 1;
-    maxDepth = Math.max(maxDepth, depth);
     return snapshotNode;
   }
 

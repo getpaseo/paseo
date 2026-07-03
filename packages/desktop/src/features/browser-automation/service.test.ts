@@ -77,6 +77,9 @@ class FakeTab implements TabContents {
   public fullPageScreenshotData = "fullPagePng";
   public documentNodeId = 1;
   public queriedNodeId = 2;
+  public canNavigateBack = true;
+  public canNavigateForward = false;
+  public keypressTargetEditable = false;
 
   public constructor(
     public readonly id: number,
@@ -93,11 +96,11 @@ class FakeTab implements TabContents {
   }
 
   public canGoBack(): boolean {
-    return true;
+    return this.canNavigateBack;
   }
 
   public canGoForward(): boolean {
-    return false;
+    return this.canNavigateForward;
   }
 
   public isLoading(): boolean {
@@ -127,6 +130,9 @@ class FakeTab implements TabContents {
     }
     if (code.includes("window.innerWidth") && code.includes("window.innerHeight")) {
       return { x: 640, y: 400 };
+    }
+    if (code.includes("element.focus({ preventScroll: true })")) {
+      return { editable: this.keypressTargetEditable };
     }
     if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
       if (this.evaluateScriptThrows) {
@@ -1140,7 +1146,7 @@ describe("executeAutomationCommand", () => {
     ]);
   });
 
-  test("keypress dispatches a trusted key to an actionable button ref", async () => {
+  test("keypress focuses a non-editable ref without clicking before the trusted key", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
     browser.tab.rejectEditableActionability = true;
@@ -1156,10 +1162,10 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "keypress", browserId: BROWSER_A, key: "Enter", ref: "@e4", x: 40, y: 30 },
     });
-    expect(browser.tab.debugCommands.slice(0, 3).map((entry) => entry.command)).toEqual([
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
+    expect(containsScript(browser.tab, "element.focus({ preventScroll: true })")).toBe(true);
+    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
+      "Input.dispatchKeyEvent",
+      "Input.dispatchKeyEvent",
     ]);
     expect(browser.tab.debugCommands.at(-2)).toEqual({
       command: "Input.dispatchKeyEvent",
@@ -1213,6 +1219,7 @@ describe("executeAutomationCommand", () => {
 
   test("navigation actions dispatch to the explicit tab", async () => {
     const browser = new BrowserAutomationHarness();
+    browser.tab.canNavigateForward = true;
 
     const back = await executeAutomationCommand(
       automationRequest(
@@ -1252,6 +1259,41 @@ describe("executeAutomationCommand", () => {
       result: { command: "reload", browserId: BROWSER_A },
     });
     expect(browser.tab.actions).toEqual(["back", "forward", "reload"]);
+  });
+
+  test("back and forward fail when the tab has no matching history entry", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.canNavigateBack = false;
+    browser.tab.canNavigateForward = false;
+
+    const back = await browser.execute({
+      command: "back",
+      args: { browserId: BROWSER_A },
+    });
+    const forward = await browser.execute({
+      command: "forward",
+      args: { browserId: BROWSER_A },
+    });
+
+    expect(back).toEqual({
+      requestId: "req-back",
+      ok: false,
+      error: {
+        code: "browser_denied",
+        message: "There is nothing to go back to.",
+        retryable: false,
+      },
+    });
+    expect(forward).toEqual({
+      requestId: "req-forward",
+      ok: false,
+      error: {
+        code: "browser_denied",
+        message: "There is nothing to go forward to.",
+        retryable: false,
+      },
+    });
+    expect(browser.tab.actions).toEqual([]);
   });
 
   test.each([
@@ -1454,10 +1496,28 @@ describe("executeAutomationCommand", () => {
       result: {
         command: "evaluate",
         browserId: BROWSER_A,
-        resultJson: "x".repeat(80_000),
+        resultJson: JSON.stringify("x".repeat(79_000)),
         truncated: true,
       },
     });
+    if (!result.ok) {
+      throw new Error("Expected evaluate to succeed");
+    }
+    expect(JSON.parse(result.result.resultJson)).toBe("x".repeat(79_000));
+  });
+
+  test("evaluate caps oversized results inside the page script", async () => {
+    const browser = new BrowserAutomationHarness();
+
+    await browser.execute({
+      command: "evaluate",
+      args: { browserId: BROWSER_A, function: "() => 'large'" },
+    });
+
+    expect(
+      containsScript(browser.tab, "__PASEO_BROWSER_EVALUATE__", "resultJson.length <= 80000"),
+    ).toBe(true);
+    expect(containsScript(browser.tab, "resultJson.slice(0, 79000)")).toBe(true);
   });
 
   test("screenshot captures the painted viewport", async () => {
