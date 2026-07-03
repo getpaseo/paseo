@@ -3136,7 +3136,7 @@ describe("rename_workspace MCP tool", () => {
     expect(emittedWorkspaceIds).toEqual([["wks_parent"]]);
   });
 
-  it("rejects an explicit workspace outside the caller workspace", async () => {
+  it("renames an explicit workspace outside the caller workspace", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentWorkspace = createPersistedWorkspaceRecord({
       workspaceId: "wks_parent",
@@ -3188,14 +3188,24 @@ describe("rename_workspace MCP tool", () => {
     });
     const tool = registeredTool(server, "rename_workspace");
 
-    await expect(
-      invokeToolWithParsedInput(tool, {
-        workspaceId: "wks_other",
+    const response = await invokeToolWithParsedInput(tool, {
+      workspaceId: "wks_other",
+      title: "Payments flow",
+    });
+
+    expect(upsertedWorkspaces).toEqual([
+      {
+        ...otherWorkspace,
         title: "Payments flow",
-      }),
-    ).rejects.toThrow("Workspace wks_other is outside your current workspace");
-    expect(upsertedWorkspaces).toEqual([]);
-    expect(emittedWorkspaceIds).toEqual([]);
+        updatedAt: expect.any(String),
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      success: true,
+      workspaceId: "wks_other",
+      title: "Payments flow",
+    });
+    expect(emittedWorkspaceIds).toEqual([["wks_other"]]);
   });
 
   it("rejects archived workspaces", async () => {

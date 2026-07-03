@@ -558,20 +558,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
     const explicitWorkspaceId = requestedWorkspaceId?.trim();
+    if (explicitWorkspaceId) {
+      return explicitWorkspaceId;
+    }
+
     if (callerAgentId) {
       const callerAgent = resolveCallerAgent();
       if (!callerAgent?.workspaceId) {
         throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
       }
-      const callerWorkspaceId = callerAgent.workspaceId;
-      if (explicitWorkspaceId && explicitWorkspaceId !== callerWorkspaceId) {
-        throw new Error(`Workspace ${explicitWorkspaceId} is outside your current workspace`);
-      }
-      return callerWorkspaceId;
-    }
-
-    if (explicitWorkspaceId) {
-      return explicitWorkspaceId;
+      return callerAgent.workspaceId;
     }
     throw new Error("workspaceId is required outside an agent-scoped session");
   }
