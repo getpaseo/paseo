@@ -1225,6 +1225,121 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("keeps ACP mode approvals as mode when rawInput contains questions", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "reject", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "mode-1",
+        title: "Switch mode",
+        kind: "switch_mode",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              header: "Mode",
+              question: "Switch modes?",
+              options: [{ label: "Yes" }],
+            },
+          ],
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "mode",
+        detail: {
+          type: "plain_text",
+          label: "Switch mode",
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+    expect(requested.request.input).toBeUndefined();
+  });
+
+  test("keeps typed ACP tool approvals as tools when rawInput contains questions", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "reject", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "edit-1",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        rawInput: {
+          path: "src/example.ts",
+          oldString: "before",
+          newString: "after",
+          questions: [
+            {
+              header: "Edit",
+              question: "Which edit?",
+              options: [{ label: "A" }],
+            },
+          ],
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "tool",
+        detail: {
+          type: "edit",
+          filePath: "src/example.ts",
+          oldString: "before",
+          newString: "after",
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+    expect(requested.request.input).toBeUndefined();
+  });
+
   test("maps Copilot Allow All mode to allow_all ACP config on session start", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
       configOptions: [

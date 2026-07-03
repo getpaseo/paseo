@@ -3293,12 +3293,15 @@ function mapPermissionRequest(
   params: RequestPermissionRequest,
   snapshot: ACPToolSnapshot,
 ): AgentPermissionRequest {
-  const questionInput = parseACPQuestionInput(snapshot.rawInput);
+  const questionInput =
+    snapshot.kind === "other" || snapshot.kind == null
+      ? parseACPQuestionInput(snapshot.rawInput)
+      : null;
   let kind: AgentPermissionRequestKind = "tool";
-  if (questionInput) {
-    kind = "question";
-  } else if (snapshot.kind === "switch_mode") {
+  if (snapshot.kind === "switch_mode") {
     kind = "mode";
+  } else if (questionInput) {
+    kind = "question";
   }
   return {
     id: requestId,
