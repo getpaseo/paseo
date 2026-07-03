@@ -75,6 +75,36 @@ Voice is configured through `features.dictation` and `features.voiceMode`, with 
 
 For voice philosophy, architecture, and complete local/OpenAI setup examples, see [Voice docs](/docs/voice).
 
+## Bundled web UI
+
+The daemon can serve the browser web client from the same HTTP server. This is enabled in the official Docker image and disabled by default for normal CLI and desktop-managed daemons.
+
+Enable it from the CLI:
+
+```bash
+paseo daemon start --web-ui
+```
+
+Or set the environment variable:
+
+```bash
+PASEO_WEB_UI_ENABLED=true paseo daemon start
+```
+
+Or persist it in `config.json`:
+
+```json
+{
+  "features": {
+    "webUi": {
+      "enabled": true
+    }
+  }
+}
+```
+
+When enabled, open the daemon HTTP origin, for example `http://localhost:6767/`, to load the web app. Static UI files load without daemon auth; API and WebSocket requests still require the configured password.
+
 ## Logging
 
 Daemon logging uses separate console and file sinks by default:
@@ -164,6 +194,9 @@ In the mobile app, enter the password in the direct connection setup screen.
 - `PASEO_LISTEN`, override `daemon.listen`
 - `PASEO_HOSTNAMES`, override/extend `daemon.hostnames`
 - `PASEO_ALLOWED_HOSTS`, deprecated alias for `PASEO_HOSTNAMES`
+- `PASEO_WEB_UI_ENABLED`, enable or disable the daemon-served web UI
+- `PASEO_WEB_UI_DIST_DIR`, override the daemon web UI build directory
+- `PASEO_TRUSTED_PROXIES`, configure trusted reverse proxy ranges for `X-Forwarded-*` headers
 - `PASEO_LOG_CONSOLE_LEVEL`, override `log.console.level`
 - `PASEO_LOG_FILE_LEVEL`, override `log.file.level`
 - `PASEO_LOG_FILE_PATH`, override `log.file.path`
@@ -171,6 +204,8 @@ In the mobile app, enter the password in the direct connection setup screen.
 - `PASEO_LOG_FILE_ROTATE_COUNT`, override `log.file.rotate.maxFiles`
 - `PASEO_LOG`, `PASEO_LOG_FORMAT`, legacy log overrides (still supported)
 - `OPENAI_API_KEY`, override OpenAI provider key
+- `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, OpenAI speech-to-text endpoint (dictation + voice mode STT)
+- `OPENAI_TTS_API_KEY`, `OPENAI_TTS_BASE_URL`, OpenAI text-to-speech endpoint (voice mode TTS)
 - `PASEO_VOICE_LLM_PROVIDER`, override voice LLM provider (`claude`, `codex`, `opencode`)
 - `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, override voice provider selection (`local` or `openai`)
 - `PASEO_LOCAL_MODELS_DIR`, control local model directory

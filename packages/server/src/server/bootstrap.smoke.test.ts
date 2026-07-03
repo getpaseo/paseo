@@ -21,7 +21,7 @@ describe("paseo daemon bootstrap", () => {
 
   test("starts and serves health endpoint", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      openai: { apiKey: "test-openai-api-key" },
+      openai: { stt: { apiKey: "test-openai-api-key" }, tts: { apiKey: "test-openai-api-key" } },
       speech: {
         providers: {
           dictationStt: { provider: "openai", explicit: true },

@@ -25,6 +25,28 @@ const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
 
+/**
+ * Why a git mutation is forcing a workspace snapshot refresh. Shared between the
+ * Session shell (which owns the refresh primitive) and the checkout subsystem
+ * (which triggers most of these reasons after a write).
+ */
+export type GitMutationRefreshReason =
+  | "commit-changes"
+  | "pull"
+  | "push"
+  | "merge-to-base"
+  | "merge-from-base"
+  | "merge-pr"
+  | "enable-pr-auto-merge"
+  | "disable-pr-auto-merge"
+  | "create-pr"
+  | "switch-branch"
+  | "rename-branch"
+  | "create-branch"
+  | "stash-push"
+  | "stash-pop"
+  | "create-worktree";
+
 const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
 const DEFAULT_SHORTSTAT_CACHE_TTL_MS = 15_000;
@@ -46,6 +68,24 @@ interface CheckoutReadCacheOptions {
 interface PullRequestStatusLookupTarget {
   headRef: string;
   headRepositoryOwner?: string;
+}
+
+interface PullRequestLookupTargetBranchConfig {
+  currentBranch: string;
+  branchRemoteName: string | null;
+  branchMergeRef: string | null;
+  branchRemoteUrl: string | null;
+  originRemoteUrl: string | null;
+  resolvedBaseRef: string | null;
+}
+
+interface PullRequestLookupTargetPushConfig {
+  currentBranch: string;
+  pushRemoteName: string | null;
+  pushRefspec: string | null;
+  pushRemoteUrl: string | null;
+  originRemoteUrl: string | null;
+  resolvedBaseRef: string | null;
 }
 
 function getErrorStderr(error: Error): string {
@@ -1093,6 +1133,24 @@ async function getGitConfigValue(
   }
 }
 
+async function getGitRemotePushUrl(
+  cwd: string,
+  remoteName: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  try {
+    const { stdout } = await runGitCommand(["remote", "get-url", "--push", remoteName], {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    });
+    const value = stdout.trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseBranchMergeHeadRef(mergeRef: string | null): string | null {
   const prefix = "refs/heads/";
   if (!mergeRef?.startsWith(prefix)) {
@@ -1110,24 +1168,55 @@ async function resolvePullRequestStatusLookupTarget(
   if (context?.facts?.isGit && context.facts.pullRequestLookupTarget) {
     return context.facts.pullRequestLookupTarget;
   }
-  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
-  if (!remoteName?.startsWith("paseo-pr-")) {
-    return { headRef: currentBranch };
+  const branchRemoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`, context);
+  let branchMergeRef: string | null = null;
+  if (branchRemoteName) {
+    branchMergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`, context);
   }
 
-  const mergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`);
-  const trackedHeadRef = parseBranchMergeHeadRef(mergeRef);
-  if (!trackedHeadRef) {
-    return { headRef: currentBranch };
+  const localBranchTarget = buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch,
+    branchRemoteName,
+    branchMergeRef,
+    branchRemoteUrl: null,
+    originRemoteUrl: null,
+    resolvedBaseRef: null,
+  });
+  if (localBranchTarget.headRef === currentBranch) {
+    const pushTarget = await resolvePullRequestLookupTargetFromPushConfig(
+      cwd,
+      currentBranch,
+      null,
+      null,
+      context,
+    );
+    return pushTarget ?? localBranchTarget;
   }
 
-  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
-  const remoteRepo = remoteUrl ? parseGitHubRepoFromRemote(remoteUrl) : null;
-  const headRepositoryOwner = remoteRepo?.split("/")[0];
-  return {
-    headRef: trackedHeadRef,
-    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
-  };
+  const [branchRemoteUrl, originRemoteUrl, resolvedBaseRef] = await Promise.all([
+    branchRemoteName ? getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context) : null,
+    getGitConfigValue(cwd, "remote.origin.url", context),
+    getResolvedBaseRefForCwd(cwd, context),
+  ]);
+  const branchTarget = buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch,
+    branchRemoteName,
+    branchMergeRef,
+    branchRemoteUrl,
+    originRemoteUrl,
+    resolvedBaseRef,
+  });
+  if (branchTarget.headRef !== currentBranch || branchTarget.headRepositoryOwner) {
+    return branchTarget;
+  }
+  const pushTarget = await resolvePullRequestLookupTargetFromPushConfig(
+    cwd,
+    currentBranch,
+    originRemoteUrl,
+    resolvedBaseRef,
+    context,
+  );
+  return pushTarget ?? branchTarget;
 }
 
 export async function resolveAbsoluteGitDir(cwd: string): Promise<string | null> {
@@ -1476,29 +1565,96 @@ async function inspectCheckoutContext(
   }
 }
 
-function buildPullRequestLookupTargetFromBranchConfig(input: {
-  currentBranch: string;
-  branchRemoteName: string | null;
-  branchMergeRef: string | null;
-  branchRemoteUrl: string | null;
-}): PullRequestStatusLookupTarget {
-  if (!input.branchRemoteName?.startsWith("paseo-pr-")) {
-    return { headRef: input.currentBranch };
-  }
-
+function buildPullRequestLookupTargetFromBranchConfig(
+  input: PullRequestLookupTargetBranchConfig,
+): PullRequestStatusLookupTarget {
   const trackedHeadRef = parseBranchMergeHeadRef(input.branchMergeRef);
-  if (!trackedHeadRef) {
+  if (!input.branchRemoteName || !trackedHeadRef || trackedHeadRef === input.currentBranch) {
     return { headRef: input.currentBranch };
   }
 
   const remoteRepo = input.branchRemoteUrl
     ? parseGitHubRepoFromRemote(input.branchRemoteUrl)
     : null;
-  const headRepositoryOwner = remoteRepo?.split("/")[0];
+  const originRepo = input.originRemoteUrl
+    ? parseGitHubRepoFromRemote(input.originRemoteUrl)
+    : null;
+  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
+  const normalizedBaseRef = input.resolvedBaseRef
+    ? normalizeLocalBranchRefName(input.resolvedBaseRef)
+    : null;
+  if (trackedHeadRef === normalizedBaseRef && !headRepositoryOwner) {
+    return { headRef: input.currentBranch };
+  }
+
+  if (isSameRepo) {
+    return { headRef: trackedHeadRef };
+  }
+
   return {
     headRef: trackedHeadRef,
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
   };
+}
+
+function buildPullRequestLookupTargetFromPushConfig(
+  input: PullRequestLookupTargetPushConfig,
+): PullRequestStatusLookupTarget | null {
+  const pushedHeadRef = parseHeadPushRefspec(input.pushRefspec);
+  if (!input.pushRemoteName || !pushedHeadRef || pushedHeadRef === input.currentBranch) {
+    return null;
+  }
+
+  const remoteRepo = input.pushRemoteUrl ? parseGitHubRepoFromRemote(input.pushRemoteUrl) : null;
+  const originRepo = input.originRemoteUrl
+    ? parseGitHubRepoFromRemote(input.originRemoteUrl)
+    : null;
+  const isSameRepo = Boolean(remoteRepo && originRepo && remoteRepo === originRepo);
+  const headRepositoryOwner = remoteRepo && !isSameRepo ? remoteRepo.split("/")[0] : null;
+  const normalizedBaseRef = input.resolvedBaseRef
+    ? normalizeLocalBranchRefName(input.resolvedBaseRef)
+    : null;
+  if (pushedHeadRef === normalizedBaseRef && !headRepositoryOwner) {
+    return null;
+  }
+
+  return {
+    headRef: pushedHeadRef,
+    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
+  };
+}
+
+async function resolvePullRequestLookupTargetFromPushConfig(
+  cwd: string,
+  currentBranch: string,
+  knownOriginRemoteUrl: string | null,
+  knownResolvedBaseRef: string | null,
+  context?: CheckoutContext,
+): Promise<PullRequestStatusLookupTarget | null> {
+  const pushRemoteName = await getGitConfigValue(
+    cwd,
+    `branch.${currentBranch}.pushRemote`,
+    context,
+  );
+  if (!pushRemoteName) {
+    return null;
+  }
+
+  const [pushRefspec, pushRemoteUrl, originRemoteUrl, resolvedBaseRef] = await Promise.all([
+    getGitConfigValue(cwd, `remote.${pushRemoteName}.push`, context),
+    getGitConfigValue(cwd, `remote.${pushRemoteName}.url`, context),
+    knownOriginRemoteUrl === null ? getGitConfigValue(cwd, "remote.origin.url", context) : null,
+    knownResolvedBaseRef === null ? getResolvedBaseRefForCwd(cwd, context) : null,
+  ]);
+  return buildPullRequestLookupTargetFromPushConfig({
+    currentBranch,
+    pushRemoteName,
+    pushRefspec,
+    pushRemoteUrl,
+    originRemoteUrl: knownOriginRemoteUrl ?? originRemoteUrl,
+    resolvedBaseRef: knownResolvedBaseRef ?? resolvedBaseRef,
+  });
 }
 
 export async function getCheckoutSnapshotFacts(
@@ -1537,31 +1693,43 @@ export async function getCheckoutSnapshotFacts(
   let branchRemoteName: string | null = null;
   let branchMergeRef: string | null = null;
   let branchRemoteUrl: string | null = null;
-  if (inspected.remoteUrl && inspected.currentBranch) {
+  if (inspected.currentBranch) {
     branchRemoteName = await getGitConfigValue(
       cwd,
       `branch.${inspected.currentBranch}.remote`,
       context,
     );
     if (branchRemoteName) {
-      branchMergeRef = await getGitConfigValue(
-        cwd,
-        `branch.${inspected.currentBranch}.merge`,
-        context,
-      );
-      if (branchRemoteName.startsWith("paseo-pr-")) {
-        branchRemoteUrl = await getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context);
-      }
+      [branchMergeRef, branchRemoteUrl] = await Promise.all([
+        getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
+        getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
+      ]);
     }
   }
-  const pullRequestLookupTarget = inspected.currentBranch
+  let pullRequestLookupTarget = inspected.currentBranch
     ? buildPullRequestLookupTargetFromBranchConfig({
         currentBranch: inspected.currentBranch,
         branchRemoteName,
         branchMergeRef,
         branchRemoteUrl,
+        originRemoteUrl: inspected.remoteUrl,
+        resolvedBaseRef,
       })
     : null;
+  if (
+    inspected.currentBranch &&
+    pullRequestLookupTarget?.headRef === inspected.currentBranch &&
+    !pullRequestLookupTarget.headRepositoryOwner
+  ) {
+    pullRequestLookupTarget =
+      (await resolvePullRequestLookupTargetFromPushConfig(
+        cwd,
+        inspected.currentBranch,
+        inspected.remoteUrl,
+        resolvedBaseRef,
+        context,
+      )) ?? pullRequestLookupTarget;
+  }
 
   return {
     isGit: true,
@@ -2639,12 +2807,133 @@ export async function pushCurrentBranch(cwd: string, github?: GitHubService): Pr
   if (!currentBranch || currentBranch === "HEAD") {
     throw new Error("Unable to determine current branch for push");
   }
+  const configuredPushTarget = await getCurrentBranchConfiguredPushTarget(cwd, currentBranch);
+  if (configuredPushTarget) {
+    await runGitCommand(
+      ["push", configuredPushTarget.remoteName, `HEAD:refs/heads/${configuredPushTarget.headRef}`],
+      { cwd, timeout: 120_000 },
+    );
+    await refreshCurrentBranchTrackedRefAfterPush(cwd, currentBranch, configuredPushTarget);
+    github?.invalidate({ cwd });
+    return;
+  }
+
+  const upstreamTarget = await getCurrentBranchUpstreamPushTarget(cwd, currentBranch);
+  if (upstreamTarget) {
+    await runGitCommand(
+      ["push", "-u", upstreamTarget.remoteName, `HEAD:refs/heads/${upstreamTarget.headRef}`],
+      { cwd, timeout: 120_000 },
+    );
+    github?.invalidate({ cwd });
+    return;
+  }
+
   const hasRemote = await hasOriginRemote(cwd);
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
   await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
   github?.invalidate({ cwd });
+}
+
+async function getCurrentBranchConfiguredPushTarget(
+  cwd: string,
+  currentBranch: string,
+): Promise<{ remoteName: string; headRef: string } | null> {
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.pushRemote`);
+  const pushRefspec = remoteName ? await getGitConfigValue(cwd, `remote.${remoteName}.push`) : null;
+  const headRef = parseHeadPushRefspec(pushRefspec);
+  if (!remoteName || !headRef) {
+    return null;
+  }
+  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
+  return remoteUrl ? { remoteName, headRef } : null;
+}
+
+async function refreshCurrentBranchTrackedRefAfterPush(
+  cwd: string,
+  currentBranch: string,
+  pushedTarget: { remoteName: string; headRef: string },
+): Promise<void> {
+  const trackingRemoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
+  const trackingMergeRef = await getGitConfigValue(cwd, `branch.${currentBranch}.merge`);
+  const trackingHeadRef = parseBranchMergeHeadRef(trackingMergeRef);
+  if (!trackingRemoteName && !trackingMergeRef) {
+    const updated = await updateRemoteTrackingRef(
+      cwd,
+      pushedTarget.remoteName,
+      pushedTarget.headRef,
+    );
+    if (!updated) {
+      return;
+    }
+    await runGitCommand(["config", `branch.${currentBranch}.remote`, pushedTarget.remoteName], {
+      cwd,
+    });
+    await runGitCommand(
+      ["config", `branch.${currentBranch}.merge`, `refs/heads/${pushedTarget.headRef}`],
+      {
+        cwd,
+      },
+    );
+    return;
+  }
+  if (!trackingRemoteName || trackingHeadRef !== pushedTarget.headRef) {
+    return;
+  }
+
+  const [trackingRemotePushUrl, pushedRemotePushUrl] = await Promise.all([
+    getGitRemotePushUrl(cwd, trackingRemoteName),
+    getGitRemotePushUrl(cwd, pushedTarget.remoteName),
+  ]);
+  if (!trackingRemotePushUrl || trackingRemotePushUrl !== pushedRemotePushUrl) {
+    return;
+  }
+
+  await updateRemoteTrackingRef(cwd, trackingRemoteName, trackingHeadRef);
+}
+
+async function updateRemoteTrackingRef(
+  cwd: string,
+  remoteName: string,
+  headRef: string,
+): Promise<boolean> {
+  const trackingRef = `refs/remotes/${remoteName}/${headRef}`;
+  const checkRef = await runGitCommand(["check-ref-format", trackingRef], {
+    cwd,
+    acceptExitCodes: [0, 1],
+  });
+  if (checkRef.exitCode !== 0) {
+    return false;
+  }
+  await runGitCommand(["update-ref", trackingRef, "HEAD"], { cwd, timeout: 120_000 });
+  return true;
+}
+
+async function getCurrentBranchUpstreamPushTarget(
+  cwd: string,
+  currentBranch: string,
+): Promise<{ remoteName: string; headRef: string } | null> {
+  const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
+  const mergeRef = remoteName
+    ? await getGitConfigValue(cwd, `branch.${currentBranch}.merge`)
+    : null;
+  const headRef = parseBranchMergeHeadRef(mergeRef);
+  if (!remoteName || !headRef) {
+    return null;
+  }
+  const remoteUrl = await getGitConfigValue(cwd, `remote.${remoteName}.url`);
+  return remoteUrl ? { remoteName, headRef } : null;
+}
+
+function parseHeadPushRefspec(refspec: string | null): string | null {
+  const prefix = "HEAD:refs/heads/";
+  const normalized = refspec?.trim().replace(/^\+/, "");
+  if (!normalized?.startsWith(prefix)) {
+    return null;
+  }
+  const headRef = normalized.slice(prefix.length).trim();
+  return headRef.length > 0 ? headRef : null;
 }
 
 export interface CreatePullRequestOptions {

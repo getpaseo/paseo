@@ -228,6 +228,7 @@ test("changes diff keeps unwrapped gutter and code rows aligned after code size 
 
   await changeCodeFontSizeFromSettings(page, 18);
   await returnToWorkspaceChanges(page);
+  await expectStoredCodeFontSize(page, 18);
   await scrollToLowerUnwrappedDiffRows(page);
 
   await expectDiffCodeFontSize(page, 18);
@@ -238,6 +239,9 @@ test("changes diff keeps unwrapped gutter and code rows aligned after code size 
 async function useCodeFont(page: Page, codeFontSize: number): Promise<void> {
   await page.addInitScript(
     ({ settingsKey, fontSize }) => {
+      if (localStorage.getItem(settingsKey)) {
+        return;
+      }
       localStorage.setItem(
         settingsKey,
         JSON.stringify({
@@ -270,10 +274,13 @@ async function useUnwrappedDiffLines(page: Page): Promise<void> {
 }
 
 async function expectDiffCodeFontSize(page: Page, fontSize: number): Promise<void> {
-  const actualFontSize = await page
-    .getByTestId("diff-code-text-1")
-    .evaluate((text) => Number.parseFloat(getComputedStyle(text).fontSize));
-  expect(actualFontSize).toBe(fontSize);
+  await expect
+    .poll(async () => {
+      return page
+        .getByTestId("diff-code-text-1")
+        .evaluate((text) => Number.parseFloat(getComputedStyle(text).fontSize));
+    })
+    .toBe(fontSize);
 }
 
 async function expectVisibleDiffRowsAligned(page: Page): Promise<void> {
@@ -400,6 +407,22 @@ async function changeCodeFontSizeFromSettings(page: Page, codeFontSize: number):
   await page.getByLabel("Code font size").fill(String(codeFontSize));
   await page.getByLabel("Code font size").press("Enter");
   await expect(page.getByLabel("Code font size")).toHaveValue(String(codeFontSize));
+  await expectStoredCodeFontSize(page, codeFontSize);
+}
+
+async function expectStoredCodeFontSize(page: Page, codeFontSize: number): Promise<void> {
+  await expect
+    .poll(async () => {
+      const raw = await page.evaluate(
+        (settingsKey) => localStorage.getItem(settingsKey),
+        APP_SETTINGS_KEY,
+      );
+      if (!raw) {
+        return null;
+      }
+      return (JSON.parse(raw) as { codeFontSize?: number }).codeFontSize ?? null;
+    })
+    .toBe(codeFontSize);
 }
 
 async function returnToWorkspaceChanges(page: Page): Promise<void> {

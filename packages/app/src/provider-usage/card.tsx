@@ -22,7 +22,7 @@ function ProviderUsageIcon({ iconKey, size, color = "" }: ProviderUsageIconProps
 
 const ThemedProviderUsageIcon = withUnistyles(ProviderUsageIcon);
 
-const foregroundIconColor = (theme: Theme) => ({ color: theme.colors.foreground });
+const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 function statusText(usage: ProviderUsage): string | null {
   if (usage.status === "available") return null;
@@ -65,11 +65,7 @@ export function ProviderUsageCard({
   return (
     <View style={containerStyle}>
       <View style={styles.header}>
-        <ThemedProviderUsageIcon
-          iconKey={usage.providerId}
-          size={16}
-          uniProps={foregroundIconColor}
-        />
+        <ThemedProviderUsageIcon iconKey={usage.providerId} size={14} uniProps={mutedIconColor} />
         <Text style={styles.name} numberOfLines={1}>
           {usage.displayName}
         </Text>
@@ -129,11 +125,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   containerPadded: {
+    gap: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
   },
   containerCompact: {
-    gap: theme.spacing[2],
+    gap: theme.spacing[3],
   },
   header: {
     flexDirection: "row",
@@ -143,7 +140,7 @@ const styles = StyleSheet.create((theme) => ({
   name: {
     flexShrink: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
   },
   headerSpacer: {
     flex: 1,
@@ -170,7 +167,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   bars: {
-    gap: theme.spacing[2],
+    gap: theme.spacing[3],
   },
   details: {
     gap: theme.spacing[1],

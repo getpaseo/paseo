@@ -9,6 +9,7 @@ import {
 } from "@/attachments/service";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
+import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
   applyClearDraftRecord,
   collectReferencedAttachmentIdsFromState,
@@ -139,6 +140,18 @@ async function runAttachmentGc(): Promise<void> {
     collectQueuedMessageAttachmentIds(session, referencedIds);
     collectStreamUserImageIds(session.agentStreamTail, referencedIds);
     collectStreamUserImageIds(session.agentStreamHead, referencedIds);
+  }
+
+  // Browser-element screenshots live in the workspace attachment store, not in
+  // drafts, so collect their ids here to keep them from being garbage collected
+  // before the user sends the message.
+  const attachmentsByScope = useWorkspaceAttachmentsStore.getState().attachmentsByScope;
+  for (const attachments of Object.values(attachmentsByScope)) {
+    for (const attachment of attachments) {
+      if (attachment.kind === "browser_element" && attachment.attachment.screenshot) {
+        referencedIds.add(attachment.attachment.screenshot.id);
+      }
+    }
   }
 
   try {

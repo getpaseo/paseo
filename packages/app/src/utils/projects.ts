@@ -1,4 +1,4 @@
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { EmptyProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostProjectList, type HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 
@@ -37,6 +37,8 @@ export interface ProjectHost {
   serverName: string;
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
+  /** Project parents with no active workspaces, so they still surface as projects. */
+  emptyProjects?: EmptyProjectDescriptor[];
 }
 
 export interface BuildProjectsInput {
@@ -54,6 +56,9 @@ interface HostGroup {
   serverName: string;
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
+  // Repo root for a project parent that has no workspaces yet. Without it the
+  // host's repoRoot resolves to "" and the project reads as non-editable.
+  fallbackRepoRoot: string;
 }
 
 interface ProjectGroup {
@@ -80,10 +85,14 @@ function findProjectCustomName(
 
 function buildHostProjectEntries(host: ProjectHost): HostProjectListItem[] {
   return buildHostProjectList({
-    serverId: host.serverId,
     projects: buildWorkspaceStructureProjects({
-      serverId: host.serverId,
-      workspaces: host.workspaces,
+      sessions: [
+        {
+          serverId: host.serverId,
+          workspaces: host.workspaces,
+          emptyProjects: host.emptyProjects,
+        },
+      ],
     }),
   });
 }
@@ -96,14 +105,14 @@ function deriveGithubUrl(projectKey: string): string | undefined {
   return `https://github.com/${match[1]}/${match[2]}`;
 }
 
-function resolveHostRepoRoot(workspaces: WorkspaceDescriptor[]): string {
-  for (const workspace of workspaces) {
+function resolveHostRepoRoot(group: HostGroup): string {
+  for (const workspace of group.workspaces) {
     const mainRepoRoot = workspace.project?.checkout.mainRepoRoot;
     if (mainRepoRoot) {
       return mainRepoRoot;
     }
   }
-  return workspaces[0]?.projectRootPath ?? "";
+  return group.workspaces[0]?.projectRootPath ?? group.fallbackRepoRoot;
 }
 
 function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
@@ -117,7 +126,7 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
 }
 
 function toHostEntry(group: HostGroup): ProjectHostEntry {
-  const repoRoot = resolveHostRepoRoot(group.workspaces);
+  const repoRoot = resolveHostRepoRoot(group);
   const canonical =
     group.workspaces.find((workspace) => workspace.projectRootPath === repoRoot) ??
     group.workspaces[0];
@@ -161,6 +170,11 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
   const groups = new Map<string, ProjectGroup>();
 
   for (const host of input.hosts) {
+    const emptyRepoRootByProjectKey = new Map<string, string>();
+    for (const emptyProject of host.emptyProjects ?? []) {
+      emptyRepoRootByProjectKey.set(emptyProject.projectId, emptyProject.projectRootPath);
+    }
+
     const hostProjects = buildHostProjectEntries(host);
     for (const hostProject of hostProjects) {
       const customName = findProjectCustomName(host.workspaces, hostProject.projectKey);
@@ -184,6 +198,7 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
           serverName: host.serverName,
           isOnline: host.isOnline,
           workspaces: [],
+          fallbackRepoRoot: emptyRepoRootByProjectKey.get(hostProject.projectKey) ?? "",
         });
       }
     }

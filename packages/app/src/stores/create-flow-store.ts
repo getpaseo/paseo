@@ -17,6 +17,20 @@ export interface PendingCreateAttempt {
   attachments?: AgentAttachment[];
 }
 
+export function isActiveCreateFlowForDraft(input: {
+  pending: PendingCreateAttempt | null | undefined;
+  serverId: string;
+  draftId: string | null | undefined;
+}): boolean {
+  const draftId = input.draftId?.trim();
+  return Boolean(
+    draftId &&
+    input.pending?.draftId === draftId &&
+    input.pending.serverId === input.serverId &&
+    input.pending.lifecycle === "active",
+  );
+}
+
 interface CreateFlowState {
   pendingByDraftId: Record<string, PendingCreateAttempt>;
   setPending: (pending: Omit<PendingCreateAttempt, "lifecycle">) => void;

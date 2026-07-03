@@ -124,8 +124,8 @@ interface HelpSectionCase {
 describe("keyboard-shortcuts", () => {
   const matchingCases: MatchingShortcutCase[] = [
     {
-      name: "matches Mod+Shift+O to create new agent",
-      event: { key: "O", code: "KeyO", metaKey: true, shiftKey: true },
+      name: "matches Cmd+O to open project",
+      event: { key: "o", code: "KeyO", metaKey: true },
       context: { isMac: true },
       action: "agent.new",
     },
@@ -227,8 +227,8 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.tab.close.current",
     },
     {
-      name: "matches Ctrl+Shift+O to create new agent on non-mac",
-      event: { key: "O", code: "KeyO", ctrlKey: true, shiftKey: true },
+      name: "matches Ctrl+O to open project on non-mac",
+      event: { key: "o", code: "KeyO", ctrlKey: true },
       context: { isMac: false },
       action: "agent.new",
     },
@@ -298,6 +298,13 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, focusScope: "message-input" },
       action: "message-input.action",
       payload: { kind: "dictation-toggle" },
+    },
+    {
+      name: "routes Shift+Tab to cycle agent mode from the message input",
+      event: { key: "Tab", code: "Tab", shiftKey: true },
+      context: { focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "mode-cycle" },
     },
     {
       name: "routes space to voice mute toggle outside editable scopes",
@@ -388,6 +395,16 @@ describe("keyboard-shortcuts", () => {
       event: { key: "T", code: "KeyT", altKey: true, shiftKey: true },
     },
     {
+      name: "does not keep old Cmd+Shift+O open-project binding after rebind to Cmd+O",
+      event: { key: "O", code: "KeyO", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+    },
+    {
+      name: "does not keep old Ctrl+Shift+O open-project binding after rebind to Ctrl+O",
+      event: { key: "O", code: "KeyO", ctrlKey: true, shiftKey: true },
+      context: { isMac: false },
+    },
+    {
       name: "does not match question-mark shortcut inside editable scopes",
       event: { key: "?", code: "Slash", shiftKey: true },
       context: { focusScope: "message-input" },
@@ -426,6 +443,16 @@ describe("keyboard-shortcuts", () => {
       name: "does not route message-input actions when terminal is focused",
       event: { key: "d", code: "KeyD", metaKey: true },
       context: { isMac: true, focusScope: "terminal" },
+    },
+    {
+      name: "does not cycle agent mode outside the message input",
+      event: { key: "Tab", code: "Tab", shiftKey: true },
+      context: { focusScope: "other" },
+    },
+    {
+      name: "does not repeat agent mode cycling while Shift+Tab is held",
+      event: { key: "Tab", code: "Tab", shiftKey: true, repeat: true },
+      context: { focusScope: "message-input" },
     },
     {
       name: "does not bind Cmd+Enter as a rebindable message queue shortcut",
@@ -563,20 +590,21 @@ describe("keyboard-shortcut help sections", () => {
       name: "uses web defaults for workspace and tab jump",
       context: { isMac: true, isDesktop: false },
       expectedKeys: {
-        "new-agent": ["mod", "shift", "O"],
+        "new-agent": ["mod", "O"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["alt", "1-9"],
         "workspace-tab-jump-index": ["alt", "shift", "1-9"],
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
+        "cycle-agent-mode": ["shift", "Tab"],
       },
     },
     {
       name: "uses desktop defaults for workspace and tab jump",
       context: { isMac: true, isDesktop: true },
       expectedKeys: {
-        "new-agent": ["mod", "shift", "O"],
+        "new-agent": ["mod", "O"],
         "new-workspace": ["mod", "N"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
@@ -617,12 +645,14 @@ describe("keyboard-shortcut help sections", () => {
     const projects = sections.find((section) => section.id === "projects");
     const panels = sections.find((section) => section.id === "panels");
     const openProject = findRow(sections, "new-agent");
+    const cycleAgentMode = findRow(sections, "cycle-agent-mode");
     const showShortcuts = findRow(sections, "show-shortcuts");
 
     expect(projects?.titleKey).toBe("settings.shortcuts.sections.projects");
     expect(panels?.titleKey).toBe("settings.shortcuts.sections.panels");
     expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
     expect(openProject?.label).toBe("Open project");
+    expect(cycleAgentMode?.labelKey).toBe("settings.shortcuts.help.cycleAgentMode");
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
   });
 

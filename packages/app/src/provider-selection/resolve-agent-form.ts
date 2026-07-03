@@ -90,6 +90,7 @@ export type AgentFormAction =
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
     }
+  | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
   | { type: "SET_WORKING_DIR"; value: string }
   | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
@@ -142,6 +143,24 @@ export function resolveThinkingOptionId(args: {
   }
 
   return effectiveModel?.defaultThinkingOptionId ?? thinkingOptions[0]?.id ?? "";
+}
+
+const normalizeSelectedModeId = normalizeSelectedModelId;
+
+function resolvePreferredModeId(input: {
+  initialModeId?: string | null;
+  preferredModeId?: string | null;
+  providerDef: AgentProviderDefinition | undefined;
+}): string {
+  // Saved modes are user intent. Provider create config validates unknown modes
+  // at submission time, so background form resolution should not erase them.
+  const initialModeId = normalizeSelectedModeId(input.initialModeId);
+  if (initialModeId) return initialModeId;
+
+  const preferredModeId = normalizeSelectedModeId(input.preferredModeId);
+  if (preferredModeId) return preferredModeId;
+
+  return input.providerDef?.defaultModeId ?? input.providerDef?.modes[0]?.id ?? "";
 }
 
 export function mergeSelectedComposerPreferences(args: {
@@ -259,18 +278,11 @@ function resolveModeId(input: {
     input;
   if (userModified) return currentModeId;
   if (!provider) return "";
-  const validModeIds = providerDef?.modes.map((m) => m.id) ?? [];
-  if (
-    typeof initialValues?.modeId === "string" &&
-    initialValues.modeId.length > 0 &&
-    validModeIds.includes(initialValues.modeId)
-  ) {
-    return initialValues.modeId;
-  }
-  if (providerPrefs?.mode && validModeIds.includes(providerPrefs.mode)) {
-    return providerPrefs.mode;
-  }
-  return providerDef?.defaultModeId ?? validModeIds[0] ?? "";
+  return resolvePreferredModeId({
+    initialModeId: initialValues?.modeId,
+    preferredModeId: providerPrefs?.mode,
+    providerDef,
+  });
 }
 
 function resolveModelField(input: {
@@ -411,11 +423,10 @@ function pickNextModeForProvider(input: {
   providerPrefs: ProviderPrefs | undefined;
 }): string {
   const { providerDef, providerPrefs } = input;
-  const validModeIds = providerDef?.modes.map((m) => m.id) ?? [];
-  if (providerPrefs?.mode && validModeIds.includes(providerPrefs.mode)) {
-    return providerPrefs.mode;
-  }
-  return providerDef?.defaultModeId ?? "";
+  return resolvePreferredModeId({
+    preferredModeId: providerPrefs?.mode,
+    providerDef,
+  });
 }
 
 function pickNextModeForProviderAndModel(input: {
@@ -425,14 +436,8 @@ function pickNextModeForProviderAndModel(input: {
   providerDef: AgentProviderDefinition | undefined;
   providerPrefs: ProviderPrefs | undefined;
 }): string {
-  const validModeIds = input.providerDef?.modes.map((m) => m.id) ?? [];
-  if (
-    input.currentProvider === input.provider &&
-    input.currentModeId &&
-    validModeIds.includes(input.currentModeId)
-  ) {
-    return input.currentModeId;
-  }
+  const currentModeId = normalizeSelectedModeId(input.currentModeId);
+  if (input.currentProvider === input.provider && currentModeId) return currentModeId;
   return pickNextModeForProvider({
     providerDef: input.providerDef,
     providerPrefs: input.providerPrefs,
@@ -560,6 +565,24 @@ export function resolveAgentForm(
         userModified: { ...state.userModified, model: true },
       };
     }
+
+    case "CLEAR_PROVIDER_SELECTION_FROM_USER":
+      return {
+        form: {
+          ...state.form,
+          provider: null,
+          model: "",
+          modeId: "",
+          thinkingOptionId: "",
+        },
+        userModified: {
+          ...state.userModified,
+          provider: true,
+          model: true,
+          modeId: true,
+          thinkingOptionId: true,
+        },
+      };
 
     case "SET_THINKING_OPTION_FROM_USER":
       return {

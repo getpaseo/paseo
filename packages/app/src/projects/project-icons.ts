@@ -4,7 +4,7 @@ import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runt
 import { projectIconQueryKey, projectIconToDataUri } from "@/hooks/use-project-icon-query";
 
 export interface ProjectIconRequestTarget {
-  serverId?: string | null;
+  serverId: string;
   projectKey: string;
   iconWorkingDir: string;
 }
@@ -21,24 +21,19 @@ function useStableProjectIconData(
 }
 
 export function useProjectIconDataByProjectKey(input: {
-  serverId: string | null;
   projects: readonly ProjectIconRequestTarget[];
 }): Map<string, string | null> {
   const projectIconRequests = useMemo(() => {
     const unique = new Map<string, { serverId: string; cwd: string }>();
     for (const project of input.projects) {
-      const serverId = project.serverId || input.serverId;
-      if (!serverId) {
-        continue;
-      }
       const cwd = project.iconWorkingDir.trim();
       if (!cwd) {
         continue;
       }
-      unique.set(`${serverId}:${cwd}`, { serverId, cwd });
+      unique.set(`${project.serverId}:${cwd}`, { serverId: project.serverId, cwd });
     }
     return Array.from(unique.values());
-  }, [input.projects, input.serverId]);
+  }, [input.projects]);
 
   const projectIconQueries = useQueries({
     queries: projectIconRequests.map((request) => ({
@@ -83,15 +78,17 @@ export function useProjectIconDataByProjectKey(input: {
 
     const byProject = new Map<string, string | null>();
     for (const project of input.projects) {
-      const serverId = project.serverId || input.serverId;
       const cwd = project.iconWorkingDir.trim();
-      if (!cwd || !serverId) {
+      if (!cwd) {
         byProject.set(project.projectKey, null);
         continue;
       }
-      byProject.set(project.projectKey, iconByServerAndCwd.get(`${serverId}:${cwd}`) ?? null);
+      byProject.set(
+        project.projectKey,
+        iconByServerAndCwd.get(`${project.serverId}:${cwd}`) ?? null,
+      );
     }
 
     return byProject;
-  }, [input.projects, input.serverId, projectIconData, projectIconRequests]);
+  }, [input.projects, projectIconData, projectIconRequests]);
 }

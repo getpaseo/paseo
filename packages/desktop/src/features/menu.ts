@@ -1,5 +1,5 @@
 import { app, Menu, BrowserWindow, ipcMain } from "electron";
-import { getWorkspaceActivePaseoBrowserWebContents } from "./browser-webviews/index.js";
+import { getMostRecentWorkspaceActivePaseoBrowserWebContents } from "./browser-webviews/index.js";
 
 interface ShowContextMenuInput {
   kind?: "terminal";
@@ -20,7 +20,7 @@ function withBrowserWindow(
 }
 
 function getReloadTargetBrowserWebContents(): Electron.WebContents | null {
-  return getWorkspaceActivePaseoBrowserWebContents();
+  return getMostRecentWorkspaceActivePaseoBrowserWebContents();
 }
 
 function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCache?: boolean }) {

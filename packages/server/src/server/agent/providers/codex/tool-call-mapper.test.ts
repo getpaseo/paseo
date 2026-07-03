@@ -703,6 +703,44 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("replaces mcp image result blocks with placeholder text in tool output", () => {
+    const item = expectMapped(
+      mapCodexToolCallFromThreadItem({
+        type: "mcpToolCall",
+        id: "codex-browser-screenshot",
+        status: "completed",
+        server: "paseo",
+        tool: "browser_screenshot",
+        arguments: { browserId: "11111111-1111-4111-8111-111111111111" },
+        result: {
+          content: [
+            { type: "text", text: "Captured browser screenshot (1x1)." },
+            { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+          ],
+        },
+      }),
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-browser-screenshot",
+      name: "paseo.browser_screenshot",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: { browserId: "11111111-1111-4111-8111-111111111111" },
+        output: {
+          content: [
+            { type: "text", text: "Captured browser screenshot (1x1)." },
+            { type: "text", text: "[image]" },
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(item)).not.toContain("iVBORw0KGgo=");
+  });
+
   it("normalizes codex paseo_voice.speak mcp calls and extracts spoken text", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem({

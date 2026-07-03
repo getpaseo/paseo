@@ -9,23 +9,25 @@ import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
-  maxTokens: number;
-  usedTokens: number;
+  maxTokens: number | null;
+  usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
   serverId?: string;
   /** The Paseo provider key, e.g. "claude", "gemini", "codex" */
   provider?: string | null;
+  /** Reserve the meter footprint and show a loading ring while usage is pending. */
+  pending?: boolean;
 }
 
-const SVG_SIZE = 16;
-const COMPACT_SVG_SIZE = 14;
+const SVG_SIZE = 14;
+const COMPACT_SVG_SIZE = 12;
 const CENTER = SVG_SIZE / 2;
 const COMPACT_CENTER = COMPACT_SVG_SIZE / 2;
-const RADIUS = 7;
-const COMPACT_RADIUS = 6;
-const STROKE_WIDTH = 2.25;
-const COMPACT_STROKE_WIDTH = 2;
+const RADIUS = 6;
+const COMPACT_RADIUS = 5;
+const STROKE_WIDTH = 2;
+const COMPACT_STROKE_WIDTH = 1.75;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const COMPACT_CIRCUMFERENCE = 2 * Math.PI * COMPACT_RADIUS;
 
@@ -100,6 +102,7 @@ export function ContextWindowMeter({
   showPercentage = false,
   serverId,
   provider,
+  pending = false,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -108,7 +111,8 @@ export function ContextWindowMeter({
     serverId ?? null,
     { enabled: isTooltipOpen },
   );
-  const percentage = getUsagePercentage(maxTokens, usedTokens);
+  const percentage =
+    maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const handleTooltipOpenChange = useCallback(
     (nextOpen: boolean) => {
       setIsTooltipOpen(nextOpen);
@@ -119,14 +123,42 @@ export function ContextWindowMeter({
     [refreshProviderUsage],
   );
 
-  if (percentage === null) {
-    return null;
+  const geometry = getMeterGeometry(showPercentage);
+
+  // No usage yet: reserve the footprint with a track-only ring while a session is
+  // active so the real ring fades in without shifting siblings. Render nothing when
+  // no usage is expected.
+  if (percentage === null || maxTokens === null || usedTokens === null) {
+    if (!pending) {
+      return null;
+    }
+    return (
+      <View style={geometry.containerStyle}>
+        <Svg
+          width={geometry.svgSize}
+          height={geometry.svgSize}
+          viewBox={`0 0 ${geometry.svgSize} ${geometry.svgSize}`}
+          style={styles.svg}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <Circle
+            cx={geometry.center}
+            cy={geometry.center}
+            r={geometry.radius}
+            fill="none"
+            stroke={theme.colors.surface3}
+            strokeWidth={geometry.strokeWidth}
+          />
+        </Svg>
+        {showPercentage ? <View style={styles.skeletonLabel} /> : null}
+      </View>
+    );
   }
 
   const clampedPercentage = clampPercentage(percentage);
   const roundedPercentage = Math.round(percentage);
-  const { svgSize, center, radius, strokeWidth, circumference, containerStyle } =
-    getMeterGeometry(showPercentage);
+  const { svgSize, center, radius, strokeWidth, circumference, containerStyle } = geometry;
   const dashOffset = circumference - (clampedPercentage / 100) * circumference;
   const colors = getMeterColors(clampedPercentage, theme);
   const formattedSessionCost =
@@ -230,8 +262,14 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
+  skeletonLabel: {
+    width: 22,
+    height: theme.fontSize.sm,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+  },
   tooltipContent: {
-    gap: theme.spacing[1],
+    gap: theme.spacing[1.5],
     minWidth: 200,
   },
   tooltipTitle: {

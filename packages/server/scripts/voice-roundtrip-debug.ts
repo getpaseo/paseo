@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const daemon = await createTestPaseoDaemon({
     logger,
     agentClients: {},
-    openai: { apiKey },
+    openai: { stt: { apiKey }, tts: { apiKey } },
     speech: {
       providers: {
         dictationStt: { provider: "openai", explicit: true },

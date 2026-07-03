@@ -118,7 +118,7 @@ test.describe("Settings host page", () => {
     await expectHostActionCards(page, serverId);
   });
 
-  test("sidebar pins the local daemon host first with a Local marker", async ({ page }) => {
+  test("sidebar pins the local daemon host first", async ({ page }) => {
     const serverId = getServerId();
 
     // Simulate the Electron desktop bridge so `useIsLocalDaemon` resolves the

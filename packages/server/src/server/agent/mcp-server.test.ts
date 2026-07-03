@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 import { realpathSync, rmSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -9,10 +11,12 @@ import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
+import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
+import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
   AgentListItemPayloadSchema,
@@ -36,9 +40,12 @@ import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "../browser-tools/broker.js";
+import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
+const BROWSER_WORKSPACE_ID = "wks_browser_tools";
 
 interface LooseSafeParseResult {
   success: boolean;
@@ -56,6 +63,13 @@ interface LooseStructuredContent {
   [key: string]: unknown;
 }
 
+interface LooseContentBlock {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}
+
 interface RegisteredMcpTool {
   inputSchema: LooseInputSchema;
   outputSchema?: unknown;
@@ -64,18 +78,18 @@ interface RegisteredMcpTool {
     extra?: unknown,
   ) => Promise<{
     structuredContent: LooseStructuredContent;
-    content?: Array<{ type: string; text?: string }>;
+    content?: LooseContentBlock[];
   }>;
   handler?: (input: unknown) => Promise<{
     structuredContent: LooseStructuredContent;
-    content?: Array<{ type: string; text?: string }>;
+    content?: LooseContentBlock[];
   }>;
 }
 
 interface RegisteredMcpToolWithHandler extends RegisteredMcpTool {
   handler: (input: unknown) => Promise<{
     structuredContent: LooseStructuredContent;
-    content?: Array<{ type: string; text?: string }>;
+    content?: LooseContentBlock[];
   }>;
 }
 
@@ -486,6 +500,77 @@ function createGitHubServiceStub(): GitHubService {
   };
 }
 
+class FakeBrowserToolsBroker {
+  public readonly calls: BrowserToolsExecuteInput[] = [];
+
+  public constructor(private readonly response: BrowserToolsResponsePayload) {}
+
+  public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
+    this.calls.push(input);
+    return this.response;
+  }
+}
+
+class BoundaryAgentManagerFake {
+  private readonly agent = createManagedAgent({
+    id: "agent-1",
+    cwd: REPO_CWD,
+    workspaceId: BROWSER_WORKSPACE_ID,
+  });
+
+  public getAgent(agentId: string): ManagedAgent | null {
+    return agentId === this.agent.id ? this.agent : null;
+  }
+
+  public listAgents(): ManagedAgent[] {
+    return [];
+  }
+}
+
+class BoundaryAgentStorageFake {
+  public async list(): Promise<StoredAgentRecord[]> {
+    return [];
+  }
+}
+
+class BoundaryProviderSnapshotManagerFake {
+  public listRegisteredProviderIds(): AgentProvider[] {
+    return [];
+  }
+
+  public hasProvider(): boolean {
+    return false;
+  }
+
+  public getProviderLabel(provider: AgentProvider): string {
+    return provider;
+  }
+
+  public async listProviders(): Promise<ProviderSnapshotEntry[]> {
+    return [];
+  }
+
+  public async getProvider(): Promise<ProviderSnapshotEntry> {
+    throw new Error("Provider catalog is not used by this boundary test");
+  }
+
+  public async listModels(): Promise<[]> {
+    return [];
+  }
+
+  public async listModes(): Promise<[]> {
+    return [];
+  }
+}
+
+async function connectInMemoryMcpClient(server: Awaited<ReturnType<typeof createAgentMcpServer>>) {
+  const client = new Client({ name: "paseo-test-client", version: "0.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
+}
+
 function createStoredSchedule(input: CreateScheduleInput): StoredSchedule {
   const now = "2026-04-11T00:00:00.000Z";
   return {
@@ -577,6 +662,278 @@ function createPaseoWorktreeForMcpTest(options: {
     return result;
   };
 }
+
+describe("browser MCP tools", () => {
+  const logger = createTestLogger();
+
+  it("calls registered tools through the MCP SDK with listed output schemas", async () => {
+    const agentManager = new BoundaryAgentManagerFake();
+    const agentStorage = new BoundaryAgentStorageFake();
+    const broker = new FakeBrowserToolsBroker({
+      requestId: "req-browser-tabs",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    const serverOptions = {
+      agentManager: agentManager as AgentManager,
+      agentStorage: agentStorage as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsBroker: broker as BrowserToolsBroker,
+      callerAgentId: "agent-1",
+      logger,
+    };
+    const server = await createAgentMcpServer(serverOptions);
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const browserResult = await client.callTool({
+        name: "browser_list_tabs",
+        arguments: {},
+      });
+      const listAgentsResult = await client.callTool({
+        name: "list_agents",
+        arguments: {},
+      });
+
+      expect(broker.calls).toEqual([
+        {
+          agentId: "agent-1",
+          cwd: REPO_CWD,
+          workspaceId: BROWSER_WORKSPACE_ID,
+          command: { command: "list_tabs", args: {} },
+        },
+      ]);
+      expect(browserResult.isError).not.toBe(true);
+      expect(browserResult.structuredContent).toEqual({
+        ok: true,
+        result: { command: "list_tabs", tabs: [] },
+        context: { agentId: "agent-1", cwd: REPO_CWD, workspaceId: BROWSER_WORKSPACE_ID },
+      });
+      expect(listAgentsResult.isError).not.toBe(true);
+      expect(listAgentsResult.structuredContent).toEqual({
+        agents: [],
+      });
+
+      const listedTools = await client.listTools();
+      const toolsByName = new Map(listedTools.tools.map((tool) => [tool.name, tool]));
+      const catalog = createPaseoToolCatalog(serverOptions);
+
+      for (const tool of catalog.tools.values()) {
+        if (tool.outputSchema !== undefined) {
+          expect(toolsByName.get(tool.name)?.outputSchema, `${tool.name} outputSchema`).toEqual(
+            expect.objectContaining({ type: "object" }),
+          );
+        }
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("returns screenshot pixels as image content and keeps structured content metadata-only", async () => {
+    const agentManager = new BoundaryAgentManagerFake();
+    const agentStorage = new BoundaryAgentStorageFake();
+    const broker = new FakeBrowserToolsBroker({
+      requestId: "req-browser-screenshot",
+      ok: true,
+      result: {
+        command: "screenshot",
+        browserId: "11111111-1111-4111-8111-111111111111",
+        mimeType: "image/png",
+        dataBase64: "iVBORw0KGgo=",
+        width: 800,
+        height: 600,
+      },
+    });
+    const server = await createAgentMcpServer({
+      agentManager: agentManager as AgentManager,
+      agentStorage: agentStorage as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsBroker: broker as BrowserToolsBroker,
+      callerAgentId: "agent-1",
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const response = await client.callTool({
+        name: "browser_screenshot",
+        arguments: { browserId: "11111111-1111-4111-8111-111111111111" },
+      });
+
+      expect(broker.calls).toEqual([
+        {
+          agentId: "agent-1",
+          cwd: REPO_CWD,
+          workspaceId: BROWSER_WORKSPACE_ID,
+          command: {
+            command: "screenshot",
+            args: {
+              browserId: "11111111-1111-4111-8111-111111111111",
+              fullPage: false,
+            },
+          },
+        },
+      ]);
+      expect(response.content).toEqual([
+        { type: "text", text: "Captured browser screenshot (800x600)." },
+        { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+      ]);
+      expect(response.structuredContent).toEqual({
+        ok: true,
+        result: {
+          command: "screenshot",
+          browserId: "11111111-1111-4111-8111-111111111111",
+          mimeType: "image/png",
+          width: 800,
+          height: 600,
+        },
+        context: {
+          agentId: "agent-1",
+          cwd: REPO_CWD,
+          workspaceId: BROWSER_WORKSPACE_ID,
+          browserId: "11111111-1111-4111-8111-111111111111",
+        },
+      });
+      expect(JSON.stringify(response.structuredContent)).not.toContain("iVBORw0KGgo=");
+      expect(JSON.stringify(response.structuredContent)).not.toContain("dataBase64");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("keeps browser tools registered when browser tools are disabled", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: BROWSER_WORKSPACE_ID,
+    });
+    const execute = vi.fn().mockResolvedValue({
+      requestId: "req-browser-disabled",
+      ok: false,
+      error: {
+        code: "browser_disabled",
+        message: "Browser tools are disabled.",
+        retryable: false,
+      },
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsBroker: { execute } as never,
+      callerAgentId: "agent-1",
+      logger,
+    });
+    const tool = registeredTool(server, "browser_list_tabs");
+
+    const response = await tool.handler({});
+
+    expect(lookupTool(server, "browser_snapshot")).not.toBeUndefined();
+    expect(execute).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: BROWSER_WORKSPACE_ID,
+      command: { command: "list_tabs", args: {} },
+    });
+    expect(response.structuredContent).toEqual({
+      ok: false,
+      error: {
+        code: "browser_disabled",
+        message: "Browser tools are disabled.",
+        retryable: false,
+      },
+      context: { agentId: "agent-1", cwd: REPO_CWD, workspaceId: BROWSER_WORKSPACE_ID },
+    });
+  });
+
+  it("wires browser tools through the browser tools broker", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: BROWSER_WORKSPACE_ID,
+    });
+    const execute = vi.fn().mockResolvedValue({
+      requestId: "req-browser-tabs",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsBroker: { execute } as never,
+      callerAgentId: "agent-1",
+      logger,
+    });
+    const tool = registeredTool(server, "browser_list_tabs");
+
+    const response = await tool.handler({});
+
+    expect(execute).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: BROWSER_WORKSPACE_ID,
+      command: { command: "list_tabs", args: {} },
+    });
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: "No Paseo browser tabs are open. Call browser_new_tab to create one.",
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+      context: { agentId: "agent-1", cwd: REPO_CWD, workspaceId: BROWSER_WORKSPACE_ID },
+    });
+  });
+
+  it("tells browser callers without a workspace how to proceed before broker execution", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD });
+    const execute = vi.fn().mockResolvedValue({
+      requestId: "req-browser-tabs",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsBroker: { execute } as never,
+      callerAgentId: "agent-1",
+      logger,
+    });
+    const tool = registeredTool(server, "browser_list_tabs");
+
+    const response = await tool.handler({});
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling browser_new_tab or browser_list_tabs.",
+      },
+    ]);
+    expect(response.structuredContent).toEqual({
+      ok: false,
+      error: {
+        code: "browser_denied",
+        message:
+          "This browser tool needs a workspace. Start the agent from a Paseo workspace before calling browser_new_tab or browser_list_tabs.",
+        retryable: false,
+      },
+      context: { agentId: "agent-1", cwd: REPO_CWD },
+    });
+  });
+});
 
 describe("terminal MCP tools", () => {
   const logger = createTestLogger();
@@ -722,7 +1079,7 @@ describe("create_agent MCP tool", () => {
     ).toBe(true);
   });
 
-  it("requires an explicit workspace", async () => {
+  it("rejects partial explicit workspace shape", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
       agentManager,
@@ -740,12 +1097,10 @@ describe("create_agent MCP tool", () => {
       initialPrompt: "test",
     });
 
-    expect(parsed.success).toBe(false);
-    expect(
-      parsed.error.issues.some(
-        (issue: { path: Array<string | number> }) => issue.path[0] === "workspace",
-      ),
-    ).toBe(true);
+    expect(parsed.success).toBe(true);
+    await expect(tool.handler(parsed.data)).rejects.toThrow(
+      "relationship and workspace must be provided together",
+    );
   });
 
   it("rejects caller-only relationship and workspace intents without a caller agent", async () => {
@@ -765,7 +1120,7 @@ describe("create_agent MCP tool", () => {
         provider: "codex/gpt-5.4",
         initialPrompt: "test",
       }),
-    ).rejects.toThrow("relationship subagent requires an agent-scoped MCP session");
+    ).rejects.toThrow("relationship subagent requires an agent-scoped tool session");
 
     await expect(
       tool.handler({
@@ -774,7 +1129,7 @@ describe("create_agent MCP tool", () => {
         provider: "codex/gpt-5.4",
         initialPrompt: "test",
       }),
-    ).rejects.toThrow("workspace current requires an agent-scoped MCP session");
+    ).rejects.toThrow("workspace current requires an agent-scoped tool session");
   });
 
   it("requires a caller workspace for current workspace intent", async () => {
@@ -2720,12 +3075,14 @@ describe("create_schedule MCP tool", () => {
 
   it("requires provider for schedules", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2737,17 +3094,19 @@ describe("create_schedule MCP tool", () => {
         name: "Default schedule",
       }),
     ).rejects.toThrow("provider is required when target is new-agent");
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 
   it("keeps create_schedule provider overrides compatible with provider and provider/model forms", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2763,7 +3122,7 @@ describe("create_schedule MCP tool", () => {
       provider: "codex/gpt-5.4",
     });
 
-    expect(create).toHaveBeenNthCalledWith(
+    expect(createOrReplace).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         target: {
@@ -2775,7 +3134,7 @@ describe("create_schedule MCP tool", () => {
         },
       }),
     );
-    expect(create).toHaveBeenNthCalledWith(
+    expect(createOrReplace).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         target: {
@@ -2805,12 +3164,14 @@ describe("create_schedule MCP tool", () => {
         featureValues: { auto_accept: true },
       },
     } as ManagedAgent);
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       callerAgentId: "parent-agent",
       logger,
     });
@@ -2831,14 +3192,14 @@ describe("create_schedule MCP tool", () => {
 
   it("passes timezone through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn(async (scheduleInput: CreateScheduleInput) =>
+    const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
       createStoredSchedule(scheduleInput),
     );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2850,7 +3211,7 @@ describe("create_schedule MCP tool", () => {
       provider: "codex",
     });
 
-    expect(create).toHaveBeenCalledWith(
+    expect(createOrReplace).toHaveBeenCalledWith(
       expect.objectContaining({
         cadence: {
           type: "cron",
@@ -2863,12 +3224,12 @@ describe("create_schedule MCP tool", () => {
 
   it("rejects removed create_schedule every input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2880,17 +3241,17 @@ describe("create_schedule MCP tool", () => {
     });
     expect(parsed.success).toBe(false);
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 
   it("rejects create_schedule without cron", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2902,17 +3263,17 @@ describe("create_schedule MCP tool", () => {
       }),
     ).rejects.toThrow(/cron/);
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 
   it.each(["", "   "])("rejects create_schedule blank timezone %#", async (timezone) => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_schedule");
@@ -2926,7 +3287,7 @@ describe("create_schedule MCP tool", () => {
       }),
     ).rejects.toThrow();
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 });
 
@@ -2944,12 +3305,14 @@ describe("create_heartbeat MCP tool", () => {
       availableModes: [],
       config: { title: "Parent agent" },
     } as ManagedAgent);
-    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       callerAgentId: "parent-agent",
       logger,
     });
@@ -2962,7 +3325,7 @@ describe("create_heartbeat MCP tool", () => {
       name: "status heartbeat",
     });
 
-    expect(create).toHaveBeenCalledWith(
+    expect(createOrReplace).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "check status",
         cadence: {
@@ -2978,12 +3341,12 @@ describe("create_heartbeat MCP tool", () => {
 
   it("requires an agent-scoped session", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const create = vi.fn();
+    const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { create } as unknown as ScheduleService,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
     const tool = registeredTool(server, "create_heartbeat");
@@ -2995,7 +3358,7 @@ describe("create_heartbeat MCP tool", () => {
       }),
     ).rejects.toThrow("create_heartbeat requires an agent-scoped session");
 
-    expect(create).not.toHaveBeenCalled();
+    expect(createOrReplace).not.toHaveBeenCalled();
   });
 });
 

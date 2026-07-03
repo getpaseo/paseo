@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openProjectDirectly } from "@/hooks/open-project";
+import { getOpenProjectFailureReason, openProjectDirectly } from "@/hooks/open-project";
 import type { EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor } from "@/stores/session-store";
 
 const SERVER_ID = "server-1";
@@ -130,5 +130,23 @@ describe("openProjectDirectly", () => {
     });
     expect(session.projects).toEqual([]);
     expect(session.hydrated).toEqual([]);
+  });
+});
+
+describe("getOpenProjectFailureReason", () => {
+  it("keeps the known directory-not-found failure reason", () => {
+    expect(
+      getOpenProjectFailureReason({
+        ok: false,
+        errorCode: "directory_not_found",
+        error: "Directory not found: /missing",
+      }),
+    ).toBe("directory_not_found");
+  });
+
+  it("uses the generic failure reason for untyped project-open failures", () => {
+    expect(getOpenProjectFailureReason({ ok: false, errorCode: null, error: "boom" })).toBe(
+      "open_failed",
+    );
   });
 });

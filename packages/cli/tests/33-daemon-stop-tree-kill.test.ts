@@ -144,17 +144,23 @@ try {
   const parsed = JSON.parse(stopResult.stdout) as {
     action?: unknown;
     forced?: unknown;
+    usedLifecycleRpc?: unknown;
+    reason?: unknown;
     message?: unknown;
   };
   assert.deepStrictEqual(
     {
       action: parsed.action,
       forced: parsed.forced,
+      usedLifecycleRpc: parsed.usedLifecycleRpc,
+      reason: parsed.reason,
       message: parsed.message,
     },
     {
       action: "stopped",
       forced: true,
+      usedLifecycleRpc: false,
+      reason: "owner_pid_sigkill",
       message: "Daemon owner process was force-stopped",
     },
     `stop should report forced tree cleanup: ${stopResult.stdout}`,

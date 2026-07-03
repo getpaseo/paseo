@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
+import { refreshAgentInitializationTimeout } from "@/hooks/use-agent-initialization";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
@@ -1210,6 +1211,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         error: payload.error,
       });
       if (followUp?.direction === "after") {
+        refreshAgentInitializationTimeout({
+          key: initKey,
+          agentId,
+          setAgentInitializing: (id, initializing) => {
+            if (initializing) {
+              return;
+            }
+            clearAgentInitializingFlag(setInitializingAgents, serverId, id);
+          },
+        });
         requestCanonicalCatchUp(agentId, {
           epoch: followUp.cursor.epoch,
           endSeq: followUp.cursor.seq,

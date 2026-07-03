@@ -165,7 +165,7 @@ export const zhCN: TranslationResources = {
     hints: {
       thinking: "Thinking mode",
       model: "切换 Model",
-      mode: "切换权限 Mode",
+      mode: "更改模式",
     },
   },
   agentStream: {
@@ -245,6 +245,12 @@ export const zhCN: TranslationResources = {
       copyCode: "复制代码",
       copyTurn: "复制回合",
       copyMessage: "复制消息",
+      forkMenu: "分叉消息",
+      forkInNewTab: "分叉到新标签页",
+      forkInNewWorkspace: "分叉到新工作区",
+      forkUnavailable: "请更新主机以使用此功能。",
+      forkMissingWorkspace: "此 Agent 不在工作区中。",
+      forkFailed: "分叉聊天失败",
       openFile: "打开文件",
       copied: "已复制",
     },
@@ -416,7 +422,21 @@ export const zhCN: TranslationResources = {
         enterUrl: "输入 URL",
         openDevTools: "打开浏览器开发者工具",
         cancelSelector: "取消元素选择器",
-        selectElement: "选择元素",
+        annotateElement: "标注元素",
+        screenshotElement: "截图元素",
+        screenshotCopied: "已将截图复制到剪贴板",
+        elementCopied: "已将元素复制到剪贴板",
+        screenshotFailed: "无法复制截图",
+      },
+      annotate: {
+        title: "标注元素",
+        placeholder: "给智能体关于此元素的留言…",
+        submit: "附加",
+        cancel: "取消",
+      },
+      devices: {
+        label: "设备尺寸",
+        responsive: "自适应",
       },
       errors: {
         failedToLoad: "页面加载失败",
@@ -711,6 +731,9 @@ export const zhCN: TranslationResources = {
         failedOpen: "打开 workspace 失败",
       },
       pr: {
+        actions: {
+          viewPullRequest: "查看",
+        },
         sections: {
           checks: "Checks",
           reviews: "Reviews",
@@ -755,6 +778,7 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "历史",
+      schedules: "计划",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -918,8 +942,14 @@ export const zhCN: TranslationResources = {
         upToDate: "App 已是最新版本。",
         upToDateWithLastChecked: "已是最新版本。上次检查时间：{{time}}。",
         pending: "更新准备好后会通知你。",
+        pendingWithLastChecked: "更新准备好后会通知你。上次检查时间：{{time}}。",
+        pendingWithVersion: "发现更新：{{version}}。正在下载...",
+        pendingWithVersionAndLastChecked:
+          "发现更新：{{version}}。正在下载... 上次检查时间：{{time}}。",
         availableWithVersion: "更新已就绪：{{version}}",
+        availableWithVersionAndLastChecked: "更新已就绪：{{version}}。上次检查时间：{{time}}。",
         available: "有 app 更新可安装。",
+        availableWithLastChecked: "有 app 更新可安装。上次检查时间：{{time}}。",
         installed: "App 更新已安装。需要重启。",
         failed: "App 更新失败。",
         idle: "尚未检查更新状态。",
@@ -1036,6 +1066,7 @@ export const zhCN: TranslationResources = {
   projectPicker: {
     placeholder: "输入目录路径...",
     opening: "正在打开 project...",
+    searching: "正在搜索...",
     empty: "开始输入路径",
     errors: {
       directory_not_found: "找不到目录。",
@@ -1417,6 +1448,8 @@ export const zhCN: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "简体中文",
         },
@@ -1428,6 +1461,22 @@ export const zhCN: TranslationResources = {
       playTest: "播放测试",
       playing: "正在播放...",
       playbackFailed: "播放失败：{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "关于",
@@ -1545,6 +1594,7 @@ export const zhCN: TranslationResources = {
         toggleFocusMode: "切换专注模式",
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
+        cycleAgentMode: "循环切换代理模式",
         toggleVoiceMode: "切换语音模式",
         startStopDictation: "开始/停止听写",
         interruptAgent: "中断 Agent",
@@ -1699,6 +1749,30 @@ export const zhCN: TranslationResources = {
           requestFailedTitle: "错误",
           requestFailedMessage: "发送重启请求失败。Paseo 会自动重连，请在 Host 显示在线后重试。",
           dialogFailedMessage: "无法打开重启确认对话框。",
+        },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
         },
         dangerZone: "危险区域",
         remove: {

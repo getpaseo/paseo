@@ -27,6 +27,7 @@ Rules that apply to both steps:
 - No code changes bundled into the changelog commit or the release commit. Code shims live in their own commit, reviewed on their own merits.
 - A sanity-check finding is information, not a directive. The agent surfaces it; the user decides.
 - Invoking a release skill is intent to start the flow, not blanket authorization to publish.
+- If the user asks for a release preview, show the prospective changelog/release contents and answer questions, but do not commit, tag, publish, or run release commands until they explicitly authorize the release.
 
 ## Two paths
 
@@ -47,7 +48,9 @@ Before running any stable patch release command:
 npm run release:patch
 ```
 
-This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, and `Release Notes Sync` on GitHub Actions. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no `release-mobile.yml` in this repo.
+This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag. The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no `release-mobile.yml` in this repo.
+
+The Docker workflow builds images on pull requests and on `main` as non-publishing checks. Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`. Beta Docker images build from the checked-out source tree so the beta flow can intentionally skip npm publishing.
 
 **Releases are always patch.** "Release paseo", "release stable", "ship stable", and similar always mean a patch bump from the previous stable. Never bump minor or major to trigger a build, ever — minor and major bumps are reserved for genuinely larger product cuts and require an explicit user instruction with the word "minor" or "major". If you find yourself reaching for `release:minor` to retrigger a failed build, you are doing the wrong thing — push a retry tag instead (see "Fixing a failed release build" below).
 
@@ -270,9 +273,31 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 
 **Do not rely on `workflow_dispatch` for tagged code fixes.** The `workflow_dispatch` trigger runs the workflow file from the default branch but checks out the code at the tag ref (`ref: ${{ inputs.tag }}`). That means fixes committed to `main` won't change the tagged source tree being built. `workflow_dispatch` only helps when the fix lives in the workflow file itself.
 
-To retry a failed workflow, **always push a retry tag** on the commit you want to build. Reusing the same tag name is expected: move it with `git tag -f ...` and push it with `--force` so the workflow rebuilds the commit you actually want.
+For Docker-only retries, **do not push or force-push a `v*` release tag**.
+`v*` tag pushes rebuild desktop assets, the Android APK, Docker, release notes,
+and EAS mobile release builds. Use the Docker workflow dispatch instead:
 
-Prefer a tag push over `workflow_dispatch` whenever you are rebuilding release code or release assets.
+```bash
+gh workflow run docker.yml \
+  --ref main \
+  -f paseo_version=X.Y.Z-beta.N \
+  -f publish=true \
+  -f source_build=auto
+```
+
+This replaces `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` in place without touching
+desktop, APK, or EAS release builders. The Docker exception is safe because the
+dispatch runs from `--ref main` and uses the explicit `paseo_version`; it does
+not check out or move the `v*` release tag.
+
+To retry a failed non-Docker release workflow, push a retry tag on the commit
+you want to build. Reusing the same tag name is expected: move it with
+`git tag -f ...` and push it with `--force` so the workflow rebuilds the commit
+you actually want.
+
+Prefer a tag push over `workflow_dispatch` when rebuilding desktop or APK
+release assets. Prefer Docker workflow dispatch when rebuilding only the Docker
+image.
 
 The retry tag patterns below still work and remain the supported way to rebuild specific release targets:
 

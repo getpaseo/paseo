@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
   AgentCreateFailedStatusPayloadSchema,
   AgentCreatedStatusPayloadSchema,
@@ -10,6 +10,7 @@ import {
   RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
+  DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
   WSOutboundMessageSchema,
@@ -25,6 +26,7 @@ import type {
   FileUploadResponse,
   FileExplorerResponse,
   FetchAgentTimelineResponseMessage,
+  AgentForkContextResponseMessage,
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommitResponse,
@@ -67,6 +69,7 @@ import type {
   ProviderUsageListResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
+  DiagnosticsResponse,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -116,6 +119,10 @@ import {
 } from "./daemon-client-transport.js";
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
+import type {
+  BrowserAutomationExecuteRequest,
+  BrowserAutomationExecuteResponse,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -218,6 +225,8 @@ export type DaemonEvent =
   | { type: "error"; message: string };
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
+export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
+export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
 
 export interface DaemonClientConfig {
   url: string;
@@ -243,6 +252,7 @@ export interface DaemonClientConfig {
   };
   runtimeMetricsIntervalMs?: number;
   runtimeMetricsWindowMs?: number;
+  capabilities?: Partial<Record<ClientCapability, boolean>>;
 }
 
 export interface SendMessageOptions {
@@ -351,6 +361,7 @@ type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
+type DiagnosticsPayload = DiagnosticsResponse["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -371,9 +382,11 @@ export interface WriteProjectConfigInput {
   requestId?: string;
 }
 interface ListCommandsOptions {
+  agentId: string;
   requestId?: string;
   draftConfig?: ListCommandsDraftConfig;
 }
+type LegacyListCommandsOptions = Omit<ListCommandsOptions, "agentId">;
 type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
@@ -451,21 +464,74 @@ type ScheduleUpdatePayload = Extract<
   { type: "schedule/update/response" }
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
+export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
 export type FetchAgentTimelineCursor = NonNullable<FetchAgentTimelinePayload["startCursor"]>;
+export interface FetchAgentOptions {
+  agentId: string;
+  requestId?: string;
+  timeout?: number;
+}
+type LegacyFetchAgentOptions = Omit<FetchAgentOptions, "agentId">;
 export interface FetchAgentTimelineOptions {
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
   requestId?: string;
+  timeout?: number;
+}
+
+// COMPAT(daemon-client-object-options): added in v0.1.102; remove after
+// 2026-12-29 once SDK callers have migrated to object parameters.
+function normalizeFetchAgentOptions(
+  input: FetchAgentOptions | string,
+  legacyOptions?: LegacyFetchAgentOptions | string,
+): FetchAgentOptions {
+  if (typeof input !== "string") {
+    return input;
+  }
+  if (typeof legacyOptions === "string") {
+    return { agentId: input, requestId: legacyOptions };
+  }
+  return { agentId: input, ...legacyOptions };
+}
+
+function normalizeListCommandsOptions(
+  input: ListCommandsOptions | string,
+  legacyOptions?: LegacyListCommandsOptions | string,
+): ListCommandsOptions {
+  if (typeof input !== "string") {
+    return input;
+  }
+  if (typeof legacyOptions === "string") {
+    return { agentId: input, requestId: legacyOptions };
+  }
+  return { agentId: input, ...legacyOptions };
+}
+export interface AgentForkContextOptions {
+  boundaryMessageId?: string;
+  requestId?: string;
 }
 
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
 type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayloadSchema>;
+export interface ShutdownServerOptions {
+  requestId?: string;
+  timeout?: number;
+}
+export interface DaemonStatusOptions {
+  requestId?: string;
+  timeout?: number;
+}
+export interface DaemonPairingOfferOptions {
+  requestId?: string;
+  timeout?: number;
+}
+type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
 type FetchAgentsPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_agents_response" }
@@ -473,6 +539,7 @@ type FetchAgentsPayload = Extract<
 type FetchAgentsRequest = Extract<SessionInboundMessage, { type: "fetch_agents_request" }>;
 export type FetchAgentsOptions = Omit<FetchAgentsRequest, "type" | "requestId"> & {
   requestId?: string;
+  timeout?: number;
 };
 export type FetchAgentsEntry = FetchAgentsPayload["entries"][number];
 export type FetchAgentsPageInfo = FetchAgentsPayload["pageInfo"];
@@ -540,6 +607,7 @@ export interface ReadChatMessagesOptions {
   since?: string;
   authorAgentId?: string;
   requestId?: string;
+  timeout?: number;
 }
 export interface WaitForChatMessagesOptions {
   room: string;
@@ -758,15 +826,16 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
-const DEFAULT_CONNECT_TIMEOUT_MS = 15000;
+const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
-const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
-const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = 15000;
+const DEFAULT_SEND_QUEUE_TIMEOUT_MS = DEFAULT_SESSION_RPC_TIMEOUT_MS;
+const DEFAULT_DICTATION_FINISH_ACCEPT_TIMEOUT_MS = DEFAULT_SESSION_RPC_TIMEOUT_MS;
 const DEFAULT_DICTATION_FINISH_FALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000;
 
@@ -1416,10 +1485,11 @@ export class DaemonClient {
   private async sendRequest<T>(params: {
     requestId: string;
     message: SessionInboundMessage;
-    timeout: number;
+    timeout?: number;
     select: (msg: SessionOutboundMessage) => T | null;
     options?: { skipQueue?: boolean };
   }): Promise<T> {
+    const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
       (msg) => {
         if (msg.type === "rpc_error" && msg.payload.requestId === params.requestId) {
@@ -1439,7 +1509,7 @@ export class DaemonClient {
         }
         return { kind: "ok", value };
       },
-      params.timeout,
+      timeout,
       params.options,
     );
 
@@ -1465,7 +1535,7 @@ export class DaemonClient {
   >(params: {
     requestId: string;
     message: SessionInboundMessage;
-    timeout: number;
+    timeout?: number;
     responseType: TResponseType;
     options?: { skipQueue?: boolean };
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
@@ -1499,7 +1569,7 @@ export class DaemonClient {
     requestId?: string;
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>;
     responseType: TResponseType;
-    timeout: number;
+    timeout?: number;
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
   }): Promise<TResult> {
     const resolvedRequestId = this.createRequestId(params.requestId);
@@ -1526,7 +1596,7 @@ export class DaemonClient {
       string,
       unknown
     >;
-    timeout: number;
+    timeout?: number;
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
   }): Promise<TResult> {
     const responseType = params.message.type.replace(/\.request$/, ".response") as TResponseType;
@@ -1558,7 +1628,6 @@ export class DaemonClient {
     await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "clear_agent_attention_response") {
@@ -1582,7 +1651,6 @@ export class DaemonClient {
     const response = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "workspace.clear_attention.response") {
@@ -1778,7 +1846,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
+      timeout: options?.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agents_response") {
@@ -1804,7 +1872,6 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_history_response") {
@@ -1833,7 +1900,6 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_recent_provider_sessions_response") {
@@ -1860,7 +1926,6 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_workspaces_response") {
@@ -1882,7 +1947,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "open_project_response",
-      timeout: 10000,
     });
   }
 
@@ -1894,7 +1958,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "project.add.response",
-      timeout: 10000,
     });
   }
 
@@ -1913,7 +1976,6 @@ export class DaemonClient {
         scriptName,
       },
       responseType: "start_workspace_script_response",
-      timeout: 10000,
     });
   }
 
@@ -1928,7 +1990,6 @@ export class DaemonClient {
         workspaceId,
       },
       responseType: "archive_workspace_response",
-      timeout: 10000,
     });
   }
 
@@ -1943,21 +2004,30 @@ export class DaemonClient {
         workspaceId,
       },
       responseType: "workspace_setup_status_response",
-      timeout: 10000,
     });
   }
 
-  async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null> {
-    const resolvedRequestId = this.createRequestId(requestId);
+  async fetchAgent(options: FetchAgentOptions): Promise<FetchAgentResult | null>;
+  async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null>;
+  async fetchAgent(
+    agentId: string,
+    options?: LegacyFetchAgentOptions,
+  ): Promise<FetchAgentResult | null>;
+  async fetchAgent(
+    input: FetchAgentOptions | string,
+    legacyOptions?: LegacyFetchAgentOptions | string,
+  ): Promise<FetchAgentResult | null> {
+    const options = normalizeFetchAgentOptions(input, legacyOptions);
+    const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_request",
       requestId: resolvedRequestId,
-      agentId,
+      agentId: options.agentId,
     });
     const payload = await this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
+      timeout: options.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_response") {
@@ -2042,7 +2112,6 @@ export class DaemonClient {
     const status = await this.sendRequest({
       requestId,
       message,
-      timeout: 60000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -2076,7 +2145,6 @@ export class DaemonClient {
     await this.sendRequest({
       requestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "agent_deleted") {
@@ -2100,7 +2168,6 @@ export class DaemonClient {
     const result = await this.sendRequest({
       requestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "agent_archived") {
@@ -2121,7 +2188,6 @@ export class DaemonClient {
         type: "agent.detach.request",
         agentId,
       },
-      timeout: 10000,
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "detachAgent rejected");
@@ -2145,7 +2211,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "update_agent_response") {
@@ -2175,7 +2240,6 @@ export class DaemonClient {
         customName,
       },
       responseType: "project.rename.response",
-      timeout: 10000,
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "renameProject rejected");
@@ -2193,7 +2257,6 @@ export class DaemonClient {
         type: "project.remove.request",
         projectId,
       },
-      timeout: 10000,
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "removeProject rejected");
@@ -2214,7 +2277,6 @@ export class DaemonClient {
         title,
       },
       responseType: "workspace.title.set.response",
-      timeout: 10000,
     });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setWorkspaceTitle rejected");
@@ -2237,7 +2299,6 @@ export class DaemonClient {
     const status = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -2269,7 +2330,6 @@ export class DaemonClient {
     const status = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -2306,7 +2366,6 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -2339,10 +2398,45 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 15000,
+      timeout: options.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_timeline_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+
+    return payload;
+  }
+
+  async buildAgentForkContext(
+    agentId: string,
+    options: AgentForkContextOptions = {},
+  ): Promise<AgentForkContextPayload> {
+    const resolvedRequestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.fork_context.request",
+      agentId,
+      requestId: resolvedRequestId,
+      ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
+    });
+
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.fork_context.response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {
@@ -2382,7 +2476,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "send_agent_message_response") {
@@ -2419,7 +2512,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "agent.rewind.response") {
@@ -2447,7 +2539,6 @@ export class DaemonClient {
     await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "cancel_agent_response") {
@@ -2472,7 +2563,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "set_agent_mode_response") {
@@ -2501,7 +2591,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "set_agent_model_response") {
@@ -2530,7 +2619,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "set_agent_feature_response") {
@@ -2561,7 +2649,6 @@ export class DaemonClient {
     const payload = await this.sendRequest({
       requestId,
       message,
-      timeout: 15000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "set_agent_thinking_response") {
@@ -2589,7 +2676,6 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -2607,8 +2693,8 @@ export class DaemonClient {
     });
   }
 
-  async shutdownServer(requestId?: string): Promise<ShutdownRequestedStatusPayload> {
-    const resolvedRequestId = this.createRequestId(requestId);
+  async shutdownServer(options?: ShutdownServerOptions): Promise<ShutdownRequestedStatusPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "shutdown_server_request",
       requestId: resolvedRequestId,
@@ -2616,7 +2702,7 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
+      timeout: options?.timeout,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {
@@ -2630,6 +2716,30 @@ export class DaemonClient {
           return null;
         }
         return shutdown.data;
+      },
+    });
+  }
+
+  async updateDaemon(requestId?: string): Promise<DaemonUpdateResponse["payload"]> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "daemon.update.request",
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 300_000, // 5 minutes — npm update can be slow on remote machines
+      options: { skipQueue: true },
+      select: (msg) => {
+        const parsed = DaemonUpdateResponseSchema.safeParse(msg);
+        if (!parsed.success) {
+          return null;
+        }
+        if (parsed.data.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return parsed.data.payload;
       },
     });
   }
@@ -2649,7 +2759,6 @@ export class DaemonClient {
     const response = await this.sendRequest({
       requestId,
       message,
-      timeout: 10000,
       select: (msg) => {
         if (msg.type !== "set_voice_mode_response") {
           return null;
@@ -2918,7 +3027,6 @@ export class DaemonClient {
     const responsePromise = this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 60000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "checkout_status_response") {
@@ -3019,7 +3127,6 @@ export class DaemonClient {
         requestId: resolvedRequestId,
         message,
         responseType: "subscribe_checkout_diff_response",
-        timeout: 60000,
         options: { skipQueue: true },
         selectPayload: (payload) => {
           if (payload.subscriptionId !== subscriptionId) {
@@ -3060,7 +3167,6 @@ export class DaemonClient {
         addAll: input.addAll,
       },
       responseType: "checkout_commit_response",
-      timeout: 60000,
     });
   }
 
@@ -3079,7 +3185,6 @@ export class DaemonClient {
         requireCleanTarget: input.requireCleanTarget,
       },
       responseType: "checkout_merge_response",
-      timeout: 60000,
     });
   }
 
@@ -3097,7 +3202,6 @@ export class DaemonClient {
         requireCleanTarget: input.requireCleanTarget,
       },
       responseType: "checkout_merge_from_base_response",
-      timeout: 60000,
     });
   }
 
@@ -3109,7 +3213,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "checkout_pull_response",
-      timeout: 60000,
     });
   }
 
@@ -3121,7 +3224,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "checkout_push_response",
-      timeout: 60000,
     });
   }
 
@@ -3133,7 +3235,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "checkout.refresh.response",
-      timeout: 60000,
     });
   }
 
@@ -3152,7 +3253,6 @@ export class DaemonClient {
         baseRef: input.baseRef,
       },
       responseType: "checkout_pr_create_response",
-      timeout: 60000,
     });
   }
 
@@ -3169,7 +3269,6 @@ export class DaemonClient {
         mergeMethod: input.method,
       },
       responseType: "checkout_pr_merge_response",
-      timeout: 60000,
     });
   }
 
@@ -3186,7 +3285,6 @@ export class DaemonClient {
         enabled: input.enabled,
         ...(input.enabled ? { mergeMethod: input.method } : {}),
       },
-      timeout: 60000,
     });
   }
 
@@ -3211,7 +3309,6 @@ export class DaemonClient {
           checkRunId: input.checkRunId,
           workflowRunId: input.workflowRunId,
         },
-        timeout: 60000,
       },
     );
   }
@@ -3224,7 +3321,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "checkout_pr_status_response",
-      timeout: 60000,
     });
   }
 
@@ -3242,7 +3338,6 @@ export class DaemonClient {
         repoName: input.repoName,
       },
       responseType: "pull_request_timeline_response",
-      timeout: 60000,
     });
   }
 
@@ -3259,7 +3354,6 @@ export class DaemonClient {
         branch,
       },
       responseType: "checkout_switch_branch_response",
-      timeout: 30000,
     });
   }
 
@@ -3272,7 +3366,6 @@ export class DaemonClient {
         branch: input.branch,
       },
       responseType: "checkout.rename_branch.response",
-      timeout: 30000,
     });
   }
 
@@ -3289,7 +3382,6 @@ export class DaemonClient {
         branch: options?.branch,
       },
       responseType: "stash_save_response",
-      timeout: 30000,
     });
   }
 
@@ -3302,7 +3394,6 @@ export class DaemonClient {
         stashIndex,
       },
       responseType: "stash_pop_response",
-      timeout: 30000,
     });
   }
 
@@ -3319,7 +3410,6 @@ export class DaemonClient {
         paseoOnly: options?.paseoOnly,
       },
       responseType: "stash_list_response",
-      timeout: 10000,
     });
   }
 
@@ -3335,7 +3425,6 @@ export class DaemonClient {
         repoRoot: input.repoRoot,
       },
       responseType: "paseo_worktree_list_response",
-      timeout: 60000,
     });
   }
 
@@ -3360,7 +3449,6 @@ export class DaemonClient {
         ...(input.scope !== undefined ? { scope: input.scope } : {}),
       },
       responseType: "paseo_worktree_archive_response",
-      timeout: 60000,
     });
   }
 
@@ -3383,7 +3471,6 @@ export class DaemonClient {
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
       },
       responseType: "create_paseo_worktree_response",
-      timeout: 60000,
     });
   }
 
@@ -3406,7 +3493,6 @@ export class DaemonClient {
           : {}),
       },
       responseType: "workspace.create.response",
-      timeout: 60000,
     });
   }
 
@@ -3422,7 +3508,6 @@ export class DaemonClient {
         branchName: options.branchName,
       },
       responseType: "validate_branch_response",
-      timeout: 10000,
     });
   }
 
@@ -3439,7 +3524,6 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "branch_suggestions_response",
-      timeout: 10000,
     });
   }
 
@@ -3457,7 +3541,6 @@ export class DaemonClient {
         kinds: options.kinds,
       },
       responseType: "github_search_response",
-      timeout: 15000,
     });
   }
 
@@ -3484,7 +3567,8 @@ export class DaemonClient {
         limit: options.limit,
       },
       responseType: "directory_suggestions_response",
-      timeout: 10000,
+      // Home-tree scans on large home dirs can take several seconds; don't cut
+      // the suggestion request off early (it would surface as an empty list).
     });
   }
 
@@ -3509,7 +3593,6 @@ export class DaemonClient {
         ...(acceptBinary ? { acceptBinary: true } : {}),
       },
       responseType: "file_explorer_response",
-      timeout: 10000,
     });
   }
 
@@ -3569,7 +3652,6 @@ export class DaemonClient {
         requestId: resolvedRequestId,
       },
       responseType: "file.upload.response",
-      timeout: 60000,
       options: { skipQueue: true },
     });
 
@@ -3621,7 +3703,6 @@ export class DaemonClient {
         path,
       },
       responseType: "file_download_token_response",
-      timeout: 10000,
     });
   }
 
@@ -3636,7 +3717,6 @@ export class DaemonClient {
         cwd,
       },
       responseType: "project_icon_response",
-      timeout: 10000,
     });
   }
 
@@ -3656,8 +3736,8 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_models_response",
-      // Provider SDK cold starts (especially model discovery) can exceed 30s.
-      timeout: 45000,
+      // Provider SDK cold starts (especially model discovery) can exceed 60s.
+      timeout: 90000,
     });
   }
 
@@ -3673,7 +3753,7 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "list_provider_modes_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3688,7 +3768,7 @@ export class DaemonClient {
         draftConfig,
       },
       responseType: "list_provider_features_response",
-      timeout: 45000,
+      timeout: 90000,
     });
   }
 
@@ -3701,7 +3781,6 @@ export class DaemonClient {
         type: "list_available_providers_request",
       },
       responseType: "list_available_providers_response",
-      timeout: 30000,
     });
   }
 
@@ -3716,7 +3795,6 @@ export class DaemonClient {
         cwd: options?.cwd,
       },
       responseType: "get_providers_snapshot_response",
-      timeout: 10000,
     });
   }
 
@@ -3729,29 +3807,39 @@ export class DaemonClient {
         type: "get_daemon_config_request",
       },
       responseType: "get_daemon_config_response",
-      timeout: 10000,
     });
   }
 
-  async getDaemonStatus(requestId?: string): Promise<DaemonStatusPayload> {
+  async getDaemonStatus(options?: DaemonStatusOptions): Promise<DaemonStatusPayload> {
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "daemon.get_status.request",
       },
       responseType: "daemon.get_status.response",
-      timeout: 10000,
+      timeout: options?.timeout,
     });
   }
 
-  async getDaemonPairingOffer(requestId?: string): Promise<DaemonPairingOfferPayload> {
+  async getDaemonPairingOffer(
+    options?: DaemonPairingOfferOptions,
+  ): Promise<DaemonPairingOfferPayload> {
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options?.requestId,
       message: {
         type: "daemon.get_pairing_offer.request",
       },
       responseType: "daemon.get_pairing_offer.response",
-      timeout: 10000,
+      timeout: options?.timeout,
+    });
+  }
+
+  async collectDiagnostics(requestId?: string): Promise<DiagnosticsPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "diagnostics.request",
+      },
     });
   }
 
@@ -3766,8 +3854,11 @@ export class DaemonClient {
         config,
       },
       responseType: "set_daemon_config_response",
-      timeout: 10000,
     });
+  }
+
+  sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {
+    this.sendSessionMessageStrict(response);
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
@@ -3778,7 +3869,6 @@ export class DaemonClient {
         repoRoot,
       },
       responseType: "read_project_config_response",
-      timeout: 10000,
     });
   }
 
@@ -3792,7 +3882,6 @@ export class DaemonClient {
         expectedRevision: input.expectedRevision,
       },
       responseType: "write_project_config_response",
-      timeout: 10000,
     });
   }
 
@@ -3809,7 +3898,7 @@ export class DaemonClient {
         providers: options?.providers,
       },
       responseType: "refresh_providers_snapshot_response",
-      timeout: 60000,
+      timeout: 120000,
     });
   }
 
@@ -3824,7 +3913,7 @@ export class DaemonClient {
         provider,
       },
       responseType: "provider_diagnostic_response",
-      timeout: 30000,
+      timeout: 180000,
     });
   }
 
@@ -3834,30 +3923,28 @@ export class DaemonClient {
       message: {
         type: "provider.usage.list.request",
       },
-      timeout: 30000,
     });
   }
 
+  async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload>;
   async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
-  async listCommands(agentId: string, options?: ListCommandsOptions): Promise<ListCommandsPayload>;
   async listCommands(
     agentId: string,
-    requestIdOrOptions?: string | ListCommandsOptions,
+    options?: LegacyListCommandsOptions,
+  ): Promise<ListCommandsPayload>;
+  async listCommands(
+    input: ListCommandsOptions | string,
+    legacyOptions?: LegacyListCommandsOptions | string,
   ): Promise<ListCommandsPayload> {
-    const requestId =
-      typeof requestIdOrOptions === "string" ? requestIdOrOptions : requestIdOrOptions?.requestId;
-    const draftConfig =
-      typeof requestIdOrOptions === "string" ? undefined : requestIdOrOptions?.draftConfig;
-
+    const options = normalizeListCommandsOptions(input, legacyOptions);
     return this.sendCorrelatedSessionRequest({
-      requestId,
+      requestId: options.requestId,
       message: {
         type: "list_commands_request",
-        agentId,
-        ...(draftConfig ? { draftConfig } : {}),
+        agentId: options.agentId,
+        ...(options.draftConfig ? { draftConfig: options.draftConfig } : {}),
       },
       responseType: "list_commands_response",
-      timeout: 30000,
     });
   }
 
@@ -3919,12 +4006,20 @@ export class DaemonClient {
     predicate: (snapshot: AgentSnapshotPayload) => boolean,
     timeout = 60000,
   ): Promise<AgentSnapshotPayload> {
-    const initialResult = await this.fetchAgent(agentId).catch(() => null);
+    const deadline = Date.now() + timeout;
+    const remainingTimeoutMs = () => Math.max(1, deadline - Date.now());
+    const timeoutError = () => new Error(`Timed out waiting for agent ${agentId}`);
+    const fetchAgentWithinDeadline = () =>
+      this.fetchAgent({ agentId, timeout: remainingTimeoutMs() }).catch(() => null);
+
+    const initialResult = await fetchAgentWithinDeadline();
     if (initialResult && predicate(initialResult.agent)) {
       return initialResult.agent;
     }
+    if (Date.now() >= deadline) {
+      throw timeoutError();
+    }
 
-    const deadline = Date.now() + timeout;
     return await new Promise<AgentSnapshotPayload>((resolve, reject) => {
       let settled = false;
       let pollInFlight = false;
@@ -3975,7 +4070,7 @@ export class DaemonClient {
         }
         pollInFlight = true;
         try {
-          const result = await this.fetchAgent(agentId).catch(() => null);
+          const result = await fetchAgentWithinDeadline();
           maybeResolve(result?.agent ?? null);
         } finally {
           pollInFlight = false;
@@ -4000,7 +4095,7 @@ export class DaemonClient {
       timeoutTimer = setTimeout(() => {
         finish({
           kind: "error",
-          error: new Error(`Timed out waiting for agent ${agentId}`),
+          error: timeoutError(),
         });
       }, remaining);
 
@@ -4084,7 +4179,6 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "list_terminals_response",
-      timeout: 10000,
       options: { skipQueue: true },
     });
   }
@@ -4110,7 +4204,6 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "create_terminal_response",
-      timeout: 10000,
       options: { skipQueue: true },
     });
   }
@@ -4124,7 +4217,6 @@ export class DaemonClient {
         title: input.title,
       },
       responseType: "terminal.rename.response",
-      timeout: 10000,
     });
   }
 
@@ -4148,7 +4240,6 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "subscribe_terminal_response",
-      timeout: 10000,
       options: { skipQueue: true },
     });
     if (payload.error === null) {
@@ -4189,7 +4280,6 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "kill_terminal_response",
-      timeout: 10000,
       options: { skipQueue: true },
     });
   }
@@ -4209,7 +4299,6 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "close_items_response",
-      timeout: 10000,
       options: { skipQueue: true },
     });
   }
@@ -4232,7 +4321,6 @@ export class DaemonClient {
       requestId: resolvedRequestId,
       message,
       responseType: "capture_terminal_response",
-      timeout: 10000,
       options: { skipQueue: true },
     });
   }
@@ -4246,7 +4334,6 @@ export class DaemonClient {
         ...(options.purpose ? { purpose: options.purpose } : {}),
       },
       responseType: "chat/create/response",
-      timeout: 10000,
     });
   }
 
@@ -4257,7 +4344,6 @@ export class DaemonClient {
         type: "chat/list",
       },
       responseType: "chat/list/response",
-      timeout: 10000,
     });
   }
 
@@ -4269,7 +4355,6 @@ export class DaemonClient {
         room: options.room,
       },
       responseType: "chat/inspect/response",
-      timeout: 10000,
     });
   }
 
@@ -4281,7 +4366,6 @@ export class DaemonClient {
         room: options.room,
       },
       responseType: "chat/delete/response",
-      timeout: 10000,
     });
   }
 
@@ -4296,7 +4380,6 @@ export class DaemonClient {
         ...(options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
       },
       responseType: "chat/post/response",
-      timeout: 10000,
     });
   }
 
@@ -4311,7 +4394,7 @@ export class DaemonClient {
         ...(options.authorAgentId ? { authorAgentId: options.authorAgentId } : {}),
       },
       responseType: "chat/read/response",
-      timeout: 10000,
+      timeout: options.timeout,
     });
   }
 
@@ -4343,7 +4426,6 @@ export class DaemonClient {
         ...(typeof options.runOnCreate === "boolean" ? { runOnCreate: options.runOnCreate } : {}),
       },
       responseType: "schedule/create/response",
-      timeout: 10000,
     });
   }
 
@@ -4354,7 +4436,6 @@ export class DaemonClient {
         type: "schedule/list",
       },
       responseType: "schedule/list/response",
-      timeout: 10000,
     });
   }
 
@@ -4366,7 +4447,6 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/inspect/response",
-      timeout: 10000,
     });
   }
 
@@ -4378,7 +4458,6 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/logs/response",
-      timeout: 10000,
     });
   }
 
@@ -4390,7 +4469,6 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/pause/response",
-      timeout: 10000,
     });
   }
 
@@ -4402,7 +4480,6 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/resume/response",
-      timeout: 10000,
     });
   }
 
@@ -4414,7 +4491,6 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/delete/response",
-      timeout: 10000,
     });
   }
 
@@ -4426,7 +4502,6 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/run-once/response",
-      timeout: 10000,
     });
   }
 
@@ -4444,7 +4519,6 @@ export class DaemonClient {
         ...(options.expiresAt !== undefined ? { expiresAt: options.expiresAt } : {}),
       },
       responseType: "schedule/update/response",
-      timeout: 10000,
     });
   }
 
@@ -4473,7 +4547,6 @@ export class DaemonClient {
         ...(typeof options.maxTimeMs === "number" ? { maxTimeMs: options.maxTimeMs } : {}),
       },
       responseType: "loop/run/response",
-      timeout: 15000,
     });
   }
 
@@ -4484,7 +4557,6 @@ export class DaemonClient {
         type: "loop/list",
       },
       responseType: "loop/list/response",
-      timeout: 10000,
     });
   }
 
@@ -4497,7 +4569,6 @@ export class DaemonClient {
         id: normalized.id,
       },
       responseType: "loop/inspect/response",
-      timeout: 10000,
     });
   }
 
@@ -4511,7 +4582,6 @@ export class DaemonClient {
         ...(typeof normalized.afterSeq === "number" ? { afterSeq: normalized.afterSeq } : {}),
       },
       responseType: "loop/logs/response",
-      timeout: 10000,
     });
   }
 
@@ -4524,7 +4594,6 @@ export class DaemonClient {
         id: normalized.id,
       },
       responseType: "loop/stop/response",
-      timeout: 10000,
     });
   }
 
@@ -4590,6 +4659,7 @@ export class DaemonClient {
             [CLIENT_CAPS.customModeIcons]: true,
             [CLIENT_CAPS.reasoningMergeEnum]: true,
             [CLIENT_CAPS.terminalReflowableSnapshot]: true,
+            ...this.config.capabilities,
           },
           ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
         }),

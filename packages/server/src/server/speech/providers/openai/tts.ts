@@ -7,6 +7,7 @@ export type { SpeechStreamResult };
 
 export interface TTSConfig {
   apiKey: string;
+  baseUrl?: string;
   model?: "tts-1" | "tts-1-hd";
   voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
   responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
@@ -27,6 +28,7 @@ export class OpenAITTS implements TextToSpeechProvider {
     this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "tts" });
     this.openaiClient = new OpenAI({
       apiKey: ttsConfig.apiKey,
+      ...(ttsConfig.baseUrl ? { baseURL: ttsConfig.baseUrl } : {}),
     });
 
     this.logger.info(

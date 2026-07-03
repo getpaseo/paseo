@@ -6,6 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
@@ -111,7 +112,8 @@ function markdownImageSource(markdown: string): string {
   if (!match) {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
-  return match[1].replace(/\\\)/g, ")");
+  const source = match[1].replace(/\\\)/g, ")");
+  return source.startsWith("file://") ? fileURLToPath(source) : source;
 }
 
 function emitCodexUserMessage(
@@ -581,6 +583,123 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("unarchives a persisted Codex thread through app-server", async () => {
+    const threadRequests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/unarchive": (params) => {
+        threadRequests.push({ method: "thread/unarchive", params });
+        return { thread: { id: "native-thread-id" } };
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => appServer.child;
+
+    await provider.unarchiveNativeSession({
+      provider: "codex",
+      sessionId: "persisted-thread-id",
+      nativeHandle: "native-thread-id",
+    });
+
+    expect(threadRequests).toEqual([
+      { method: "thread/unarchive", params: { threadId: "native-thread-id" } },
+    ]);
+    appServer.assertNoErrors();
+  });
+
+  test("unarchives a persisted Codex thread using sessionId when nativeHandle is absent", async () => {
+    const threadRequests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/unarchive": (params) => {
+        threadRequests.push({ method: "thread/unarchive", params });
+        return { thread: { id: "persisted-thread-id" } };
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => appServer.child;
+
+    await provider.unarchiveNativeSession({
+      provider: "codex",
+      sessionId: "persisted-thread-id",
+    });
+
+    expect(threadRequests).toEqual([
+      { method: "thread/unarchive", params: { threadId: "persisted-thread-id" } },
+    ]);
+    appServer.assertNoErrors();
+  });
+
+  test("treats a readable Codex thread as already unarchived", async () => {
+    const threadRequests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/unarchive": (params) => {
+        threadRequests.push({ method: "thread/unarchive", params });
+        return Promise.reject(
+          new Error(
+            "failed to unarchive thread: no archived rollout found for thread id active-thread-id",
+          ),
+        );
+      },
+      "thread/read": (params) => {
+        threadRequests.push({ method: "thread/read", params });
+        return { thread: { id: "active-thread-id", turns: [] } };
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => appServer.child;
+
+    await provider.unarchiveNativeSession({
+      provider: "codex",
+      sessionId: "active-thread-id",
+    });
+
+    expect(threadRequests).toEqual([
+      { method: "thread/unarchive", params: { threadId: "active-thread-id" } },
+      { method: "thread/read", params: { threadId: "active-thread-id" } },
+    ]);
+    appServer.assertNoErrors();
+  });
+
+  test("propagates Codex unarchive failure when the thread cannot be read", async () => {
+    const threadRequests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/unarchive": (params) => {
+        threadRequests.push({ method: "thread/unarchive", params });
+        return Promise.reject(
+          new Error(
+            "failed to unarchive thread: no archived rollout found for thread id missing-thread-id",
+          ),
+        );
+      },
+      "thread/read": (params) => {
+        threadRequests.push({ method: "thread/read", params });
+        return Promise.reject(new Error("thread not found"));
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => appServer.child;
+
+    await expect(
+      provider.unarchiveNativeSession({
+        provider: "codex",
+        sessionId: "missing-thread-id",
+      }),
+    ).rejects.toThrow("no archived rollout found for thread id missing-thread-id");
+
+    expect(threadRequests).toEqual([
+      { method: "thread/unarchive", params: { threadId: "missing-thread-id" } },
+      { method: "thread/read", params: { threadId: "missing-thread-id" } },
+    ]);
+    appServer.assertNoErrors();
   });
 
   test("rewinds the conversation to a freshly emitted Codex user message id", async () => {
@@ -2238,6 +2357,126 @@ describe("Codex app-server provider", () => {
     expect(source).toMatch(/paseo-attachments[\\/].+\.png$/);
     expect(existsSync(source)).toBe(true);
     rmSync(source, { force: true });
+  });
+
+  test("mcpToolCall image content emits a completed tool call plus assistant markdown image", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    const timelineEvents: Array<Extract<AgentStreamEvent, { type: "timeline" }>> = [];
+    const timelineItemsReceived = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Timed out waiting for MCP image timeline events"));
+      }, 1000);
+      const unsubscribe = session.subscribe((event) => {
+        events.push(event);
+        if (event.type !== "timeline") {
+          return;
+        }
+        timelineEvents.push(event);
+        if (timelineEvents.length === 2) {
+          clearTimeout(timeout);
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+
+    try {
+      const { turnId } = await session.startTurn("capture a browser screenshot");
+      appServer.child.stdout.write(
+        `${JSON.stringify({
+          method: "item/completed",
+          params: {
+            item: {
+              id: "mcp-browser-screenshot",
+              type: "mcpToolCall",
+              status: "completed",
+              server: "paseo",
+              tool: "browser_screenshot",
+              arguments: { browserId: "11111111-1111-4111-8111-111111111111" },
+              result: {
+                content: [
+                  { type: "text", text: "Captured browser screenshot (1x1)." },
+                  { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+                ],
+                structuredContent: {
+                  ok: true,
+                  result: {
+                    command: "screenshot",
+                    browserId: "11111111-1111-4111-8111-111111111111",
+                    mimeType: "image/png",
+                    width: 1,
+                    height: 1,
+                  },
+                },
+              },
+            },
+          },
+        })}\n`,
+      );
+
+      await timelineItemsReceived;
+
+      expect(timelineEvents).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: {
+            type: "tool_call",
+            callId: "mcp-browser-screenshot",
+            name: "paseo.browser_screenshot",
+            status: "completed",
+            error: null,
+            detail: {
+              type: "unknown",
+              input: { browserId: "11111111-1111-4111-8111-111111111111" },
+              output: {
+                content: [
+                  { type: "text", text: "Captured browser screenshot (1x1)." },
+                  { type: "text", text: "[image]" },
+                ],
+                structuredContent: {
+                  ok: true,
+                  result: {
+                    command: "screenshot",
+                    browserId: "11111111-1111-4111-8111-111111111111",
+                    mimeType: "image/png",
+                    width: 1,
+                    height: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: expect.objectContaining({ type: "assistant_message" }),
+        },
+      ]);
+      const imageEvent = timelineEvents[1];
+      if (imageEvent.item.type !== "assistant_message") {
+        throw new Error("Expected assistant image timeline event");
+      }
+      expect(JSON.stringify(events)).not.toContain(ONE_BY_ONE_PNG_BASE64);
+      const source = markdownImageSource(imageEvent.item.text);
+      expect(source).toMatch(/paseo-attachments[\\/].+\.png$/);
+      expect(existsSync(source)).toBe(true);
+      rmSync(source, { force: true });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("ignores incomplete imageGeneration thread items without failing the turn", () => {

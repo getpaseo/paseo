@@ -8,6 +8,7 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { CommunityLinks } from "@/components/community-links";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { useHostChooser } from "@/hosts/host-chooser";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   useIsCompactFormFactor,
@@ -16,7 +17,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { buildHostAgentDetailRoute, buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
@@ -24,14 +25,16 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
 import type { Href } from "expo-router";
 
-export function OpenProjectScreen({ serverId }: { serverId: string }) {
+export function OpenProjectScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const openDesktopAgentList = usePanelStore((s) => s.openDesktopAgentList);
-  const openProjectPicker = useOpenProjectPicker(serverId);
-  const isLocalDaemon = useIsLocalDaemon(serverId);
-  const client = useHostRuntimeClient(serverId);
-  const openProject = useOpenProject(serverId);
+  const openProjectPicker = useOpenProjectPicker();
+  const chooseHost = useHostChooser();
+  const localServerId = useLocalDaemonServerId();
+  const [importServerId, setImportServerId] = useState<string | null>(null);
+  const importClient = useHostRuntimeClient(importServerId ?? "");
+  const openImportedProject = useOpenProject(importServerId);
   const [isPairDeviceOpen, setIsPairDeviceOpen] = useState(false);
   const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
 
@@ -50,22 +53,38 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
   const handleOpenPairDevice = useCallback(() => setIsPairDeviceOpen(true), []);
   const handleClosePairDevice = useCallback(() => setIsPairDeviceOpen(false), []);
 
-  const handleOpenImportSession = useCallback(() => setIsImportSheetOpen(true), []);
+  const handleOpenImportSession = useCallback(() => {
+    chooseHost({
+      title: "Import from host",
+      onChooseHost: (serverId) => {
+        setImportServerId(serverId);
+        setIsImportSheetOpen(true);
+      },
+    });
+  }, [chooseHost]);
   const handleCloseImportSession = useCallback(() => setIsImportSheetOpen(false), []);
 
   const handleImported = useCallback(
     (agent: { id: string; cwd: string }) => {
+      if (!importServerId) return;
       void (async () => {
-        await openProject(agent.cwd);
-        router.push(buildHostAgentDetailRoute(serverId, agent.id) as Href);
+        const result = await openImportedProject(agent.cwd);
+        if (result.ok) {
+          router.push(buildHostAgentDetailRoute(importServerId, agent.id) as Href);
+        }
       })();
     },
-    [openProject, router, serverId],
+    [importServerId, openImportedProject, router],
   );
 
   const handleOpenProviders = useCallback(() => {
-    router.push(buildSettingsHostSectionRoute(serverId, "providers"));
-  }, [router, serverId]);
+    chooseHost({
+      title: "Choose host",
+      onChooseHost: (serverId) => {
+        router.push(buildSettingsHostSectionRoute(serverId, "providers"));
+      },
+    });
+  }, [chooseHost, router]);
 
   return (
     <View style={styles.container}>
@@ -98,7 +117,7 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
             onPress={handleOpenProviders}
             testID="open-project-setup-providers"
           />
-          {isLocalDaemon ? (
+          {localServerId ? (
             <HomeTile
               icon={Smartphone}
               title={t("openProject.tiles.pairDevice.title")}
@@ -119,8 +138,8 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
       />
       <ImportSessionSheet
         visible={isImportSheetOpen}
-        client={client}
-        serverId={serverId}
+        client={importClient}
+        serverId={importServerId}
         onClose={handleCloseImportSession}
         onImported={handleImported}
       />

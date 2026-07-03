@@ -41,6 +41,7 @@ function buildCheckResult(
     latestVersion: null,
     body: null,
     date: null,
+    errorMessage: null,
     ...overrides,
   };
 }

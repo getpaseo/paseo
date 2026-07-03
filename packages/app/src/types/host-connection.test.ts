@@ -1,5 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { normalizeStoredHostProfile } from "./host-connection";
+import {
+  normalizeStoredHostProfile,
+  orderHostsLocalFirst,
+  type HostProfile,
+} from "./host-connection";
+
+function makeHost(serverId: string): HostProfile {
+  return {
+    serverId,
+    label: serverId,
+    lifecycle: {},
+    connections: [],
+    preferredConnectionId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+describe("orderHostsLocalFirst", () => {
+  it("moves the local host to the first position", () => {
+    const remote = makeHost("srv_remote");
+    const local = makeHost("srv_local");
+    const anotherRemote = makeHost("srv_another_remote");
+
+    expect(orderHostsLocalFirst([remote, local, anotherRemote], "srv_local")).toEqual([
+      local,
+      remote,
+      anotherRemote,
+    ]);
+  });
+
+  it("preserves host order when the local host is missing", () => {
+    const hosts = [makeHost("srv_remote"), makeHost("srv_another_remote")];
+
+    expect(orderHostsLocalFirst(hosts, "srv_local")).toBe(hosts);
+  });
+
+  it("preserves host order when there is no local host", () => {
+    const hosts = [makeHost("srv_remote"), makeHost("srv_another_remote")];
+
+    expect(orderHostsLocalFirst(hosts, null)).toBe(hosts);
+  });
+});
 
 describe("normalizeStoredHostProfile", () => {
   it("loads direct TCP connections stored before TLS and password fields existed", () => {

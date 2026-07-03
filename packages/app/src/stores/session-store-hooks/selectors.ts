@@ -23,8 +23,8 @@ export interface SessionsSnapshot {
 }
 
 export interface SidebarOrderSnapshot {
-  projectOrderByServerId: Record<string, string[]>;
-  workspaceOrderByServerAndProject: Record<string, string[]>;
+  projectOrder: string[];
+  workspaceOrderByProject: Record<string, string[]>;
 }
 
 const EMPTY_WORKSPACE_KEYS: string[] = [];
@@ -34,10 +34,6 @@ export const workspaceEqualityFns = {
   identity: Object.is as (a: unknown, b: unknown) => boolean,
   deep: equal as (a: unknown, b: unknown) => boolean,
 };
-
-function getWorkspaceOrderScopeKey(serverId: string, projectKey: string): string {
-  return `${serverId.trim()}::${projectKey.trim()}`;
-}
 
 function applyStoredOrdering<T>(input: {
   items: T[];
@@ -137,76 +133,63 @@ export function selectHasHydratedWorkspaces(
 
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
-  serverId: string | null,
+  serverIds: readonly string[],
 ): WorkspaceStructureProject[] {
-  if (!serverId) {
-    return EMPTY_WORKSPACE_STRUCTURE.projects;
-  }
+  const sessions: Array<{
+    serverId: string;
+    workspaces: Iterable<WorkspaceDescriptor>;
+    emptyProjects: Iterable<EmptyProjectDescriptor>;
+  }> = [];
 
-  const session = state.sessions[serverId];
-  const workspaces = session?.workspaces;
-  const emptyProjects = session?.emptyProjects;
-  if ((!workspaces || workspaces.size === 0) && (!emptyProjects || emptyProjects.size === 0)) {
-    return EMPTY_WORKSPACE_STRUCTURE.projects;
-  }
-
-  return buildWorkspaceStructureProjects({
-    serverId,
-    workspaces: workspaces?.values() ?? [],
-    emptyProjects: emptyProjects?.values() ?? [],
-  });
-}
-
-export function selectProjectOrder(state: SidebarOrderSnapshot, serverId: string | null): string[] {
-  return serverId
-    ? (state.projectOrderByServerId[serverId] ?? EMPTY_WORKSPACE_KEYS)
-    : EMPTY_WORKSPACE_KEYS;
-}
-
-export function selectWorkspaceOrderByScopeForServer(
-  state: SidebarOrderSnapshot,
-  serverId: string | null,
-): Record<string, string[]> {
-  if (!serverId) {
-    return {};
-  }
-  const prefix = `${serverId.trim()}::`;
-  const relevantOrderByScope: Record<string, string[]> = {};
-  for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject)) {
-    if (scopeKey.startsWith(prefix)) {
-      relevantOrderByScope[scopeKey] = order;
+  for (const serverId of serverIds) {
+    const session = state.sessions[serverId];
+    const workspaces = session?.workspaces;
+    const emptyProjects = session?.emptyProjects;
+    if ((!workspaces || workspaces.size === 0) && (!emptyProjects || emptyProjects.size === 0)) {
+      continue;
     }
+    sessions.push({
+      serverId,
+      workspaces: workspaces?.values() ?? [],
+      emptyProjects: emptyProjects?.values() ?? [],
+    });
   }
-  return relevantOrderByScope;
+
+  if (sessions.length === 0) {
+    return EMPTY_WORKSPACE_STRUCTURE.projects;
+  }
+
+  return buildWorkspaceStructureProjects({ sessions });
+}
+
+export function selectProjectOrder(state: SidebarOrderSnapshot): string[] {
+  return state.projectOrder ?? EMPTY_WORKSPACE_KEYS;
+}
+
+export function selectWorkspaceOrderByScope(state: SidebarOrderSnapshot): Record<string, string[]> {
+  return state.workspaceOrderByProject ?? {};
 }
 
 export function composeWorkspaceStructure(input: {
-  serverId: string | null;
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
   workspaceOrderByScope: Record<string, readonly string[]>;
 }): WorkspaceStructure {
-  if (!input.serverId || input.projects.length === 0) {
+  if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
   }
 
   const orderedProjects = applyStoredOrdering({
     items: input.projects.map((project) => {
       const workspaceOrder =
-        input.workspaceOrderByScope[
-          getWorkspaceOrderScopeKey(input.serverId as string, project.projectKey)
-        ] ?? EMPTY_WORKSPACE_KEYS;
-      const workspaceItems = project.workspaceKeys.map((workspaceId) => ({
-        workspaceId,
-        workspaceKey: `${input.serverId as string}:${workspaceId}`,
-      }));
+        input.workspaceOrderByScope[project.projectKey] ?? EMPTY_WORKSPACE_KEYS;
       return {
         ...project,
         workspaceKeys: applyStoredOrdering({
-          items: workspaceItems,
+          items: project.workspaceKeys,
           storedOrder: workspaceOrder,
-          getKey: (workspace) => workspace.workspaceKey,
-        }).map((workspace) => workspace.workspaceId),
+          getKey: (workspaceKey) => workspaceKey,
+        }),
       };
     }),
     storedOrder: input.projectOrder,

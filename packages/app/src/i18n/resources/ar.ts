@@ -165,7 +165,7 @@ export const ar: TranslationResources = {
     hints: {
       thinking: "وضع التفكير",
       model: "تغيير النموذج",
-      mode: "تغيير وضع الإذن",
+      mode: "تغيير الوضع",
     },
   },
   agentStream: {
@@ -245,6 +245,12 @@ export const ar: TranslationResources = {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
+      forkMenu: "تفريع الرسالة",
+      forkInNewTab: "تفريع في تبويب جديد",
+      forkInNewWorkspace: "تفريع في مساحة عمل جديدة",
+      forkUnavailable: "حدّث المضيف لاستخدام هذا.",
+      forkMissingWorkspace: "هذا الوكيل ليس في مساحة عمل.",
+      forkFailed: "فشل تفريع المحادثة",
       openFile: "افتح الملف",
       copied: "منقول",
     },
@@ -416,7 +422,21 @@ export const ar: TranslationResources = {
         enterUrl: "أدخل URL",
         openDevTools: "افتح أدوات تطوير المتصفح",
         cancelSelector: "إلغاء محدد العنصر",
-        selectElement: "حدد العنصر",
+        annotateElement: "التعليق على العنصر",
+        screenshotElement: "لقطة للعنصر",
+        screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
+        elementCopied: "تم نسخ العنصر إلى الحافظة",
+        screenshotFailed: "تعذّر نسخ لقطة الشاشة",
+      },
+      annotate: {
+        title: "التعليق على العنصر",
+        placeholder: "رسالة إلى الوكيل حول هذا العنصر…",
+        submit: "إرفاق",
+        cancel: "إلغاء",
+      },
+      devices: {
+        label: "حجم الجهاز",
+        responsive: "متجاوب",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
@@ -717,6 +737,9 @@ export const ar: TranslationResources = {
         failedOpen: "فشل في فتح مساحة العمل",
       },
       pr: {
+        actions: {
+          viewPullRequest: "عرض",
+        },
         sections: {
           checks: "الشيكات",
           reviews: "التعليقات",
@@ -761,6 +784,7 @@ export const ar: TranslationResources = {
     },
     sections: {
       sessions: "السجل",
+      schedules: "الجداول",
     },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
@@ -929,8 +953,14 @@ export const ar: TranslationResources = {
         upToDate: "التطبيق محدث.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "سنخبرك عندما يصبح التحديث جاهزًا.",
+        pendingWithLastChecked: "سنخبرك عندما يصبح التحديث جاهزًا. آخر فحص في {{time}}.",
+        pendingWithVersion: "تم العثور على تحديث: {{version}}. جارٍ التنزيل...",
+        pendingWithVersionAndLastChecked:
+          "تم العثور على تحديث: {{version}}. جارٍ التنزيل... آخر فحص في {{time}}.",
         availableWithVersion: "التحديث جاهز:{{version}}",
+        availableWithVersionAndLastChecked: "التحديث جاهز:{{version}}. آخر فحص في {{time}}.",
         available: "تحديث التطبيق جاهز للتثبيت.",
+        availableWithLastChecked: "تحديث التطبيق جاهز للتثبيت. آخر فحص في {{time}}.",
         installed: "تم تثبيت تحديث التطبيق. إعادة التشغيل مطلوبة.",
         failed: "فشل في تحديث التطبيق.",
         idle: "لم يتم التحقق من حالة التحديث بعد.",
@@ -1051,6 +1081,7 @@ export const ar: TranslationResources = {
   projectPicker: {
     placeholder: "اكتب مسار الدليل...",
     opening: "افتتاح المشروع...",
+    searching: "جارٍ البحث...",
     empty: "ابدأ بكتابة المسار",
     errors: {
       directory_not_found: "لم يتم العثور على الدليل.",
@@ -1435,6 +1466,8 @@ export const ar: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1446,6 +1479,22 @@ export const ar: TranslationResources = {
       playTest: "لعب الاختبار",
       playing: "جارٍ اللعب...",
       playbackFailed: "فشل التشغيل:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "عن",
@@ -1564,6 +1613,7 @@ export const ar: TranslationResources = {
         toggleFocusMode: "تبديل وضع التركيز",
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
+        cycleAgentMode: "تبديل وضع الوكيل",
         toggleVoiceMode: "تبديل الوضع الصوتي",
         startStopDictation: "بدء إملاء /stop",
         interruptAgent: "عامل المقاطعة",
@@ -1722,6 +1772,30 @@ export const ar: TranslationResources = {
           requestFailedMessage:
             "فشل في إرسال طلب إعادة التشغيل.  يقوم Paseo بإعادة الاتصال تلقائيًا - حاول مرة أخرى بمجرد ظهور المضيف على أنه متصل بالإنترنت.",
           dialogFailedMessage: "غير قادر على فتح مربع حوار تأكيد إعادة التشغيل.",
+        },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
         },
         dangerZone: "منطقة الخطر",
         remove: {

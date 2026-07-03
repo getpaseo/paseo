@@ -66,7 +66,7 @@ describe("daemon E2E (real opencode) - initial prompt wait", () => {
       expect(finish.status).toBe("idle");
       expect(finish.lastMessage).toContain("BIG_PICKLE_OK");
 
-      const snapshot = await client.fetchAgent(agent.id);
+      const snapshot = await client.fetchAgent({ agentId: agent.id });
       expect(snapshot.agent?.status).toBe("idle");
 
       const timeline = await client.fetchAgentTimeline(agent.id, {

@@ -4,7 +4,13 @@ import { PortalProvider } from "@gorhom/portal";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
-import { Stack, useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import {
+  Stack,
+  useGlobalSearchParams,
+  useNavigationContainerRef,
+  usePathname,
+  useRouter,
+} from "expo-router";
 import {
   createContext,
   type ReactNode,
@@ -28,11 +34,13 @@ import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { LeftSidebar } from "@/components/left-sidebar";
+import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
+import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -40,6 +48,7 @@ import {
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
+import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import {
   SidebarAnimationProvider,
   useSidebarAnimation,
@@ -54,7 +63,8 @@ import {
   startDaemonIfGateAllows,
   startHostRuntimeBootstrap,
   type StartupBlocker,
-} from "@/app/host-runtime-bootstrap";
+} from "@/navigation/host-runtime-bootstrap";
+import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
@@ -77,6 +87,8 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
+  hasConfiguredLocalDaemonOverride,
+  useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,
   useHosts,
@@ -86,11 +98,10 @@ import { applyAppearance } from "@/screens/settings/appearance/apply-appearance"
 import { usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
-import { resolveActiveHost } from "@/utils/active-host";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import { canOpenLeftSidebarGesture } from "@/utils/sidebar-animation-state";
 import {
-  buildHostRootRoute,
+  buildOpenProjectRoute,
   parseHostAgentRouteFromPathname,
   parseServerIdFromPathname,
   parseWorkspaceOpenIntent,
@@ -123,14 +134,13 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
 
 function PushNotificationRouter() {
   const router = useRouter();
-  const pathname = usePathname();
   const lastHandledIdRef = useRef<string | null>(null);
   const openNotification = useStableEvent((data: Record<string, unknown> | undefined) => {
     const target = resolveNotificationTarget(data);
     const serverId = target.serverId;
     const agentId = target.agentId;
     if (serverId && agentId) {
-      navigateToAgent({ serverId, agentId, currentPathname: pathname, pin: true });
+      navigateToAgent({ serverId, agentId, pin: true });
       return;
     }
 
@@ -303,6 +313,9 @@ async function shouldStartBuiltInDaemon(): Promise<boolean> {
   if (!shouldUseDesktopDaemon()) {
     return false;
   }
+  if (hasConfiguredLocalDaemonOverride()) {
+    return false;
+  }
   const settings = await loadDesktopSettings();
   return settings.daemon.manageBuiltInDaemon;
 }
@@ -425,12 +438,8 @@ function AppContainer({
 
   const isCompactLayout = useIsCompactFormFactor();
   useCompactWebViewportZoomLock(isCompactLayout);
-  const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const pathname = usePathname();
-  const activeServerId = useMemo(
-    () => resolveActiveHost({ hosts: daemons, pathname })?.serverId ?? null,
-    [daemons, pathname],
-  );
+  const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const toggleAgentList = isCompactLayout ? toggleMobileAgentList : toggleDesktopAgentList;
   const toggleDesktopSidebars = useCallback(() => {
     const { desktop } = usePanelStore.getState();
@@ -465,14 +474,26 @@ function AppContainer({
   useActiveWorktreeNewAction();
   useGlobalNewWorkspaceAction();
 
+  const workspaceChrome = (
+    <View style={rowStyle}>
+      {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
+        <LeftSidebar selectedAgentId={selectedAgentId} />
+      )}
+      {isCompactLayout && chromeEnabled ? (
+        <ExplorerSidebarAnimationProvider>
+          <CompactExplorerSidebarHost enabled={chromeEnabled}>
+            <View style={flexStyle}>{children}</View>
+          </CompactExplorerSidebarHost>
+        </ExplorerSidebarAnimationProvider>
+      ) : (
+        <View style={flexStyle}>{children}</View>
+      )}
+    </View>
+  );
+
   const content = (
     <View style={layoutStyles.surfaceFill}>
-      <View style={rowStyle}>
-        {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
-          <LeftSidebar selectedAgentId={selectedAgentId} />
-        )}
-        <View style={flexStyle}>{children}</View>
-      </View>
+      {workspaceChrome}
       <FloatingPanelPortalHost />
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
@@ -480,12 +501,10 @@ function AppContainer({
       <UpdateCalloutSource />
       <WorktreeSetupCalloutSource />
       <CommandCenter />
+      <HostChooserModal />
       <ProjectPickerModal />
       <ProviderSettingsHost />
-      <WorkspaceShortcutTargetsSubscriber
-        enabled={keyboardShortcutsEnabled}
-        serverId={activeServerId}
-      />
+      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
       <QuittingOverlay />
@@ -717,7 +736,7 @@ function OfferLinkListener({
           if (cancelled) return;
           const serverId = (profile as { serverId?: unknown } | null)?.serverId;
           if (typeof serverId !== "string" || !serverId) return;
-          router.replace(buildHostRootRoute(serverId));
+          router.replace(buildOpenProjectRoute());
           return;
         })
         .catch((error) => {
@@ -747,48 +766,87 @@ interface OpenProjectEventPayload {
   path?: unknown;
 }
 
-function OpenProjectListener() {
-  const hosts = useHosts();
-  const serverId = hosts[0]?.serverId ?? null;
-  const client = useHostRuntimeClient(serverId ?? "");
-  const openProject = useOpenProject(serverId);
-  const pendingPathRef = useRef<string | null>(null);
+interface PendingOpenProjectRequest {
+  id: number;
+  serverId: string;
+  path: string;
+}
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    const maybeOpenProject = (inputPath: string) => {
-      const nextPath = inputPath.trim();
+let nextOpenProjectRequestId = 1;
+
+function OpenProjectListener() {
+  const chooseHost = useHostChooser();
+  const hostRegistryLoaded = useHostRegistryLoaded();
+  const [request, setRequest] = useState<PendingOpenProjectRequest | null>(null);
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const openProject = useOpenProject(request?.serverId ?? null);
+
+  const openPathOnChosenHost = useCallback(
+    (path: string) => {
+      const nextPath = path.trim();
       if (!nextPath) {
         return;
       }
 
-      pendingPathRef.current = nextPath;
-
-      if (!serverId || !client) {
+      if (!hostRegistryLoaded) {
+        setPendingPath(nextPath);
         return;
       }
 
-      const pathToOpen = pendingPathRef.current;
-      pendingPathRef.current = null;
-      if (!pathToOpen) {
-        return;
+      chooseHost({
+        title: "Choose host",
+        onChooseHost: (serverId) => {
+          setRequest({
+            id: nextOpenProjectRequestId++,
+            serverId,
+            path: nextPath,
+          });
+        },
+      });
+    },
+    [chooseHost, hostRegistryLoaded],
+  );
+
+  useEffect(() => {
+    if (!hostRegistryLoaded || !pendingPath) {
+      return;
+    }
+    const nextPath = pendingPath;
+    setPendingPath(null);
+    openPathOnChosenHost(nextPath);
+  }, [hostRegistryLoaded, openPathOnChosenHost, pendingPath]);
+
+  useEffect(() => {
+    if (!request) {
+      return;
+    }
+    let cancelled = false;
+    void openProject(request.path).then((result) => {
+      if (cancelled) {
+        return null;
       }
 
-      void openProject(pathToOpen).catch(() => undefined);
+      if (!result.ok) {
+        setRequest((current) => (current?.id === request.id ? null : current));
+        return null;
+      }
+
+      setRequest((current) => (current?.id === request.id ? null : current));
+      return null;
+    });
+    return () => {
+      cancelled = true;
     };
+  }, [openProject, request]);
 
-    // Pull any path that was passed on cold start (before the listener existed).
-    // Store in the ref even if this effect instance is disposed — the next
-    // effect run picks it up via maybeOpenProject(pendingPathRef.current).
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
     void getDesktopHost()
       ?.getPendingOpenProject?.()
       ?.then((pending) => {
-        if (pending) {
-          pendingPathRef.current = pending;
-        }
         if (!disposed && pending) {
-          maybeOpenProject(pending);
+          openPathOnChosenHost(pending);
         }
         return;
       })
@@ -800,7 +858,7 @@ function OpenProjectListener() {
         return;
       }
       const nextPath = typeof payload?.path === "string" ? payload.path.trim() : "";
-      maybeOpenProject(nextPath);
+      openPathOnChosenHost(nextPath);
     })
       .then((dispose) => {
         if (disposed) {
@@ -812,13 +870,11 @@ function OpenProjectListener() {
       })
       .catch(() => undefined);
 
-    maybeOpenProject(pendingPathRef.current ?? "");
-
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [client, openProject, serverId]);
+  }, [openPathOnChosenHost]);
 
   return null;
 }
@@ -828,9 +884,16 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   const params = useGlobalSearchParams<{ open?: string | string[] }>();
   const hosts = useHosts();
   const storeReady = useStoreReady();
-  const activeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
+  const routeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
+  const routeHasKnownHost =
+    routeServerId !== null && hosts.some((host) => host.serverId === routeServerId);
   const shouldShowAppChrome =
-    storeReady && activeServerId !== null && hosts.some((host) => host.serverId === activeServerId);
+    storeReady &&
+    (pathname === "/open-project" ||
+      pathname === "/new" ||
+      pathname === "/sessions" ||
+      pathname === "/schedules" ||
+      routeHasKnownHost);
 
   // Parse selectedAgentKey directly from pathname
   // useLocalSearchParams doesn't update when navigating between same-pattern routes
@@ -863,8 +926,6 @@ function FaviconStatusSync() {
   return null;
 }
 
-const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
-
 function RootStack() {
   const storeReady = useStoreReady();
   const { theme } = useUnistyles();
@@ -887,25 +948,27 @@ function RootStack() {
         <Stack.Screen name="settings/[section]" />
         <Stack.Screen name="settings/projects/index" />
         <Stack.Screen name="settings/projects/[projectKey]" />
+        <Stack.Screen name="new" />
+        <Stack.Screen name="open-project" />
+        <Stack.Screen name="sessions" />
+        <Stack.Screen name="schedules" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
-      {/*
-        Do not add getId or dangerouslySingular back to the workspace route.
-        Expo Router maps dangerouslySingular to React Navigation getId, and
-        getId repeatedly breaks Android native-stack/Fabric by reordering an
-        already-mounted workspace screen. Keep workspace identity/retention
-        outside this route-level native-stack API.
-      */}
-      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
-      <Stack.Screen name="h/[serverId]/index" />
-      <Stack.Screen name="h/[serverId]/sessions" />
-      <Stack.Screen name="h/[serverId]/open-project" />
-      <Stack.Screen name="h/[serverId]/settings" />
+      <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
     </Stack>
   );
+}
+
+function WorkspaceRouteNavigationBridge() {
+  const navigationRef = useNavigationContainerRef();
+
+  useEffect(() => {
+    return registerWorkspaceRouteNavigationRef(navigationRef);
+  }, [navigationRef]);
+
+  return null;
 }
 
 function AppShell() {
@@ -914,6 +977,7 @@ function AppShell() {
       <HorizontalScrollProvider>
         <OpenProjectListener />
         <AppWithSidebar>
+          <WorkspaceRouteNavigationBridge />
           <RootStack />
         </AppWithSidebar>
       </HorizontalScrollProvider>

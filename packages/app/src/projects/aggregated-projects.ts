@@ -1,5 +1,4 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
 import { buildProjects, type ProjectHost, type ProjectSummary } from "@/utils/projects";
 
@@ -58,13 +57,14 @@ export async function fetchAggregatedProjects(
             serverName: host.serverName,
             isOnline,
             workspaces: [],
+            emptyProjects: [],
           },
           error: null,
         };
       }
 
       try {
-        const workspaces: WorkspaceDescriptor[] = await fetchAllWorkspaceDescriptors({
+        const { workspaces, emptyProjects } = await fetchAllWorkspaceDescriptors({
           client,
           sort: [{ key: "name", direction: "asc" }],
         });
@@ -74,6 +74,7 @@ export async function fetchAggregatedProjects(
             serverName: host.serverName,
             isOnline,
             workspaces,
+            emptyProjects,
           },
           error: null,
         };
@@ -84,6 +85,7 @@ export async function fetchAggregatedProjects(
             serverName: host.serverName,
             isOnline,
             workspaces: [],
+            emptyProjects: [],
           },
           error: {
             serverId: host.serverId,

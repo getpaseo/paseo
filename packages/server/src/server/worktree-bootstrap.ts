@@ -694,7 +694,7 @@ export interface WorktreeScriptResult {
   terminalId: string;
 }
 
-interface SpawnWorkspaceScriptOptions {
+export interface SpawnWorkspaceScriptOptions {
   repoRoot: string;
   workspaceId: string;
   projectSlug: string;

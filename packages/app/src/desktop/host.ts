@@ -1,5 +1,15 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
+import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+
+type BrowserAutomationExecuteRequest = Extract<
+  SessionOutboundMessage,
+  { type: "browser.automation.execute.request" }
+>;
+type BrowserAutomationExecuteResponse = Extract<
+  SessionInboundMessage,
+  { type: "browser.automation.execute.response" }
+>;
 
 export type DesktopNotificationPermission = "granted" | "denied" | "default";
 
@@ -111,15 +121,45 @@ export interface DesktopBrowserShortcutEvent {
   action: "focus-url";
 }
 
+export interface DesktopBrowserPixelCapturePreparation {
+  token: string;
+}
+
 export interface DesktopBrowserNewTabRequestEvent {
   sourceBrowserId: string;
   url: string;
 }
 
 export interface DesktopBrowserBridge {
-  setWorkspaceActiveBrowser?: (browserId: string | null) => Promise<void>;
+  registerWorkspaceBrowser?: (input: { browserId: string; workspaceId: string }) => Promise<void>;
+  setWorkspaceActiveBrowser?: (input: {
+    workspaceId: string;
+    browserId: string | null;
+  }) => Promise<void>;
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearPartition?: (browserId: string) => Promise<void>;
+  executeAutomationCommand?: (
+    request: BrowserAutomationExecuteRequest,
+  ) => Promise<BrowserAutomationExecuteResponse["payload"]>;
+  /** Capture a PNG screenshot of the guest viewport cropped to `rect`. */
+  captureElement?: (
+    browserId: string,
+    rect: { x: number; y: number; width: number; height: number },
+  ) => Promise<string | null>;
+  /** Copy element text and/or an image to the system clipboard from main. */
+  copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;
+  onPrepareForPixelCapture?: (
+    handler: (input: {
+      requestId: string;
+      browserId: string;
+    }) => Promise<DesktopBrowserPixelCapturePreparation>,
+  ) => () => void;
+  onRestorePixelCapture?: (
+    handler: (input: DesktopBrowserPixelCapturePreparation) => Promise<void>,
+  ) => () => void;
+  onCancelPixelCapture?: (
+    handler: (input: { requestId?: string; token?: string }) => Promise<void>,
+  ) => () => void;
 }
 
 export interface DesktopInvokeBridge {

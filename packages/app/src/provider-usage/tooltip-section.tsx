@@ -54,9 +54,13 @@ export function ProviderUsageTooltipSection({
 
 const styles = StyleSheet.create((theme) => ({
   divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.border,
-    marginVertical: theme.spacing[1] + 1,
+    height: 1,
+    // Same token the popover draws its own outline with, so the rule reads as the
+    // popover's edge. `border` is invisible here (equals the popover background).
+    backgroundColor: theme.colors.borderAccent,
+    marginVertical: theme.spacing[2],
+    // Cancel the tooltip content's horizontal padding so the rule spans edge to edge.
+    marginHorizontal: -theme.spacing[2],
   },
   detail: {
     color: theme.colors.foregroundMuted,

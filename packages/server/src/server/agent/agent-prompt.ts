@@ -90,20 +90,12 @@ export function startAgentRun(
  * an archived agent unarchives it the same way.
  */
 export async function unarchiveAgentState(
-  agentStorage: AgentStorage,
+  _agentStorage: AgentStorage,
   agentManager: AgentManager,
   agentId: string,
 ): Promise<boolean> {
-  const record = await agentStorage.get(agentId);
-  if (!record || !record.archivedAt) {
-    return false;
-  }
-  const updatedAt = new Date().toISOString();
-  await agentStorage.upsert({
-    ...record,
-    archivedAt: null,
-    updatedAt,
-  });
+  const unarchived = await agentManager.unarchiveSnapshot(agentId);
+  if (!unarchived) return false;
   agentManager.notifyAgentState(agentId);
   return true;
 }
