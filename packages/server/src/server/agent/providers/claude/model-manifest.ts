@@ -169,9 +169,8 @@ export function claudeManifestModelSupportsFastMode(modelId: string | null | und
 }
 
 /**
- * Normalize a runtime model string from Claude Code to a known manifest ID.
- * Handles dated model IDs and the `[1m]` suffix Claude Code reports for 1M
- * context sessions.
+ * Normalize first-party Claude model IDs for manifest capability checks. Provider-prefixed
+ * runtime IDs intentionally use normalizeClaudeRuntimeModelId instead.
  */
 export function normalizeClaudeManifestModelId(value: string | null | undefined): string | null {
   const trimmed = typeof value === "string" ? value.trim() : "";
@@ -187,15 +186,11 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
     /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?(?:[-_ ]+\d{8})?$/i,
   );
   if (singleSegmentMatch) {
-    const family = singleSegmentMatch[1].toLowerCase();
-    const major = singleSegmentMatch[2];
-    const suffix = trimmed.toLowerCase().includes("[1m]") ? "[1m]" : "";
-    const candidates = [`claude-${family}-${major}${suffix}`, `claude-${family}-${major}`];
-    for (const candidate of candidates) {
-      if (isClaudeManifestModelId(candidate)) {
-        return candidate;
-      }
-    }
+    return normalizeSingleSegmentClaudeModelId(
+      singleSegmentMatch[1],
+      singleSegmentMatch[2],
+      trimmed.toLowerCase().includes("[1m]"),
+    );
   }
 
   const runtimeMatch = trimmed.match(
@@ -205,10 +200,83 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
     return null;
   }
 
-  const family = runtimeMatch[1].toLowerCase();
-  const major = runtimeMatch[2];
-  const minor = runtimeMatch[3];
-  const suffix = runtimeMatch[4] ?? "";
+  return normalizeMajorMinorClaudeModelId(
+    runtimeMatch[1],
+    runtimeMatch[2],
+    runtimeMatch[3],
+    Boolean(runtimeMatch[4]),
+  );
+}
+
+/**
+ * Normalize a Claude Code runtime/config model string to a known manifest ID.
+ * Runtime metadata may include provider prefixes such as Bedrock model IDs; feature
+ * gates should use normalizeClaudeManifestModelId instead.
+ */
+export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
+  const normalizedManifestModelId = normalizeClaudeManifestModelId(value);
+  if (normalizedManifestModelId) {
+    return normalizedManifestModelId;
+  }
+
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    return null;
+  }
+
+  const singleSegmentMatch = trimmed.match(
+    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?/i,
+  );
+  if (singleSegmentMatch) {
+    const normalizedModelId = normalizeSingleSegmentClaudeModelId(
+      singleSegmentMatch[1],
+      singleSegmentMatch[2],
+      Boolean(singleSegmentMatch[3]),
+    );
+    if (normalizedModelId) {
+      return normalizedModelId;
+    }
+  }
+
+  const runtimeMatch = trimmed.match(
+    /claude[-_ ](opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+  );
+  if (!runtimeMatch) {
+    return null;
+  }
+
+  return normalizeMajorMinorClaudeModelId(
+    runtimeMatch[1],
+    runtimeMatch[2],
+    runtimeMatch[3],
+    Boolean(runtimeMatch[4]),
+  );
+}
+
+function normalizeSingleSegmentClaudeModelId(
+  familyValue: string,
+  major: string,
+  hasOneMillionContext: boolean,
+): string | null {
+  const family = familyValue.toLowerCase();
+  const suffix = hasOneMillionContext ? "[1m]" : "";
+  const candidates = [`claude-${family}-${major}${suffix}`, `claude-${family}-${major}`];
+  for (const candidate of candidates) {
+    if (isClaudeManifestModelId(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function normalizeMajorMinorClaudeModelId(
+  familyValue: string,
+  major: string,
+  minor: string,
+  hasOneMillionContext: boolean,
+): string | null {
+  const family = familyValue.toLowerCase();
+  const suffix = hasOneMillionContext ? "[1m]" : "";
   const candidate = `claude-${family}-${major}-${minor}${suffix}`;
   return isClaudeManifestModelId(candidate) ? candidate : null;
 }

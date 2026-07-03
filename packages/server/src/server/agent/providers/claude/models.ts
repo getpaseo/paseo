@@ -4,7 +4,10 @@ import * as path from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
-import { getClaudeManifestModels, normalizeClaudeManifestModelId } from "./model-manifest.js";
+import {
+  getClaudeManifestModels,
+  normalizeClaudeRuntimeModelId as normalizeClaudeManifestRuntimeModelId,
+} from "./model-manifest.js";
 
 const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
@@ -126,5 +129,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Handles the `[1m]` suffix that the SDK appends for 1M context sessions.
  */
 export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
-  return normalizeClaudeManifestModelId(value);
+  return normalizeClaudeManifestRuntimeModelId(value);
 }

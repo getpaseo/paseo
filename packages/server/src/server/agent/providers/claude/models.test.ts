@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
-import { CLAUDE_ULTRACODE_THINKING_OPTION_ID } from "./model-manifest.js";
+import {
+  CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+  claudeManifestModelSupportsFastMode,
+  normalizeClaudeManifestModelId,
+} from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
@@ -291,9 +295,16 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("random")).toBeNull();
   });
 
-  it("does not normalize embedded IDs from custom provider model strings", () => {
-    expect(normalizeClaudeRuntimeModelId("openrouter/anthropic/claude-opus-4-8")).toBeNull();
-    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-8-20260101")).toBeNull();
+  it("normalizes provider-form runtime model strings", () => {
+    expect(normalizeClaudeRuntimeModelId("openrouter/anthropic/claude-opus-4-8")).toBe(
+      "claude-opus-4-8",
+    );
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-8[1m]")).toBe(
+      "claude-opus-4-8[1m]",
+    );
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-8-20260101")).toBe(
+      "claude-opus-4-8",
+    );
   });
 });
 
@@ -301,5 +312,16 @@ describe("findClaudeModel", () => {
   it("resolves runtime model IDs to catalog entries", () => {
     expect(findClaudeModel("claude-sonnet-5-20260101")?.id).toBe("claude-sonnet-5");
     expect(findClaudeModel("claude-sonnet-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
+    expect(findClaudeModel("us.anthropic.claude-opus-4-8[1m]")?.contextWindowMaxTokens).toBe(
+      1_000_000,
+    );
+  });
+});
+
+describe("claudeManifestModelSupportsFastMode", () => {
+  it("keeps fast mode strict to first-party manifest model IDs", () => {
+    expect(normalizeClaudeManifestModelId("openrouter/anthropic/claude-opus-4-8")).toBeNull();
+    expect(claudeManifestModelSupportsFastMode("openrouter/anthropic/claude-opus-4-8")).toBe(false);
+    expect(claudeManifestModelSupportsFastMode("claude-opus-4-8-20260101")).toBe(true);
   });
 });
