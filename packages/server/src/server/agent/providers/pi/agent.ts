@@ -673,6 +673,52 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+const CUSTOM_SKILL_PAYLOAD_COLLAPSE_MIN_CHARS = 4_000;
+const SKILL_FILE_MARKER_PATTERN = /(?:^|\n)\/skill:(\S*SKILL\.md)\b/m;
+const SKILL_FRONTMATTER_NAME_PATTERN = /^---\s*\n(?:[^\n]*\n)*?name:\s*["']?([^"'\n]+)["']?/;
+
+function inferSkillNameFromPath(skillPath: string): string | null {
+  const parts = skillPath.split(/[\\/]+/).filter((part) => part.length > 0);
+  const filename = parts.at(-1)?.toLowerCase();
+  if (filename !== "skill.md") {
+    return null;
+  }
+  return parts.at(-2) ?? null;
+}
+
+function parseCustomSkillPayload(text: string): { name: string } | null {
+  if (text.length < CUSTOM_SKILL_PAYLOAD_COLLAPSE_MIN_CHARS) {
+    return null;
+  }
+  const pathMatch = SKILL_FILE_MARKER_PATTERN.exec(text);
+  const frontmatterName = SKILL_FRONTMATTER_NAME_PATTERN.exec(text)?.[1]?.trim();
+  const pathName = pathMatch?.[1] ? inferSkillNameFromPath(pathMatch[1]) : null;
+  const name = frontmatterName || pathName;
+  return name ? { name } : null;
+}
+
+function mapCustomMessageToTimelineItem(
+  text: string,
+): Extract<AgentStreamEvent, { type: "timeline" }>["item"] {
+  const skill = parseCustomSkillPayload(text);
+  if (!skill) {
+    return { type: "assistant_message", text };
+  }
+  return {
+    type: "tool_call",
+    callId: `custom-skill-${randomUUID()}`,
+    name: "skill",
+    status: "completed",
+    detail: {
+      type: "plain_text",
+      label: skill.name,
+      icon: "sparkles",
+      text,
+    },
+    error: null,
+  };
+}
+
 function parseExtensionMarkerPayload(
   message: string,
   marker: string,
@@ -1772,7 +1818,7 @@ export class PiRpcAgentSession implements AgentSession {
           type: "timeline",
           provider: PI_PROVIDER,
           turnId,
-          item: { type: "assistant_message", text },
+          item: mapCustomMessageToTimelineItem(text),
         });
       }
       this.completeTurn(turnId, []);

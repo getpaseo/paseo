@@ -504,6 +504,52 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("collapses Pi custom skill payloads into a completed skill card", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const skillPayload = [
+      "---",
+      "name: diagnose",
+      "description: Diagnose tricky failures.",
+      "---",
+      "# Diagnose",
+      "Find the root cause before proposing fixes.",
+      "x".repeat(8_000),
+    ].join("\n");
+
+    await session.startTurn("/skill:diagnose");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: skillPayload }],
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: expect.objectContaining({
+          type: "tool_call",
+          name: "skill",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            label: "diagnose",
+            icon: "sparkles",
+            text: skillPayload,
+          },
+          error: null,
+        }),
+      },
+      { type: "turn_completed" },
+    ]);
+    expect(events.timelineItems()).not.toContainEqual({
+      type: "assistant_message",
+      text: skillPayload,
+    });
+  });
+
   test("adds Pi assistant context to generic provider finish errors", async () => {
     const { pi, session, events } = await createSession();
 
