@@ -421,7 +421,7 @@ describe("PiRpcAgentSession", () => {
   });
 
   test("streams assistant text, reasoning, and tool calls from Pi events", async () => {
-    const { pi, session, events } = await createSession();
+    const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();
 
     fakeSession.emit({
@@ -474,7 +474,7 @@ describe("PiRpcAgentSession", () => {
   });
 
   test("emits live user messages with captured Pi tree entry ids", async () => {
-    const { pi, session, events } = await createSession();
+    const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();
 
     fakeSession.capturedUserEntries = [{ id: "entry-user-1", parentId: null, text: "hello" }];
