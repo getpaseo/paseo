@@ -21,7 +21,7 @@ This keeps credentials and execution in your environment and avoids introducing 
 - Speech I/O: STT and TTS providers per feature (`local` or `openai`)
 - Local speech runtime: ONNX models executed on CPU by default
 - Voice LLM orchestration: hidden agent session using your configured provider (`claude`, `codex`, or `opencode`)
-- Tooling path: MCP stdio bridge for voice tools and agent control
+- Tooling path: MCP bridge for voice tools and agent control. For Pi/OMP-backed voice sessions, Paseo bundles and loads `pi-mcp-adapter` automatically; users do not need to install it manually for Paseo voice mode.
 
 ## Local Speech
 
