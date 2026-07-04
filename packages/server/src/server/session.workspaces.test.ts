@@ -33,6 +33,11 @@ import type {
   AgentStreamEvent,
 } from "./agent/agent-sdk-types.js";
 import { createWorktree, UnknownBranchError } from "../utils/worktree.js";
+import {
+  readPaseoWorktreeMetadata,
+  writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
+  writePaseoWorktreeMetadata,
+} from "../utils/worktree-metadata.js";
 import { WorktreeRequestError, toWorktreeRequestError } from "./worktree-errors.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
@@ -7378,6 +7383,101 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
     expect(stored.get(workspace.workspaceId)?.title).toBe("Generated login fix");
   } finally {
     vi.useRealTimers();
+  }
+});
+
+test("workspace auto-name applies title once when branch auto-name is rejected", async () => {
+  vi.useFakeTimers();
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "workspace-auto-name-rejected-")));
+  const repoDir = path.join(tempDir, "repo");
+  mkdirSync(repoDir);
+  execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: repoDir, stdio: "pipe" });
+  writeFileSync(path.join(repoDir, "README.md"), "hello\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "-M", "placeholder-branch"], { cwd: repoDir, stdio: "pipe" });
+  writePaseoWorktreeMetadata(repoDir, { baseRefName: "main" });
+  writePaseoWorktreeFirstAgentBranchAutoNameMetadata(repoDir, {
+    placeholderBranchName: "placeholder-branch",
+  });
+
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-rejected-branch-title",
+    projectId: "proj-rejected-branch-title",
+    cwd: repoDir,
+    kind: "worktree",
+    displayName: "Fix checkout title",
+    title: "Fix checkout title",
+    branch: "placeholder-branch",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const stored = new Map([[workspace.workspaceId, workspace]]);
+  let generateCalls = 0;
+  const gitMutations: string[] = [];
+  const emittedCwds: string[] = [];
+  const workspaceAutoName = new WorkspaceAutoName({
+    agentManager: asAgentManager({}),
+    workspaceRegistry: {
+      get: async (workspaceId) => stored.get(workspaceId) ?? null,
+      upsert: async (record) => {
+        stored.set(record.workspaceId, record);
+      },
+    },
+    workspaceGitService: createNoopWorkspaceGitService(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+    gitMutation: {
+      notifyGitMutation: async (_cwd, reason) => {
+        gitMutations.push(reason);
+      },
+    },
+    emitWorkspaceUpdateForCwd: async (cwd) => {
+      emittedCwds.push(cwd);
+    },
+    emitWorkspaceUpdateForWorkspaceId: async () => {},
+    logger: asSessionLogger(createTestLogger()),
+    generateWorkspaceName: async () => {
+      generateCalls += 1;
+      return { title: "Generated Invalid Branch Title", branch: "Invalid Branch Name" };
+    },
+  });
+
+  try {
+    workspaceAutoName.scheduleForWorktree({
+      workspace,
+      firstAgentContext: { prompt: "Fix checkout title" },
+    });
+    await vi.runAllTimersAsync();
+
+    expect(generateCalls).toBe(1);
+    expect(stored.get(workspace.workspaceId)).toMatchObject({
+      title: "Generated Invalid Branch Title",
+      branch: "placeholder-branch",
+    });
+    expect(
+      execFileSync("git", ["branch", "--show-current"], { cwd: repoDir, stdio: "pipe" })
+        .toString()
+        .trim(),
+    ).toBe("placeholder-branch");
+    expect(readPaseoWorktreeMetadata(repoDir)).toMatchObject({
+      version: 2,
+      firstAgentBranchAutoName: {
+        status: "attempted",
+        placeholderBranchName: "placeholder-branch",
+      },
+    });
+    expect(gitMutations).toEqual([]);
+    expect(emittedCwds).toEqual([repoDir]);
+  } finally {
+    vi.useRealTimers();
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

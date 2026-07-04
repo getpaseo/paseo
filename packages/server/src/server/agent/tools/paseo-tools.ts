@@ -1185,10 +1185,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
     if (callerAgentId) {
       const parsed = agentToAgentCreateAgentArgsSchema.parse(args);
-      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
-        parsed.workspace,
-        parsed.initialPrompt ? { prompt: parsed.initialPrompt } : undefined,
-      );
+      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace, {
+        prompt: parsed.initialPrompt,
+      });
       return {
         kind: "agent-scoped",
         parsedArgs: parsed,
@@ -1202,10 +1201,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (parsedArgs.relationship.kind === "subagent") {
       throw new Error("relationship subagent requires an agent-scoped tool session");
     }
-    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(
-      parsedArgs.workspace,
-      parsedArgs.initialPrompt ? { prompt: parsedArgs.initialPrompt } : undefined,
-    );
+    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsedArgs.workspace, {
+      prompt: parsedArgs.initialPrompt,
+    });
     return {
       kind: "top-level",
       parsedArgs,

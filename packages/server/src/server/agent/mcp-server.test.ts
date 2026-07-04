@@ -2177,12 +2177,15 @@ describe("create_agent MCP tool", () => {
     }
   });
 
-  it("does not auto-rename a create_agent checkout worktree from the initial prompt", async () => {
+  it("auto-titles without renaming a create_agent checkout worktree from the initial prompt", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-agent-checkout-name-context-"));
     const repoDir = join(tempDir, "repo");
     const paseoHome = join(tempDir, ".paseo");
     const broadcasts: string[] = [];
+    const createdWorkspaceIds: string[] = [];
+    const workspaceRecords = new Map<string, PersistedWorkspaceRecord>();
+    let generateCalls = 0;
     const workspaceGitService = {
       getSnapshot: vi.fn(async () => {
         throw new Error("agent metadata branch rename should not run");
@@ -2227,7 +2230,19 @@ describe("create_agent MCP tool", () => {
         agentStorage,
         providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({
+          paseoHome,
+          broadcasts,
+          createdWorkspaceIds,
+          workspaceRecords,
+          generateWorkspaceName: async () => {
+            generateCalls += 1;
+            return {
+              title: "Generated Checkout Workspace Title",
+              branch: "generated-checkout-workspace-title",
+            };
+          },
+        }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees"
@@ -2247,14 +2262,28 @@ describe("create_agent MCP tool", () => {
       });
 
       const agentCwd = z.string().parse(spies.agentManager.createAgent.mock.calls[0]?.[0].cwd);
+      const workspaceId = z.string().parse(createdWorkspaceIds[0]);
+      await waitForWorkspaceTitle(
+        workspaceRecords,
+        workspaceId,
+        "Generated Checkout Workspace Title",
+      );
       expect(
         execFileSync("git", ["branch", "--show-current"], { cwd: agentCwd, stdio: "pipe" })
           .toString()
           .trim(),
       ).toBe("existing-feature");
-      await waitForUnexpectedWorkspaceNamingSideEffects();
+      expect(workspaceRecords.get(workspaceId)).toMatchObject({
+        title: "Generated Checkout Workspace Title",
+        branch: "existing-feature",
+      });
+      expect(readPaseoWorktreeMetadata(agentCwd)).toMatchObject({
+        version: 1,
+        baseRefName: "existing-feature",
+      });
+      expect(generateCalls).toBe(1);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
-      expect(broadcasts).toHaveLength(1);
+      expect(broadcasts).toEqual([workspaceId, workspaceId]);
     } finally {
       await removeTempDir(tempDir);
     }

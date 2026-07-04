@@ -108,7 +108,7 @@ export class WorkspaceAutoName {
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<void> {
-    let generatedTitle: string | null = null;
+    let generated: GeneratedWorkspaceName | null = null;
     const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
       cwd: input.workspace.cwd,
       firstAgentContext: input.firstAgentContext,
@@ -117,26 +117,37 @@ export class WorkspaceAutoName {
           cwd,
           firstAgentContext,
           currentSelection: input.currentSelection,
-        }).then((generated) => {
-          generatedTitle = generated?.title ?? null;
-          return generated?.branch ?? null;
+        }).then((nextGenerated) => {
+          generated = nextGenerated;
+          return nextGenerated?.branch ?? null;
         });
       },
     });
-    if (!result.renamed || !generatedTitle) {
+
+    if (!generated) {
+      generated = await this.generateFromContext({
+        cwd: input.workspace.cwd,
+        firstAgentContext: input.firstAgentContext,
+        currentSelection: input.currentSelection,
+      });
+    }
+    const generatedTitle = generated?.title ?? null;
+    if (!generatedTitle) {
       return;
     }
 
     // K4: re-read from the registry before writing so any concurrent upsert
     // that happened between workspace creation and this async path is not clobbered.
-    // The first-agent rename renamed the git branch too, so persist the new branch
+    // When the first-agent rename changed the git branch too, persist that branch
     // alongside the title — both are this path's own fields.
     await this.applyGeneratedWorkspaceTitle(input.workspace.workspaceId, {
       title: generatedTitle,
-      branch: result.branchName,
+      ...(result.renamed ? { branch: result.branchName } : {}),
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
-    await this.gitMutation.notifyGitMutation(input.workspace.cwd, "rename-branch");
+    if (result.renamed) {
+      await this.gitMutation.notifyGitMutation(input.workspace.cwd, "rename-branch");
+    }
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }
 

@@ -308,10 +308,7 @@ async function ensureWorkspaceForMcpCreate(
   if (!dependencies.ensureWorkspaceForCreate) {
     return undefined;
   }
-  return dependencies.ensureWorkspaceForCreate(
-    cwd,
-    initialPrompt ? { prompt: initialPrompt } : undefined,
-  );
+  return dependencies.ensureWorkspaceForCreate(cwd, { prompt: initialPrompt });
 }
 
 async function sendInitialPrompt(
@@ -431,7 +428,7 @@ async function resolveMcpCwd(params: {
       refName: worktree.refName,
       action: worktree.action,
       githubPrNumber: worktree.githubPrNumber,
-      ...(params.initialPrompt ? { firstAgentContext: { prompt: params.initialPrompt } } : {}),
+      firstAgentContext: { prompt: params.initialPrompt },
       runSetup: false,
       paseoHome: dependencies.paseoHome,
       worktreesRoot: dependencies.worktreesRoot,
