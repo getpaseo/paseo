@@ -28,6 +28,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate protocol validators
+        run: npm run generate:validation-aot
+
       - name: Build app dependencies
         run: npm run build:app-deps
 

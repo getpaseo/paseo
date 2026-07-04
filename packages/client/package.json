@@ -27,12 +27,12 @@
   },
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "build": "tsc -p tsconfig.json --incremental false",
+    "build": "npm run generate:validation-aot --workspace=@getpaseo/protocol && tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "npm run generate:validation-aot --workspace=@getpaseo/protocol && tsgo --noEmit",
     "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
-    "test": "vitest run"
+    "test": "npm run generate:validation-aot --workspace=@getpaseo/protocol && vitest run"
   },
   "dependencies": {
     "@getpaseo/protocol": "0.1.104-beta.3",
