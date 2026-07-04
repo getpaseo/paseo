@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
@@ -153,12 +154,19 @@ const PI_THINKING_OPTIONS: ReadonlyArray<{
   { id: "xhigh", label: "XHigh", description: "Maximum reasoning" },
 ] as const;
 
+const require = createRequire(import.meta.url);
+const PI_MCP_ADAPTER_RESOLUTION_ERROR =
+  "Pi MCP adapter is required for MCP server injection but the bundled pi-mcp-adapter extension could not be resolved.";
+
+type PiMcpAdapterExtensionResolver = () => string | null;
+
 interface PiRpcAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   providerParams?: unknown;
   commandsRpcType?: PiCommandsRpcType;
   runtime?: PiRuntime;
+  resolveMcpAdapterExtensionPath?: PiMcpAdapterExtensionResolver;
 }
 
 interface PiPromptPayload {
@@ -211,6 +219,10 @@ interface PiMcpServerConfig {
 interface PiMcpConfigFile {
   path: string;
   cleanup: () => void;
+}
+
+interface PiPreparedMcpConfig extends PiMcpConfigFile {
+  adapterExtensionPath: string;
 }
 
 interface PiTempFile {
@@ -486,6 +498,14 @@ function createPiMcpConfigFile(servers: Record<string, McpServerConfig>): PiMcpC
   };
 }
 
+function resolveBundledPiMcpAdapterExtensionPath(): string | null {
+  try {
+    return require.resolve("pi-mcp-adapter/index.ts");
+  } catch {
+    return null;
+  }
+}
+
 function createPiPaseoExtensionFile(): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
@@ -587,16 +607,6 @@ function combineCleanup(cleanups: Array<(() => void) | undefined>): (() => void)
       cleanup();
     }
   };
-}
-
-function isPiMcpAdapterCommand(command: PiRpcSlashCommand): boolean {
-  if (command.source !== "extension" || !/^mcp(?::\d+)?$/.test(command.name)) {
-    return false;
-  }
-  if (!command.sourceInfo) {
-    return true;
-  }
-  return JSON.stringify(command.sourceInfo).includes("pi-mcp-adapter");
 }
 
 function withPiMcpCapability(supportsMcpServers: boolean): AgentCapabilityFlags {
@@ -1918,6 +1928,7 @@ export class PiRpcAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly providerParams: PiProviderParams;
   private readonly runtime: PiRuntime;
+  private readonly resolveMcpAdapterExtensionPath: PiMcpAdapterExtensionResolver;
 
   constructor(options: PiRpcAgentClientOptions) {
     this.logger = options.logger;
@@ -1926,14 +1937,19 @@ export class PiRpcAgentClient implements AgentClient {
     this.runtime =
       options.runtime ??
       createRuntime(options.logger, options.runtimeSettings, options.commandsRpcType);
+    this.resolveMcpAdapterExtensionPath =
+      options.resolveMcpAdapterExtensionPath ?? resolveBundledPiMcpAdapterExtensionPath;
   }
 
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const mcpConfig = await this.prepareMcpConfig(config.cwd, config.mcpServers);
+    const mcpConfig = await this.prepareMcpConfig(config.mcpServers);
     const paseoExtension = createPiPaseoExtensionFile();
+    const extensionPaths = mcpConfig
+      ? [mcpConfig.adapterExtensionPath, paseoExtension.path]
+      : [paseoExtension.path];
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -1947,7 +1963,7 @@ export class PiRpcAgentClient implements AgentClient {
         ),
         env: launchContext?.env,
         mcpConfigPath: mcpConfig?.path,
-        extensionPaths: [paseoExtension.path],
+        extensionPaths,
       });
     } catch (error) {
       mcpConfig?.cleanup();
@@ -1984,8 +2000,11 @@ export class PiRpcAgentClient implements AgentClient {
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides);
 
-    const mcpConfig = await this.prepareMcpConfig(resumeConfig.cwd, resumeConfig.config.mcpServers);
+    const mcpConfig = await this.prepareMcpConfig(resumeConfig.config.mcpServers);
     const paseoExtension = createPiPaseoExtensionFile();
+    const extensionPaths = mcpConfig
+      ? [mcpConfig.adapterExtensionPath, paseoExtension.path]
+      : [paseoExtension.path];
     let runtimeSession: PiRuntimeSession;
     try {
       runtimeSession = await this.runtime.startSession({
@@ -1998,7 +2017,7 @@ export class PiRpcAgentClient implements AgentClient {
           resumeConfig.config.daemonAppendSystemPrompt,
         ),
         mcpConfigPath: mcpConfig?.path,
-        extensionPaths: [paseoExtension.path],
+        extensionPaths,
       });
     } catch (error) {
       mcpConfig?.cleanup();
@@ -2098,34 +2117,19 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   private async prepareMcpConfig(
-    cwd: string,
     servers: Record<string, McpServerConfig> | undefined,
-  ): Promise<PiMcpConfigFile | null> {
+  ): Promise<PiPreparedMcpConfig | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
-    if (!(await this.detectMcpAdapter(cwd))) {
-      return null;
+    const adapterExtensionPath = this.resolveMcpAdapterExtensionPath();
+    if (!adapterExtensionPath) {
+      throw new Error(PI_MCP_ADAPTER_RESOLUTION_ERROR);
     }
-    return createPiMcpConfigFile(servers);
-  }
-
-  private async detectMcpAdapter(cwd: string): Promise<boolean> {
-    const runtimeSession = await this.runtime.startSession({ cwd }).catch((error) => {
-      this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed to start");
-      return null;
-    });
-    if (!runtimeSession) {
-      return false;
-    }
-    try {
-      return (await runtimeSession.getCommands()).some(isPiMcpAdapterCommand);
-    } catch (error) {
-      this.logger.debug({ err: error, cwd }, "Pi MCP adapter probe failed");
-      return false;
-    } finally {
-      await runtimeSession.close().catch(() => undefined);
-    }
+    return {
+      ...createPiMcpConfigFile(servers),
+      adapterExtensionPath,
+    };
   }
 
   private async resolvePiLaunch(): Promise<ResolvedProviderLaunch> {

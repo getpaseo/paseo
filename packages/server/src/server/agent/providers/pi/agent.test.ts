@@ -17,10 +17,17 @@ import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../a
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
-function createClient(pi = new FakePi()): PiRpcAgentClient {
+const BUNDLED_PI_MCP_ADAPTER_PATH = "/tmp/paseo-bundled-pi-mcp-adapter/index.ts";
+
+function createClient(
+  pi = new FakePi(),
+  options: { resolveMcpAdapterExtensionPath?: () => string | null } = {},
+): PiRpcAgentClient {
   return new PiRpcAgentClient({
     logger: pino({ level: "silent" }),
     runtime: pi,
+    resolveMcpAdapterExtensionPath:
+      options.resolveMcpAdapterExtensionPath ?? (() => BUNDLED_PI_MCP_ADAPTER_PATH),
   });
 }
 
@@ -1178,16 +1185,8 @@ describe("PiRpcAgentClient", () => {
     expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-1"]);
   });
 
-  test("injects MCP servers through pi-mcp-adapter when the extension is loaded", async () => {
+  test("injects MCP servers through the bundled pi-mcp-adapter extension", async () => {
     const pi = new FakePi();
-    pi.queueCommands([
-      {
-        name: "mcp",
-        description: "Show MCP server status",
-        source: "extension",
-        sourceInfo: { source: "npm:pi-mcp-adapter" },
-      },
-    ]);
     const client = createClient(pi);
 
     const session = await client.createSession(
@@ -1207,13 +1206,10 @@ describe("PiRpcAgentClient", () => {
       }),
     );
 
-    expect(pi.recordedLaunches).toHaveLength(2);
-    expect(pi.recordedLaunches[0]).toMatchObject({
-      cwd: "/tmp/paseo-pi-rpc-test",
-      argv: ["pi", "--mode", "rpc"],
-    });
-    const actualLaunch = pi.recordedLaunches[1]!;
-    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(pi.recordedLaunches).toHaveLength(1);
+    const actualLaunch = pi.recordedLaunches[0]!;
+    expect(actualLaunch.extensionPaths).toHaveLength(2);
+    expect(actualLaunch.extensionPaths?.[0]).toBe(BUNDLED_PI_MCP_ADAPTER_PATH);
     expect(actualLaunch.argv).toEqual([
       "pi",
       "--mode",
@@ -1223,7 +1219,9 @@ describe("PiRpcAgentClient", () => {
       "--mcp-config",
       actualLaunch.mcpConfigPath,
       "--extension",
-      actualLaunch.extensionPaths[0],
+      BUNDLED_PI_MCP_ADAPTER_PATH,
+      "--extension",
+      actualLaunch.extensionPaths![1],
     ]);
     expect(session.capabilities.supportsMcpServers).toBe(true);
 
@@ -1251,7 +1249,7 @@ describe("PiRpcAgentClient", () => {
     expect(existsSync(configPath!)).toBe(false);
   });
 
-  test("does not pass MCP config when pi-mcp-adapter is not loaded", async () => {
+  test("uses bundled pi-mcp-adapter even when no user-installed adapter command is loaded", async () => {
     const pi = new FakePi();
     pi.queueCommands([]);
     const client = createClient(pi);
@@ -1267,20 +1265,49 @@ describe("PiRpcAgentClient", () => {
       }),
     );
 
-    expect(pi.recordedLaunches).toHaveLength(2);
-    const actualLaunch = pi.recordedLaunches[1]!;
-    expect(actualLaunch.extensionPaths).toHaveLength(1);
+    expect(pi.recordedLaunches).toHaveLength(1);
+    const actualLaunch = pi.recordedLaunches[0]!;
+    expect(actualLaunch.extensionPaths).toHaveLength(2);
+    expect(actualLaunch.extensionPaths?.[0]).toBe(BUNDLED_PI_MCP_ADAPTER_PATH);
     expect(actualLaunch.argv).toEqual([
       "pi",
       "--mode",
       "rpc",
       "--thinking",
       "medium",
+      "--mcp-config",
+      actualLaunch.mcpConfigPath,
       "--extension",
-      actualLaunch.extensionPaths[0],
+      BUNDLED_PI_MCP_ADAPTER_PATH,
+      "--extension",
+      actualLaunch.extensionPaths![1],
     ]);
-    expect(actualLaunch.mcpConfigPath).toBeUndefined();
-    expect(session.capabilities.supportsMcpServers).toBe(false);
+    expect(actualLaunch.mcpConfigPath).toEqual(expect.any(String));
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+
+    await session.close();
+  });
+
+  test("fails before launching Pi when bundled pi-mcp-adapter cannot be resolved", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi, { resolveMcpAdapterExtensionPath: () => null });
+
+    await expect(
+      client.createSession(
+        createConfig({
+          mcpServers: {
+            paseo: {
+              type: "http",
+              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow(
+      "Pi MCP adapter is required for MCP server injection but the bundled pi-mcp-adapter extension could not be resolved.",
+    );
+
+    expect(pi.recordedLaunches).toEqual([]);
   });
 });
 
