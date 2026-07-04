@@ -414,6 +414,12 @@ export function FileExplorerPane({
     void refetchExplorer();
   }, [refetchExplorer]);
 
+  // Mirror isRefreshFetching into a ref so the dirty-state subscription stays stable across fetch cycles.
+  const refreshFetchingRef = useRef(isRefreshFetching);
+  useEffect(() => {
+    refreshFetchingRef.current = isRefreshFetching;
+  }, [isRefreshFetching]);
+
   // Auto-refresh expanded directories when isDirty flips (push-driven from daemon FS watcher
   // during agent tool-use). Debounce guard: skip if already fetching a manual or automatic refresh.
   useEffect(() => {
@@ -421,12 +427,12 @@ export function FileExplorerPane({
 
     let cancelled = false;
     const onDirtyChange = () => {
-      if (cancelled || isRefreshFetching) return;
+      if (cancelled || refreshFetchingRef.current) return;
       void refetchExplorer();
     };
 
     return subscribeToDirtyStateChange(serverId, workspaceRoot.trim(), onDirtyChange);
-  }, [serverId, hasWorkspaceScope, workspaceRoot, isRefreshFetching, refetchExplorer]);
+  }, [serverId, hasWorkspaceScope, workspaceRoot, refetchExplorer]);
 
   const sortLabels = useMemo(
     () => ({

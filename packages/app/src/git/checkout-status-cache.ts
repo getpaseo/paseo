@@ -115,13 +115,15 @@ export function subscribeToDirtyStateChange(
     set = new Set();
     dirtyListeners.set(key, set);
   }
-  set.add({ callback, serverId, cwd });
+  const entry: DirtyListenerEntry = { callback, serverId, cwd };
+  set.add(entry);
 
   return () => {
     const currentSet = dirtyListeners.get(key);
-    currentSet?.delete({ callback, serverId, cwd });
+    currentSet?.delete(entry);
     if (currentSet?.size === 0) {
       dirtyListeners.delete(key);
+      lastDirtyFlip.delete(key);
     }
   };
 }
