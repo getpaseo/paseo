@@ -692,10 +692,8 @@ describe("PiRpcAgentSession", () => {
 
         await session.startTurn("hello");
 
-        // Directly invoke pollUsage to verify emission works without relying on timer timing.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pollFn = (session as any).pollUsage.bind(session) as () => Promise<void>;
-        await pollFn();
+        // Advance past the default 5s polling interval — verify emission via subscription.
+        vi.advanceTimersByTime(6_000);
 
         let usageEvents = events.filter(
           (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
@@ -707,12 +705,9 @@ describe("PiRpcAgentSession", () => {
 
         // Complete the turn via agent_end event — polling stops.
         fakeSession.emit({ type: "agent_end" });
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
 
-        // Verify no further emissions after turn complete.
-        await pollFn();
+        // Advance more time — no further emissions after turn complete.
+        vi.advanceTimersByTime(6_000);
         usageEvents = events.filter(
           (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
             e.type === "usage_updated",
@@ -741,10 +736,8 @@ describe("PiRpcAgentSession", () => {
 
         await session.startTurn("hello");
 
-        // Directly invoke pollUsage — should NOT emit because flag is disabled.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pollFn = (session as any).pollUsage.bind(session) as () => Promise<void>;
-        await pollFn();
+        // Advance past default interval — should NOT emit because flag is disabled.
+        vi.advanceTimersByTime(6_000);
 
         expect(events.length).toBe(0);
 
@@ -767,16 +760,11 @@ describe("PiRpcAgentSession", () => {
     session.subscribe((event) => events.push(event));
     fakeSession.stats = { tokens: { input: 500, output: 200 }, cost: 0.05 };
 
-    // Verify the configured interval value.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((session as any).pollingIntervalMs).toBe(CUSTOM_INTERVAL_MS);
-
     await session.startTurn("hello");
 
-    // Directly invoke pollUsage to verify emission with custom config.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pollFn = (session as any).pollUsage.bind(session) as () => Promise<void>;
-    await pollFn();
+    // Advance past the custom 1s interval (but not 5s default) — verify emission proves custom config.
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(CUSTOM_INTERVAL_MS + 500);
 
     let usageEvents = events.filter(
       (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> => e.type === "usage_updated",
@@ -785,6 +773,7 @@ describe("PiRpcAgentSession", () => {
     expect(usageEvents[0].turnId).toBeDefined();
 
     fakeSession.emit({ type: "agent_end" });
+    vi.useRealTimers();
     await session.close();
   });
 });
