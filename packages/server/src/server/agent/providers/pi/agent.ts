@@ -1921,7 +1921,8 @@ export class PiRpcAgentSession implements AgentSession {
 
   /** Periodic callback that polls getSessionStats during an active turn. */
   private async pollUsage(): Promise<void> {
-    if (!this.activeTurnId) {
+    const turnId = this.activeTurnId;
+    if (!turnId) {
       this.stopUsagePolling();
       return;
     }
@@ -1938,7 +1939,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.emit({
         type: "usage_updated",
         provider: PI_PROVIDER,
-        turnId: this.activeTurnId ?? undefined,
+        turnId,
         usage,
       });
     }
