@@ -85,6 +85,13 @@
   },
   "overrides": [
     {
+      "files": ["packages/server/src/**/*.test.ts"],
+      "rules": {
+        "max-nested-callbacks": "off",
+        "@typescript-eslint/no-explicit-any": "warn"
+      }
+    },
+    {
       "files": ["**/e2e/fixtures.ts"],
       "rules": {
         "no-empty-pattern": "off"

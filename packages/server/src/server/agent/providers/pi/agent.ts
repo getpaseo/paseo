@@ -1069,6 +1069,8 @@ export class PiRpcAgentSession implements AgentSession {
     const payload = convertPromptInput(prompt);
     const turnId = randomUUID();
     this.activeTurnId = turnId;
+    // Reset dedup key so cumulative stats from previous turn don't suppress first emission of this one.
+    this.lastEmittedUsageKey = null;
     // Start periodic usage polling during active turns for real-time context updates.
     if (this.contextWindowReportingEnabled) {
       this.usagePollInterval = setInterval(() => {
@@ -1921,6 +1923,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   /** Periodic callback that polls getSessionStats during an active turn. */
   private async pollUsage(): Promise<void> {
+    if (!this.contextWindowReportingEnabled) return;
     const turnId = this.activeTurnId;
     if (!turnId) {
       this.stopUsagePolling();

@@ -51,16 +51,17 @@ describe("OMP integration", () => {
       const stats = (await session.getSessionStats()) as Record<string, unknown>;
 
       // toAgentUsage reads these fields — verify they exist in OMP response.
-      const tokens = stats.tokens as Record<string, unknown> | undefined;
-      expect(tokens?.input).toBeDefined();
-      expect(tokens?.output).toBeDefined();
+      expect((stats.tokens as Record<string, unknown>)!).toHaveProperty("input");
+      expect((stats.tokens as Record<string, unknown>)!).toHaveProperty("output");
       expect(stats.cost).toBeDefined();
 
-      // contextUsage is optional but may be present.
+      // contextUsage is optional but may be present; assert its shape when present.
       if ("contextUsage" in stats) {
         const cu = stats.contextUsage as Record<string, unknown>;
-        expect(cu!).toHaveProperty("tokens");
-        expect(cu!).toHaveProperty("contextWindow");
+        expect(cu!).toMatchObject({
+          tokens: expect.any(Object),
+          contextWindow: expect.any(Number),
+        });
       }
     } finally {
       await session.close();
