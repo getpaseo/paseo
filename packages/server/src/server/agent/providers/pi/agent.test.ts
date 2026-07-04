@@ -681,30 +681,34 @@ describe("PiRpcAgentSession", () => {
   test("starts usage polling on startTurn and stops it on close", () => {
     vi.useFakeTimers();
     return (async () => {
-      const { pi, session } = await createSession(undefined, {
-        contextWindowReportingEnabled: true,
-      });
-      // No turn started yet — no interval should exist.
-      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+      try {
+        const { pi, session } = await createSession(undefined, {
+          contextWindowReportingEnabled: true,
+        });
+        // No turn started yet — no interval should exist.
+        expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
 
-      // Start a turn — interval should be created.
-      await session.startTurn("hello");
-      const intervalId1 = (session as unknown as Record<string, unknown>)
-        .usagePollInterval as unknown;
-      expect(intervalId1).not.toBe(null);
+        // Start a turn — interval should be created.
+        await session.startTurn("hello");
+        const intervalId1 = (session as unknown as Record<string, unknown>)
+          .usagePollInterval as unknown;
+        expect(intervalId1).not.toBe(null);
 
-      // Complete the turn via agent_end event through fake session.
-      const fakeSession = pi.latestSession();
-      fakeSession.emit({ type: "agent_end" });
-      // Give microtasks time to process completeTurn → stopUsagePolling.
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+        // Complete the turn via agent_end event through fake session.
+        const fakeSession = pi.latestSession();
+        fakeSession.emit({ type: "agent_end" });
+        // Give microtasks time to process completeTurn → stopUsagePolling.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
 
-      // Interval should now be cleared after turn completion.
-      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+        // Interval should now be cleared after turn completion.
+        expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
 
-      await session.close();
+        await session.close();
+      } finally {
+        vi.useRealTimers();
+      }
     })();
   });
 
@@ -760,17 +764,21 @@ describe("PiRpcAgentSession", () => {
   test("does not create polling interval when contextWindowReportingEnabled is false (default)", () => {
     vi.useFakeTimers();
     return (async () => {
-      // No options passed — should default to disabled.
-      const { session } = await createSession();
+      try {
+        // No options passed — should default to disabled.
+        const { session } = await createSession();
 
-      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+        expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
 
-      await session.startTurn("hello");
+        await session.startTurn("hello");
 
-      // Interval should still be null because flag defaults to false.
-      expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
+        // Interval should still be null because flag defaults to false.
+        expect((session as unknown as Record<string, unknown>).usagePollInterval).toBe(null);
 
-      await session.close();
+        await session.close();
+      } finally {
+        vi.useRealTimers();
+      }
     })();
   });
 
@@ -811,32 +819,36 @@ describe("PiRpcAgentSession", () => {
   test("uses configurable polling interval instead of default", () => {
     vi.useFakeTimers();
     return (async () => {
-      const CUSTOM_INTERVAL_MS = 1_000;
-      const { session } = await createSession(undefined, {
-        contextWindowReportingEnabled: true,
-        pollingIntervalMs: CUSTOM_INTERVAL_MS,
-      });
+      try {
+        const CUSTOM_INTERVAL_MS = 1_000;
+        const { session } = await createSession(undefined, {
+          contextWindowReportingEnabled: true,
+          pollingIntervalMs: CUSTOM_INTERVAL_MS,
+        });
 
-      // Start a turn — should use our custom interval.
-      await session.startTurn("hello");
+        // Start a turn — should use our custom interval.
+        await session.startTurn("hello");
 
-      // Advance past the first poll cycle with our custom interval.
-      vi.advanceTimersByTime(CUSTOM_INTERVAL_MS + 1);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+        // Advance past the first poll cycle with our custom interval.
+        vi.advanceTimersByTime(CUSTOM_INTERVAL_MS + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
 
-      // Interval must have been created with the correct period by verifying
-      // that advancing only 500ms does NOT trigger another poll (proves it's not the default).
-      vi.advanceTimersByTime(500);
-      await Promise.resolve();
+        // Interval must have been created with the correct period by verifying
+        // that advancing only 500ms does NOT trigger another poll (proves it's not the default).
+        vi.advanceTimersByTime(500);
+        await Promise.resolve();
 
-      const intervalId = (session as unknown as Record<string, unknown>)
-        .usagePollInterval as unknown;
-      expect(intervalId).not.toBe(null);
+        const intervalId = (session as unknown as Record<string, unknown>)
+          .usagePollInterval as unknown;
+        expect(intervalId).not.toBe(null);
 
-      // Clean up.
-      await session.close();
+        // Clean up.
+        await session.close();
+      } finally {
+        vi.useRealTimers();
+      }
     })();
   });
 });

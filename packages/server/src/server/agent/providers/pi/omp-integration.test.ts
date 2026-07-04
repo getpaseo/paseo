@@ -1,3 +1,5 @@
+import { describe, expect, test } from "vitest";
+
 import pino from "pino";
 
 import { PiCliRuntime } from "./cli-runtime.js";
@@ -16,20 +18,12 @@ describe("OMP integration", () => {
     const session = await runtime.startSession({ cwd: "/tmp" });
 
     try {
-      // Verify OMP returns valid stats shape.
-      const stats = await session.getSessionStats();
+      const stats = (await session.getSessionStats()) as Record<string, unknown>;
 
-      expect(stats).toBeDefined();
-      if (typeof stats === "object" && stats !== null) {
-        expect(stats).toHaveProperty("tokens");
-        expect(stats).toHaveProperty("cost");
-
-        const tokens = stats.tokens as Record<string, unknown> | undefined;
-        if (tokens && typeof tokens === "object") {
-          expect(tokens).toHaveProperty("input");
-          expect(tokens).toHaveProperty("output");
-        }
-      }
+      expect(stats).toHaveProperty("tokens");
+      expect(stats).toHaveProperty("cost");
+      expect((stats.tokens as Record<string, unknown>)!).toHaveProperty("input");
+      expect((stats.tokens as Record<string, unknown>)!).toHaveProperty("output");
     } finally {
       await session.close();
     }
@@ -40,13 +34,10 @@ describe("OMP integration", () => {
     const session = await runtime.startSession({ cwd: "/tmp" });
 
     try {
-      const state = await session.getState();
+      const state = (await session.getState()) as unknown as Record<string, unknown>;
 
-      expect(state).toBeDefined();
-      if (typeof state === "object" && state !== null) {
-        // OMP returns model info even before a turn starts.
-        expect(state).toHaveProperty("model");
-      }
+      // OMP returns model info even before a turn starts.
+      expect(state).toHaveProperty("model");
     } finally {
       await session.close();
     }
@@ -57,7 +48,7 @@ describe("OMP integration", () => {
     const session = await runtime.startSession({ cwd: "/tmp" });
 
     try {
-      const stats = await session.getSessionStats();
+      const stats = (await session.getSessionStats()) as Record<string, unknown>;
 
       // toAgentUsage reads these fields — verify they exist in OMP response.
       const tokens = stats.tokens as Record<string, unknown> | undefined;
@@ -67,11 +58,9 @@ describe("OMP integration", () => {
 
       // contextUsage is optional but may be present.
       if ("contextUsage" in stats) {
-        const cu = stats.contextUsage as Record<string, unknown> | undefined;
-        if (cu && typeof cu === "object") {
-          expect(cu).toHaveProperty("tokens");
-          expect(cu).toHaveProperty("contextWindow");
-        }
+        const cu = stats.contextUsage as Record<string, unknown>;
+        expect(cu!).toHaveProperty("tokens");
+        expect(cu!).toHaveProperty("contextWindow");
       }
     } finally {
       await session.close();
