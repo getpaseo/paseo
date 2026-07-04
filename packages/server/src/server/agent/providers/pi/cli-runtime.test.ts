@@ -270,6 +270,7 @@ describe("PiCliRuntime", () => {
 
     expect(child.killedSignals).toContain("SIGTERM");
   });
+
   test("falls back to get_state when get_session_stats is unsupported", async () => {
     const child = createPiChild();
     let commandSequence: string[] = [];
@@ -327,6 +328,30 @@ describe("PiCliRuntime", () => {
       cost: 0.02,
       contextUsage: { tokens: 800, contextWindow: 200_000 },
     });
+    // Should NOT have called get_state as a fallback
+    expect(fallbackCalled).toBe(false);
+  });
+
+  test("does not fall back when get_session_stats returns cost:0", async () => {
+    const child = createPiChild();
+    let fallbackCalled = false;
+    replyToCommands(child, (command) => {
+      if (command.type === "get_state") {
+        fallbackCalled = true;
+      }
+      return {
+        tokens: { input: 200, output: 100 },
+        cost: 0,
+        contextUsage: { tokens: 500, contextWindow: 200_000 },
+      };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const stats = await session.getSessionStats();
+
+    expect(stats.tokens).toEqual({ input: 200, output: 100 });
+    expect(stats.cost).toBe(0);
+    expect(stats.contextUsage).toEqual({ tokens: 500, contextWindow: 200_000 });
     // Should NOT have called get_state as a fallback
     expect(fallbackCalled).toBe(false);
   });

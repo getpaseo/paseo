@@ -190,7 +190,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     } catch {
       // get_session_stats not supported by this binary — will try get_state below
     }
-    if (!stats?.tokens && !stats?.cost && !stats?.contextUsage) {
+    if (stats?.tokens == null && stats?.cost == null && stats?.contextUsage == null) {
       try {
         const state = (await this.request({ type: "get_state" })) as Record<string, unknown>;
         const ctx = state.contextUsage as
