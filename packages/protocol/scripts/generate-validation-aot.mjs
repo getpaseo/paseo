@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -21,6 +21,24 @@ try {
   throw error;
 }
 const zodAotRoot = resolve(dirname(zodAotEntry), "..");
+const emitterPath = resolve(zodAotRoot, "dist/cli/emitter.js");
+
+async function ensureZodAotRuntimeImportExtensionPatch() {
+  const emitter = await readFile(emitterPath, "utf8");
+  if (emitter.includes('sourceRelPath.endsWith(".js")')) {
+    return;
+  }
+
+  const before = 'let importPath = sourceRelPath.replace(/\\.[cm]?[jt]sx?$/, "");';
+  const after =
+    'let importPath = sourceRelPath.endsWith(".js")\n        ? sourceRelPath\n        : sourceRelPath.replace(/\\.[cm]?[jt]sx?$/, "");';
+  if (!emitter.includes(before)) {
+    throw new Error("zod-aot emitter shape changed; update the runtime import extension patch");
+  }
+  await writeFile(emitterPath, emitter.replace(before, after));
+}
+
+await ensureZodAotRuntimeImportExtensionPatch();
 
 const [{ discoverSchemas }, { compileSchemas }, { generateCompiledFileContent }] =
   await Promise.all([
