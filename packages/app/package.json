@@ -7,7 +7,7 @@
     "start": "npm run start:expo",
     "start:expo": "cross-env APP_VARIANT=development expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "eas-build-post-install": "npm --prefix ../protocol run generate:validators && npm --prefix ../.. run build:app-deps && npm run build:terminal-webview",
+    "eas-build-post-install": "npm --prefix ../.. run build:app-deps && npm run build:terminal-webview",
     "android": "npm run android:development",
     "android:development": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=development expo prebuild --platform android --non-interactive && cross-env APP_VARIANT=development expo run:android --variant=debug",
     "android:production": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=production expo prebuild --platform android --non-interactive && cross-env APP_VARIANT=production expo run:android --variant=release",

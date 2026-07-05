@@ -22,9 +22,11 @@
     "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
+    "postinstall": "node scripts/generate-validation-aot.mjs --optional",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "generate:validators": "node scripts/generate-validation-aot.mjs",
+    "watch": "concurrently --kill-others --names validation,tsc --prefix-colors green,yellow \"node scripts/watch-validation-aot.mjs\" \"tsc -p tsconfig.json --watch --preserveWatchOutput\"",
     "prebuild": "npm run generate:validators",
     "pretypecheck": "npm run generate:validators",
     "pretest": "npm run generate:validators"

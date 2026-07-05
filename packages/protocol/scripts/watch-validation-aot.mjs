@@ -1,9 +1,10 @@
 import { readdir, stat } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
-const rootDir = process.cwd();
-const protocolSrcDir = join(rootDir, "packages", "protocol", "src");
+const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const protocolSrcDir = join(packageRoot, "src");
 const pollIntervalMs = 1000;
 
 let currentFingerprint = "";
@@ -41,7 +42,7 @@ async function fingerprintSources() {
   const stats = await Promise.all(
     files.sort().map(async (file) => {
       const fileStat = await stat(file);
-      return `${relative(rootDir, file)}:${fileStat.mtimeMs}:${fileStat.size}`;
+      return `${relative(packageRoot, file)}:${fileStat.mtimeMs}:${fileStat.size}`;
     }),
   );
 
@@ -56,14 +57,10 @@ function runGenerate() {
 
   generateInFlight = true;
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-  const child = spawn(
-    npmCommand,
-    ["run", "generate:validators", "--workspace=@getpaseo/protocol"],
-    {
-      cwd: rootDir,
-      stdio: "inherit",
-    },
-  );
+  const child = spawn(npmCommand, ["run", "generate:validators"], {
+    cwd: packageRoot,
+    stdio: "inherit",
+  });
 
   child.on("exit", (code, signal) => {
     generateInFlight = false;

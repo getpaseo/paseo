@@ -76,10 +76,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Generate protocol validators
-        run: npm run generate:validators --workspace=@getpaseo/protocol
-
       - name: Build server stack
         run: npm run build:server
 
@@ -116,10 +112,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Generate protocol validators
-        run: npm run generate:validators --workspace=@getpaseo/protocol
-
       - name: Install agent CLIs for provider tests
         run: npm install -g @anthropic-ai/claude-code opencode-ai
 
@@ -176,10 +168,6 @@ jobs:
             }
             Start-Sleep -Seconds (20 * $attempt)
           }
-
-      - name: Generate protocol validators
-        run: npm run generate:validators --workspace=@getpaseo/protocol
-
       - name: Build server stack
         run: npm run build:server
 
@@ -211,10 +199,6 @@ jobs:
             fi
             sleep $((attempt * 20))
           done
-
-      - name: Generate protocol validators
-        run: npm run generate:validators --workspace=@getpaseo/protocol
-
       - name: Install Playwright browsers
         timeout-minutes: 10
         run: npx playwright install chromium
@@ -239,10 +223,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Generate protocol validators
-        run: npm run generate:validators --workspace=@getpaseo/protocol
-
       - name: Build client dependencies
         run: npm run build:client
 
@@ -285,10 +265,6 @@ jobs:
             fi
             sleep $((attempt * 20))
           done
-
-      - name: Generate protocol validators
-        run: npm run generate:validators --workspace=@getpaseo/protocol
-
       - name: Install Playwright browsers
         timeout-minutes: 10
         run: npx playwright install chromium
