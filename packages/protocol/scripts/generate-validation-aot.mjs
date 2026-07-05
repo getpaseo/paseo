@@ -22,6 +22,10 @@ try {
 }
 const zodAotRoot = resolve(dirname(zodAotEntry), "..");
 const emitterPath = resolve(zodAotRoot, "dist/cli/emitter.js");
+const discriminatedUnionPath = resolve(
+  zodAotRoot,
+  "dist/core/codegen/schemas/discriminated-union.js",
+);
 
 async function ensureZodAotRuntimeImportExtensionPatch() {
   const emitter = await readFile(emitterPath, "utf8");
@@ -38,7 +42,45 @@ async function ensureZodAotRuntimeImportExtensionPatch() {
   await writeFile(emitterPath, emitter.replace(before, after));
 }
 
-await ensureZodAotRuntimeImportExtensionPatch();
+async function ensureZodAotDiscriminatedUnionOutputPatch() {
+  let discriminatedUnionEmitter = await readFile(discriminatedUnionPath, "utf8");
+  if (
+    discriminatedUnionEmitter.includes(
+      "const needsOutputPropagation = ir.options.some(hasMutation);",
+    )
+  ) {
+    return;
+  }
+
+  const importBefore = 'import { escapeString } from "../context.js";';
+  const importAfter = 'import { escapeString, hasMutation } from "../context.js";';
+  const outputFlagBefore = "const discKey = escapeString(ir.discriminator);\n    let code = emit `";
+  const outputFlagAfter =
+    "const discKey = escapeString(ir.discriminator);\n    const needsOutputPropagation = ir.options.some(hasMutation);\n    let code = emit `";
+  const propagationBefore =
+    "        ${g.visit(option, { input: objVar, output: objVar })}\n        break;`;";
+  const propagationAfter =
+    '        ${g.visit(option, { input: objVar, output: objVar })}\n        ${needsOutputPropagation ? `${g.output}=${objVar};` : ""}\n        break;`;';
+
+  if (
+    !discriminatedUnionEmitter.includes(importBefore) ||
+    !discriminatedUnionEmitter.includes(outputFlagBefore) ||
+    !discriminatedUnionEmitter.includes(propagationBefore)
+  ) {
+    throw new Error("zod-aot discriminated-union emitter shape changed; update the output patch");
+  }
+
+  discriminatedUnionEmitter = discriminatedUnionEmitter
+    .replace(importBefore, importAfter)
+    .replace(outputFlagBefore, outputFlagAfter)
+    .replace(propagationBefore, propagationAfter);
+  await writeFile(discriminatedUnionPath, discriminatedUnionEmitter);
+}
+
+await Promise.all([
+  ensureZodAotRuntimeImportExtensionPatch(),
+  ensureZodAotDiscriminatedUnionOutputPatch(),
+]);
 
 const [{ discoverSchemas }, { compileSchemas }, { generateCompiledFileContent }] =
   await Promise.all([
