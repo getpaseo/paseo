@@ -110,6 +110,7 @@ export interface PaseoToolHostDependencies {
     cwd: string,
     firstAgentContext?: FirstAgentContext,
   ) => Promise<string>;
+  browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
@@ -1027,7 +1028,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return toCatalog();
   }
 
-  if (options.browserToolsBroker) {
+  if (options.browserToolsEnabled && options.browserToolsBroker) {
     registerBrowserTools({
       registerTool,
       broker: options.browserToolsBroker,

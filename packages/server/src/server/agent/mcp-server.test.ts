@@ -766,6 +766,7 @@ describe("browser MCP tools", () => {
       agentStorage: agentStorage as AgentStorage,
       providerSnapshotManager:
         new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsEnabled: true,
       browserToolsBroker: broker as BrowserToolsBroker,
       callerAgentId: "agent-1",
       logger,
@@ -839,6 +840,7 @@ describe("browser MCP tools", () => {
       agentStorage: agentStorage as AgentStorage,
       providerSnapshotManager:
         new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      browserToolsEnabled: true,
       browserToolsBroker: broker as BrowserToolsBroker,
       callerAgentId: "agent-1",
       logger,
@@ -893,50 +895,24 @@ describe("browser MCP tools", () => {
     }
   });
 
-  it("keeps browser tools registered when browser tools are disabled", async () => {
+  it("does not register browser tools when browser tools are disabled", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "agent-1",
       cwd: REPO_CWD,
       workspaceId: BROWSER_WORKSPACE_ID,
     });
-    const execute = vi.fn().mockResolvedValue({
-      requestId: "req-browser-disabled",
-      ok: false,
-      error: {
-        code: "browser_disabled",
-        message: "Browser tools are disabled.",
-        retryable: false,
-      },
-    });
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
-      browserToolsBroker: { execute } as never,
+      browserToolsEnabled: false,
       callerAgentId: "agent-1",
       logger,
     });
-    const tool = registeredTool(server, "browser_list_tabs");
 
-    const response = await tool.handler({});
-
-    expect(lookupTool(server, "browser_snapshot")).not.toBeUndefined();
-    expect(execute).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      cwd: REPO_CWD,
-      workspaceId: BROWSER_WORKSPACE_ID,
-      command: { command: "list_tabs", args: {} },
-    });
-    expect(response.structuredContent).toEqual({
-      ok: false,
-      error: {
-        code: "browser_disabled",
-        message: "Browser tools are disabled.",
-        retryable: false,
-      },
-      context: { agentId: "agent-1", cwd: REPO_CWD, workspaceId: BROWSER_WORKSPACE_ID },
-    });
+    expect(lookupTool(server, "browser_list_tabs")).toBeUndefined();
+    expect(lookupTool(server, "browser_snapshot")).toBeUndefined();
   });
 
   it("wires browser tools through the browser tools broker", async () => {
@@ -955,6 +931,7 @@ describe("browser MCP tools", () => {
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsEnabled: true,
       browserToolsBroker: { execute } as never,
       callerAgentId: "agent-1",
       logger,
@@ -994,6 +971,7 @@ describe("browser MCP tools", () => {
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
+      browserToolsEnabled: true,
       browserToolsBroker: { execute } as never,
       callerAgentId: "agent-1",
       logger,

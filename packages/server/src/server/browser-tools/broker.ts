@@ -8,7 +8,6 @@ import {
   type BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
-import type { BrowserToolsPolicy } from "./policy.js";
 
 export interface BrowserHostClient {
   id: string;
@@ -40,7 +39,6 @@ interface RegisteredBrowserHost {
 }
 
 export interface BrowserToolsBrokerOptions {
-  policy: BrowserToolsPolicy;
   defaultTimeoutMs?: number;
   createRequestId?: () => string;
 }
@@ -48,7 +46,6 @@ export interface BrowserToolsBrokerOptions {
 const DEFAULT_BROWSER_TOOLS_TIMEOUT_MS = 15_000;
 
 export class BrowserToolsBroker {
-  private readonly policy: BrowserToolsPolicy;
   private readonly defaultTimeoutMs: number;
   private readonly createRequestId: () => string;
   private readonly clients = new Map<string, RegisteredBrowserHost>();
@@ -58,7 +55,6 @@ export class BrowserToolsBroker {
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
-    this.policy = options.policy;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_BROWSER_TOOLS_TIMEOUT_MS;
     this.createRequestId = options.createRequestId ?? (() => `browser_${randomUUID()}`);
   }
@@ -116,14 +112,6 @@ export class BrowserToolsBroker {
 
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
     const requestId = input.requestId ?? this.createRequestId();
-
-    if (!this.policy.isEnabled()) {
-      return browserToolsFailure({
-        requestId,
-        code: "browser_disabled",
-        message: "Browser tools are disabled. Enable daemon.browserTools.enabled to use them.",
-      });
-    }
 
     const request = BrowserAutomationExecuteRequestSchema.safeParse({
       type: "browser.automation.execute.request",

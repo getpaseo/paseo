@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
-import { StaticBrowserToolsPolicy } from "./browser-tools/policy.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
@@ -256,7 +255,6 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
 function createBroker(): BrowserToolsBroker {
   return new BrowserToolsBroker({
-    policy: new StaticBrowserToolsPolicy(true),
     defaultTimeoutMs: 500,
     createRequestId: createRequestIdSequence(),
   });
