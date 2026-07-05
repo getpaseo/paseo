@@ -4,6 +4,7 @@ import {
   ProviderSnapshotEntrySchema,
   ProvidersSnapshotUpdateMessageSchema,
 } from "./messages.js";
+import { normalizeSessionOutboundMessage } from "./validation/model-normalization.js";
 
 describe("provider snapshot message schemas", () => {
   test("defaults missing provider snapshot entry enabled state to true", () => {
@@ -38,7 +39,7 @@ describe("provider snapshot message schemas", () => {
     expect(parsed.enabled).toBe(true);
   });
 
-  test("normalizes thinking option defaults on provider snapshot models", () => {
+  test("normalizes thinking option defaults in the explicit provider snapshot pass", () => {
     const parsed = ProviderSnapshotEntrySchema.parse({
       provider: "claude",
       status: "ready",
@@ -58,6 +59,31 @@ describe("provider snapshot message schemas", () => {
     });
 
     expect(parsed.models).toEqual([
+      {
+        provider: "claude",
+        id: "MiniMax-M2.7",
+        label: "MiniMax-M2.7",
+        isDefault: true,
+        contextWindowMaxTokens: 1_000_000,
+        thinkingOptions: [
+          { id: "off", label: "Off" },
+          { id: "max", label: "Max", isDefault: true },
+        ],
+      },
+    ]);
+
+    const normalized = normalizeSessionOutboundMessage(
+      ProvidersSnapshotUpdateMessageSchema.parse({
+        type: "providers_snapshot_update",
+        payload: {
+          cwd: "/tmp/repo",
+          entries: [parsed],
+          generatedAt: "2026-04-24T00:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(normalized.payload.entries[0]?.models).toEqual([
       {
         provider: "claude",
         id: "MiniMax-M2.7",
