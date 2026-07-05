@@ -3,23 +3,13 @@ import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const optional = process.argv.includes("--optional");
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = resolve(packageRoot, "codegen/ws-outbound.compile.ts");
 const runtimeSchemaMetadata = resolve(packageRoot, "src/validation/ws-outbound-schema-metadata.ts");
 const output = resolve(packageRoot, "src/generated/validation/ws-outbound.aot.ts");
 
 const require = createRequire(import.meta.url);
-let zodAotEntry;
-try {
-  zodAotEntry = require.resolve("zod-aot");
-} catch (error) {
-  if (optional && error && error.code === "MODULE_NOT_FOUND") {
-    console.info("skipping validation AOT generation; zod-aot is not installed");
-    process.exit(0);
-  }
-  throw error;
-}
+const zodAotEntry = require.resolve("zod-aot");
 const zodAotRoot = resolve(dirname(zodAotEntry), "..");
 const emitterPath = resolve(zodAotRoot, "dist/cli/emitter.js");
 const discriminatedUnionPath = resolve(

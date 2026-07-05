@@ -22,7 +22,7 @@ The protocol package owns generation.
 - `packages/protocol/src/generated/validation/ws-outbound.aot.ts` is generated runtime code and is gitignored.
 - `packages/protocol/src/validation/ws-outbound-schema-metadata.ts` is runtime schema metadata for zod-aot fallback/default references.
 
-Generation runs from protocol-owned lifecycle hooks: `postinstall`, `prebuild`, `pretypecheck`, `pretest`, and `watch`. CI and EAS do not call codegen directly; they run normal install/build/typecheck flows.
+Generation runs from protocol-owned lifecycle hooks: `prebuild`, `pretypecheck`, `pretest`, and `watch`. Installs do not run generation: published packages consume protocol from prebuilt `dist`, and local build/typecheck/test flows generate the source file at the point it is actually needed.
 
 ## Regression Tests
 

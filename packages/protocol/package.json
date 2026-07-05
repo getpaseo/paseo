@@ -22,7 +22,6 @@
     "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "postinstall": "node -e \"const fs=require('node:fs');const{spawnSync}=require('node:child_process');if(!fs.existsSync('scripts/generate-validation-aot.mjs')){console.info('skipping validation AOT generation; source generator is not packaged');process.exit(0)}const result=spawnSync(process.execPath,['scripts/generate-validation-aot.mjs','--optional'],{stdio:'inherit'});process.exit(result.status??1)\"",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "generate:validators": "node scripts/generate-validation-aot.mjs",
