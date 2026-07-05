@@ -694,6 +694,7 @@ describe("PiRpcAgentSession", () => {
 
         // Advance past the default 5s polling interval — verify emission via subscription.
         vi.advanceTimersByTime(6_000);
+        await vi.runOnlyPendingTimersAsync();
 
         let usageEvents = events.filter(
           (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
@@ -738,6 +739,7 @@ describe("PiRpcAgentSession", () => {
 
         // Advance past default interval — should NOT emit because flag is disabled.
         vi.advanceTimersByTime(6_000);
+        await vi.runOnlyPendingTimersAsync();
 
         expect(events.length).toBe(0);
 
@@ -749,32 +751,38 @@ describe("PiRpcAgentSession", () => {
     })();
   });
 
-  test("uses configurable polling interval instead of default", async () => {
-    const CUSTOM_INTERVAL_MS = 1_000;
-    const { pi, session } = await createSession(undefined, {
-      contextWindowReportingEnabled: true,
-      pollingIntervalMs: CUSTOM_INTERVAL_MS,
-    });
-    const fakeSession = pi.latestSession();
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-    fakeSession.stats = { tokens: { input: 500, output: 200 }, cost: 0.05 };
-
-    await session.startTurn("hello");
-
-    // Advance past the custom 1s interval (but not 5s default) — verify emission proves custom config.
+  test("uses configurable polling interval instead of default", () => {
     vi.useFakeTimers();
-    vi.advanceTimersByTime(CUSTOM_INTERVAL_MS + 500);
+    return (async () => {
+      try {
+        const CUSTOM_INTERVAL_MS = 1_000;
+        const { pi, session } = await createSession(undefined, {
+          contextWindowReportingEnabled: true,
+          pollingIntervalMs: CUSTOM_INTERVAL_MS,
+        });
+        const fakeSession = pi.latestSession();
+        const events: AgentStreamEvent[] = [];
+        session.subscribe((event) => events.push(event));
+        fakeSession.stats = { tokens: { input: 500, output: 200 }, cost: 0.05 };
 
-    let usageEvents = events.filter(
-      (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> => e.type === "usage_updated",
-    );
-    expect(usageEvents.length).toBeGreaterThanOrEqual(1);
-    expect(usageEvents[0].turnId).toBeDefined();
+        await session.startTurn("hello");
 
-    fakeSession.emit({ type: "agent_end" });
-    vi.useRealTimers();
-    await session.close();
+        // Advance past the custom 1s interval (but not 5s default) — verify emission proves custom config.
+        vi.advanceTimersByTime(CUSTOM_INTERVAL_MS + 500);
+        await vi.runOnlyPendingTimersAsync();
+
+        let usageEvents = events.filter(
+          (e): e is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
+            e.type === "usage_updated",
+        );
+        expect(usageEvents.length).toBeGreaterThanOrEqual(1);
+        expect(usageEvents[0].turnId).toBeDefined();
+
+        fakeSession.emit({ type: "agent_end" });
+      } finally {
+        vi.useRealTimers();
+      }
+    })();
   });
 });
 
