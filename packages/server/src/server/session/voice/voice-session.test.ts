@@ -297,6 +297,11 @@ describe("VoiceSession Codex voice MCP overrides", () => {
     expect(overrides.mcpServers?.paseo_voice).toMatchObject({
       type: "http",
       url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=00000000-0000-4000-8000-000000000001&voiceOnly=1",
+      enabledTools: ["speak"],
+      defaultToolsApprovalMode: "prompt",
+      tools: {
+        speak: { approvalMode: "approve" },
+      },
     });
   });
 

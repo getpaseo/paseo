@@ -48,6 +48,7 @@ interface CollaborationModeRecord {
 }
 
 interface CodexSessionTestAccess {
+  buildCodexInnerConfig(): Record<string, unknown> | null;
   ensureThreadLoaded(): Promise<void>;
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
   handleNotification(method: string, params: unknown): void;
@@ -1075,6 +1076,35 @@ describe("Codex app-server provider", () => {
         "codex-custom": expect.objectContaining({
           base_url: "https://custom-relay.example.com/v1",
         }),
+      },
+    });
+  });
+
+  test("maps MCP approval settings into Codex inner config", () => {
+    const session = createSession({
+      mcpServers: {
+        paseo_voice: {
+          type: "http",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test&voiceOnly=1",
+          enabledTools: ["speak"],
+          defaultToolsApprovalMode: "prompt",
+          tools: {
+            speak: { approvalMode: "approve" },
+          },
+        },
+      },
+    });
+
+    expect(asInternals(session).buildCodexInnerConfig()).toEqual({
+      mcp_servers: {
+        paseo_voice: {
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test&voiceOnly=1",
+          enabled_tools: ["speak"],
+          default_tools_approval_mode: "prompt",
+          tools: {
+            speak: { approval_mode: "approve" },
+          },
+        },
       },
     });
   });

@@ -787,23 +787,53 @@ interface CodexMcpServerConfig {
   args?: string[];
   env?: Record<string, string>;
   tool_timeout_sec?: number;
+  enabled_tools?: string[];
+  disabled_tools?: string[];
+  default_tools_approval_mode?: "auto" | "prompt" | "approve";
+  tools?: Record<
+    string,
+    {
+      approval_mode?: "auto" | "prompt" | "approve";
+    }
+  >;
 }
 
 function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
+  const base = {
+    ...(config.enabledTools ? { enabled_tools: config.enabledTools } : {}),
+    ...(config.disabledTools ? { disabled_tools: config.disabledTools } : {}),
+    ...(config.defaultToolsApprovalMode
+      ? { default_tools_approval_mode: config.defaultToolsApprovalMode }
+      : {}),
+    ...(config.tools
+      ? {
+          tools: Object.fromEntries(
+            Object.entries(config.tools).map(([toolName, toolConfig]) => [
+              toolName,
+              toolConfig.approvalMode ? { approval_mode: toolConfig.approvalMode } : {},
+            ]),
+          ),
+        }
+      : {}),
+  } satisfies Partial<CodexMcpServerConfig>;
+
   switch (config.type) {
     case "stdio":
       return {
+        ...base,
         command: config.command,
         args: config.args,
         env: config.env,
       };
     case "http":
       return {
+        ...base,
         url: config.url,
         http_headers: config.headers,
       };
     case "sse":
       return {
+        ...base,
         url: config.url,
         http_headers: config.headers,
       };

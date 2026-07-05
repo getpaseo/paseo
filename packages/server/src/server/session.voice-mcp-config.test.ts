@@ -33,6 +33,11 @@ describe("voice MCP stdio config", () => {
       ELECTRON_RUN_AS_NODE: "1",
       PASEO_HOME: "/tmp/paseo-home",
     });
+    expect(config.enabledTools).toEqual(["speak"]);
+    expect(config.defaultToolsApprovalMode).toBe("prompt");
+    expect(config.tools).toEqual({
+      speak: { approvalMode: "approve" },
+    });
   });
 });
 
@@ -137,6 +142,11 @@ describe("voice bridge resolution", () => {
     expect(config).toEqual({
       type: "http",
       url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=00000000-0000-4000-8000-000000000001&voiceOnly=1",
+      enabledTools: ["speak"],
+      defaultToolsApprovalMode: "prompt",
+      tools: {
+        speak: { approvalMode: "approve" },
+      },
       headers: {
         Authorization: "Bearer test-token",
       },

@@ -10,6 +10,7 @@ const VOICE_PROMPT_BLOCK_END = "</paseo_voice_mode>";
 const PASEO_SERVER_PACKAGE_NAME = "@getpaseo/server";
 
 export const PASEO_VOICE_MCP_SERVER_NAME = "paseo_voice";
+const PASEO_VOICE_ENABLED_TOOLS = ["speak"] as const;
 
 function resolveVoiceSpeakToolName(voiceToolMcpServerName?: string): string {
   return voiceToolMcpServerName ? `${voiceToolMcpServerName}.speak` : "speak";
@@ -87,16 +88,16 @@ export function buildVoiceAgentMcpServerConfig(params: {
   baseArgs: string[];
   socketPath: string;
   env?: Record<string, string>;
-}): {
-  type: "stdio";
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-} {
+}): import("./agent/agent-sdk-types.js").McpStdioServerConfig {
   return {
     type: "stdio",
     command: params.command,
     args: [...params.baseArgs, "--socket", params.socketPath],
+    enabledTools: [...PASEO_VOICE_ENABLED_TOOLS],
+    defaultToolsApprovalMode: "prompt",
+    tools: {
+      speak: { approvalMode: "approve" },
+    },
     ...(params.env ? { env: params.env } : {}),
   };
 }
@@ -158,13 +159,11 @@ export function buildDedicatedVoiceAgentMcpServerConfig(params: {
       type: "http";
       url: string;
       headers?: Record<string, string>;
+      enabledTools?: string[];
+      defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
+      tools?: Record<string, { approvalMode?: "auto" | "prompt" | "approve" }>;
     }
-  | {
-      type: "stdio";
-      command: string;
-      args: string[];
-      env?: Record<string, string>;
-    }
+  | import("./agent/agent-sdk-types.js").McpStdioServerConfig
   | null {
   const callerAgentId = params.callerAgentId?.trim();
   if (params.mcpBaseUrl && callerAgentId) {
@@ -174,6 +173,11 @@ export function buildDedicatedVoiceAgentMcpServerConfig(params: {
     return {
       type: "http",
       url: url.toString(),
+      enabledTools: [...PASEO_VOICE_ENABLED_TOOLS],
+      defaultToolsApprovalMode: "prompt",
+      tools: {
+        speak: { approvalMode: "approve" },
+      },
       ...(params.mcpAuthToken
         ? { headers: { Authorization: `Bearer ${params.mcpAuthToken}` } }
         : {}),

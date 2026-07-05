@@ -24,6 +24,15 @@ export interface McpStdioServerConfig {
    * and never deferred behind tool search. Honored by the Claude provider.
    */
   alwaysLoad?: boolean;
+  enabledTools?: string[];
+  disabledTools?: string[];
+  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
+  tools?: Record<
+    string,
+    {
+      approvalMode?: "auto" | "prompt" | "approve";
+    }
+  >;
 }
 
 /**
@@ -38,6 +47,15 @@ export interface McpHttpServerConfig {
    * and never deferred behind tool search. Honored by the Claude provider.
    */
   alwaysLoad?: boolean;
+  enabledTools?: string[];
+  disabledTools?: string[];
+  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
+  tools?: Record<
+    string,
+    {
+      approvalMode?: "auto" | "prompt" | "approve";
+    }
+  >;
 }
 
 /**
@@ -52,6 +70,15 @@ export interface McpSseServerConfig {
    * and never deferred behind tool search. Honored by the Claude provider.
    */
   alwaysLoad?: boolean;
+  enabledTools?: string[];
+  disabledTools?: string[];
+  defaultToolsApprovalMode?: "auto" | "prompt" | "approve";
+  tools?: Record<
+    string,
+    {
+      approvalMode?: "auto" | "prompt" | "approve";
+    }
+  >;
 }
 
 /**
