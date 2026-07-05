@@ -2,8 +2,8 @@ import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
-import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
-import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
+import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import { AgentProviderSchema } from "./provider-manifest.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import {
   ChatCreateRequestSchema,
@@ -40,7 +40,7 @@ import {
   ScheduleDeleteResponseSchema,
   ScheduleRunOnceResponseSchema,
   ScheduleUpdateResponseSchema,
-} from "@getpaseo/protocol/schedule/rpc-schemas";
+} from "./schedule/rpc-schemas.js";
 import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
@@ -52,7 +52,7 @@ import {
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
-} from "@getpaseo/protocol/loop/rpc-schemas";
+} from "./loop/rpc-schemas.js";
 import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
@@ -73,7 +73,7 @@ import {
   type PaseoMetadataGenerationEntry,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
-} from "@getpaseo/protocol/paseo-config-schema";
+} from "./paseo-config-schema.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
