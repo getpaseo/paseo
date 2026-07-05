@@ -837,7 +837,9 @@ const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 const VALIDATION_DIFFERENTIAL_THROTTLE_MS = 30_000;
 const shouldRunValidationDifferential =
-  process.env.NODE_ENV !== "production" && process.env.PASEO_WS_VALIDATION_DIFFERENTIAL !== "0";
+  typeof process !== "undefined" &&
+  process.env.NODE_ENV !== "production" &&
+  process.env.PASEO_WS_VALIDATION_DIFFERENTIAL !== "0";
 let lastValidationDifferentialErrorAt = 0;
 
 /** Default timeout for waiting for connection before sending queued messages */

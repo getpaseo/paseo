@@ -197,6 +197,95 @@ function timelineToolCallMessage(
   };
 }
 
+function legacyWorkspaceDescriptor() {
+  return {
+    id: "workspace-legacy",
+    projectId: "project-legacy",
+    projectDisplayName: "Legacy Project",
+    projectRootPath: "/tmp/legacy-project",
+    projectKind: "git",
+    workspaceKind: "directory",
+    name: "legacy-project",
+    status: "active",
+    activityAt: "2026-07-04T00:00:00.000Z",
+    gitRuntime: null,
+    githubRuntime: null,
+  };
+}
+
+function legacyFetchWorkspacesMessage(): unknown {
+  return {
+    type: "session",
+    message: {
+      type: "fetch_workspaces_response",
+      payload: {
+        requestId: "workspaces-legacy",
+        subscriptionId: null,
+        entries: [legacyWorkspaceDescriptor()],
+        pageInfo: {
+          nextCursor: null,
+          prevCursor: null,
+          hasMore: false,
+        },
+      },
+    },
+  };
+}
+
+function legacyWorkspaceUpdateMessage(): unknown {
+  return {
+    type: "session",
+    message: {
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: legacyWorkspaceDescriptor(),
+      },
+    },
+  };
+}
+
+function legacyDirectorySuggestionsMessage(): unknown {
+  return {
+    type: "session",
+    message: {
+      type: "directory_suggestions_response",
+      payload: {
+        directories: ["/tmp/legacy-project"],
+        error: null,
+        requestId: "directories-legacy",
+      },
+    },
+  };
+}
+
+function legacyCheckoutPrStatusMessage(): unknown {
+  return {
+    type: "session",
+    message: {
+      type: "checkout_pr_status_response",
+      payload: {
+        cwd: "/tmp/legacy-project",
+        githubFeaturesEnabled: true,
+        error: null,
+        requestId: "checkout-pr-legacy",
+        status: {
+          number: 123,
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          title: "Legacy PR",
+          state: "OPEN",
+          baseRefName: "main",
+          headRefName: "legacy",
+          isMerged: false,
+          github: {
+            mergeStateStatus: "CLEAN",
+          },
+        },
+      },
+    },
+  };
+}
+
 describe("WS outbound zod-aot validation", () => {
   it("matches Zod on captured inbound fixtures modulo passthrough keys", () => {
     expectValidatorsAgree(readJsonFixture("providers-snapshot.json"));
@@ -235,7 +324,7 @@ describe("WS outbound zod-aot validation", () => {
     expectValidatorsAgree(timelineToolCallMessage("canceled"));
   });
 
-  it("reports output divergence when generated output omits a Zod default", () => {
+  it("reports output divergence when generated comparison omits a Zod default", () => {
     const input = readJsonFixture("providers-snapshot.json");
     const zod = parseZod(input);
     expect(zod.success).toBe(true);
@@ -252,11 +341,30 @@ describe("WS outbound zod-aot validation", () => {
     }
     delete (brokenGenerated.message.payload.entries[0] as { enabled?: boolean }).enabled;
 
-    expect(
-      matchesZodKnownOutput(
-        normalizeWSOutboundMessage(zod.data),
-        normalizeWSOutboundMessage(brokenGenerated),
-      ),
-    ).toBe(false);
+    expect(matchesZodKnownOutput(zod.data, brokenGenerated)).toBe(false);
+  });
+
+  it("matches Zod defaults for legacy compatibility fields", () => {
+    const providersSnapshot = cloneJson(readJsonFixture("providers-snapshot.json"));
+    if (
+      typeof providersSnapshot === "object" &&
+      providersSnapshot !== null &&
+      "message" in providersSnapshot &&
+      typeof providersSnapshot.message === "object" &&
+      providersSnapshot.message !== null &&
+      "payload" in providersSnapshot.message &&
+      typeof providersSnapshot.message.payload === "object" &&
+      providersSnapshot.message.payload !== null &&
+      "entries" in providersSnapshot.message.payload &&
+      Array.isArray(providersSnapshot.message.payload.entries)
+    ) {
+      delete (providersSnapshot.message.payload.entries[0] as { enabled?: boolean }).enabled;
+    }
+
+    expectValidatorsAgree(providersSnapshot);
+    expectValidatorsAgree(legacyFetchWorkspacesMessage());
+    expectValidatorsAgree(legacyWorkspaceUpdateMessage());
+    expectValidatorsAgree(legacyDirectorySuggestionsMessage());
+    expectValidatorsAgree(legacyCheckoutPrStatusMessage());
   });
 });
