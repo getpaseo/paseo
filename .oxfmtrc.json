@@ -11,10 +11,5 @@
   "arrowParens": "always",
   "bracketSameLine": false,
   "bracketSpacing": true,
-  "ignorePatterns": [
-    "*.lock",
-    "**/*.gen.ts",
-    "**/*.gen.tsx",
-    "packages/protocol/tests/validation/fixtures/*.json"
-  ]
+  "ignorePatterns": ["*.lock", "**/*.gen.ts", "**/*.gen.tsx"]
 }

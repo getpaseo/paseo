@@ -4,6 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023", "DOM"],
+    "paths": {
+      "@server/*": ["./src/*"]
+    },
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,

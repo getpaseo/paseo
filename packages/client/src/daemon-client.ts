@@ -92,8 +92,11 @@ import type {
   AgentPersistenceHandle,
   AgentProviderNotice,
   AgentProvider,
+  AgentModelDefinition,
   AgentSessionConfig,
+  ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
+import { normalizeAgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
@@ -356,6 +359,10 @@ type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
+type ProvidersSnapshotUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "providers_snapshot_update" }
+>["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
@@ -370,6 +377,55 @@ type WriteProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "write_project_config_response" }
 >["payload"];
+
+function normalizeAgentModels(
+  models: AgentModelDefinition[] | undefined,
+): AgentModelDefinition[] | undefined {
+  if (!models) {
+    return models;
+  }
+
+  let changed = false;
+  const normalized = models.map((model) => {
+    const next = normalizeAgentModelDefinition(model);
+    changed ||= next !== model;
+    return next;
+  });
+
+  return changed ? normalized : models;
+}
+
+function normalizeProviderSnapshotEntry(entry: ProviderSnapshotEntry): ProviderSnapshotEntry {
+  const models = normalizeAgentModels(entry.models);
+  return models === entry.models ? entry : { ...entry, models };
+}
+
+function normalizeProviderSnapshotEntries(
+  entries: ProviderSnapshotEntry[],
+): ProviderSnapshotEntry[] {
+  let changed = false;
+  const normalized = entries.map((entry) => {
+    const next = normalizeProviderSnapshotEntry(entry);
+    changed ||= next !== entry;
+    return next;
+  });
+
+  return changed ? normalized : entries;
+}
+
+function normalizeListProviderModelsPayload(
+  payload: ListProviderModelsPayload,
+): ListProviderModelsPayload {
+  const models = normalizeAgentModels(payload.models);
+  return models === payload.models ? payload : { ...payload, models };
+}
+
+function normalizeProvidersSnapshotPayload<
+  T extends GetProvidersSnapshotPayload | ProvidersSnapshotUpdatePayload,
+>(payload: T): T {
+  const entries = normalizeProviderSnapshotEntries(payload.entries);
+  return entries === payload.entries ? payload : { ...payload, entries };
+}
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -3728,7 +3784,7 @@ export class DaemonClient {
     provider: AgentProvider,
     options?: { cwd?: string; requestId?: string },
   ): Promise<ListProviderModelsPayload> {
-    return this.sendCorrelatedSessionRequest({
+    const payload = await this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "list_provider_models_request",
@@ -3739,6 +3795,8 @@ export class DaemonClient {
       // Provider SDK cold starts (especially model discovery) can exceed 60s.
       timeout: 90000,
     });
+    // COMPAT(model-normalize): daemon normalizes at source (provider-registry) — shim covers older daemons; drop when floor >= v0.1.104
+    return normalizeListProviderModelsPayload(payload);
   }
 
   async listProviderModes(
@@ -3788,7 +3846,7 @@ export class DaemonClient {
     cwd?: string;
     requestId?: string;
   }): Promise<GetProvidersSnapshotPayload> {
-    return this.sendCorrelatedSessionRequest({
+    const payload = await this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "get_providers_snapshot_request",
@@ -3796,6 +3854,8 @@ export class DaemonClient {
       },
       responseType: "get_providers_snapshot_response",
     });
+    // COMPAT(model-normalize): daemon normalizes at source (provider-registry) — shim covers older daemons; drop when floor >= v0.1.104
+    return normalizeProvidersSnapshotPayload(payload);
   }
 
   async getDaemonConfig(
@@ -5141,7 +5201,8 @@ export class DaemonClient {
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",
-          payload: msg.payload,
+          // COMPAT(model-normalize): daemon normalizes at source (provider-registry) — shim covers older daemons; drop when floor >= v0.1.104
+          payload: normalizeProvidersSnapshotPayload(msg.payload),
         };
       default:
         return null;

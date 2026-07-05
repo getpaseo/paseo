@@ -3,8 +3,8 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "target": "ESNext",
-    "lib": ["ESNext", "DOM"],
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
     "types": ["node"],
     "outDir": "./dist",
     "rootDir": "./src",
