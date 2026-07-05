@@ -3115,7 +3115,9 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
 
 export const ReadProjectConfigResponseMessageSchema = z.object({
   type: z.literal("read_project_config_response"),
-  payload: z.discriminatedUnion("ok", [
+  // zod-aot 0.2.0 miscompiles boolean discriminators as string options
+  // (`"true"`/`"false"`), so keep this sequential until upstream fixes it.
+  payload: z.union([
     z.object({
       requestId: z.string(),
       repoRoot: z.string(),
@@ -3134,7 +3136,9 @@ export const ReadProjectConfigResponseMessageSchema = z.object({
 
 export const WriteProjectConfigResponseMessageSchema = z.object({
   type: z.literal("write_project_config_response"),
-  payload: z.discriminatedUnion("ok", [
+  // zod-aot 0.2.0 miscompiles boolean discriminators as string options
+  // (`"true"`/`"false"`), so keep this sequential until upstream fixes it.
+  payload: z.union([
     z.object({
       requestId: z.string(),
       repoRoot: z.string(),

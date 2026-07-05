@@ -3,7 +3,11 @@ import {
   type AgentModelDefinition,
   type ProviderSnapshotEntry,
 } from "../agent-types.js";
-import type { SessionOutboundMessage, WSOutboundMessage } from "../messages.js";
+import type {
+  MutableDaemonConfig,
+  SessionOutboundMessage,
+  WSOutboundMessage,
+} from "../messages.js";
 
 function normalizeModels(
   models: AgentModelDefinition[] | undefined,
@@ -38,10 +42,60 @@ function normalizeProviderEntries(entries: ProviderSnapshotEntry[]): ProviderSna
   return changed ? normalized : entries;
 }
 
+function normalizeMutableDaemonConfig(config: MutableDaemonConfig): MutableDaemonConfig {
+  let next = config;
+  const withPatch = (patch: Partial<MutableDaemonConfig>) => {
+    next = next === config ? { ...config, ...patch } : { ...next, ...patch };
+  };
+
+  if (config.browserTools === undefined) {
+    withPatch({ browserTools: { enabled: false } });
+  } else if (config.browserTools.enabled === undefined) {
+    withPatch({ browserTools: { ...config.browserTools, enabled: false } });
+  }
+
+  if (config.providers === undefined) {
+    withPatch({ providers: {} });
+  }
+
+  if (config.metadataGeneration === undefined) {
+    withPatch({ metadataGeneration: { providers: [] } });
+  } else if (config.metadataGeneration.providers === undefined) {
+    withPatch({
+      metadataGeneration: { ...config.metadataGeneration, providers: [] },
+    });
+  }
+
+  if (config.autoArchiveAfterMerge === undefined) {
+    withPatch({ autoArchiveAfterMerge: false });
+  }
+
+  if (config.enableTerminalAgentHooks === undefined) {
+    withPatch({ enableTerminalAgentHooks: false });
+  }
+
+  if (config.appendSystemPrompt === undefined) {
+    withPatch({ appendSystemPrompt: "" });
+  }
+
+  return next;
+}
+
 export function normalizeSessionOutboundMessage(
   message: SessionOutboundMessage,
 ): SessionOutboundMessage {
   switch (message.type) {
+    case "fetch_workspaces_response":
+      return message.payload.emptyProjects === undefined
+        ? { ...message, payload: { ...message.payload, emptyProjects: [] } }
+        : message;
+    case "get_daemon_config_response":
+    case "set_daemon_config_response": {
+      const config = normalizeMutableDaemonConfig(message.payload.config);
+      return config === message.payload.config
+        ? message
+        : { ...message, payload: { ...message.payload, config } };
+    }
     case "list_provider_models_response": {
       const models = normalizeModels(message.payload.models);
       return models === message.payload.models
