@@ -19,12 +19,15 @@
   },
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "generate:validation-aot": "node scripts/generate-validation-aot.mjs",
-    "build": "npm run generate:validation-aot && tsc -p tsconfig.json --incremental false",
+    "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "npm run generate:validation-aot && tsgo --noEmit",
-    "test": "npm run generate:validation-aot && vitest run"
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "generate:validators": "node scripts/generate-validation-aot.mjs",
+    "prebuild": "npm run generate:validators",
+    "pretypecheck": "npm run generate:validators",
+    "pretest": "npm run generate:validators"
   },
   "dependencies": {
     "zod": "^4.4.3"

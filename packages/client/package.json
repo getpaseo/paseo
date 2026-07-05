@@ -30,9 +30,9 @@
     "build": "npm run build --workspace=@getpaseo/protocol && tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "npm run build --workspace=@getpaseo/protocol && tsgo --noEmit",
+    "typecheck": "tsgo --noEmit",
     "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
-    "test": "npm run build --workspace=@getpaseo/protocol && vitest run"
+    "test": "vitest run"
   },
   "dependencies": {
     "@getpaseo/protocol": "0.1.104-beta.3",

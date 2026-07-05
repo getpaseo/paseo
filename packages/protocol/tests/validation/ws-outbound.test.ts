@@ -2,10 +2,9 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { WSOutboundMessageSchema as GeneratedWSOutboundMessageSchema } from "../generated/validation/ws-outbound.aot.js";
-import { WSOutboundMessageSchema, type WSOutboundMessage } from "../messages.js";
-import { normalizeWSOutboundMessage } from "./model-normalization.js";
-import { matchesZodKnownOutput } from "./output-comparison.js";
+import { WSOutboundMessageSchema as GeneratedWSOutboundMessageSchema } from "../../src/generated/validation/ws-outbound.aot.js";
+import { WSOutboundMessageSchema, type WSOutboundMessage } from "../../src/messages.js";
+import { normalizeWSOutboundMessage } from "../../src/validation/model-normalization.js";
 
 const fixturesDir = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -34,7 +33,46 @@ function parseZod(input: unknown): ReturnType<typeof WSOutboundMessageSchema.saf
   return WSOutboundMessageSchema.safeParse(input);
 }
 
-function expectValidatorsAgree(input: unknown): void {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function matchesZodKnownOutput(oracleOutput: unknown, generatedOutput: unknown): boolean {
+  if (Object.is(oracleOutput, generatedOutput)) {
+    return true;
+  }
+
+  if (
+    typeof oracleOutput !== "object" ||
+    oracleOutput === null ||
+    typeof generatedOutput !== "object" ||
+    generatedOutput === null ||
+    Array.isArray(oracleOutput) !== Array.isArray(generatedOutput)
+  ) {
+    return false;
+  }
+
+  if (Array.isArray(oracleOutput) && Array.isArray(generatedOutput)) {
+    if (oracleOutput.length !== generatedOutput.length) {
+      return false;
+    }
+    return oracleOutput.every((value, index) =>
+      matchesZodKnownOutput(value, generatedOutput[index]),
+    );
+  }
+
+  if (!isRecord(oracleOutput) || !isRecord(generatedOutput)) {
+    return false;
+  }
+
+  return Object.keys(oracleOutput).every(
+    (key) =>
+      Object.hasOwn(generatedOutput, key) &&
+      matchesZodKnownOutput(oracleOutput[key], generatedOutput[key]),
+  );
+}
+
+function expectGeneratedValidatorAgreesWithZod(input: unknown): void {
   const generated = parseGenerated(input);
   const zod = parseZod(input);
 
@@ -288,10 +326,10 @@ function legacyCheckoutPrStatusMessage(): unknown {
 
 describe("WS outbound zod-aot validation", () => {
   it("matches Zod on captured inbound fixtures modulo passthrough keys", () => {
-    expectValidatorsAgree(readJsonFixture("providers-snapshot.json"));
-    expectValidatorsAgree(readJsonFixture("fetch-agent-timeline-response.json"));
+    expectGeneratedValidatorAgreesWithZod(readJsonFixture("providers-snapshot.json"));
+    expectGeneratedValidatorAgreesWithZod(readJsonFixture("fetch-agent-timeline-response.json"));
     for (const message of readJsonlFixture("agent-stream-burst.jsonl")) {
-      expectValidatorsAgree(message);
+      expectGeneratedValidatorAgreesWithZod(message);
     }
   });
 
@@ -311,17 +349,17 @@ describe("WS outbound zod-aot validation", () => {
   });
 
   it("matches Zod for every tool_call status", () => {
-    expectValidatorsAgree(toolCallMessage("running"));
-    expectValidatorsAgree(toolCallMessage("completed"));
-    expectValidatorsAgree(toolCallMessage("failed"));
-    expectValidatorsAgree(toolCallMessage("canceled"));
+    expectGeneratedValidatorAgreesWithZod(toolCallMessage("running"));
+    expectGeneratedValidatorAgreesWithZod(toolCallMessage("completed"));
+    expectGeneratedValidatorAgreesWithZod(toolCallMessage("failed"));
+    expectGeneratedValidatorAgreesWithZod(toolCallMessage("canceled"));
   });
 
   it("matches Zod for every historical timeline tool_call status", () => {
-    expectValidatorsAgree(timelineToolCallMessage("running"));
-    expectValidatorsAgree(timelineToolCallMessage("completed"));
-    expectValidatorsAgree(timelineToolCallMessage("failed"));
-    expectValidatorsAgree(timelineToolCallMessage("canceled"));
+    expectGeneratedValidatorAgreesWithZod(timelineToolCallMessage("running"));
+    expectGeneratedValidatorAgreesWithZod(timelineToolCallMessage("completed"));
+    expectGeneratedValidatorAgreesWithZod(timelineToolCallMessage("failed"));
+    expectGeneratedValidatorAgreesWithZod(timelineToolCallMessage("canceled"));
   });
 
   it("reports output divergence when generated comparison omits a Zod default", () => {
@@ -361,10 +399,10 @@ describe("WS outbound zod-aot validation", () => {
       delete (providersSnapshot.message.payload.entries[0] as { enabled?: boolean }).enabled;
     }
 
-    expectValidatorsAgree(providersSnapshot);
-    expectValidatorsAgree(legacyFetchWorkspacesMessage());
-    expectValidatorsAgree(legacyWorkspaceUpdateMessage());
-    expectValidatorsAgree(legacyDirectorySuggestionsMessage());
-    expectValidatorsAgree(legacyCheckoutPrStatusMessage());
+    expectGeneratedValidatorAgreesWithZod(providersSnapshot);
+    expectGeneratedValidatorAgreesWithZod(legacyFetchWorkspacesMessage());
+    expectGeneratedValidatorAgreesWithZod(legacyWorkspaceUpdateMessage());
+    expectGeneratedValidatorAgreesWithZod(legacyDirectorySuggestionsMessage());
+    expectGeneratedValidatorAgreesWithZod(legacyCheckoutPrStatusMessage());
   });
 });

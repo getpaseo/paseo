@@ -29,7 +29,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Build app dependencies
         run: npm run build:app-deps

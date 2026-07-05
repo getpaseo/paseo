@@ -56,10 +56,14 @@ function runGenerate() {
 
   generateInFlight = true;
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-  const child = spawn(npmCommand, ["run", "generate:validation-aot"], {
-    cwd: rootDir,
-    stdio: "inherit",
-  });
+  const child = spawn(
+    npmCommand,
+    ["run", "generate:validators", "--workspace=@getpaseo/protocol"],
+    {
+      cwd: rootDir,
+      stdio: "inherit",
+    },
+  );
 
   child.on("exit", (code, signal) => {
     generateInFlight = false;

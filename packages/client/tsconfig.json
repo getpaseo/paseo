@@ -18,7 +18,12 @@
     "rootDir": "./src",
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "@getpaseo/protocol/*": ["../protocol/src/*.ts"],
+      "@getpaseo/relay": ["../relay/src/index.ts"],
+      "@getpaseo/relay/*": ["../relay/src/*.ts"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]

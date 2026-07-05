@@ -13,10 +13,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ServerInfoStatusPayload,
-  WSOutboundMessageSchema,
 } from "@getpaseo/protocol/messages";
-import { normalizeWSOutboundMessage } from "@getpaseo/protocol/validation/model-normalization";
-import { matchesZodKnownOutput } from "@getpaseo/protocol/validation/output-comparison";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
   AgentStreamEventPayload,
@@ -835,12 +832,6 @@ const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
 const LIVENESS_HEARTBEAT_TIMEOUT_MS = 15_000;
 const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
-const VALIDATION_DIFFERENTIAL_THROTTLE_MS = 30_000;
-const shouldRunValidationDifferential =
-  typeof process !== "undefined" &&
-  process.env.NODE_ENV !== "production" &&
-  process.env.PASEO_WS_VALIDATION_DIFFERENTIAL !== "0";
-let lastValidationDifferentialErrorAt = 0;
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = DEFAULT_SESSION_RPC_TIMEOUT_MS;
@@ -850,47 +841,6 @@ const DEFAULT_DICTATION_FINISH_TIMEOUT_GRACE_MS = 5000;
 
 function isWaiterTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("Timeout waiting for message");
-}
-
-function reportValidationDifferential(message: string, details: Record<string, unknown>): void {
-  const now = Date.now();
-  if (now - lastValidationDifferentialErrorAt < VALIDATION_DIFFERENTIAL_THROTTLE_MS) {
-    return;
-  }
-  lastValidationDifferentialErrorAt = now;
-  console.error(message, details);
-}
-
-function runValidationDifferential(
-  input: unknown,
-  generatedData: unknown,
-  generatedAccepted: boolean,
-): void {
-  if (!shouldRunValidationDifferential) {
-    return;
-  }
-
-  const zodParsed = WSOutboundMessageSchema.safeParse(input);
-  if (zodParsed.success !== generatedAccepted) {
-    reportValidationDifferential("WS outbound validation accept/reject divergence", {
-      zodAccepted: zodParsed.success,
-      generatedAccepted,
-    });
-    return;
-  }
-
-  if (!zodParsed.success || !generatedAccepted) {
-    return;
-  }
-
-  const normalizedZod = normalizeWSOutboundMessage(zodParsed.data);
-  const normalizedGenerated = normalizeWSOutboundMessage(generatedData as typeof zodParsed.data);
-  if (!matchesZodKnownOutput(normalizedZod, normalizedGenerated)) {
-    reportValidationDifferential("WS outbound validation output divergence", {
-      zodType: normalizedZod.type,
-      generatedType: normalizedGenerated.type,
-    });
-  }
 }
 
 function normalizeClientId(value: unknown): string | null {
@@ -4805,7 +4755,6 @@ export class DaemonClient {
     }
 
     const parsed = validateWSOutboundMessage(parsedJson);
-    runValidationDifferential(parsedJson, parsed.success ? parsed.data : null, parsed.success);
     if (!parsed.success) {
       const msgType =
         parsedJson != null &&

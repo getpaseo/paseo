@@ -78,7 +78,7 @@ jobs:
         run: npm ci
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Build server stack
         run: npm run build:server
@@ -118,7 +118,7 @@ jobs:
         run: npm ci
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Install agent CLIs for provider tests
         run: npm install -g @anthropic-ai/claude-code opencode-ai
@@ -178,7 +178,7 @@ jobs:
           }
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Build server stack
         run: npm run build:server
@@ -213,7 +213,7 @@ jobs:
           done
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Install Playwright browsers
         timeout-minutes: 10
@@ -241,7 +241,7 @@ jobs:
         run: npm ci
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Build client dependencies
         run: npm run build:client
@@ -287,7 +287,7 @@ jobs:
           done
 
       - name: Generate protocol validators
-        run: npm run generate:validation-aot
+        run: npm run generate:validators --workspace=@getpaseo/protocol
 
       - name: Install Playwright browsers
         timeout-minutes: 10

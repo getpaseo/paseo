@@ -13,6 +13,10 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
   },
+  {
+    nodeModulesPath: "node_modules/zod-aot",
+    patchPrefix: "zod-aot+",
+  },
 ];
 
 const installedPatchPrefixes = patchedPackages

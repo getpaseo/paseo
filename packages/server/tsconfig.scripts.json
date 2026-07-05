@@ -17,7 +17,14 @@
     "outDir": "./dist",
     "rootDir": ".",
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "@getpaseo/client/internal/*": ["../client/src/*.ts"],
+      "@getpaseo/highlight": ["../highlight/src/index.ts"],
+      "@getpaseo/protocol/*": ["../protocol/src/*.ts"],
+      "@getpaseo/relay": ["../relay/src/index.ts"],
+      "@getpaseo/relay/*": ["../relay/src/*.ts"]
+    }
   },
   "include": ["scripts/supervisor-entrypoint.ts", "scripts/dev-runner.ts", "scripts/supervisor.ts"],
   "exclude": ["node_modules", "dist"]
