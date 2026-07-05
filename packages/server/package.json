@@ -42,6 +42,7 @@
     "build:scripts": "tsc -p tsconfig.scripts.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');\"",
     "prepack": "npm run build:clean && npm --prefix ../.. run build:daemon-web-ui",
     "start": "node dist/scripts/supervisor-entrypoint.js",
+    "pretypecheck": "npm run typecheck --workspace=@getpaseo/protocol",
     "typecheck": "tsgo -p tsconfig.server.typecheck.json --noEmit",
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",

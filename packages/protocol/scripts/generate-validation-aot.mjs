@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const optional = process.argv.includes("--optional");
@@ -35,10 +35,10 @@ if (schemas.length === 0) {
 }
 
 const compiled = compileSchemas(schemas, { mode: "inline" });
-const runtimeImportPath = relative(dirname(output), runtimeSchemaMetadata).replace(
-  /\.[cm]?[jt]sx?$/,
-  ".js",
-);
+const runtimeImportPath = relative(dirname(output), runtimeSchemaMetadata)
+  .replace(/\.[cm]?[jt]sx?$/, ".js")
+  .split(sep)
+  .join("/");
 const content = generateCompiledFileContent(compiled, runtimeImportPath, {
   zodCompat: false,
 }).replace(

@@ -21,6 +21,7 @@
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run",
+    "pretypecheck": "npm run typecheck --workspace=@getpaseo/protocol",
     "typecheck": "tsgo --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {

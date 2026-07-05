@@ -19,6 +19,7 @@
     "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
+    "pretypecheck": "npm run typecheck --workspace=@getpaseo/protocol",
     "typecheck": "tsgo -p tsconfig.typecheck.json --noEmit",
     "test": "npm run test:local",
     "test:local": "tsx tests/run-all.ts",
