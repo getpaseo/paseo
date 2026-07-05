@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { WSOutboundMessageSchema as GeneratedWSOutboundMessageSchema } from "../generated/validation/ws-outbound.aot.js";
 import { WSOutboundMessageSchema, type WSOutboundMessage } from "../messages.js";
 import { normalizeWSOutboundMessage } from "./model-normalization.js";
+import { matchesZodKnownOutput } from "./output-comparison.js";
 
 const fixturesDir = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -42,15 +43,12 @@ function expectValidatorsAgree(input: unknown): void {
     return;
   }
 
-  const zodKnownGenerated = parseZod(generated.data);
-  expect(zodKnownGenerated.success).toBe(true);
-  if (!zodKnownGenerated.success) {
-    return;
-  }
-
-  expect(normalizeWSOutboundMessage(zodKnownGenerated.data)).toEqual(
-    normalizeWSOutboundMessage(zod.data),
-  );
+  expect(
+    matchesZodKnownOutput(
+      normalizeWSOutboundMessage(zod.data),
+      normalizeWSOutboundMessage(generated.data as typeof zod.data),
+    ),
+  ).toBe(true);
 }
 
 function corruptProviderModelId(input: unknown): unknown {
@@ -153,6 +151,52 @@ function toolCallMessage(
   };
 }
 
+function timelineToolCallMessage(
+  status: "running" | "completed" | "failed" | "canceled",
+): WSOutboundMessage {
+  const streamMessage = toolCallMessage(status);
+  const streamPayload = streamMessage.message.payload;
+
+  if (streamPayload.event.type !== "timeline") {
+    throw new Error("expected timeline event");
+  }
+
+  return {
+    type: "session",
+    message: {
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: `timeline-${status}`,
+        agentId: "agent-tool-call",
+        agent: null,
+        direction: "tail",
+        projection: "canonical",
+        epoch: "epoch-tool-call",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+        startCursor: null,
+        endCursor: null,
+        hasOlder: false,
+        hasNewer: false,
+        entries: [
+          {
+            provider: "opencode",
+            item: streamPayload.event.item,
+            timestamp: "2026-07-04T00:00:00.000Z",
+            seqStart: 1,
+            seqEnd: 1,
+            sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+            collapsed: [],
+          },
+        ],
+        error: null,
+      },
+    },
+  };
+}
+
 describe("WS outbound zod-aot validation", () => {
   it("matches Zod on captured inbound fixtures modulo passthrough keys", () => {
     expectValidatorsAgree(readJsonFixture("providers-snapshot.json"));
@@ -182,5 +226,37 @@ describe("WS outbound zod-aot validation", () => {
     expectValidatorsAgree(toolCallMessage("completed"));
     expectValidatorsAgree(toolCallMessage("failed"));
     expectValidatorsAgree(toolCallMessage("canceled"));
+  });
+
+  it("matches Zod for every historical timeline tool_call status", () => {
+    expectValidatorsAgree(timelineToolCallMessage("running"));
+    expectValidatorsAgree(timelineToolCallMessage("completed"));
+    expectValidatorsAgree(timelineToolCallMessage("failed"));
+    expectValidatorsAgree(timelineToolCallMessage("canceled"));
+  });
+
+  it("reports output divergence when generated output omits a Zod default", () => {
+    const input = readJsonFixture("providers-snapshot.json");
+    const zod = parseZod(input);
+    expect(zod.success).toBe(true);
+    if (!zod.success) {
+      return;
+    }
+
+    const brokenGenerated = cloneJson(zod.data) as WSOutboundMessage;
+    if (brokenGenerated.type !== "session") {
+      throw new Error("expected session fixture");
+    }
+    if (brokenGenerated.message.type !== "get_providers_snapshot_response") {
+      throw new Error("expected providers snapshot fixture");
+    }
+    delete (brokenGenerated.message.payload.entries[0] as { enabled?: boolean }).enabled;
+
+    expect(
+      matchesZodKnownOutput(
+        normalizeWSOutboundMessage(zod.data),
+        normalizeWSOutboundMessage(brokenGenerated),
+      ),
+    ).toBe(false);
   });
 });
