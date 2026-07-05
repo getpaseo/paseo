@@ -246,6 +246,15 @@ function legacyWorkspaceDescriptor() {
     name: "legacy-project",
     status: "active",
     activityAt: "2026-07-04T00:00:00.000Z",
+    scripts: [
+      {
+        scriptName: "web",
+        hostname: "127.0.0.1",
+        port: 3000,
+        lifecycle: "running",
+        health: "healthy",
+      },
+    ],
     gitRuntime: null,
     githubRuntime: null,
   };
@@ -320,6 +329,61 @@ function legacyCheckoutPrStatusMessage(): unknown {
           },
         },
       },
+    },
+  };
+}
+
+function legacyFetchAgentsMessage(): unknown {
+  const timeline = readJsonFixture("fetch-agent-timeline-response.json");
+  if (
+    typeof timeline !== "object" ||
+    timeline === null ||
+    !("message" in timeline) ||
+    typeof timeline.message !== "object" ||
+    timeline.message === null ||
+    !("payload" in timeline.message) ||
+    typeof timeline.message.payload !== "object" ||
+    timeline.message.payload === null ||
+    !("agent" in timeline.message.payload) ||
+    typeof timeline.message.payload.agent !== "object" ||
+    timeline.message.payload.agent === null
+  ) {
+    throw new Error("expected timeline fixture agent");
+  }
+
+  const agent = cloneJson(timeline.message.payload.agent);
+  if (typeof agent === "object" && agent !== null) {
+    delete (agent as { labels?: Record<string, string> }).labels;
+  }
+
+  return {
+    type: "session",
+    message: {
+      type: "fetch_agents_response",
+      payload: {
+        requestId: "agents-legacy",
+        subscriptionId: null,
+        entries: [
+          {
+            agent,
+            project: null,
+          },
+        ],
+        pageInfo: {
+          nextCursor: null,
+          prevCursor: null,
+          hasMore: false,
+        },
+      },
+    },
+  };
+}
+
+function legacyPullRequestTimelineMessage(): unknown {
+  return {
+    type: "session",
+    message: {
+      type: "pull_request_timeline_response",
     },
   };
 }
@@ -404,5 +468,7 @@ describe("WS outbound zod-aot validation", () => {
     expectGeneratedValidatorAgreesWithZod(legacyWorkspaceUpdateMessage());
     expectGeneratedValidatorAgreesWithZod(legacyDirectorySuggestionsMessage());
     expectGeneratedValidatorAgreesWithZod(legacyCheckoutPrStatusMessage());
+    expectGeneratedValidatorAgreesWithZod(legacyFetchAgentsMessage());
+    expectGeneratedValidatorAgreesWithZod(legacyPullRequestTimelineMessage());
   });
 });

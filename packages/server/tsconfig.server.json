@@ -4,14 +4,6 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023", "DOM"],
-    "paths": {
-      "@server/*": ["./src/*"],
-      "@getpaseo/client/internal/*": ["../client/src/*.ts"],
-      "@getpaseo/highlight": ["../highlight/src/index.ts"],
-      "@getpaseo/protocol/*": ["../protocol/src/*.ts"],
-      "@getpaseo/relay": ["../relay/src/index.ts"],
-      "@getpaseo/relay/*": ["../relay/src/*.ts"]
-    },
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,

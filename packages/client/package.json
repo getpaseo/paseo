@@ -30,7 +30,7 @@
     "build": "npm run build --workspace=@getpaseo/protocol && tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo -p tsconfig.typecheck.json --noEmit",
     "typecheck:examples": "tsgo -p tsconfig.examples.json --noEmit",
     "test": "vitest run"
   },

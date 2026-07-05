@@ -14,15 +14,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noImplicitReturns": true,
-    "paths": {
-      "@getpaseo/client/internal/*": ["../client/src/*.ts"],
-      "@getpaseo/highlight": ["../highlight/src/index.ts"],
-      "@getpaseo/protocol/*": ["../protocol/src/*.ts"],
-      "@getpaseo/relay": ["../relay/src/index.ts"],
-      "@getpaseo/relay/*": ["../relay/src/*.ts"],
-      "@getpaseo/server": ["./src/types/getpaseo-server.d.ts"]
-    }
+    "noImplicitReturns": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]

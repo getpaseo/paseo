@@ -21,7 +21,7 @@
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run",
-    "typecheck": "tsgo --noEmit -p tsconfig.json"
+    "typecheck": "tsgo --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "@getpaseo/cli": "*",
