@@ -426,6 +426,18 @@ function normalizeProvidersSnapshotPayload<
   const entries = normalizeProviderSnapshotEntries(payload.entries);
   return entries === payload.entries ? payload : { ...payload, entries };
 }
+
+function normalizeSessionMessageForConsumers(msg: SessionOutboundMessage): SessionOutboundMessage {
+  if (msg.type !== "providers_snapshot_update") {
+    return msg;
+  }
+
+  return {
+    ...msg,
+    // COMPAT(model-normalize): daemon normalizes at source (provider-registry) — shim covers older daemons; drop when floor >= v0.1.104
+    payload: normalizeProvidersSnapshotPayload(msg.payload),
+  };
+}
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -5077,8 +5089,10 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    if (msg.type === "status") {
-      const serverInfo = parseServerInfoStatusPayload(msg.payload);
+    const consumerMessage = normalizeSessionMessageForConsumers(msg);
+
+    if (consumerMessage.type === "status") {
+      const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
       if (serverInfo) {
         this.lastServerInfoMessage = serverInfo;
         if (this.connectionState.status === "connecting") {
@@ -5094,39 +5108,39 @@ export class DaemonClient {
       }
     }
 
-    if (msg.type === "terminal_stream_exit") {
-      this.terminalStreams.removeTerminal(msg.payload.terminalId);
+    if (consumerMessage.type === "terminal_stream_exit") {
+      this.terminalStreams.removeTerminal(consumerMessage.payload.terminalId);
     }
 
     if (this.rawMessageListeners.size > 0) {
       for (const handler of this.rawMessageListeners) {
         try {
-          handler(msg);
+          handler(consumerMessage);
         } catch {
           // no-op
         }
       }
     }
 
-    const handlers = this.messageHandlers.get(msg.type);
+    const handlers = this.messageHandlers.get(consumerMessage.type);
     if (handlers) {
       for (const handler of handlers) {
         try {
-          handler(msg);
+          handler(consumerMessage);
         } catch {
           // no-op
         }
       }
     }
 
-    const event = this.toEvent(msg);
+    const event = this.toEvent(consumerMessage);
     if (event) {
       for (const handler of this.eventListeners) {
         handler(event);
       }
     }
 
-    this.resolveWaiters(msg);
+    this.resolveWaiters(consumerMessage);
   }
 
   private resolveWaiters(msg: SessionOutboundMessage): void {
@@ -5201,8 +5215,7 @@ export class DaemonClient {
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",
-          // COMPAT(model-normalize): daemon normalizes at source (provider-registry) — shim covers older daemons; drop when floor >= v0.1.104
-          payload: normalizeProvidersSnapshotPayload(msg.payload),
+          payload: msg.payload,
         };
       default:
         return null;
