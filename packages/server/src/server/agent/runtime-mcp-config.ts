@@ -3,6 +3,10 @@ import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
 const PASEO_MCP_SERVER_NAME = "paseo";
 const PASEO_MCP_PATHNAME = "/mcp/agents";
 
+function shouldSkipRuntimePaseoMcpServer(config: AgentSessionConfig): boolean {
+  return config.voiceToolMcpServerName === "paseo_voice";
+}
+
 export function stripInternalPaseoMcpServer(config: AgentSessionConfig): AgentSessionConfig {
   const mcpServers = config.mcpServers;
   if (!mcpServers) {
@@ -38,6 +42,9 @@ export function withRuntimePaseoMcpServer(params: {
   mcpAuthToken: string | null;
 }): AgentSessionConfig {
   const storedConfig = stripInternalPaseoMcpServer(params.config);
+  if (shouldSkipRuntimePaseoMcpServer(storedConfig)) {
+    return storedConfig;
+  }
   if (!params.mcpBaseUrl || storedConfig.mcpServers?.[PASEO_MCP_SERVER_NAME]) {
     return storedConfig;
   }

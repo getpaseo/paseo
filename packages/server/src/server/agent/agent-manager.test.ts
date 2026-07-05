@@ -39,6 +39,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { PASEO_VOICE_MCP_SERVER_NAME } from "../voice-config.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -3762,6 +3763,40 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
   expect(older.rows).toHaveLength(1);
   expect(older.rows[0]?.seq).toBe(2);
   expect(older.hasOlder).toBe(true);
+});
+
+test("dedicated Codex voice MCP sessions skip generic paseo MCP injection", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-voice-mcp-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  manager.setMcpBaseUrl("http://127.0.0.1:4123/mcp/agents");
+
+  await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    voiceToolMcpServerName: PASEO_VOICE_MCP_SERVER_NAME,
+    mcpServers: {
+      [PASEO_VOICE_MCP_SERVER_NAME]: {
+        type: "stdio",
+        command: "node",
+        args: ["bridge.mjs", "--socket", "/tmp/paseo.sock"],
+      },
+    },
+  });
+
+  expect(client.createdConfigs).toHaveLength(1);
+  expect(client.createdConfigs[0]?.mcpServers).toEqual({
+    [PASEO_VOICE_MCP_SERVER_NAME]: {
+      type: "stdio",
+      command: "node",
+      args: ["bridge.mjs", "--socket", "/tmp/paseo.sock"],
+    },
+  });
 });
 
 test("getTimelineRows falls back to the in-memory timeline when no durable store is configured", async () => {

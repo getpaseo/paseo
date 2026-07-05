@@ -1,9 +1,13 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  buildDedicatedVoiceAgentMcpServerConfig,
   buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
+  PASEO_VOICE_MCP_SERVER_NAME,
+  resolveVoiceAgentBridgeSocketPath,
   stripVoiceModeSystemPrompt,
+  wrapSpokenInput,
 } from "./voice-config.js";
 
 describe("voice MCP stdio config", () => {
@@ -43,6 +47,15 @@ describe("voice mode prompt instructions", () => {
     expect(prompt).toContain("</paseo_voice_mode>");
   });
 
+  test("builds enabled voice instructions for a dedicated voice MCP server", () => {
+    const prompt = buildVoiceModeSystemPrompt("Base system prompt", true, {
+      voiceToolMcpServerName: PASEO_VOICE_MCP_SERVER_NAME,
+    });
+
+    expect(prompt).toContain(`Always use the ${PASEO_VOICE_MCP_SERVER_NAME}.speak tool`);
+    expect(prompt).toContain(`first call ${PASEO_VOICE_MCP_SERVER_NAME}.speak`);
+  });
+
   test("builds disabled voice instructions and supersedes previous voice block", () => {
     const existing = [
       "Base system prompt",
@@ -74,5 +87,59 @@ describe("voice mode prompt instructions", () => {
         ["<paseo_voice_mode>", "legacy voice instruction", "</paseo_voice_mode>"].join("\n\n"),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("spoken-input wrapping", () => {
+  test("defaults to the generic speak tool", () => {
+    expect(wrapSpokenInput("hello")).toContain("Respond using the speak tool only");
+  });
+
+  test("mentions the dedicated voice MCP tool when configured", () => {
+    expect(
+      wrapSpokenInput("hello", {
+        voiceToolMcpServerName: PASEO_VOICE_MCP_SERVER_NAME,
+      }),
+    ).toContain(`Respond using the ${PASEO_VOICE_MCP_SERVER_NAME}.speak tool only`);
+  });
+});
+
+describe("voice bridge resolution", () => {
+  test("resolves local socket and pipe listeners", () => {
+    expect(resolveVoiceAgentBridgeSocketPath("unix:///tmp/paseo.sock")).toBe("/tmp/paseo.sock");
+    expect(resolveVoiceAgentBridgeSocketPath("/tmp/paseo.sock")).toBe("/tmp/paseo.sock");
+    expect(resolveVoiceAgentBridgeSocketPath("pipe://voice-bridge")).toBe("voice-bridge");
+    expect(resolveVoiceAgentBridgeSocketPath("127.0.0.1:1234")).toBeNull();
+  });
+
+  test("builds a dedicated voice MCP bridge config for local listeners", () => {
+    const config = buildDedicatedVoiceAgentMcpServerConfig({
+      listen: "/tmp/paseo.sock",
+      paseoHome: "/tmp/paseo-home",
+    });
+
+    expect(config).not.toBeNull();
+    expect(config?.type).toBe("stdio");
+    expect(config?.args.at(-2)).toBe("--socket");
+    expect(config?.args.at(-1)).toBe("/tmp/paseo.sock");
+    expect(config?.env?.PASEO_HOME).toBe("/tmp/paseo-home");
+  });
+
+  test("builds a dedicated HTTP voice MCP config when an agent MCP base URL is available", () => {
+    const config = buildDedicatedVoiceAgentMcpServerConfig({
+      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      callerAgentId: "00000000-0000-4000-8000-000000000001",
+      mcpAuthToken: "test-token",
+      listen: "127.0.0.1:6767",
+      paseoHome: "/tmp/paseo-home",
+    });
+
+    expect(config).toEqual({
+      type: "http",
+      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=00000000-0000-4000-8000-000000000001&voiceOnly=1",
+      headers: {
+        Authorization: "Bearer test-token",
+      },
+    });
   });
 });

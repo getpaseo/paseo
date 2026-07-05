@@ -578,6 +578,13 @@ export interface AgentSessionConfig {
   };
   mcpServers?: Record<string, McpServerConfig>;
   /**
+   * Internal voice-mode override for provider-specific speech tool routing.
+   * This is persisted with the session config so reloads can apply the same
+   * launch behavior until voice mode is disabled and the original config is
+   * restored.
+   */
+  voiceToolMcpServerName?: string;
+  /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.
    */
