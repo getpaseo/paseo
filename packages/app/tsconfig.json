@@ -3,10 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./src/*"],
-      "@getpaseo/client/internal/*": ["../client/src/*.ts"],
-      "@getpaseo/highlight": ["../highlight/src/index.ts"],
-      "@getpaseo/protocol/*": ["../protocol/src/*.ts"]
+      "@/*": ["./src/*"]
     }
   },
   "include": [
