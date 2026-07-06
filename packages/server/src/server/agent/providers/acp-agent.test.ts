@@ -543,6 +543,7 @@ describe("ACPAgentSession terminal tools", () => {
     const session = createSession();
     const shell = buildStringCommandShellInvocation({
       command: "git -C /repo status --short",
+      windowsShell: "cmd",
     });
 
     await session.createTerminal({
