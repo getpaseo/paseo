@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  collectDesktopDiagnosticSectionsFromSources,
+  collectDesktopDiagnosticSections,
   type DesktopDiagnosticSources,
 } from "./desktop-diagnostic-report";
 
@@ -52,7 +52,7 @@ describe("desktop diagnostic report", () => {
       },
     };
 
-    const resultPromise = collectDesktopDiagnosticSectionsFromSources(sources);
+    const resultPromise = collectDesktopDiagnosticSections(sources);
 
     expect(calls).toEqual(["status", "daemonLogs", "appLogs"]);
     releaseAppLogs();
@@ -60,7 +60,7 @@ describe("desktop diagnostic report", () => {
   });
 
   test("includes the Electron main-process log after the daemon log", async () => {
-    const result = await collectDesktopDiagnosticSectionsFromSources(makeSources());
+    const result = await collectDesktopDiagnosticSections(makeSources());
     const report = result.sections.join("\n\n");
 
     expect(result.status).toBe("done");
@@ -83,7 +83,7 @@ describe("desktop diagnostic report", () => {
       },
     };
 
-    const result = await collectDesktopDiagnosticSectionsFromSources(sources);
+    const result = await collectDesktopDiagnosticSections(sources);
     const report = result.sections.join("\n\n");
 
     expect(result.status).toBe("failed");

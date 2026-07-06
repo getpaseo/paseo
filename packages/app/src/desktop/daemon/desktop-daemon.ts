@@ -112,16 +112,6 @@ function parseDesktopDaemonLogs(raw: unknown): DesktopDaemonLogs {
   };
 }
 
-function parseDesktopAppLogs(raw: unknown): DesktopAppLogs {
-  if (!isRecord(raw)) {
-    throw new Error("Unexpected desktop app logs response.");
-  }
-  return {
-    logPath: toStringOrNull(raw.logPath) ?? "",
-    contents: typeof raw.contents === "string" ? raw.contents : "",
-  };
-}
-
 function parseDesktopPairingOffer(raw: unknown): DesktopPairingOffer {
   if (!isRecord(raw)) {
     throw new Error("Unexpected desktop daemon pairing response.");
@@ -160,7 +150,14 @@ export async function getDesktopDaemonLogs(): Promise<DesktopDaemonLogs> {
 }
 
 export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
-  return parseDesktopAppLogs(await invokeDesktopCommand("desktop_app_logs"));
+  const raw = await invokeDesktopCommand("desktop_app_logs");
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected desktop app logs response.");
+  }
+  return {
+    logPath: toStringOrNull(raw.logPath) ?? "",
+    contents: typeof raw.contents === "string" ? raw.contents : "",
+  };
 }
 
 export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {

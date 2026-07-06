@@ -21,16 +21,14 @@ export interface DesktopDiagnosticSources {
   getAppLogs: () => Promise<DesktopAppLogs>;
 }
 
-export async function collectDesktopDiagnosticSections(): Promise<DesktopDiagnosticCollectionResult> {
-  return collectDesktopDiagnosticSectionsFromSources({
-    getStatus: getDesktopDaemonStatus,
-    getDaemonLogs: getDesktopDaemonLogs,
-    getAppLogs: getDesktopAppLogs,
-  });
-}
+const DEFAULT_DESKTOP_DIAGNOSTIC_SOURCES: DesktopDiagnosticSources = {
+  getStatus: getDesktopDaemonStatus,
+  getDaemonLogs: getDesktopDaemonLogs,
+  getAppLogs: getDesktopAppLogs,
+};
 
-export async function collectDesktopDiagnosticSectionsFromSources(
-  sources: DesktopDiagnosticSources,
+export async function collectDesktopDiagnosticSections(
+  sources: DesktopDiagnosticSources = DEFAULT_DESKTOP_DIAGNOSTIC_SOURCES,
 ): Promise<DesktopDiagnosticCollectionResult> {
   const sections: string[] = [];
   let failed = false;
