@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
-import {
-  isLocalDesktopManagedDaemon,
-  restartDaemonFromSettings,
-  type SettingsDaemonRestartDeps,
-} from "./daemon-restart";
+import { restartDaemonFromSettings, type SettingsDaemonRestartDeps } from "./daemon-restart";
 
 const runningDesktopDaemonStatus: DesktopDaemonStatus = {
   serverId: "local-desktop",
@@ -57,54 +53,11 @@ function makeDeps(overrides?: {
   return { calls, deps };
 }
 
-describe("isLocalDesktopManagedDaemon", () => {
-  it("matches only the Electron desktop-managed daemon with the same server id", () => {
-    expect(
-      isLocalDesktopManagedDaemon(
-        " local-desktop ",
-        runningDesktopDaemonStatus,
-        desktopSettings,
-        true,
-      ),
-    ).toBe(true);
-    expect(
-      isLocalDesktopManagedDaemon("remote", runningDesktopDaemonStatus, desktopSettings, true),
-    ).toBe(false);
-    expect(
-      isLocalDesktopManagedDaemon(
-        "local-desktop",
-        runningDesktopDaemonStatus,
-        desktopSettings,
-        false,
-      ),
-    ).toBe(false);
-    expect(
-      isLocalDesktopManagedDaemon(
-        "local-desktop",
-        { ...runningDesktopDaemonStatus, desktopManaged: false },
-        desktopSettings,
-        true,
-      ),
-    ).toBe(false);
-    expect(
-      isLocalDesktopManagedDaemon(
-        "local-desktop",
-        runningDesktopDaemonStatus,
-        {
-          ...desktopSettings,
-          daemon: { ...desktopSettings.daemon, manageBuiltInDaemon: false },
-        },
-        true,
-      ),
-    ).toBe(false);
-  });
-});
-
 describe("restartDaemonFromSettings", () => {
   it("restarts the local desktop-managed daemon through the desktop bridge", async () => {
     const { calls, deps } = makeDeps();
 
-    await restartDaemonFromSettings("local-desktop", "settings_daemon_restart_local", deps);
+    await restartDaemonFromSettings(" local-desktop ", "settings_daemon_restart_local", deps);
 
     expect(calls).toEqual(["desktop-status", "desktop-settings", "desktop-restart"]);
   });

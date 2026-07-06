@@ -19,17 +19,12 @@ export interface SettingsDaemonRestartDeps {
   restartServer: (reason: string) => Promise<unknown>;
 }
 
-export function isLocalDesktopManagedDaemon(
+function isLocalDesktopManagedDaemon(
   hostServerId: string,
   desktopDaemonStatus: DesktopDaemonRestartStatus,
   desktopSettings: DesktopDaemonRestartSettings,
-  isElectron: boolean,
 ): boolean {
-  if (
-    !isElectron ||
-    !desktopDaemonStatus.desktopManaged ||
-    !desktopSettings.daemon.manageBuiltInDaemon
-  ) {
+  if (!desktopDaemonStatus.desktopManaged || !desktopSettings.daemon.manageBuiltInDaemon) {
     return false;
   }
 
@@ -51,9 +46,7 @@ export async function restartDaemonFromSettings(
       deps.getDesktopDaemonStatus(),
       deps.getDesktopSettings(),
     ]);
-    if (
-      isLocalDesktopManagedDaemon(hostServerId, desktopDaemonStatus, desktopSettings, isElectron)
-    ) {
+    if (isLocalDesktopManagedDaemon(hostServerId, desktopDaemonStatus, desktopSettings)) {
       await deps.restartDesktopDaemon();
       return;
     }
