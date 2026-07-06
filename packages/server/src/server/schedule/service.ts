@@ -27,6 +27,7 @@ import type {
 } from "@getpaseo/protocol/schedule/types";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
+const WORKSPACE_STAMP_CACHE_TTL_MS = 5_000;
 
 // A run failed because its target no longer exists: the agent was deleted or
 // archived, or a new-agent cwd was removed. These are permanent, so the schedule
@@ -922,14 +923,19 @@ export class ScheduleService {
     })();
     this.workspaceStampPromises.set(key, promise);
     try {
-      return await promise;
-    } finally {
+      const stampedTarget = await promise;
       const timer = setTimeout(() => {
         if (this.workspaceStampPromises.get(key) === promise) {
           this.workspaceStampPromises.delete(key);
         }
-      }, 0);
+      }, WORKSPACE_STAMP_CACHE_TTL_MS);
       timer.unref?.();
+      return stampedTarget;
+    } catch (error) {
+      if (this.workspaceStampPromises.get(key) === promise) {
+        this.workspaceStampPromises.delete(key);
+      }
+      throw error;
     }
   }
 
