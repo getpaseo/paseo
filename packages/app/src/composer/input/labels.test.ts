@@ -124,6 +124,7 @@ describe("composer input labels", () => {
       resolveSendTooltipLabel({
         submitButtonAccessibilityLabel: undefined,
         defaultActionQueues: true,
+        showNewlineHint: true,
         t,
       }),
     ).toBe("Queue");
@@ -131,8 +132,17 @@ describe("composer input labels", () => {
       resolveSendTooltipLabel({
         submitButtonAccessibilityLabel: undefined,
         defaultActionQueues: false,
+        showNewlineHint: true,
         t,
       }),
     ).toBe("Send (Shift+Enter or Alt+Enter for new line)");
+    expect(
+      resolveSendTooltipLabel({
+        submitButtonAccessibilityLabel: undefined,
+        defaultActionQueues: false,
+        showNewlineHint: false,
+        t,
+      }),
+    ).toBe("Send");
   });
 });

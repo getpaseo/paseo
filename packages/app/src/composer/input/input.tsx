@@ -1184,6 +1184,28 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
+function useClampedSelection(value: string): {
+  selection: { start: number; end: number };
+  setReportedSelection: (selection: { start: number; end: number }) => void;
+} {
+  const [reportedSelection, setReportedSelection] = useState<{ start: number; end: number }>({
+    start: value.length,
+    end: value.length,
+  });
+  const selection = useMemo(
+    () => ({
+      start: Math.min(reportedSelection.start, value.length),
+      end: Math.min(reportedSelection.end, value.length),
+    }),
+    [reportedSelection, value.length],
+  );
+  return { selection, setReportedSelection };
+}
+
+function shouldShowNewlineHint(isWebPlatform: boolean, isCompact: boolean): boolean {
+  return isWebPlatform && !isCompact;
+}
+
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   function MessageInput(props, ref) {
     const {
@@ -1238,10 +1260,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
-    const [selection, setSelection] = useState<{ start: number; end: number }>({
-      start: value.length,
-      end: value.length,
-    });
+    const { selection, setReportedSelection } = useClampedSelection(value);
     const rootRef = useRef<View | null>(null);
     const inputWrapperRef = useRef<View | null>(null);
     const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -1288,10 +1307,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     useEffect(() => {
       valueRef.current = value;
-      setSelection((previous) => ({
-        start: Math.min(previous.start, value.length),
-        end: Math.min(previous.end, value.length),
-      }));
     }, [value]);
 
     useEffect(() => {
@@ -1629,10 +1644,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
         const start = event.nativeEvent.selection?.start ?? 0;
         const end = event.nativeEvent.selection?.end ?? start;
-        setSelection({ start, end });
+        setReportedSelection({ start, end });
         onSelectionChangeCallback?.({ start, end });
       },
-      [onSelectionChangeCallback],
+      [onSelectionChangeCallback, setReportedSelection],
     );
 
     const shouldHandleWebKeyPress = isWeb;
@@ -1651,7 +1666,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         value,
         selection,
         onChangeText: handleInputChange,
-        onSelectionChange: setSelection,
+        onSelectionChange: setReportedSelection,
         handleAlternateSendAction,
         handleDefaultSendAction,
       });
@@ -1701,6 +1716,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const sendTooltipLabel = resolveSendTooltipLabel({
       submitButtonAccessibilityLabel,
       defaultActionQueues,
+      showNewlineHint: shouldShowNewlineHint(isWeb, isCompact),
       t,
     });
 

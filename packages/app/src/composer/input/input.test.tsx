@@ -1,19 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleDesktopKeyPressImpl, insertNewlineAtSelection } from "./keyboard";
+import type { WebTextInputKeyPressEvent } from "./keyboard";
 import type { MessagePayload } from "@/composer/types";
-
-interface WebTextInputKeyPressEvent {
-  nativeEvent: {
-    key: string;
-    shiftKey?: boolean;
-    altKey?: boolean;
-    metaKey?: boolean;
-    ctrlKey?: boolean;
-    isComposing?: boolean;
-    keyCode?: number;
-  };
-  preventDefault: () => void;
-}
 
 function makeEvent(options: {
   key?: string;

@@ -45,9 +45,11 @@ export function resolveVoiceTooltipText(input: {
 export function resolveSendTooltipLabel(input: {
   submitButtonAccessibilityLabel: string | undefined;
   defaultActionQueues: boolean;
+  showNewlineHint: boolean;
   t: TFunction;
 }): string {
   if (input.submitButtonAccessibilityLabel) return input.submitButtonAccessibilityLabel;
   if (input.defaultActionQueues) return input.t("composer.input.queue");
-  return input.t("composer.input.sendWithNewline");
+  if (input.showNewlineHint) return input.t("composer.input.sendWithNewline");
+  return input.t("composer.input.send");
 }
