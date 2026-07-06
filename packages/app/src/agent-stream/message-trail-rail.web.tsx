@@ -16,6 +16,7 @@ import {
   anchorOpacityFor,
   gaussianWeight,
   MAGNIFY_ACTIVATION,
+  MIN_GAP_TO_CONTENT,
   OPACITY_FOCUS,
   OPACITY_REST,
   RAIL_EDGE_MIN,
@@ -28,6 +29,7 @@ import {
   TICK_MAX_WIDTH,
   twoSigmaSqFor,
 } from "./message-trail-rail-geometry";
+import { prefersReducedMotion } from "./web-scroll-geometry";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface MessageTrailRailProps {
@@ -63,10 +65,6 @@ const TICK_HEIGHT_HOVER = 4; // hovered tick reads thicker, not just longer
 const TICK_BASE_WIDTH = 6;
 const REDUCED_MOTION_HOVER_WIDTH = 16;
 const RAIL_HEIGHT_FRACTION = 0.8; // tick column capped at 80% of rail height
-// Minimum breathing room between the rail's right edge (where a fully-magnified, center-
-// anchored tick reaches — it can grow up to TICK_MAX_WIDTH === RAIL_WIDTH) and the content's
-// real left edge. Mirrors the geometry module's constant so HIT_PADDING_RIGHT matches it.
-const MIN_GAP_TO_CONTENT = 6;
 // Push the tooltip up so it reads centered on the focused tick rather than starting below it.
 const TOOLTIP_VERTICAL_NUDGE = 18;
 const TOOLTIP_BOTTOM_CLEARANCE = 64;
@@ -112,13 +110,6 @@ const RAIL_DIV_STYLE: CSSProperties = {
   overflowY: "hidden",
   cursor: "pointer",
 };
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 export function MessageTrailRail({
   items,
@@ -197,8 +188,6 @@ export function MessageTrailRail({
     const reducedMotion = reducedMotionRef.current;
     const tickSpacing = spacingRef.current;
     const twoSigmaSq = twoSigmaSqFor(tickSpacing);
-    let nearestIndex = -1;
-    let nearestDistance = Number.POSITIVE_INFINITY;
 
     for (let index = 0; index < list.length; index += 1) {
       const node = tickRefs.current[index];
@@ -207,10 +196,6 @@ export function MessageTrailRail({
       }
       const center = index * tickSpacing + TICK_HEIGHT / 2;
       const distance = Math.abs(pointerY - center);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestIndex = index;
-      }
 
       const item = list[index];
       const baseOpacity = item ? anchorOpacityFor(item.id, snapshot) : OPACITY_REST;
@@ -239,7 +224,10 @@ export function MessageTrailRail({
       );
     }
 
-    return nearestIndex;
+    // Resolve the focused tick with the same pure helper handleRailClick uses, so hovering and
+    // clicking at the same pointer Y always agree — even if a tick's DOM ref hasn't attached yet
+    // (the loop above skips null refs for styling, but the nearest-tick choice must not).
+    return resolveNearestTickIndex(pointerY, list.length, tickSpacing);
   }, []);
 
   // Single coalesced pointermove -> one rAF -> imperative writes. Zero React state per frame.

@@ -1,9 +1,8 @@
 export type ScrollBehaviorLike = "auto" | "smooth";
 
-const BOTTOM_OVERSCROLL_TOLERANCE_PX = 2;
-
 export const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
 export const AUTO_SCROLL_RESUME_THRESHOLD_PX = 1;
+const BOTTOM_OVERSCROLL_TOLERANCE_PX = 2;
 
 // Fraction of the viewport the target row should sit below the top edge after a jump.
 export const SCROLL_TO_MESSAGE_TOP_OFFSET_FRACTION = 0.2;

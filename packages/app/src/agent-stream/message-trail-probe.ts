@@ -2,7 +2,7 @@ import type { TrailAnchorSnapshot } from "./message-trail-anchor";
 
 // The "current reading position" line for the message-trail: the last user-message row
 // whose top edge sits at or above this fraction of the viewport from the top.
-export const TRAIL_CURRENT_TOP_FRACTION = 0.25;
+const TRAIL_CURRENT_TOP_FRACTION = 0.25;
 
 export function computeTrailAnchor(input: {
   ids: readonly string[];

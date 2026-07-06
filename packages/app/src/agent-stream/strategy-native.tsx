@@ -125,6 +125,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const programmaticScrollEventBudgetRef = useRef(0);
   // Guards onScrollToIndexFailed so a failed scrollToIndex retries at most once.
   const scrollToIndexRetriedRef = useRef(false);
+  // Handle for the retry rAF so it can be cancelled if the component unmounts before it fires.
+  const scrollToIndexRetryFrameRef = useRef<number | null>(null);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
@@ -352,13 +354,24 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         return;
       }
       scrollToIndexRetriedRef.current = true;
-      requestAnimationFrame(() => {
+      scrollToIndexRetryFrameRef.current = requestAnimationFrame(() => {
+        scrollToIndexRetryFrameRef.current = null;
         flatListRef.current?.scrollToIndex({
           index: info.index,
           viewPosition: 0.8,
           animated: true,
         });
       });
+    },
+    [],
+  );
+
+  // Cancel a pending retry frame if the component unmounts before it fires.
+  useEffect(
+    () => () => {
+      if (scrollToIndexRetryFrameRef.current !== null) {
+        cancelAnimationFrame(scrollToIndexRetryFrameRef.current);
+      }
     },
     [],
   );

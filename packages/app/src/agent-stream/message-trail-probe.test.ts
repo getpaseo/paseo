@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TRAIL_CURRENT_TOP_FRACTION, computeTrailAnchor } from "./message-trail-probe";
+import { computeTrailAnchor } from "./message-trail-probe";
 
 function createOffsetResolver(offsets: Record<string, number | null>) {
   const map = new Map<string, number | null>(Object.entries(offsets));
@@ -92,9 +92,5 @@ describe("computeTrailAnchor", () => {
         resolveOffset,
       }),
     ).toEqual({ currentId: null });
-  });
-
-  it("places the reading line at a quarter of the viewport below the scroll top", () => {
-    expect(TRAIL_CURRENT_TOP_FRACTION).toBe(0.25);
   });
 });
