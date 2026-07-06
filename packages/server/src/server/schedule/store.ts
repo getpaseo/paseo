@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { StoredScheduleSchema, type StoredSchedule } from "@getpaseo/protocol/schedule/types";
+import {
+  StoredScheduleSchema,
+  type ScheduleTarget,
+  type StoredSchedule,
+} from "@getpaseo/protocol/schedule/types";
 import { writeJsonFileAtomic } from "../atomic-file.js";
 
 function generateScheduleId(): string {
@@ -10,11 +14,78 @@ function generateScheduleId(): string {
 
 type ScheduleUpdater = (schedule: StoredSchedule) => StoredSchedule | Promise<StoredSchedule>;
 
-interface ScheduleIdentityUpsert {
-  identity: string;
-  matches: (schedule: StoredSchedule) => boolean;
+interface ScheduleNameTargetUpsert {
   create: () => Omit<StoredSchedule, "id"> | Promise<Omit<StoredSchedule, "id">>;
   update: ScheduleUpdater;
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(source)
+        .sort()
+        .map((key) => [key, canonicalize(source[key])]),
+    );
+  }
+  return value;
+}
+
+function normalizeScheduleName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("Schedule name is required");
+  }
+  return trimmed;
+}
+
+function normalizeOptionalScheduleName(name: string | null): string | null {
+  if (name === null) {
+    return null;
+  }
+  const trimmed = name.trim();
+  return trimmed ? trimmed : null;
+}
+
+function targetIdentity(target: ScheduleTarget): unknown {
+  if (target.type === "agent") {
+    return {
+      type: target.type,
+      agentId: target.agentId,
+    };
+  }
+
+  const { workspaceId: _workspaceId, ...config } = target.config;
+  return {
+    type: target.type,
+    config,
+  };
+}
+
+function nameTargetIdentityKey(name: string, target: ScheduleTarget): string {
+  return JSON.stringify(
+    canonicalize({
+      name: normalizeScheduleName(name),
+      target: targetIdentity(target),
+    }),
+  );
+}
+
+function matchesNameAndTarget(
+  schedule: StoredSchedule,
+  name: string,
+  target: ScheduleTarget,
+): boolean {
+  const scheduleName = normalizeOptionalScheduleName(schedule.name);
+  return (
+    schedule.status !== "completed" &&
+    scheduleName !== null &&
+    scheduleName === normalizeScheduleName(name) &&
+    nameTargetIdentityKey(scheduleName, schedule.target) === nameTargetIdentityKey(name, target)
+  );
 }
 
 export class ScheduleStore {
@@ -64,12 +135,6 @@ export class ScheduleStore {
     return created;
   }
 
-  async put(schedule: StoredSchedule): Promise<void> {
-    await this.serializeScheduleMutation(schedule.id, async () => {
-      await this.write(StoredScheduleSchema.parse(schedule));
-    });
-  }
-
   async update(id: string, updater: ScheduleUpdater): Promise<StoredSchedule | null> {
     return this.serializeScheduleMutation(id, async () => {
       const current = await this.get(id);
@@ -89,29 +154,34 @@ export class ScheduleStore {
     });
   }
 
-  async upsertByIdentity(options: ScheduleIdentityUpsert): Promise<StoredSchedule> {
-    return this.serializeIdentityMutation(options.identity, async () => {
-      const existing = (await this.list()).find(options.matches);
-      if (!existing) {
-        const created = StoredScheduleSchema.parse({
-          ...(await options.create()),
-          id: generateScheduleId(),
-        });
-        await this.write(created);
-        return created;
-      }
+  async upsertByNameAndTarget(
+    name: string,
+    target: ScheduleTarget,
+    options: ScheduleNameTargetUpsert,
+  ): Promise<StoredSchedule> {
+    const identity = nameTargetIdentityKey(name, target);
+    return this.serializeIdentityMutation(identity, async () => {
+      while (true) {
+        const existing = (await this.list()).find((schedule) =>
+          matchesNameAndTarget(schedule, name, target),
+        );
+        if (!existing) {
+          const created = StoredScheduleSchema.parse({
+            ...(await options.create()),
+            id: generateScheduleId(),
+          });
+          if (!matchesNameAndTarget(created, name, target)) {
+            throw new Error("Created schedule does not match requested identity");
+          }
+          await this.write(created);
+          return created;
+        }
 
-      const updated = await this.update(existing.id, options.update);
-      if (updated) {
-        return updated;
+        const updated = await this.updateMatchedSchedule(existing.id, name, target, options.update);
+        if (updated) {
+          return updated;
+        }
       }
-
-      const created = StoredScheduleSchema.parse({
-        ...(await options.create()),
-        id: generateScheduleId(),
-      });
-      await this.write(created);
-      return created;
     });
   }
 
@@ -156,5 +226,29 @@ export class ScheduleStore {
         promises.delete(key);
       }
     }
+  }
+
+  private async updateMatchedSchedule(
+    id: string,
+    name: string,
+    target: ScheduleTarget,
+    updater: ScheduleUpdater,
+  ): Promise<StoredSchedule | null> {
+    return this.serializeScheduleMutation(id, async () => {
+      const current = await this.get(id);
+      if (!current || !matchesNameAndTarget(current, name, target)) {
+        return null;
+      }
+      const next = await updater(current);
+      if (next.id !== id) {
+        throw new Error(`Schedule update cannot change id: ${id}`);
+      }
+      const updated = StoredScheduleSchema.parse(next);
+      if (!matchesNameAndTarget(updated, name, target)) {
+        throw new Error("Updated schedule does not match requested identity");
+      }
+      await this.write(updated);
+      return updated;
+    });
   }
 }

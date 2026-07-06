@@ -156,22 +156,6 @@ function scheduleTargetsEqual(a: ScheduleTarget, b: ScheduleTarget): boolean {
   return false;
 }
 
-function scheduleTargetsEqualForCreateOrReplace(
-  existing: ScheduleTarget,
-  incoming: ScheduleTarget,
-): boolean {
-  if (existing.type !== "new-agent" || incoming.type !== "new-agent") {
-    return scheduleTargetsEqual(existing, incoming);
-  }
-  const incomingConfig =
-    incoming.config.workspaceId || !existing.config.workspaceId
-      ? incoming.config
-      : { ...incoming.config, workspaceId: existing.config.workspaceId };
-  return (
-    JSON.stringify(canonicalize(existing.config)) === JSON.stringify(canonicalize(incomingConfig))
-  );
-}
-
 function carryExistingWorkspaceStamp(
   existing: ScheduleTarget,
   incoming: ScheduleTarget,
@@ -191,10 +175,6 @@ function carryExistingWorkspaceStamp(
       workspaceId: existing.config.workspaceId,
     },
   };
-}
-
-function createOrReplaceIdentity(name: string, target: ScheduleTarget): string {
-  return JSON.stringify(canonicalize({ name, target }));
 }
 
 function requireSchedule(schedule: StoredSchedule | null, id: string): StoredSchedule {
@@ -363,12 +343,7 @@ export class ScheduleService {
       return this.createScheduleRecord(input, { name, prompt, target });
     }
 
-    return this.store.upsertByIdentity({
-      identity: createOrReplaceIdentity(name, input.target),
-      matches: (schedule) =>
-        schedule.status !== "completed" &&
-        trimOptionalName(schedule.name) === name &&
-        scheduleTargetsEqualForCreateOrReplace(schedule.target, input.target),
+    return this.store.upsertByNameAndTarget(name, input.target, {
       create: async () => {
         const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
         return this.buildScheduleRecord(input, { name, prompt, target });
