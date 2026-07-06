@@ -62,7 +62,7 @@ async function createRewindHarness(options: { historyGate?: RewindHistoryGate } 
       cwd: process.cwd(),
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   return { manager, session, agentId: agent.id };
 }

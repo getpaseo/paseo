@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { getDeviceTimeZone } from "@/utils/device-timezone";
+import { nextCronCadence } from "@/utils/schedule-cadence-policy";
 import {
   describeCron,
   everyMsToParts,
@@ -58,6 +59,21 @@ function describeInterval(value: number, unit: IntervalUnit): string {
   return `Runs every ${value} ${noun}s`;
 }
 
+function getCronPreview(expression: string, timezone: string, error: string | null): string | null {
+  if (error) {
+    return null;
+  }
+  if (!expression) {
+    return null;
+  }
+
+  const described = describeCron({ type: "cron", expression, timezone });
+  if (described) {
+    return described;
+  }
+  return expression;
+}
+
 export interface CadenceEditorProps {
   value: ScheduleCadence;
   onChange: (next: ScheduleCadence) => void;
@@ -106,9 +122,9 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const emitCron = useCallback(
     (expression: string) => {
       lastCronExpression.current = expression;
-      onChange({ type: "cron", expression, timezone: cronTimeZone });
+      onChange(nextCronCadence(value, expression, deviceTimeZone));
     },
-    [onChange, cronTimeZone],
+    [onChange, value, deviceTimeZone],
   );
 
   const handleModeChange = useCallback(
@@ -164,10 +180,7 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const intervalPreview = describeInterval(parsedIntervalValue, intervalUnit);
   const trimmedCron = cronText.trim();
   const cronError = trimmedCron ? validateCron(trimmedCron) : null;
-  const cronPreview = cronError
-    ? null
-    : (describeCron({ type: "cron", expression: trimmedCron, timezone: cronTimeZone }) ??
-      trimmedCron);
+  const cronPreview = getCronPreview(trimmedCron, cronTimeZone, cronError);
 
   let cronFeedback: ReactNode = null;
   if (cronError) {

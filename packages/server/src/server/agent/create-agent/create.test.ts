@@ -121,7 +121,7 @@ test("mcp create accepts provider-only internal input and leaves model undefined
     }),
     undefined,
     expect.objectContaining({
-      placement: { kind: "workspace", workspaceId: "ws-create-test" },
+      workspaceId: "ws-create-test",
     }),
   );
 });

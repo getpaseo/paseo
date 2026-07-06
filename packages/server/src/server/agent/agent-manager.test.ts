@@ -468,7 +468,7 @@ test("normalizeConfig injects the provider default model when omitted", async ()
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.config.model).toBe("gpt-5.4");
@@ -497,7 +497,7 @@ test("createAgent forwards request env into the spawned provider process", async
         env: {
           CHUNK14_PROBE: "expected",
         },
-        placement: { kind: "ephemeral" },
+        workspaceId: undefined,
       },
     );
 
@@ -530,7 +530,7 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
       model: "default",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.config.model).toBe("gpt-5.4");
@@ -758,7 +758,7 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
       systemPrompt: "Agent instructions.",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const record = await storage.get(snapshot.id);
 
@@ -794,7 +794,7 @@ test("daemon append system prompt is injected into Pi configs", async () => {
       systemPrompt: "Agent instructions.",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toBe("Daemon instructions.");
@@ -912,7 +912,7 @@ test("setAgentMode persists the selected mode across session reload", async () =
       modeId: "auto",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.setAgentMode(snapshot.id, "full-access");
@@ -981,7 +981,7 @@ test("reloadAgentSession completes when the previous session close hangs", async
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     );
 
     const reloaded = await manager.reloadAgentSession(snapshot.id);
@@ -1037,7 +1037,7 @@ test("cancelAgentRun completes when provider interrupt hangs", async () => {
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     );
 
     await new Promise<void>((resolve) => {
@@ -1134,7 +1134,7 @@ test("createAgent passes daemon launch env through the provider launch context",
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(client.lastConfig).toEqual({
@@ -1185,7 +1185,7 @@ test("createAgent passes persistSession to provider create options", async () =>
       cwd: workdir,
     },
     undefined,
-    { persistSession: false, placement: { kind: "ephemeral" } },
+    { persistSession: false, workspaceId: undefined },
   );
 
   expect(client.lastCreateOptions).toEqual({ persistSession: false });
@@ -1213,7 +1213,7 @@ test("createAgent persists workspaceId on the stored record and emits it in the 
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "workspace", workspaceId: "wks_owner" } },
+      { workspaceId: "wks_owner" },
     );
 
     expect(agent.workspaceId).toBe("wks_owner");
@@ -1263,7 +1263,7 @@ test("createAgent injects paseo MCP server only into provider launch config", as
       },
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.config.mcpServers).toEqual({
@@ -1348,7 +1348,7 @@ test("createAgent passes native Paseo tools through launch context without inter
       },
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(client.lastLaunchContext?.paseoTools).toBe(paseoTools);
@@ -1406,7 +1406,7 @@ test("createAgent injects the MCP auth token as a bearer header into the launch 
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(manager.getMcpAuthToken()).toBe("cap-token");
@@ -1544,7 +1544,7 @@ test("createAgent preserves a user-provided paseo MCP config", async () => {
       },
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.config.mcpServers).toEqual({
@@ -1575,7 +1575,7 @@ test("createAgent fails when cwd does not exist", async () => {
         cwd: join(workdir, "does-not-exist"),
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     ),
   ).rejects.toThrow("Working directory does not exist");
 });
@@ -1599,7 +1599,7 @@ test("createAgent reports configured providers when provider is unknown", async 
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     ),
   ).rejects.toThrow("Unknown provider 'missing-provider'. Configured providers: codex.");
 });
@@ -1631,7 +1631,7 @@ test("createAgent reports available providers when selected provider is unavaila
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     ),
   ).rejects.toThrow(
     "Provider 'codex' is not available. Available providers: claude. Use one of those providers, or install/configure 'codex'.",
@@ -1674,7 +1674,7 @@ test("createAgent rejects a disabled provider without creating a session", async
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     ),
   ).rejects.toThrow("Provider 'codex' is disabled");
   expect(disabledClient.createSessionCalls).toBe(0);
@@ -1697,7 +1697,7 @@ test("updateProviderRegistry re-enables a previously disabled provider", async (
 
   await expect(
     manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      placement: { kind: "ephemeral" },
+      workspaceId: undefined,
     }),
   ).rejects.toThrow("Provider 'codex' is disabled");
 
@@ -1707,7 +1707,7 @@ test("updateProviderRegistry re-enables a previously disabled provider", async (
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
   expect(snapshot.config.provider).toBe("codex");
 });
@@ -1733,7 +1733,7 @@ test("updateProviderRegistry disables a previously enabled provider", async () =
 
   await expect(
     manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      placement: { kind: "ephemeral" },
+      workspaceId: undefined,
     }),
   ).rejects.toThrow("Provider 'codex' is disabled");
 });
@@ -1758,7 +1758,7 @@ test("updateProviderRegistry registers a previously unknown provider", async () 
 
   expect(manager.getRegisteredProviderIds()).toContain("codex");
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
   expect(snapshot.config.provider).toBe("codex");
 });
@@ -1791,7 +1791,7 @@ test("createAgent passes explicit model strings through to the provider", async 
       model: "not-a-real-model",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(client.lastConfig?.model).toBe("not-a-real-model");
@@ -2049,7 +2049,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(client.lastCreateLaunchContext).toEqual({
@@ -2138,7 +2138,7 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.appendTimelineItem(snapshot.id, {
@@ -2180,7 +2180,7 @@ test("reloadAgentSession preserves current title when config title is unset", as
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.setTitle(snapshot.id, "Generated title");
 
@@ -2214,7 +2214,7 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const before = await storage.get(snapshot.id);
@@ -2250,7 +2250,7 @@ test("updateAgentMetadata bumps updatedAt for stored agents", async () => {
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.closeAgent(snapshot.id);
 
@@ -2296,7 +2296,7 @@ test("persists live mode, model, and thinking changes without an external snapsh
       thinkingOptionId: "low",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.setAgentMode(snapshot.id, "build");
@@ -2340,7 +2340,7 @@ test("session config drift events update state through the stream channel", asyn
       thinkingOptionId: "low",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const streams: AgentStreamEvent[] = [];
   manager.subscribe(
@@ -2413,7 +2413,7 @@ test("setLabels merges and persists labels", async () => {
       title: "Label test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.setLabels(snapshot.id, { surface: "mobile" });
@@ -2445,7 +2445,7 @@ test("detachAgent removes only the parent label from a live agent and emits stat
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -2459,7 +2459,7 @@ test("detachAgent removes only the parent label from a live agent and emits stat
         [PARENT_AGENT_ID_LABEL]: parent.id,
         team: "infra",
       },
-      placement: { kind: "ephemeral" },
+      workspaceId: undefined,
     },
   );
   const emittedLabels: Array<Record<string, string>> = [];
@@ -2503,7 +2503,7 @@ test("detachAgent removes the parent label from a stored-only agent", async () =
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -2517,7 +2517,7 @@ test("detachAgent removes the parent label from a stored-only agent", async () =
         [PARENT_AGENT_ID_LABEL]: parent.id,
         role: "reviewer",
       },
-      placement: { kind: "ephemeral" },
+      workspaceId: undefined,
     },
   );
   await manager.closeAgent(child.id);
@@ -2549,7 +2549,7 @@ test("archiveAgent does not cascade to a detached former child", async () => {
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -2558,7 +2558,7 @@ test("archiveAgent does not cascade to a detached former child", async () => {
       title: "Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
 
   await manager.detachAgent(child.id);
@@ -2588,7 +2588,7 @@ test("runAgent persists finished attention and idle status without an external s
       title: "Finished attention test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.runAgent(snapshot.id, "say hello");
@@ -2621,7 +2621,7 @@ test("archiveSnapshot clears persisted attention and normalizes running status",
       title: "Archive attention test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const live = manager.getAgent(snapshot.id);
@@ -2667,7 +2667,7 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
       title: "Stored archive dispatch",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.closeAgent(created.id);
 
@@ -2817,7 +2817,7 @@ test("reloadAgentSession cancels active run and resumes existing session once th
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   expect(snapshot.persistence).toBeNull();
 
@@ -2872,7 +2872,7 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.appendTimelineItem(snapshot.id, {
@@ -2945,7 +2945,7 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.appendTimelineItem(snapshot.id, {
@@ -2996,7 +2996,7 @@ test("getAgent does not expose committed history internals once manager owns the
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.appendTimelineItem(snapshot.id, {
@@ -3053,7 +3053,7 @@ test("coalesces assistant chunks and persists the canonical row", async () => {
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const streamEvents: Array<{
@@ -3139,7 +3139,7 @@ test("fetchTimeline supports older-history pagination with before seq", async ()
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.appendTimelineItem(snapshot.id, {
@@ -3197,7 +3197,7 @@ test("does not trim committed history", async () => {
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.appendTimelineItem(snapshot.id, {
@@ -3301,7 +3301,7 @@ test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline hi
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.hydrateTimelineFromProvider(snapshot.id);
@@ -3384,7 +3384,7 @@ test("hydrateTimeline preserves reasoning between assistant chunks", async () =>
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.hydrateTimelineFromProvider(snapshot.id);
@@ -3419,7 +3419,7 @@ test("createAgent fails when generated agent ID is not a UUID", async () => {
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     ),
   ).rejects.toThrow("createAgent: agentId must be a UUID");
 });
@@ -3443,7 +3443,7 @@ test("createAgent fails when explicit agent ID is not a UUID", async () => {
         cwd: workdir,
       },
       "not-a-uuid",
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     ),
   ).rejects.toThrow("createAgent: agentId must be a UUID");
 });
@@ -3469,7 +3469,7 @@ test("createAgent persists provided title before returning", async () => {
       title: "Fix Login Bug",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.id).toBe(agentId);
@@ -3501,7 +3501,7 @@ test("createAgent populates runtimeInfo after session creation", async () => {
       modeId: "full-access",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.runtimeInfo).toBeDefined();
@@ -3528,7 +3528,7 @@ test("runAgent refreshes runtimeInfo after completion", async () => {
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.runtimeInfo?.model).toBe("gpt-5.4");
@@ -3579,7 +3579,7 @@ test("waitForAgentEvent does not resolve idle until foreground turn is finalized
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const stream = manager.streamAgent(snapshot.id, "hello");
@@ -3629,7 +3629,7 @@ test("waitForAgentRunStart resolves while a foreground run is still only pending
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const run = manager.streamAgent(snapshot.id, "fast");
@@ -3703,7 +3703,7 @@ test("replaceAgentRun does not emit idle or resolve waiters between interrupted 
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const lifecycleUpdates: string[] = [];
@@ -3830,7 +3830,7 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const stateUpdates: Array<{ lifecycle: string; updatedAt: number }> = [];
@@ -3929,7 +3929,7 @@ test("applies live autonomous events while no foreground run is active", async (
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const lifecycleUpdates: string[] = [];
@@ -4022,7 +4022,7 @@ test("cancelAgentRun can interrupt autonomous running state without a foreground
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const capturedSession = client.lastSession!;
@@ -4090,7 +4090,7 @@ test("waitForAgentEvent waitForActive resolves for autonomous live-event run", a
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const autonomousTurnId = "autonomous-wait-1";
@@ -4153,7 +4153,7 @@ test("autonomous events arriving during foreground run are processed via subscri
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const foreground = manager.streamAgent(snapshot.id, "foreground run");
@@ -4252,7 +4252,7 @@ test("subscribe error isolation: throwing subscriber does not break event flow",
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const receivedEvents: string[] = [];
@@ -4322,7 +4322,7 @@ test("keeps updatedAt monotonic when user message and run start happen in the sa
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_750_000_000_000);
@@ -4478,7 +4478,7 @@ test("runAgent assembles finalText from trailing assistant chunks", async () => 
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const result = await manager.runAgent(snapshot.id, "generate commit message");
@@ -4511,7 +4511,7 @@ test("listAgents excludes internal agents", async () => {
       title: "Normal Agent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   // Create an internal agent
@@ -4523,7 +4523,7 @@ test("listAgents excludes internal agents", async () => {
       internal: true,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const agents = manager.listAgents();
@@ -4553,7 +4553,7 @@ test("getAgent returns internal agents by ID", async () => {
       internal: true,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const agent = manager.getAgent(internalAgentId);
@@ -4594,7 +4594,7 @@ test("subscribe does not emit state events for internal agents to global subscri
       title: "Normal Agent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   // Create an internal agent - should NOT emit to global subscriber
@@ -4606,7 +4606,7 @@ test("subscribe does not emit state events for internal agents to global subscri
       internal: true,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   // Should only have events from the normal agent
@@ -4647,7 +4647,7 @@ test("subscribe emits state events for internal agents when subscribed by agentI
       internal: true,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   // Should receive events when subscribed by specific agentId
@@ -4695,7 +4695,7 @@ test("onAgentAttention is not called for internal agents", async () => {
       internal: true,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   // Run and complete the agent (which normally triggers attention)
@@ -4730,7 +4730,7 @@ test("onAgentAttention is not called for delegated child agents", async () => {
       title: "Delegated Child Agent",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" }, workspaceId: undefined },
   );
 
   await manager.runAgent(agent.id, "hello");
@@ -4803,7 +4803,7 @@ test("clearAgentAttention on errored agent stays cleared until a new error trans
       title: "Attention transition test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await expect(manager.runAgent(agent.id, "fail once")).rejects.toThrow("boom-1");
@@ -4906,7 +4906,7 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
       title: "Start turn failure cleanup",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await expect(manager.runAgent(agent.id, "fail before turn id")).rejects.toThrow(
@@ -4941,7 +4941,7 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
       title: "Archive target",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const lifecycles: string[] = [];
@@ -4992,12 +4992,12 @@ test("fires onAgentArchived for archived parent and cascaded children", async ()
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const liveChild = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Child" },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: liveParent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: liveParent.id }, workspaceId: undefined },
   );
 
   await manager.archiveAgent(liveParent.id);
@@ -5025,7 +5025,7 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
       title: "Stored only",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.closeAgent(storedOnly.id);
 
@@ -5051,7 +5051,7 @@ test("unarchiveSnapshot skips native provider unarchive for active records", asy
       title: "Active unarchive target",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const unarchived = await manager.unarchiveSnapshot(agent.id);
@@ -5078,7 +5078,7 @@ test("unarchiveSnapshot unarchives native provider storage before clearing archi
       title: "Native unarchive target",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.archiveAgent(agent.id);
   client.readArchivedAtDuringUnarchive = async () => (await storage.get(agent.id))?.archivedAt;
@@ -5111,7 +5111,7 @@ test("unarchiveSnapshotByHandle unarchives native provider storage for the match
       title: "Native unarchive by handle target",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.archiveAgent(agent.id);
   const archived = await storage.get(agent.id);
@@ -5144,7 +5144,7 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
       title: "Native unarchive failure target",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   await manager.archiveAgent(agent.id);
   client.unarchiveFailure = new Error("provider still archived");
@@ -5175,7 +5175,7 @@ test("archiveAgent cascade archives in-memory children with the full archive con
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -5184,7 +5184,7 @@ test("archiveAgent cascade archives in-memory children with the full archive con
       title: "Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
   const unrelated = await manager.createAgent(
     {
@@ -5193,7 +5193,7 @@ test("archiveAgent cascade archives in-memory children with the full archive con
       title: "Unrelated",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.archiveAgent(parent.id);
@@ -5256,7 +5256,7 @@ test("archiveAgent cascade closes a running child runtime", async () => {
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -5265,7 +5265,7 @@ test("archiveAgent cascade closes a running child runtime", async () => {
       title: "Running Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
   const childSession = client.sessions[1];
   const childLifecycleEvents: string[] = [];
@@ -5314,7 +5314,7 @@ test("archiveAgent cascade archives off-memory children with the full archive co
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -5323,7 +5323,7 @@ test("archiveAgent cascade archives off-memory children with the full archive co
       title: "Off-memory Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
   const managerInternals = manager as unknown as {
     agents: Map<string, unknown>;
@@ -5353,7 +5353,7 @@ test("archiveAgent cascade notifies subscribers for in-memory and off-memory chi
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const inMemoryChild = await manager.createAgent(
     {
@@ -5362,7 +5362,7 @@ test("archiveAgent cascade notifies subscribers for in-memory and off-memory chi
       title: "In-memory Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
   const offMemoryChild = await manager.createAgent(
     {
@@ -5371,7 +5371,7 @@ test("archiveAgent cascade notifies subscribers for in-memory and off-memory chi
       title: "Off-memory Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
   const managerInternals = manager as unknown as {
     agents: Map<string, unknown>;
@@ -5431,7 +5431,7 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
       title: "Parent",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
   const child = await manager.createAgent(
     {
@@ -5440,7 +5440,7 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
       title: "Failing Child",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, placement: { kind: "ephemeral" } },
+    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
   );
   failingChildId = child.id;
 
@@ -5506,7 +5506,7 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
       title: "Turn failed test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("invalid model id");
@@ -5584,7 +5584,7 @@ test("turn_failed surfaces provider code and diagnostic in system error message"
       title: "Detailed failure test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await expect(manager.runAgent(agent.id, "hello")).rejects.toThrow("Provider execution failed");
@@ -5679,7 +5679,7 @@ test("permission request notifies once without forcing unread attention state", 
       title: "Permission transition test",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const stream = manager.streamAgent(agent.id, "permission flow");
@@ -5810,7 +5810,7 @@ test("respondToPermission updates currentModeId after plan approval", async () =
       modeId: "plan",
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   expect(snapshot.currentModeId).toBe("plan");
@@ -5915,7 +5915,7 @@ test("respondToPermission refreshes features and runtime info after provider-man
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const agent = manager.getAgent(snapshot.id);
@@ -6028,7 +6028,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const seen: string[] = [];
@@ -6197,7 +6197,7 @@ test("close during in-flight stream does not clear persistence sessionId", async
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   const stream = manager.streamAgent(snapshot.id, "hello");
@@ -6241,7 +6241,7 @@ test("closeAgent persists one final closed snapshot", async () => {
         cwd: workdir,
       },
       undefined,
-      { placement: { kind: "ephemeral" } },
+      { workspaceId: undefined },
     );
 
     await manager.flush();
@@ -6321,7 +6321,7 @@ test("hydrateTimeline keeps provider user_message items when no canonical user h
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.hydrateTimelineFromProvider(snapshot.id);
@@ -6386,7 +6386,7 @@ test("hydrateTimeline preserves provider replay timestamps and marks missing one
       cwd: workdir,
     },
     undefined,
-    { placement: { kind: "ephemeral" } },
+    { workspaceId: undefined },
   );
 
   await manager.hydrateTimelineFromProvider(snapshot.id);
@@ -6452,7 +6452,7 @@ test("provider user_message is recorded from the live stream", async () => {
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   await manager.runAgent(snapshot.id, { text: "do something" });
@@ -6506,7 +6506,7 @@ test("authoritative timeline includes provider-emitted submitted user prompt", a
 
   try {
     const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      placement: { kind: "ephemeral" },
+      workspaceId: undefined,
     });
 
     await manager.runAgent(snapshot.id, "hello from composer", { messageId: "msg-client-1" });
@@ -6573,7 +6573,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   // Start first foreground run — it will hang (no terminal event)
@@ -6768,7 +6768,7 @@ test("user_message events wrapping a paseo-system envelope are not added to the 
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   await manager.runAgent(snapshot.id, { text: "do something" });
@@ -6809,7 +6809,7 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   await manager.hydrateTimelineFromProvider(snapshot.id);
@@ -6883,7 +6883,7 @@ test("onWorkspaceStateMayHaveChanged is called when a completed shell tool call 
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   await manager.runAgent(snapshot.id, { text: "merge it" });
@@ -6919,7 +6919,7 @@ test("onWorkspaceStateMayHaveChanged is not called for non-shell tool calls", as
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   await manager.runAgent(snapshot.id, { text: "read it" });
@@ -6954,7 +6954,7 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
   });
 
   const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
 
   await manager.runAgent(snapshot.id, { text: "merge it" });

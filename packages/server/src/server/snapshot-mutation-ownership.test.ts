@@ -36,7 +36,7 @@ describe("snapshot mutation ownership boundary", () => {
           model: "gpt-5.2-codex",
         },
         undefined,
-        { placement: { kind: "ephemeral" } },
+        { workspaceId: undefined },
       );
       await daemonHandle.daemon.agentManager.flush();
 

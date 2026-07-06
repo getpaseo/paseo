@@ -366,7 +366,7 @@ describe("Suite A: Core Fixes", () => {
           modeId: "bypassPermissions",
         },
         undefined,
-        { placement: { kind: "ephemeral" } },
+        { workspaceId: undefined },
       );
       agentId = snapshot.id;
 

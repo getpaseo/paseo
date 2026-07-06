@@ -250,7 +250,7 @@ describe("MockLoadTestAgentClient", () => {
           model: "ten-second-stream",
         },
         "00000000-0000-4000-8000-000000000001",
-        { placement: { kind: "ephemeral" } },
+        { workspaceId: undefined },
       );
 
       const resultPromise = manager.runAgent(

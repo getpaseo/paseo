@@ -242,12 +242,9 @@ async function resolveSessionCreateAgent(
       env: input.env,
       initialTitle: input.provisionalTitle,
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
-      // agent belongs to that workspace, not the source one (mirrors the MCP
-      // path). createdWorkspaceId is the freshly created worktree's workspace.
-      placement: {
-        kind: "workspace",
-        workspaceId: requireResolvedWorkspaceId(workspaceId),
-      },
+      // agent belongs to that workspace, not the source one. createdWorkspaceId
+      // is the freshly created worktree's workspace.
+      workspaceId: requireResolvedWorkspaceId(workspaceId),
     },
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
@@ -313,10 +310,7 @@ async function resolveMcpCreateAgent(
     }),
     createOptions: {
       ...(labels ? { labels } : {}),
-      placement: {
-        kind: "workspace",
-        workspaceId: requireResolvedWorkspaceId(workspaceId),
-      },
+      workspaceId: requireResolvedWorkspaceId(workspaceId),
     },
     prompt: trimmedPrompt ? trimmedPrompt : undefined,
     setupContinuation,

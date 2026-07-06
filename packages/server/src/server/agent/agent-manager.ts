@@ -125,16 +125,6 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   return stripInternalPaseoMcpServer(config);
 }
 
-function resolvePlacementWorkspaceId(placement: AgentPlacement): string | undefined {
-  switch (placement.kind) {
-    case "workspace":
-    case "restored":
-      return placement.workspaceId;
-    case "ephemeral":
-      return undefined;
-  }
-}
-
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 export type {
   AgentTimelineCursor,
@@ -206,32 +196,14 @@ interface ProviderEnabledFlag {
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
-export interface WorkspaceAgentPlacement {
-  kind: "workspace";
-  workspaceId: string;
-}
-
-export interface EphemeralAgentPlacement {
-  kind: "ephemeral";
-}
-
-export interface RestoredAgentPlacement {
-  kind: "restored";
-  workspaceId: string | undefined;
-}
-
-export type AgentPlacement =
-  | WorkspaceAgentPlacement
-  | EphemeralAgentPlacement
-  | RestoredAgentPlacement;
-
 export interface CreateAgentOptions {
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
   persistSession?: boolean;
   initialTitle?: string | null;
-  placement: AgentPlacement;
+  // undefined is an explicit decision: the agent never appears in the sidebar.
+  workspaceId: string | undefined;
 }
 
 export interface AgentManagerOptions {
@@ -968,7 +940,7 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
-      workspaceId: resolvePlacementWorkspaceId(options.placement),
+      workspaceId: options.workspaceId,
     });
   }
 

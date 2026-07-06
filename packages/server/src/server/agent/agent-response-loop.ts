@@ -358,7 +358,7 @@ export async function generateStructuredAgentResponse<T>(
     options;
   const agent = await manager.createAgent(agentConfig, agentId, {
     persistSession,
-    placement: { kind: "ephemeral" },
+    workspaceId: undefined,
   });
   try {
     const caller: AgentCaller = async (nextPrompt) => {
