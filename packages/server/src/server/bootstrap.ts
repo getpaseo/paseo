@@ -983,8 +983,8 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     logger,
     agentManager,
-    providerSnapshotManager,
     createAgent,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
   });
   await loopService.initialize();
   logger.info({ elapsed: elapsed() }, "Loop service initialized");

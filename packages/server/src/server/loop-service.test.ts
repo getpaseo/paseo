@@ -30,7 +30,11 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import { createAgentCommand } from "./agent/create-agent/create.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { createLocalCheckoutWorkspace } from "./paseo-worktree-service.js";
+import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+import { FileBackedProjectRegistry, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { LoopService } from "./loop-service.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { createTestLogger } from "../test-utils/test-logger.js";
@@ -46,10 +50,72 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
 
 const NO_UNATTENDED_LOOP_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
   async resolveCreateConfig(input) {
-    expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
-    return { modeId: undefined, featureValues: input.featureValues };
+    expect(input).toMatchObject({ parent: null, unattended: false });
+    return { modeId: input.requestedMode, featureValues: input.featureValues };
   },
 };
+
+interface TestLoopServiceOptions {
+  paseoHome: string;
+  agentManager: AgentManager;
+  agentStorage: AgentStorage;
+  logger: ReturnType<typeof createTestLogger>;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+  ensureWorkspaceForCreate?: (
+    cwd: string,
+    firstAgentContext?: { prompt: string },
+  ) => Promise<string>;
+}
+
+function createLoopService(options: TestLoopServiceOptions): LoopService {
+  const providerSnapshotManager = options.providerSnapshotManager ?? NO_UNATTENDED_LOOP_POLICY;
+  const ensureWorkspaceForCreate =
+    options.ensureWorkspaceForCreate ?? (async () => "workspace-created-for-loop");
+  return new LoopService({
+    paseoHome: options.paseoHome,
+    agentManager: options.agentManager,
+    logger: options.logger,
+    ensureWorkspaceForCreate,
+    createAgent: (input) =>
+      createAgentCommand(
+        {
+          agentManager: options.agentManager,
+          agentStorage: options.agentStorage,
+          logger: options.logger,
+          providerSnapshotManager: providerSnapshotManager as ProviderSnapshotManager,
+          ensureWorkspaceForCreate,
+        },
+        input,
+      ),
+  });
+}
+
+async function createRegistryBackedWorkspaceEnsure(rootDir: string): Promise<{
+  workspaceRegistry: FileBackedWorkspaceRegistry;
+  ensureWorkspaceForCreate: TestLoopServiceOptions["ensureWorkspaceForCreate"];
+}> {
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(rootDir, "projects", "workspaces.json"),
+    createTestLogger(),
+  );
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(rootDir, "projects", "projects.json"),
+    createTestLogger(),
+  );
+  await workspaceRegistry.initialize();
+  await projectRegistry.initialize();
+  const workspaceGitService = createNoopWorkspaceGitService();
+  return {
+    workspaceRegistry,
+    ensureWorkspaceForCreate: async (cwd, firstAgentContext) => {
+      const workspace = await createLocalCheckoutWorkspace(
+        { cwd, title: firstAgentContext?.prompt ?? null },
+        { projectRegistry, workspaceRegistry, workspaceGitService },
+      );
+      return workspace.workspaceId;
+    },
+  };
+}
 
 interface ScriptedAgentBehavior {
   onRun(input: { config: AgentSessionConfig; prompt: string; turnId: string }): Promise<string>;
@@ -273,17 +339,18 @@ describe("LoopService", () => {
         registry: storage,
         logger,
       });
-      const service = new LoopService({
+      const service = createLoopService({
         paseoHome,
         agentManager: manager,
+        agentStorage: storage,
         logger,
-        providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
       });
       await service.initialize();
 
       const loop = await service.runLoop({
         prompt: "Create done.txt when the task is actually fixed.",
         cwd: workspaceDir,
+        model: "test-model",
         verifyChecks: [
           `${JSON.stringify(process.execPath)} ${JSON.stringify(path.basename(verifyScriptPath))}`,
         ],
@@ -329,11 +396,11 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
-      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
     });
     await service.initialize();
 
@@ -363,14 +430,75 @@ describe("LoopService", () => {
     expect(workerConfigs[0]).toMatchObject({
       provider: "codex",
       model: "gpt-5.4",
-      internal: true,
     });
     expect(verifierConfigs).toHaveLength(1);
     expect(verifierConfigs[0]).toMatchObject({
       provider: "claude",
       model: "sonnet",
-      internal: true,
     });
+  });
+
+  test("loop worker and verifier agents share one registry workspace across iterations", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tmpDir);
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              return "worker finished";
+            }
+            const verifierRuns = await storage.list();
+            const verifierCount = verifierRuns.filter((agent) =>
+              agent.title?.includes("verifier"),
+            ).length;
+            return verifierCount >= 2
+              ? '{"passed":true,"reason":"second verifier passed"}'
+              : '{"passed":false,"reason":"try again"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+      ensureWorkspaceForCreate,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Keep trying until the verifier passes.",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyPrompt: "Report whether the loop has passed.",
+      archive: true,
+      sleepMs: 1,
+      maxIterations: 2,
+    });
+
+    await waitForLoopCompletion(service, loop.id);
+
+    const finalLoop = await service.inspectLoop(loop.id);
+    expect(finalLoop.status).toBe("succeeded");
+    expect(finalLoop.iterations).toHaveLength(2);
+    const firstWorker = await storage.get(finalLoop.iterations[0]!.workerAgentId!);
+    const firstVerifier = await storage.get(finalLoop.iterations[0]!.verifierAgentId!);
+    const secondWorker = await storage.get(finalLoop.iterations[1]!.workerAgentId!);
+    const secondVerifier = await storage.get(finalLoop.iterations[1]!.verifierAgentId!);
+    const workspaceId = firstWorker?.workspaceId;
+    expect(workspaceId).toMatch(/^wks_/);
+    expect(firstVerifier?.workspaceId).toBe(workspaceId);
+    expect(secondWorker?.workspaceId).toBe(workspaceId);
+    expect(secondVerifier?.workspaceId).toBe(workspaceId);
+    expect(await workspaceRegistry.get(workspaceId!)).toMatchObject({
+      workspaceId,
+      cwd: workspaceDir,
+    });
+    expect(await workspaceRegistry.list()).toHaveLength(1);
   });
 
   test("archives worker and verifier agents after each iteration when requested", async () => {
@@ -395,17 +523,18 @@ describe("LoopService", () => {
       archivedAgentIds.push(agentId);
       await archiveAgent(agentId);
     };
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
-      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
     });
     await service.initialize();
 
     const loop = await service.runLoop({
       prompt: "Create done.txt",
       cwd: workspaceDir,
+      model: "test-model",
       verifyPrompt: "Confirm that done.txt exists in the workspace.",
       archive: true,
       maxIterations: 1,
@@ -423,12 +552,10 @@ describe("LoopService", () => {
     await expect(storage.get(iteration.workerAgentId!)).resolves.toMatchObject({
       id: iteration.workerAgentId!,
       archivedAt: expect.any(String),
-      internal: true,
     });
     await expect(storage.get(iteration.verifierAgentId!)).resolves.toMatchObject({
       id: iteration.verifierAgentId!,
       archivedAt: expect.any(String),
-      internal: true,
     });
   });
 
@@ -452,17 +579,18 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
-      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
     });
     await service.initialize();
 
     const loop = await service.runLoop({
       prompt: "Create done.txt",
       cwd: workspaceDir,
+      model: "test-model",
       verifyPrompt: "Confirm that done.txt exists in the workspace.",
       maxIterations: 1,
     });
@@ -499,13 +627,18 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
       providerSnapshotManager: {
         async resolveCreateConfig(input) {
-          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+          expect(input).toMatchObject({
+            parent: null,
+            unattended: false,
+            requestedMode: undefined,
+          });
           return { modeId: "bypassPermissions", featureValues: input.featureValues };
         },
       },
@@ -515,6 +648,7 @@ describe("LoopService", () => {
     const loop = await service.runLoop({
       prompt: "Create done.txt",
       cwd: workspaceDir,
+      model: "test-model",
       verifyPrompt: "Confirm that done.txt exists in the workspace.",
       maxIterations: 1,
     });
@@ -554,13 +688,18 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
       providerSnapshotManager: {
         async resolveCreateConfig(input) {
-          expect(input).toMatchObject({ parent: null, unattended: true, requestedMode: undefined });
+          expect(input).toMatchObject({
+            parent: null,
+            unattended: false,
+            requestedMode: undefined,
+          });
           return {
             modeId: "build",
             featureValues: { ...input.featureValues, auto_accept: true },
@@ -574,6 +713,7 @@ describe("LoopService", () => {
       prompt: "Create done.txt",
       cwd: workspaceDir,
       provider: "opencode",
+      model: "test-model",
       verifyPrompt: "Confirm that done.txt exists in the workspace.",
       maxIterations: 1,
     });
@@ -610,17 +750,18 @@ describe("LoopService", () => {
       registry: storage,
       logger,
     });
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
-      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
     });
     await service.initialize();
 
     const loop = await service.runLoop({
       prompt: "Create done.txt",
       cwd: workspaceDir,
+      model: "test-model",
       modeId: "acceptEdits",
       verifierModeId: "plan",
       verifyPrompt: "Confirm that done.txt exists in the workspace.",
@@ -659,17 +800,18 @@ describe("LoopService", () => {
       cancelledAgentIds.push(agentId);
       return cancelAgentRun(agentId);
     };
-    const service = new LoopService({
+    const service = createLoopService({
       paseoHome,
       agentManager: manager,
+      agentStorage: storage,
       logger,
-      providerSnapshotManager: NO_UNATTENDED_LOOP_POLICY,
     });
     await service.initialize();
 
     const loop = await service.runLoop({
       prompt: "Wait forever",
       cwd: workspaceDir,
+      model: "test-model",
       verifyChecks: ["test -f never.txt"],
     });
 

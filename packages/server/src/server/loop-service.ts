@@ -7,10 +7,12 @@ import { writeJsonFileAtomic } from "./atomic-file.js";
 import { curateAgentActivity } from "./agent/activity-curator.js";
 import type { BoundCreateAgentCommand } from "./agent/create-agent/create.js";
 import type { AgentManager } from "./agent/agent-manager.js";
-import { getStructuredAgentResponse } from "./agent/agent-response-loop.js";
+import {
+  buildStructuredAgentResponsePrompt,
+  getStructuredAgentResponse,
+} from "./agent/agent-response-loop.js";
 import type {
   AgentPromptInput,
-  AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
   AgentProvider,
@@ -20,11 +22,7 @@ import {
   createStringCommandShellEnvOverlay,
 } from "../utils/string-command-shell.js";
 import { execCommand } from "../utils/spawn.js";
-import type {
-  ProviderSnapshotManager,
-  ResolvedProviderCreateConfig,
-  ResolveProviderCreateConfigOptions,
-} from "./agent/provider-snapshot-manager.js";
+import type { FirstAgentContext } from "./messages.js";
 
 const LOOP_ID_LENGTH = 8;
 const DEFAULT_LOOP_PROVIDER: AgentProvider = "claude";
@@ -216,7 +214,26 @@ function buildVerifierTitle(loop: LoopRecord, iterationIndex: number): string {
   return `${prefix} [loop ${iterationIndex} verifier]`;
 }
 
-type CreateConfigResolver = Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+function formatProviderModel(provider: string, model: string | null): string {
+  if (!model || provider.includes("/")) {
+    return provider;
+  }
+  return `${provider}/${model}`;
+}
+
+type LoopAgentManager = Pick<
+  AgentManager,
+  "archiveAgent" | "cancelAgentRun" | "closeAgent" | "runAgent" | "subscribe" | "waitForAgentEvent"
+>;
+
+type EnsureWorkspaceForCreate = (
+  cwd: string,
+  firstAgentContext?: FirstAgentContext,
+) => Promise<string>;
+
+interface LoopExecutionContext {
+  workspaceId: Promise<string>;
+}
 
 function formatStreamLog(event: AgentStreamEvent): string | null {
   switch (event.type) {
@@ -319,10 +336,10 @@ export class LoopService {
   constructor(
     private readonly options: {
       paseoHome: string;
-      agentManager: AgentManager;
+      agentManager: LoopAgentManager;
       logger: Logger;
-      providerSnapshotManager: CreateConfigResolver;
       createAgent: BoundCreateAgentCommand;
+      ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
     },
   ) {
     this.storePath = path.join(options.paseoHome, "loops", "loops.json");
@@ -515,6 +532,9 @@ export class LoopService {
   private async executeLoop(loopId: string, signal: AbortSignal): Promise<void> {
     const loop = this.requireLoop(loopId);
     const deadline = loop.maxTimeMs ? Date.now() + loop.maxTimeMs : null;
+    const context: LoopExecutionContext = {
+      workspaceId: this.options.ensureWorkspaceForCreate(loop.cwd, { prompt: loop.prompt }),
+    };
 
     try {
       for (let index = 1; ; index += 1) {
@@ -553,14 +573,14 @@ export class LoopService {
         });
         await this.persist();
 
-        const workerPassed = await this.runWorkerIteration(loop, iteration, signal);
+        const workerPassed = await this.runWorkerIteration(loop, iteration, signal, context);
         if (signal.aborted) {
           throw new Error("Loop aborted");
         }
         if (!workerPassed) {
           iteration.status = iteration.status === "stopped" ? "stopped" : "failed";
         } else {
-          const verificationPassed = await this.runVerification(loop, iteration, signal);
+          const verificationPassed = await this.runVerification(loop, iteration, signal, context);
           if (verificationPassed) {
             iteration.status = "succeeded";
             this.finishLoop(loop, "succeeded", `Iteration ${index} passed verification.`);
@@ -630,15 +650,21 @@ export class LoopService {
     loop: LoopRecord,
     iteration: LoopIterationRecord,
     signal: AbortSignal,
+    context: LoopExecutionContext,
   ): Promise<boolean> {
-    const agent = await this.options.agentManager.createAgent(
-      await this.buildWorkerConfig(loop, iteration),
-      undefined,
-      {
-        // Phase 3 routes loop worker agents through createAgentCommand with a workspace.
-        placement: { kind: "ephemeral" },
-      },
-    );
+    const agent = (
+      await this.options.createAgent({
+        kind: "mcp",
+        provider: this.formatWorkerProviderModel(loop),
+        cwd: loop.cwd,
+        workspaceId: await context.workspaceId,
+        title: buildWorkerTitle(loop, iteration.index),
+        initialPrompt: loop.prompt,
+        mode: loop.modeId ?? undefined,
+        background: true,
+        notifyOnFinish: false,
+      })
+    ).snapshot;
     iteration.workerAgentId = agent.id;
     loop.activeWorkerAgentId = agent.id;
     loop.updatedAt = nowIso();
@@ -665,14 +691,17 @@ export class LoopService {
     );
 
     try {
-      const prompt = this.toPrompt(loop.prompt);
-      const result = await this.options.agentManager.runAgent(agent.id, prompt);
+      const result = await this.options.agentManager.waitForAgentEvent(agent.id, {
+        waitForActive: true,
+        signal,
+      });
       iteration.workerCompletedAt = nowIso();
-      iteration.workerOutcome = result.canceled ? "canceled" : "completed";
-      if (result.canceled) {
-        iteration.failureReason = "Worker run was canceled.";
-        iteration.status = "stopped";
-        return false;
+      iteration.workerOutcome = "completed";
+      if (result.permission) {
+        throw new Error(`Loop worker ${agent.id} is waiting for permission`);
+      }
+      if (result.status === "error") {
+        throw new Error(result.lastMessage ?? `Loop worker ${agent.id} failed`);
       }
       return true;
     } catch (error) {
@@ -710,6 +739,7 @@ export class LoopService {
     loop: LoopRecord,
     iteration: LoopIterationRecord,
     signal: AbortSignal,
+    context: LoopExecutionContext,
   ): Promise<boolean> {
     for (const command of loop.verifyChecks) {
       if (signal.aborted) {
@@ -743,14 +773,24 @@ export class LoopService {
     }
 
     const startedAt = nowIso();
-    const verifierAgent = await this.options.agentManager.createAgent(
-      await this.buildVerifierConfig(loop, iteration),
-      undefined,
-      {
-        // Phase 3 routes loop verifier agents through createAgentCommand with a workspace.
-        placement: { kind: "ephemeral" },
-      },
-    );
+    const initialVerifierPrompt = buildStructuredAgentResponsePrompt({
+      prompt: loop.verifyPrompt,
+      schema: LoopVerifyPromptSchema,
+      schemaName: "LoopVerifierResult",
+    });
+    const verifierAgent = (
+      await this.options.createAgent({
+        kind: "mcp",
+        provider: this.formatVerifierProviderModel(loop),
+        cwd: loop.cwd,
+        workspaceId: await context.workspaceId,
+        title: buildVerifierTitle(loop, iteration.index),
+        initialPrompt: initialVerifierPrompt,
+        mode: loop.verifierModeId ?? loop.modeId ?? undefined,
+        background: true,
+        notifyOnFinish: false,
+      })
+    ).snapshot;
     iteration.verifierAgentId = verifierAgent.id;
     loop.activeVerifierAgentId = verifierAgent.id;
     loop.updatedAt = nowIso();
@@ -777,8 +817,23 @@ export class LoopService {
     );
 
     try {
+      let waitingForInitialResponse = true;
       const result = await getStructuredAgentResponse({
         caller: async (nextPrompt) => {
+          if (waitingForInitialResponse) {
+            waitingForInitialResponse = false;
+            const waitResult = await this.options.agentManager.waitForAgentEvent(verifierAgent.id, {
+              waitForActive: true,
+              signal,
+            });
+            if (waitResult.permission) {
+              throw new Error(`Loop verifier ${verifierAgent.id} is waiting for permission`);
+            }
+            if (waitResult.status === "error") {
+              throw new Error(waitResult.lastMessage ?? `Loop verifier ${verifierAgent.id} failed`);
+            }
+            return waitResult.lastMessage ?? "";
+          }
           const run = await this.options.agentManager.runAgent(
             verifierAgent.id,
             this.toPrompt(nextPrompt),
@@ -824,56 +879,18 @@ export class LoopService {
     }
   }
 
-  private async buildWorkerConfig(
-    loop: LoopRecord,
-    iteration: LoopIterationRecord,
-  ): Promise<AgentSessionConfig> {
-    const provider = loop.workerProvider ?? loop.provider;
-    const resolvedUnattendedConfig = loop.modeId
-      ? { modeId: loop.modeId, featureValues: undefined }
-      : await this.resolveProviderCreateConfig({ provider, cwd: loop.cwd });
-    return {
-      provider,
-      cwd: loop.cwd,
-      model: loop.workerModel ?? loop.model ?? undefined,
-      modeId: resolvedUnattendedConfig.modeId,
-      featureValues: resolvedUnattendedConfig.featureValues,
-      title: buildWorkerTitle(loop, iteration.index),
-      internal: true,
-    };
+  private formatWorkerProviderModel(loop: LoopRecord): string {
+    return formatProviderModel(
+      loop.workerProvider ?? loop.provider,
+      loop.workerModel ?? loop.model,
+    );
   }
 
-  private async buildVerifierConfig(
-    loop: LoopRecord,
-    iteration: LoopIterationRecord,
-  ): Promise<AgentSessionConfig> {
-    const provider = loop.verifierProvider ?? loop.provider;
-    const explicitModeId = loop.verifierModeId ?? loop.modeId;
-    const resolvedUnattendedConfig = explicitModeId
-      ? { modeId: explicitModeId, featureValues: undefined }
-      : await this.resolveProviderCreateConfig({ provider, cwd: loop.cwd });
-    return {
-      provider,
-      cwd: loop.cwd,
-      model: loop.verifierModel ?? loop.model ?? undefined,
-      modeId: resolvedUnattendedConfig.modeId,
-      featureValues: resolvedUnattendedConfig.featureValues,
-      title: buildVerifierTitle(loop, iteration.index),
-      internal: true,
-    };
-  }
-
-  private resolveProviderCreateConfig(
-    input: Pick<ResolveProviderCreateConfigOptions, "provider" | "cwd">,
-  ): Promise<ResolvedProviderCreateConfig> {
-    return this.options.providerSnapshotManager.resolveCreateConfig({
-      provider: input.provider,
-      cwd: input.cwd,
-      requestedMode: undefined,
-      featureValues: undefined,
-      parent: null,
-      unattended: true,
-    });
+  private formatVerifierProviderModel(loop: LoopRecord): string {
+    return formatProviderModel(
+      loop.verifierProvider ?? loop.provider,
+      loop.verifierModel ?? loop.model,
+    );
   }
 
   private resolveFinalText(timeline: AgentTimelineItem[], finalText: string): string {

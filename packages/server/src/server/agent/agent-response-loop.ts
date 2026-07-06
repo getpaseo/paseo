@@ -182,6 +182,15 @@ function buildBasePrompt(prompt: string, jsonSchema: JsonSchema): string {
   ].join("\n");
 }
 
+export function buildStructuredAgentResponsePrompt(options: {
+  prompt: string;
+  schema: z.ZodType | JsonSchema;
+  schemaName?: string;
+}): string {
+  const validator = buildValidator(options.schema, options.schemaName ?? "Response");
+  return buildBasePrompt(options.prompt, validator.jsonSchema);
+}
+
 function buildRetryPrompt(basePrompt: string, errors: string[]): string {
   const formattedErrors = errors.map((error) => `- ${error}`).join("\n");
   return [
