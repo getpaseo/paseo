@@ -997,11 +997,20 @@ describe("ScheduleService", () => {
     const nextCwd = join(tempDir, "next-cwd");
     await mkdir(nextCwd, { recursive: true });
     const createdInputs: Parameters<ScheduleServiceOptions["createAgent"]>[0][] = [];
+    const runPrompts: AgentPromptInput[] = [];
     const manager = new AgentManager({
       logger: createTestLogger(),
       clients: createTestAgentClients(),
       registry: agentStorage,
     });
+    manager.runAgent = async (_agentId, prompt) => {
+      runPrompts.push(prompt);
+      return {
+        sessionId: "scheduled-snapshot-run",
+        finalText: "old snapshot result",
+        timeline: [{ type: "assistant_message", text: "old snapshot result" }],
+      };
+    };
     manager.waitForAgentEvent = async () => ({
       status: "idle",
       permission: null,
@@ -1087,7 +1096,6 @@ describe("ScheduleService", () => {
 
     expect(createdInputs).toHaveLength(1);
     expect(createdInputs[0]).toMatchObject({
-      initialPrompt: "old prompt",
       cwd: tempDir,
       workspaceId: "workspace-old-snapshot",
       config: {
@@ -1095,6 +1103,8 @@ describe("ScheduleService", () => {
         cwd: tempDir,
       },
     });
+    expect(createdInputs[0].initialPrompt).toBeUndefined();
+    expect(runPrompts).toEqual(["old prompt"]);
     const inspected = await service.inspect(legacy.id);
     expect(inspected.prompt).toBe("new prompt");
     expect(inspected.target.config).toMatchObject({
@@ -1108,6 +1118,159 @@ describe("ScheduleService", () => {
     });
   });
 
+  test("scheduled new-agent slash prompts run as normal foreground prompts", async () => {
+    const createdInputs: Parameters<ScheduleServiceOptions["createAgent"]>[0][] = [];
+    const runPrompts: AgentPromptInput[] = [];
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    manager.runAgent = async (_agentId, prompt) => {
+      runPrompts.push(prompt);
+      return {
+        sessionId: "scheduled-slash-run",
+        finalText: "compacted",
+        timeline: [{ type: "assistant_message", text: "compacted" }],
+      };
+    };
+    manager.waitForAgentEvent = async () => ({
+      status: "idle",
+      permission: null,
+      lastMessage: "compacted",
+    });
+    manager.archiveAgent = async () => {};
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createAgent: async (input) => {
+        createdInputs.push(input);
+        const snapshot = {
+          id: "00000000-0000-0000-0000-000000000322",
+          provider: "claude",
+          cwd: input.cwd ?? tempDir,
+          workspaceId: input.workspaceId,
+          status: "idle",
+          lifecycle: "idle",
+        };
+        return {
+          snapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["snapshot"],
+          liveSnapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["liveSnapshot"],
+          background: true,
+          initialPromptStarted: false,
+          initialPromptError: null,
+        };
+      },
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "/compact",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    await service.tick();
+
+    expect(createdInputs).toHaveLength(1);
+    expect(createdInputs[0].initialPrompt).toBeUndefined();
+    expect(runPrompts).toEqual(["/compact"]);
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs[0]).toMatchObject({
+      status: "succeeded",
+      output: "compacted",
+    });
+  });
+
+  test("scheduled new-agent run output falls back to final text and curated timeline", async () => {
+    let runCount = 0;
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    manager.runAgent = async () => {
+      runCount += 1;
+      return runCount === 1
+        ? {
+            sessionId: "scheduled-final-text-run",
+            finalText: "final text output",
+            timeline: [],
+          }
+        : {
+            sessionId: "scheduled-timeline-run",
+            finalText: "",
+            timeline: [{ type: "assistant_message", text: "timeline output" }],
+          };
+    };
+    manager.waitForAgentEvent = async () => ({
+      status: "idle",
+      permission: null,
+      lastMessage: null,
+    });
+    manager.archiveAgent = async () => {};
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createAgent: async (input) => {
+        const snapshot = {
+          id:
+            runCount === 0
+              ? "00000000-0000-0000-0000-000000000323"
+              : "00000000-0000-0000-0000-000000000324",
+          provider: "claude",
+          cwd: input.cwd ?? tempDir,
+          workspaceId: input.workspaceId,
+          status: "idle",
+          lifecycle: "idle",
+        };
+        return {
+          snapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["snapshot"],
+          liveSnapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["liveSnapshot"],
+          background: true,
+          initialPromptStarted: false,
+          initialPromptError: null,
+        };
+      },
+      now: () => now,
+    });
+
+    const finalTextSchedule = await service.create({
+      prompt: "final text",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    const timelineSchedule = await service.create({
+      prompt: "timeline",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+
+    await service.runOnce(finalTextSchedule.id);
+    await service.runOnce(timelineSchedule.id);
+
+    expect((await service.inspect(finalTextSchedule.id)).runs[0]?.output).toBe("final text output");
+    expect((await service.inspect(timelineSchedule.id)).runs[0]?.output).toContain(
+      "timeline output",
+    );
+  });
+
   test("shows scheduled new-agent prompts as normal user turns", async () => {
     class PromptEchoScheduleSession implements AgentSession {
       readonly provider = "claude";
@@ -1116,7 +1279,28 @@ describe("ScheduleService", () => {
       private turnCount = 0;
       private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
 
-      async run(_prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
+      async run(prompt: AgentPromptInput, _options?: AgentRunOptions): Promise<AgentRunResult> {
+        const turnId = `run-${++this.turnCount}`;
+        const textPrompt = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
+        this.emit({ type: "turn_started", provider: this.provider, turnId });
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "user_message", text: textPrompt },
+        });
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: "done" },
+        });
+        this.emit({
+          type: "turn_completed",
+          provider: this.provider,
+          turnId,
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
         return {
           sessionId: this.id,
           finalText: "done",
@@ -2207,6 +2391,39 @@ describe("ScheduleService", () => {
     });
     expect(back.cadence).toEqual({ type: "every", everyMs: 2 * 60_000 });
     expect(back.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("update preserves a cron cadence timezone when the new cadence omits it", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      prompt: "p",
+      cadence: {
+        type: "cron",
+        expression: "0 9 * * *",
+        timezone: "America/New_York",
+      },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    const updated = await service.update({
+      id: created.id,
+      cadence: { type: "cron", expression: "30 9 * * *" },
+    });
+
+    expect(updated.cadence).toEqual({
+      type: "cron",
+      expression: "30 9 * * *",
+      timezone: "America/New_York",
+    });
   });
 
   test("update preserves nextRunAt and run history when cadence is unchanged", async () => {

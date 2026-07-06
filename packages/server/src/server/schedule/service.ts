@@ -8,6 +8,7 @@ import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
+import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import {
   type BoundCreateAgentCommand,
   type EnsureWorkspaceForCreate,
@@ -192,6 +193,24 @@ function completeSchedule(schedule: StoredSchedule, now: Date): StoredSchedule {
     pausedAt: null,
     updatedAt: now.toISOString(),
   };
+}
+
+function mergeScheduleCadenceTimezone(
+  current: StoredSchedule["cadence"],
+  next: StoredSchedule["cadence"],
+): StoredSchedule["cadence"] {
+  if (
+    current.type === "cron" &&
+    next.type === "cron" &&
+    next.timezone === undefined &&
+    current.timezone !== undefined
+  ) {
+    return {
+      ...next,
+      timezone: current.timezone,
+    };
+  }
+  return next;
 }
 
 function buildRunOutput(params: {
@@ -452,10 +471,11 @@ export class ScheduleService {
       }
 
       if (input.cadence !== undefined) {
-        validateScheduleCadence(input.cadence);
+        const cadence = mergeScheduleCadenceTimezone(updated.cadence, input.cadence);
+        validateScheduleCadence(cadence);
         const nextRunAt =
-          updated.status === "active" ? computeNextRunAt(input.cadence, now).toISOString() : null;
-        updated = { ...updated, cadence: input.cadence, nextRunAt };
+          updated.status === "active" ? computeNextRunAt(cadence, now).toISOString() : null;
+        updated = { ...updated, cadence, nextRunAt };
       }
 
       if (input.newAgentConfig !== undefined) {
@@ -827,8 +847,7 @@ export class ScheduleService {
       config: buildScheduleAgentConfig(stampedConfig),
       cwd: stampedConfig.cwd,
       workspaceId: stampedConfig.workspaceId,
-      title: stampedConfig.title ?? "",
-      initialPrompt: executionSchedule.prompt,
+      title: resolveScheduleAgentTitle(stampedConfig, executionSchedule.prompt),
       labels: {
         "paseo.schedule-id": executionSchedule.id,
         "paseo.schedule-run": runId,
@@ -846,17 +865,25 @@ export class ScheduleService {
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
-      const result = await this.agentManager.waitForAgentEvent(agent.id, { waitForActive: true });
-      if (result.permission) {
+      const result = await this.agentManager.runAgent(agent.id, executionSchedule.prompt);
+      const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
+        waitForActive: true,
+      });
+      if (waitResult.permission) {
         throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
       }
-      if (result.status === "error") {
-        throw new Error(result.lastMessage ?? `Scheduled agent ${agent.id} failed`);
+      if (waitResult.status === "error") {
+        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
       }
+      const timelineText = curateAgentActivity(result.timeline);
       await this.agentManager.archiveAgent(agent.id);
       return {
         agentId: agent.id,
-        output: result.lastMessage?.trim() ? result.lastMessage.trim() : null,
+        output: buildRunOutput({
+          output: waitResult.lastMessage ?? null,
+          timelineText,
+          finalText: result.finalText,
+        }),
       };
     } catch (error) {
       try {
@@ -1005,6 +1032,18 @@ function buildScheduleAgentConfig(
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
   };
+}
+
+function resolveScheduleAgentTitle(
+  config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
+  prompt: string,
+): string {
+  return (
+    resolveCreateAgentTitles({
+      configTitle: config.title,
+      initialPrompt: prompt,
+    }).provisionalTitle ?? ""
+  );
 }
 
 function stripNewAgentWorkspaceStamp(target: ScheduleTarget): ScheduleTarget {
