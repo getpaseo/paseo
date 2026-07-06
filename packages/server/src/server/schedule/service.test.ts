@@ -707,6 +707,96 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.status).toBe("succeeded");
   });
 
+  test("concurrent run finish and update preserve the config stamp and run outcome", async () => {
+    let finishRun: (() => void) | null = null;
+    const runBlocked = new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    let releaseRun: (() => void) | null = null;
+    const runStarted = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    let releaseStamp: (() => void) | null = null;
+    const stampBlocked = new Promise<void>((resolve) => {
+      releaseStamp = resolve;
+    });
+    let stampStarted: (() => void) | null = null;
+    const stampStartedSignal = new Promise<void>((resolve) => {
+      stampStarted = resolve;
+    });
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const legacy = await store.create({
+      name: null,
+      prompt: "finish/update race",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+        },
+      },
+      status: "active",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      nextRunAt: now.toISOString(),
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        stampStarted?.();
+        await stampBlocked;
+        return "workspace-from-update";
+      },
+      now: () => now,
+      runner: async () => {
+        releaseRun?.();
+        await runBlocked;
+        return {
+          agentId: null,
+          output: "finished while updating",
+        };
+      },
+    });
+
+    const tickPromise = service.tick();
+    await runStarted;
+    const updatePromise = service.update({
+      id: legacy.id,
+      newAgentConfig: { modeId: "full-access" },
+    });
+    await stampStartedSignal;
+    finishRun?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseStamp?.();
+    await Promise.all([tickPromise, updatePromise]);
+
+    const inspected = await service.inspect(legacy.id);
+    expect(inspected.target).toMatchObject({
+      type: "new-agent",
+      config: {
+        modeId: "full-access",
+        workspaceId: "workspace-from-update",
+      },
+    });
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]).toMatchObject({
+      status: "succeeded",
+      output: "finished while updating",
+      error: null,
+    });
+  });
+
   test("shows scheduled new-agent prompts as normal user turns", async () => {
     class PromptEchoScheduleSession implements AgentSession {
       readonly provider = "claude";
@@ -2531,6 +2621,58 @@ describe("ScheduleService", () => {
     });
     expect(third.id).not.toBe(first.id);
     expect(await service.list()).toHaveLength(2);
+  });
+
+  test("concurrent createOrReplace first creates share one schedule and workspace", async () => {
+    let releaseFirstStamp: (() => void) | null = null;
+    const firstStampStarted = new Promise<void>((resolve) => {
+      releaseFirstStamp = resolve;
+    });
+    let unblockStamp: (() => void) | null = null;
+    const stampBlocked = new Promise<void>((resolve) => {
+      unblockStamp = resolve;
+    });
+    let ensureCalls = 0;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        releaseFirstStamp?.();
+        await stampBlocked;
+        return `workspace-${ensureCalls}`;
+      },
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const firstPromise = service.createOrReplace({
+      name: "nightly race",
+      prompt: "audit",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    await firstStampStarted;
+    const secondPromise = service.createOrReplace({
+      name: "nightly race",
+      prompt: "audit",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    unblockStamp?.();
+
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(second.id).toBe(first.id);
+    expect(ensureCalls).toBe(1);
+    expect(await service.list()).toHaveLength(1);
+    expect(second.target).toMatchObject({
+      type: "new-agent",
+      config: { workspaceId: "workspace-1" },
+    });
   });
 
   test("createOrReplace dedups new-agent targets regardless of config key order", async () => {

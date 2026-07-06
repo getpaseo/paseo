@@ -186,6 +186,10 @@ function carryExistingWorkspaceStamp(
   };
 }
 
+function createOrReplaceMutationKey(name: string, target: ScheduleTarget): string {
+  return JSON.stringify(canonicalize({ name, target }));
+}
+
 function completeSchedule(schedule: StoredSchedule, now: Date): StoredSchedule {
   return {
     ...schedule,
@@ -258,6 +262,7 @@ export class ScheduleService {
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
   private readonly scheduleMutationPromises = new Map<string, Promise<unknown>>();
+  private readonly createOrReplaceMutationPromises = new Map<string, Promise<unknown>>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
@@ -295,17 +300,28 @@ export class ScheduleService {
   }
 
   async create(input: CreateScheduleInput): Promise<StoredSchedule> {
-    const now = this.now();
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
-    const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
-    const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
     const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
-    const schedule = await this.store.create({
+    return this.createScheduleRecord(input, {
       name: trimOptionalName(input.name),
       prompt,
-      cadence: input.cadence,
       target,
+    });
+  }
+
+  private async createScheduleRecord(
+    input: CreateScheduleInput,
+    fields: { name: string | null; prompt: string; target: ScheduleTarget },
+  ): Promise<StoredSchedule> {
+    const now = this.now();
+    const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
+    const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+    return this.store.create({
+      name: fields.name,
+      prompt: fields.prompt,
+      cadence: input.cadence,
+      target: fields.target,
       status: "active",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -316,7 +332,6 @@ export class ScheduleService {
       maxRuns: normalizeMaxRuns(input.maxRuns),
       runs: [],
     });
-    return schedule;
   }
 
   // Idempotent create for the MCP write path: repeating a create with the same
@@ -326,43 +341,57 @@ export class ScheduleService {
     const name = trimOptionalName(input.name);
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
-    if (name !== null) {
-      const existing = (await this.store.list()).find(
-        (schedule) =>
-          schedule.status !== "completed" &&
-          trimOptionalName(schedule.name) === name &&
-          scheduleTargetsEqualForCreateOrReplace(schedule.target, input.target),
-      );
-      if (existing) {
-        return this.serializeScheduleMutation(existing.id, async () => {
-          const current = await this.inspect(existing.id);
-          const now = this.now();
-          const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
-          const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
-          const target = await this.stampNewAgentWorkspace(
-            carryExistingWorkspaceStamp(current.target, input.target),
-            input.prompt,
-          );
-          const replaced: StoredSchedule = {
-            ...current,
-            name,
-            prompt,
-            cadence: input.cadence,
-            target,
-            status: "active",
-            pausedAt: null,
-            nextRunAt: nextRunAt.toISOString(),
-            expiresAt: input.expiresAt ?? null,
-            maxRuns: normalizeMaxRuns(input.maxRuns),
-            updatedAt: now.toISOString(),
-          };
-          await this.store.put(replaced);
-          return replaced;
-        });
-      }
+    if (name === null) {
+      const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+      return this.createScheduleRecord(input, { name, prompt, target });
     }
-    const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
-    return this.create({ ...input, target });
+
+    return this.serializeCreateOrReplaceMutation(
+      createOrReplaceMutationKey(name, input.target),
+      async () => this.createOrReplaceWithName(input, { name, prompt }),
+    );
+  }
+
+  private async createOrReplaceWithName(
+    input: CreateScheduleInput,
+    fields: { name: string; prompt: string },
+  ): Promise<StoredSchedule> {
+    const existing = (await this.store.list()).find(
+      (schedule) =>
+        schedule.status !== "completed" &&
+        trimOptionalName(schedule.name) === fields.name &&
+        scheduleTargetsEqualForCreateOrReplace(schedule.target, input.target),
+    );
+    if (!existing) {
+      const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+      return this.createScheduleRecord(input, { ...fields, target });
+    }
+
+    return this.serializeScheduleMutation(existing.id, async () => {
+      const current = await this.inspect(existing.id);
+      const now = this.now();
+      const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
+      const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+      const target = await this.stampNewAgentWorkspace(
+        carryExistingWorkspaceStamp(current.target, input.target),
+        input.prompt,
+      );
+      const replaced: StoredSchedule = {
+        ...current,
+        name: fields.name,
+        prompt: fields.prompt,
+        cadence: input.cadence,
+        target,
+        status: "active",
+        pausedAt: null,
+        nextRunAt: nextRunAt.toISOString(),
+        expiresAt: input.expiresAt ?? null,
+        maxRuns: normalizeMaxRuns(input.maxRuns),
+        updatedAt: now.toISOString(),
+      };
+      await this.store.put(replaced);
+      return replaced;
+    });
   }
 
   async list(): Promise<StoredSchedule[]> {
@@ -383,43 +412,47 @@ export class ScheduleService {
   }
 
   async pause(id: string): Promise<StoredSchedule> {
-    const schedule = await this.inspect(id);
-    if (schedule.status === "completed") {
-      throw new Error(`Schedule ${id} is already completed`);
-    }
-    if (schedule.status === "paused") {
-      return schedule;
-    }
-    const now = this.now();
-    const paused = {
-      ...schedule,
-      status: "paused" as const,
-      nextRunAt: null,
-      pausedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    };
-    await this.store.put(paused);
-    return paused;
+    return this.serializeScheduleMutation(id, async () => {
+      const schedule = await this.inspect(id);
+      if (schedule.status === "completed") {
+        throw new Error(`Schedule ${id} is already completed`);
+      }
+      if (schedule.status === "paused") {
+        return schedule;
+      }
+      const now = this.now();
+      const paused = {
+        ...schedule,
+        status: "paused" as const,
+        nextRunAt: null,
+        pausedAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      };
+      await this.store.put(paused);
+      return paused;
+    });
   }
 
   async resume(id: string): Promise<StoredSchedule> {
-    const schedule = await this.inspect(id);
-    if (schedule.status === "completed") {
-      throw new Error(`Schedule ${id} is already completed`);
-    }
-    if (schedule.status === "active") {
-      return schedule;
-    }
-    const now = this.now();
-    const resumed = {
-      ...schedule,
-      status: "active" as const,
-      pausedAt: null,
-      nextRunAt: computeNextRunAt(schedule.cadence, now).toISOString(),
-      updatedAt: now.toISOString(),
-    };
-    await this.store.put(resumed);
-    return resumed;
+    return this.serializeScheduleMutation(id, async () => {
+      const schedule = await this.inspect(id);
+      if (schedule.status === "completed") {
+        throw new Error(`Schedule ${id} is already completed`);
+      }
+      if (schedule.status === "active") {
+        return schedule;
+      }
+      const now = this.now();
+      const resumed = {
+        ...schedule,
+        status: "active" as const,
+        pausedAt: null,
+        nextRunAt: computeNextRunAt(schedule.cadence, now).toISOString(),
+        updatedAt: now.toISOString(),
+      };
+      await this.store.put(resumed);
+      return resumed;
+    });
   }
 
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
@@ -473,7 +506,9 @@ export class ScheduleService {
   }
 
   async delete(id: string): Promise<void> {
-    await this.store.delete(id);
+    await this.serializeScheduleMutation(id, async () => {
+      await this.store.delete(id);
+    });
   }
 
   async completeForAgent(agentId: string): Promise<number> {
@@ -486,20 +521,43 @@ export class ScheduleService {
         schedule.status !== "completed",
     );
     const results = await Promise.allSettled(
-      matches.map((schedule) => this.store.put(completeSchedule(schedule, now))),
+      matches.map((schedule) => this.completeScheduleForAgent(schedule.id, agentId, now)),
     );
     let completed = 0;
     for (const [index, result] of results.entries()) {
-      if (result.status === "fulfilled") {
+      if (result.status === "fulfilled" && result.value) {
         completed += 1;
-      } else {
+      } else if (result.status === "rejected") {
         this.logger.warn(
-          { err: result.reason, scheduleId: matches[index].id, agentId },
+          {
+            err: result.reason,
+            scheduleId: matches[index].id,
+            agentId,
+          },
           "Failed to complete schedule for archived agent; continuing",
         );
       }
     }
     return completed;
+  }
+
+  private async completeScheduleForAgent(
+    scheduleId: string,
+    agentId: string,
+    now: Date,
+  ): Promise<boolean> {
+    return this.serializeScheduleMutation(scheduleId, async () => {
+      const schedule = await this.inspect(scheduleId);
+      if (
+        schedule.target.type !== "agent" ||
+        schedule.target.agentId !== agentId ||
+        schedule.status === "completed"
+      ) {
+        return false;
+      }
+      await this.store.put(completeSchedule(schedule, now));
+      return true;
+    });
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
@@ -525,7 +583,7 @@ export class ScheduleService {
         continue;
       }
       if (shouldCompleteSchedule(schedule, now)) {
-        await this.store.put(completeSchedule(schedule, now));
+        await this.completeScheduleIfDue(schedule.id, now);
         continue;
       }
       if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
@@ -535,48 +593,68 @@ export class ScheduleService {
     }
   }
 
+  private async completeScheduleIfDue(scheduleId: string, now: Date): Promise<void> {
+    await this.serializeScheduleMutation(scheduleId, async () => {
+      const schedule = await this.inspect(scheduleId);
+      if (
+        schedule.status !== "active" ||
+        !schedule.nextRunAt ||
+        !shouldCompleteSchedule(schedule, now)
+      ) {
+        return;
+      }
+      await this.store.put(completeSchedule(schedule, now));
+    });
+  }
+
   private async recoverInterruptedRuns(): Promise<void> {
     const schedules = await this.store.list();
     const now = this.now();
     await Promise.all(
-      schedules.map(async (schedule) => {
-        let updated = { ...schedule };
-        let dirty = false;
-
-        // Mark any in-flight runs as failed
-        const runningIndex = updated.runs.findIndex((run) => run.status === "running");
-        if (runningIndex !== -1) {
-          const runs = [...updated.runs];
-          runs[runningIndex] = {
-            ...runs[runningIndex],
-            status: "failed",
-            endedAt: now.toISOString(),
-            error: "Daemon restarted before the scheduled run completed",
-          };
-          updated = { ...updated, runs };
-          dirty = true;
-        }
-
-        // Advance stale nextRunAt for active schedules
-        if (
-          updated.status === "active" &&
-          updated.nextRunAt &&
-          new Date(updated.nextRunAt).getTime() <= now.getTime()
-        ) {
-          let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
-          while (nextRunAt.getTime() <= now.getTime()) {
-            nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
-          }
-          updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
-          dirty = true;
-        }
-
-        if (dirty) {
-          updated = { ...updated, updatedAt: now.toISOString() };
-          await this.store.put(updated);
-        }
-      }),
+      schedules.map((schedule) => this.recoverInterruptedSchedule(schedule.id, now)),
     );
+  }
+
+  private async recoverInterruptedSchedule(scheduleId: string, now: Date): Promise<void> {
+    await this.serializeScheduleMutation(scheduleId, async () => {
+      const current = await this.store.get(scheduleId);
+      if (!current) {
+        return;
+      }
+      let updated = { ...current };
+      let dirty = false;
+
+      const runningIndex = updated.runs.findIndex((run) => run.status === "running");
+      if (runningIndex !== -1) {
+        const runs = [...updated.runs];
+        runs[runningIndex] = {
+          ...runs[runningIndex],
+          status: "failed",
+          endedAt: now.toISOString(),
+          error: "Daemon restarted before the scheduled run completed",
+        };
+        updated = { ...updated, runs };
+        dirty = true;
+      }
+
+      if (
+        updated.status === "active" &&
+        updated.nextRunAt &&
+        new Date(updated.nextRunAt).getTime() <= now.getTime()
+      ) {
+        let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
+        while (nextRunAt.getTime() <= now.getTime()) {
+          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+        }
+        updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
+        dirty = true;
+      }
+
+      if (dirty) {
+        updated = { ...updated, updatedAt: now.toISOString() };
+        await this.store.put(updated);
+      }
+    });
   }
 
   // Orphaned agent-target schedules (agent deleted while the daemon was down, or
@@ -585,18 +663,21 @@ export class ScheduleService {
   private async sweepOrphanedSchedules(): Promise<void> {
     const now = this.now();
     const schedules = await this.store.list();
-    await Promise.all(
-      schedules.map(async (schedule) => {
-        if (schedule.target.type !== "agent" || schedule.status === "completed") {
-          return;
-        }
-        const record = await this.agentStorage.get(schedule.target.agentId);
-        if (record && !record.archivedAt) {
-          return;
-        }
-        await this.store.put(completeSchedule(schedule, now));
-      }),
-    );
+    await Promise.all(schedules.map((schedule) => this.sweepOrphanedSchedule(schedule.id, now)));
+  }
+
+  private async sweepOrphanedSchedule(scheduleId: string, now: Date): Promise<void> {
+    await this.serializeScheduleMutation(scheduleId, async () => {
+      const schedule = await this.store.get(scheduleId);
+      if (!schedule || schedule.target.type !== "agent" || schedule.status === "completed") {
+        return;
+      }
+      const record = await this.agentStorage.get(schedule.target.agentId);
+      if (record && !record.archivedAt) {
+        return;
+      }
+      await this.store.put(completeSchedule(schedule, now));
+    });
   }
 
   private async runSchedule(
@@ -617,12 +698,7 @@ export class ScheduleService {
       output: null,
       error: null,
     };
-    const scheduleWithRun = {
-      ...schedule,
-      updatedAt: now.toISOString(),
-      runs: [...schedule.runs, runningRun],
-    };
-    await this.store.put(scheduleWithRun);
+    const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
 
     try {
       const result = await this.runner(scheduleWithRun, runId);
@@ -652,6 +728,22 @@ export class ScheduleService {
     }
   }
 
+  private async appendRunningRun(
+    scheduleId: string,
+    runningRun: ScheduleRun,
+  ): Promise<StoredSchedule> {
+    return this.serializeScheduleMutation(scheduleId, async () => {
+      const schedule = await this.inspect(scheduleId);
+      const updated = {
+        ...schedule,
+        updatedAt: runningRun.startedAt,
+        runs: [...schedule.runs, runningRun],
+      };
+      await this.store.put(updated);
+      return updated;
+    });
+  }
+
   private async finishRun(params: {
     scheduleId: string;
     runId: string;
@@ -662,56 +754,58 @@ export class ScheduleService {
     targetGone: boolean;
     manual: boolean;
   }): Promise<void> {
-    const schedule = await this.inspect(params.scheduleId);
-    const now = this.now();
-    const completedRuns = schedule.runs.map((run) =>
-      run.id === params.runId
-        ? {
-            ...run,
-            status: params.status,
-            endedAt: now.toISOString(),
-            agentId: params.agentId,
-            output: params.output,
-            error: params.error,
-          }
-        : run,
-    );
-    let updated: StoredSchedule = {
-      ...schedule,
-      runs: completedRuns,
-      lastRunAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    };
-
-    if (params.targetGone) {
-      // The target is permanently gone; retrying only burns the schedule down to
-      // its expiry, so complete it now regardless of manual/scheduled origin.
-      updated = completeSchedule(updated, now);
-    } else if (updated.status === "completed") {
-      // Completed concurrently (e.g. the target agent was archived mid-run);
-      // record the run outcome but leave the schedule terminal — don't advance.
-    } else if (params.manual) {
-      // Manual one-shot runs do not advance the cadence or recompute completion.
-    } else if (shouldCompleteSchedule(updated, now)) {
-      updated = completeSchedule(updated, now);
-    } else if (updated.status === "paused") {
-      updated = {
-        ...updated,
-        nextRunAt: null,
+    await this.serializeScheduleMutation(params.scheduleId, async () => {
+      const schedule = await this.inspect(params.scheduleId);
+      const now = this.now();
+      const completedRuns = schedule.runs.map((run) =>
+        run.id === params.runId
+          ? {
+              ...run,
+              status: params.status,
+              endedAt: now.toISOString(),
+              agentId: params.agentId,
+              output: params.output,
+              error: params.error,
+            }
+          : run,
+      );
+      let updated: StoredSchedule = {
+        ...schedule,
+        runs: completedRuns,
+        lastRunAt: now.toISOString(),
+        updatedAt: now.toISOString(),
       };
-    } else {
-      const after = new Date(schedule.nextRunAt ?? now.toISOString());
-      let nextRunAt = computeNextRunAt(updated.cadence, after);
-      while (nextRunAt.getTime() <= now.getTime()) {
-        nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+
+      if (params.targetGone) {
+        // The target is permanently gone; retrying only burns the schedule down to
+        // its expiry, so complete it now regardless of manual/scheduled origin.
+        updated = completeSchedule(updated, now);
+      } else if (updated.status === "completed") {
+        // Completed concurrently (e.g. the target agent was archived mid-run);
+        // record the run outcome but leave the schedule terminal — don't advance.
+      } else if (params.manual) {
+        // Manual one-shot runs do not advance the cadence or recompute completion.
+      } else if (shouldCompleteSchedule(updated, now)) {
+        updated = completeSchedule(updated, now);
+      } else if (updated.status === "paused") {
+        updated = {
+          ...updated,
+          nextRunAt: null,
+        };
+      } else {
+        const after = new Date(schedule.nextRunAt ?? now.toISOString());
+        let nextRunAt = computeNextRunAt(updated.cadence, after);
+        while (nextRunAt.getTime() <= now.getTime()) {
+          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+        }
+        updated = {
+          ...updated,
+          nextRunAt: nextRunAt.toISOString(),
+        };
       }
-      updated = {
-        ...updated,
-        nextRunAt: nextRunAt.toISOString(),
-      };
-    }
 
-    await this.store.put(updated);
+      await this.store.put(updated);
+    });
   }
 
   private async executeSchedule(
@@ -810,14 +904,29 @@ export class ScheduleService {
     scheduleId: string,
     mutation: () => Promise<T>,
   ): Promise<T> {
-    const previous = this.scheduleMutationPromises.get(scheduleId) ?? Promise.resolve();
+    return this.serializeMutation(this.scheduleMutationPromises, scheduleId, mutation);
+  }
+
+  private async serializeCreateOrReplaceMutation<T>(
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    return this.serializeMutation(this.createOrReplaceMutationPromises, key, mutation);
+  }
+
+  private async serializeMutation<T>(
+    promises: Map<string, Promise<unknown>>,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = promises.get(key) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(mutation);
-    this.scheduleMutationPromises.set(scheduleId, next);
+    promises.set(key, next);
     try {
       return await next;
     } finally {
-      if (this.scheduleMutationPromises.get(scheduleId) === next) {
-        this.scheduleMutationPromises.delete(scheduleId);
+      if (promises.get(key) === next) {
+        promises.delete(key);
       }
     }
   }
