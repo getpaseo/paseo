@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Logger } from "pino";
 import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
@@ -266,6 +266,7 @@ export class ScheduleService {
   private readonly runningScheduleIds = new Set<string>();
   private readonly scheduleMutationPromises = new Map<string, Promise<unknown>>();
   private readonly createOrReplaceMutationPromises = new Map<string, Promise<unknown>>();
+  private readonly workspaceStampPromises = new Map<string, Promise<ScheduleTarget>>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
@@ -845,14 +846,13 @@ export class ScheduleService {
       };
     }
 
-    const targetConfig = schedule.target.config;
-    await this.assertNewAgentCwdExists(targetConfig.cwd);
-    const stampedSchedule = await this.ensureScheduleWorkspaceStamped(schedule);
+    const executionSchedule = await this.ensureScheduleWorkspaceStamped(schedule);
     const stampedConfig =
-      stampedSchedule.target.type === "new-agent" ? stampedSchedule.target.config : null;
+      executionSchedule.target.type === "new-agent" ? executionSchedule.target.config : null;
     if (!stampedConfig) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
+    await this.assertNewAgentCwdExists(stampedConfig.cwd);
     const created = await this.createAgent({
       kind: "mcp",
       provider: formatScheduleProviderModel(stampedConfig),
@@ -860,9 +860,9 @@ export class ScheduleService {
       cwd: stampedConfig.cwd,
       workspaceId: stampedConfig.workspaceId,
       title: stampedConfig.title ?? "",
-      initialPrompt: stampedSchedule.prompt,
+      initialPrompt: executionSchedule.prompt,
       labels: {
-        "paseo.schedule-id": stampedSchedule.id,
+        "paseo.schedule-id": executionSchedule.id,
         "paseo.schedule-run": runId,
       },
       mode: stampedConfig.modeId,
@@ -949,19 +949,40 @@ export class ScheduleService {
     target: Extract<ScheduleTarget, { type: "new-agent" }>,
     prompt: string,
   ): Promise<ScheduleTarget> {
-    const workspaceId = await this.ensureWorkspaceForCreate(target.config.cwd, { prompt });
-    return {
-      ...target,
-      config: {
-        ...target.config,
-        workspaceId,
-      },
-    };
+    const key = newAgentWorkspaceStampKey(target);
+    const existing = this.workspaceStampPromises.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const promise = (async () => {
+      const workspaceId = await this.ensureWorkspaceForCreate(resolve(target.config.cwd), {
+        prompt,
+      });
+      return {
+        ...target,
+        config: {
+          ...target.config,
+          workspaceId,
+        },
+      };
+    })();
+    this.workspaceStampPromises.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      const timer = setTimeout(() => {
+        if (this.workspaceStampPromises.get(key) === promise) {
+          this.workspaceStampPromises.delete(key);
+        }
+      }, 0);
+      timer.unref?.();
+    }
   }
 
   private async hasActiveWorkspaceStamp(workspaceId: string, cwd: string): Promise<boolean> {
     const workspace = await this.workspaceRegistry.get(workspaceId);
-    return Boolean(workspace && !workspace.archivedAt && workspace.cwd === cwd);
+    return Boolean(workspace && !workspace.archivedAt && workspace.cwd === resolve(cwd));
   }
 
   private async stampNewAgentWorkspace(
@@ -978,29 +999,38 @@ export class ScheduleService {
     if (schedule.target.type !== "new-agent") {
       return schedule;
     }
-    return this.serializeScheduleMutation(schedule.id, async () => {
-      const latest = (await this.store.get(schedule.id)) ?? schedule;
-      if (latest.target.type !== "new-agent") {
-        return latest;
-      }
-      const stampedWorkspaceId = latest.target.config.workspaceId;
-      if (
-        stampedWorkspaceId &&
-        (await this.hasActiveWorkspaceStamp(stampedWorkspaceId, latest.target.config.cwd))
-      ) {
-        return latest;
-      }
+    const stampedWorkspaceId = schedule.target.config.workspaceId;
+    if (
+      stampedWorkspaceId &&
+      (await this.hasActiveWorkspaceStamp(stampedWorkspaceId, schedule.target.config.cwd))
+    ) {
+      return schedule;
+    }
 
-      await this.assertNewAgentCwdExists(latest.target.config.cwd);
-      const target = await this.createWorkspaceStampedTarget(latest.target, latest.prompt);
-      const stamped = {
+    await this.assertNewAgentCwdExists(schedule.target.config.cwd);
+    const target = await this.createWorkspaceStampedTarget(schedule.target, schedule.prompt);
+    const stamped = {
+      ...schedule,
+      target,
+      updatedAt: this.now().toISOString(),
+    };
+
+    await this.serializeScheduleMutation(schedule.id, async () => {
+      const latest = await this.store.get(schedule.id);
+      if (!latest || latest.target.type !== "new-agent") {
+        return;
+      }
+      if (!scheduleTargetsEqual(latest.target, schedule.target)) {
+        return;
+      }
+      await this.store.put({
         ...latest,
         target,
-        updatedAt: this.now().toISOString(),
-      };
-      await this.store.put(stamped);
-      return stamped;
+        updatedAt: stamped.updatedAt,
+      });
     });
+
+    return stamped;
   }
 }
 
@@ -1023,6 +1053,20 @@ function buildScheduleAgentConfig(
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
   };
+}
+
+function newAgentWorkspaceStampKey(target: Extract<ScheduleTarget, { type: "new-agent" }>): string {
+  const config = target.config;
+  return JSON.stringify({
+    type: target.type,
+    provider: config.provider,
+    model: config.model ?? null,
+    cwd: resolve(config.cwd),
+    modeId: config.modeId ?? null,
+    thinkingOptionId: config.thinkingOptionId ?? null,
+    approvalPolicy: config.approvalPolicy ?? null,
+    title: config.title ?? null,
+  });
 }
 
 function formatScheduleProviderModel(

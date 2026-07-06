@@ -24,7 +24,7 @@ import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
-import { resolveRequiredProviderModel } from "../mcp-shared.js";
+import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp-shared.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -83,7 +83,7 @@ export interface CreateAgentFromMcpInput {
   kind: "mcp";
   provider: string;
   title: string;
-  initialPrompt: string;
+  initialPrompt?: string;
   config?: Partial<AgentSessionConfig>;
   cwd?: string;
   workspaceId?: string;
@@ -139,6 +139,17 @@ export function formatProviderModel(provider: string, model: string | null | und
     return provider;
   }
   return `${provider}/${model}`;
+}
+
+function resolveProviderModel(providerValue: string): ResolvedProviderModel {
+  const providerInput = providerValue.trim();
+  if (providerInput.includes("/")) {
+    return resolveRequiredProviderModel(providerInput);
+  }
+  if (!providerInput) {
+    throw new Error("provider is required");
+  }
+  return { provider: providerInput, model: undefined };
 }
 
 interface ResolvedCreateAgent {
@@ -253,7 +264,7 @@ async function resolveMcpCreateAgent(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromMcpInput,
 ): Promise<ResolvedCreateAgent> {
-  const resolvedProviderModel = resolveRequiredProviderModel(input.provider);
+  const resolvedProviderModel = resolveProviderModel(input.provider);
   const provider = resolvedProviderModel.provider;
   const parentAgent = input.callerAgentId
     ? requireParentAgent(dependencies.agentManager, input.callerAgentId)
@@ -263,7 +274,7 @@ async function resolveMcpCreateAgent(
     dependencies,
     cwd,
     worktree: input.worktree,
-    initialPrompt: input.initialPrompt,
+    initialPrompt: input.initialPrompt ?? "",
   });
 
   const workspaceId = await resolveMcpWorkspaceId({
@@ -289,7 +300,7 @@ async function resolveMcpCreateAgent(
     labels: input.labels,
   });
 
-  const trimmedPrompt = input.initialPrompt.trim();
+  const trimmedPrompt = input.initialPrompt?.trim() ?? "";
   return {
     config: buildMcpSessionConfig({
       input,
@@ -307,7 +318,7 @@ async function resolveMcpCreateAgent(
         workspaceId: requireResolvedWorkspaceId(workspaceId),
       },
     },
-    prompt: trimmedPrompt,
+    prompt: trimmedPrompt ? trimmedPrompt : undefined,
     setupContinuation,
     background: input.background,
     promptFailure: input.promptFailure ?? "log",
@@ -353,7 +364,7 @@ async function resolveMcpWorkspaceId(params: {
   return ensureWorkspaceForMcpCreate(
     params.dependencies,
     params.resolvedCwd,
-    params.input.initialPrompt,
+    params.input.initialPrompt ?? "",
   );
 }
 
@@ -377,7 +388,7 @@ async function resolveMcpProviderCreateConfig(params: {
 
 function buildMcpSessionConfig(params: {
   input: CreateAgentFromMcpInput;
-  resolvedProviderModel: ReturnType<typeof resolveRequiredProviderModel>;
+  resolvedProviderModel: ResolvedProviderModel;
   provider: string;
   resolvedCwd: string;
   trimmedPrompt: string;

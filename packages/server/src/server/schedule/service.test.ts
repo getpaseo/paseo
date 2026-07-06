@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentManager } from "../agent/agent-manager.js";
@@ -467,6 +467,56 @@ describe("ScheduleService", () => {
     expect(await workspaceRegistry.list()).toHaveLength(1);
   });
 
+  test("new-agent schedules with non-normalized cwd reuse one stamped workspace", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tempDir);
+    const nonNormalizedCwd = join(tempDir, "child", "..");
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate,
+      workspaceRegistry,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "repeat from relative cwd",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: nonNormalizedCwd,
+        },
+      },
+      maxRuns: 2,
+    });
+
+    await service.tick();
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    const firstAgent = await agentStorage.get(inspected.runs[0]!.agentId!);
+    const secondAgent = await agentStorage.get(inspected.runs[1]!.agentId!);
+    expect(firstAgent?.workspaceId).toBe(secondAgent?.workspaceId);
+    expect(firstAgent?.workspaceId).toBe(inspected.target.config.workspaceId);
+    expect(await workspaceRegistry.get(inspected.target.config.workspaceId!)).toMatchObject({
+      workspaceId: inspected.target.config.workspaceId,
+      cwd: resolvePath(nonNormalizedCwd),
+    });
+    expect(await workspaceRegistry.list()).toHaveLength(1);
+  });
+
   test("legacy new-agent schedules without workspaceId stamp and persist on first fire", async () => {
     const { workspaceRegistry, ensureWorkspaceForCreate } =
       await createRegistryBackedWorkspaceEnsure(tempDir);
@@ -850,6 +900,130 @@ describe("ScheduleService", () => {
       status: "succeeded",
       output: "finished while updating",
       error: null,
+    });
+  });
+
+  test("fired new-agent runs use the schedule snapshot captured before concurrent edits", async () => {
+    let releaseStamp: (() => void) | null = null;
+    const stampBlocked = new Promise<void>((resolve) => {
+      releaseStamp = resolve;
+    });
+    let firstStampStarted: (() => void) | null = null;
+    const firstStampSignal = new Promise<void>((resolve) => {
+      firstStampStarted = resolve;
+    });
+    let ensureCalls = 0;
+    const nextCwd = join(tempDir, "next-cwd");
+    await mkdir(nextCwd, { recursive: true });
+    const createdInputs: Parameters<ScheduleServiceOptions["createAgent"]>[0][] = [];
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    manager.waitForAgentEvent = async () => ({
+      status: "idle",
+      permission: null,
+      lastMessage: "old snapshot result",
+    });
+    manager.archiveAgent = async () => {};
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const legacy = await store.create({
+      name: null,
+      prompt: "old prompt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "old-model",
+          cwd: tempDir,
+        },
+      },
+      status: "active",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      nextRunAt: now.toISOString(),
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: 1,
+      runs: [],
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        if (ensureCalls === 1) {
+          firstStampStarted?.();
+          await stampBlocked;
+          return "workspace-old-snapshot";
+        }
+        return "workspace-new-config";
+      },
+      createAgent: async (input) => {
+        createdInputs.push(input);
+        const snapshot = {
+          id: "00000000-0000-0000-0000-000000000321",
+          provider: "claude",
+          cwd: input.cwd ?? tempDir,
+          workspaceId: input.workspaceId,
+          status: "idle",
+          lifecycle: "idle",
+        };
+        return {
+          snapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["snapshot"],
+          liveSnapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["liveSnapshot"],
+          background: true,
+          initialPromptStarted: true,
+          initialPromptError: null,
+        };
+      },
+      now: () => now,
+    });
+
+    const tickPromise = service.tick();
+    await firstStampSignal;
+    const updatePromise = service.update({
+      id: legacy.id,
+      prompt: "new prompt",
+      newAgentConfig: {
+        cwd: nextCwd,
+        model: "new-model",
+      },
+    });
+    await updatePromise;
+    releaseStamp?.();
+    await tickPromise;
+
+    expect(createdInputs).toHaveLength(1);
+    expect(createdInputs[0]).toMatchObject({
+      initialPrompt: "old prompt",
+      cwd: tempDir,
+      workspaceId: "workspace-old-snapshot",
+      config: {
+        model: "old-model",
+        cwd: tempDir,
+      },
+    });
+    const inspected = await service.inspect(legacy.id);
+    expect(inspected.prompt).toBe("new prompt");
+    expect(inspected.target.config).toMatchObject({
+      cwd: nextCwd,
+      model: "new-model",
+      workspaceId: "workspace-new-config",
+    });
+    expect(inspected.runs[0]).toMatchObject({
+      status: "succeeded",
+      output: "old snapshot result",
     });
   });
 

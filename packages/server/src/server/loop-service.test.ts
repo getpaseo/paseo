@@ -504,6 +504,54 @@ describe("LoopService", () => {
     expect(await workspaceRegistry.list()).toHaveLength(1);
   });
 
+  test("model-less loop workers use provider defaults and keep fast worker logs", async () => {
+    const workerConfigs: AgentSessionConfig[] = [];
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              workerConfigs.push(config);
+              return "worker default model output";
+            }
+            return '{"passed":true,"reason":"ok"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Use provider default model",
+      cwd: workspaceDir,
+      verifyChecks: ["true"],
+      maxIterations: 1,
+    });
+
+    await waitForLoopCompletion(service, loop.id);
+
+    const finalLoop = await service.inspectLoop(loop.id);
+    expect(finalLoop.status).toBe("succeeded");
+    expect(workerConfigs).toHaveLength(1);
+    expect(workerConfigs[0]).toMatchObject({
+      provider: "claude",
+      model: undefined,
+    });
+    expect(
+      finalLoop.logs.some(
+        (entry) => entry.source === "worker" && entry.text.includes("worker default model output"),
+      ),
+    ).toBe(true);
+  });
+
   test("archives worker and verifier agents after each iteration when requested", async () => {
     const archivedAgentIds: string[] = [];
     const manager = new AgentManager({

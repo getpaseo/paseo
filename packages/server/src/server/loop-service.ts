@@ -649,7 +649,6 @@ export class LoopService {
       cwd: loop.cwd,
       workspaceId: await context.workspaceId,
       title: buildWorkerTitle(loop, iteration.index),
-      initialPrompt: loop.prompt,
       mode: loop.modeId ?? undefined,
       unattended: true,
       promptFailure: "return-error",
@@ -687,22 +686,10 @@ export class LoopService {
     );
 
     try {
-      if (created.initialPromptError) {
-        throw created.initialPromptError;
-      }
-      const result = await this.options.agentManager.waitForAgentEvent(agent.id, {
-        waitForActive: true,
-        signal,
-      });
+      const result = await this.options.agentManager.runAgent(agent.id, this.toPrompt(loop.prompt));
       iteration.workerCompletedAt = nowIso();
       iteration.workerOutcome = "completed";
-      if (result.permission) {
-        throw new Error(`Loop worker ${agent.id} is waiting for permission`);
-      }
-      if (result.status === "error") {
-        throw new Error(result.lastMessage ?? `Loop worker ${agent.id} failed`);
-      }
-      if (workerCanceledReason) {
+      if (result.canceled || workerCanceledReason) {
         throw new Error(`Loop worker ${agent.id} was canceled: ${workerCanceledReason}`);
       }
       return true;
@@ -786,7 +773,6 @@ export class LoopService {
       cwd: loop.cwd,
       workspaceId: await context.workspaceId,
       title: buildVerifierTitle(loop, iteration.index),
-      initialPrompt: initialVerifierPrompt,
       mode: loop.verifierModeId ?? loop.modeId ?? undefined,
       unattended: true,
       promptFailure: "return-error",
@@ -820,25 +806,16 @@ export class LoopService {
     );
 
     try {
-      if (created.initialPromptError) {
-        throw created.initialPromptError;
-      }
       let waitingForInitialResponse = true;
       const result = await getStructuredAgentResponse({
         caller: async (nextPrompt) => {
           if (waitingForInitialResponse) {
             waitingForInitialResponse = false;
-            const waitResult = await this.options.agentManager.waitForAgentEvent(verifierAgent.id, {
-              waitForActive: true,
-              signal,
-            });
-            if (waitResult.permission) {
-              throw new Error(`Loop verifier ${verifierAgent.id} is waiting for permission`);
-            }
-            if (waitResult.status === "error") {
-              throw new Error(waitResult.lastMessage ?? `Loop verifier ${verifierAgent.id} failed`);
-            }
-            return waitResult.lastMessage ?? "";
+            const run = await this.options.agentManager.runAgent(
+              verifierAgent.id,
+              initialVerifierPrompt,
+            );
+            return this.resolveFinalText(run.timeline, run.finalText);
           }
           const run = await this.options.agentManager.runAgent(
             verifierAgent.id,

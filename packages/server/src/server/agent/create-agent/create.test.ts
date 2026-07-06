@@ -80,6 +80,52 @@ test("session create forwards clientMessageId to the initial prompt run options"
   });
 });
 
+test("mcp create accepts provider-only internal input and leaves model undefined", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn(() => snapshot),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: {
+      resolveCreateConfig: vi.fn(async (input) => {
+        expect(input.provider).toBe("claude");
+        return {};
+      }),
+    } as Parameters<typeof createAgentCommand>[0]["providerSnapshotManager"],
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "claude",
+    cwd: "/tmp/paseo-create-test",
+    workspaceId: "ws-create-test",
+    title: "provider default",
+    initialPrompt: "hello",
+    background: true,
+    notifyOnFinish: false,
+  });
+
+  expect(createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      provider: "claude",
+      model: undefined,
+    }),
+    undefined,
+    expect.objectContaining({
+      placement: { kind: "workspace", workspaceId: "ws-create-test" },
+    }),
+  );
+});
+
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
