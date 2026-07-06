@@ -30,7 +30,13 @@ import {
   ProfileDraft,
   TerminalProfileEditModal,
 } from "@/screens/settings/terminal-profile-edit-modal";
-import { startDesktopDaemon, stopDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { getIsElectron } from "@/constants/platform";
+import {
+  getDesktopDaemonStatus,
+  restartDesktopDaemon,
+  startDesktopDaemon,
+  stopDesktopDaemon,
+} from "@/desktop/daemon/desktop-daemon";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
@@ -62,6 +68,7 @@ import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
 import { getProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
+import { restartDaemonFromSettings } from "./daemon-restart";
 
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedArrowDown = withUnistyles(ArrowDown);
@@ -664,17 +671,20 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       .then((confirmed) => {
         if (!confirmed) return;
         setIsRestarting(true);
-        void daemonClient
-          .restartServer(`settings_daemon_restart_${host.serverId}`)
-          .catch((error) => {
-            console.error(`[HostPage] Failed to restart daemon ${host.label}`, error);
-            if (!isMountedRef.current) return;
-            setIsRestarting(false);
-            Alert.alert(
-              t("settings.host.daemon.restart.requestFailedTitle"),
-              t("settings.host.daemon.restart.requestFailedMessage"),
-            );
-          });
+        void restartDaemonFromSettings(host.serverId, `settings_daemon_restart_${host.serverId}`, {
+          getIsElectron,
+          getDesktopDaemonStatus,
+          restartDesktopDaemon,
+          restartServer: (reason) => daemonClient.restartServer(reason),
+        }).catch((error) => {
+          console.error(`[HostPage] Failed to restart daemon ${host.label}`, error);
+          if (!isMountedRef.current) return;
+          setIsRestarting(false);
+          Alert.alert(
+            t("settings.host.daemon.restart.requestFailedTitle"),
+            t("settings.host.daemon.restart.requestFailedMessage"),
+          );
+        });
         void waitForDaemonRestart();
         return;
       })
