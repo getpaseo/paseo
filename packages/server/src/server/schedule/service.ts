@@ -379,8 +379,9 @@ export class ScheduleService {
       },
       update: async (current) => {
         const now = this.now();
-        const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
-        const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+        const cadence = mergeScheduleCadenceTimezone(current.cadence, input.cadence);
+        const runOnCreate = input.runOnCreate ?? cadence.type === "every";
+        const nextRunAt = runOnCreate ? now : computeNextRunAt(cadence, now);
         const target = await this.stampNewAgentWorkspace(
           carryExistingWorkspaceStamp(current.target, inputTarget),
           input.prompt,
@@ -390,7 +391,7 @@ export class ScheduleService {
           ...current,
           name,
           prompt,
-          cadence: input.cadence,
+          cadence,
           target,
           status: "active",
           pausedAt: null,

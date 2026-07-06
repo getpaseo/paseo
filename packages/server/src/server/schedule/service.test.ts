@@ -3314,6 +3314,41 @@ describe("ScheduleService", () => {
     expect(await service.list()).toHaveLength(1);
   });
 
+  test("createOrReplace preserves an existing cron timezone when replacement omits timezone", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const agentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const first = await service.createOrReplace({
+      name: "timezone-aware cron",
+      prompt: "watch the build",
+      cadence: { type: "cron", expression: "0 9 * * *", timezone: "America/New_York" },
+      target: { type: "agent", agentId },
+    });
+
+    const second = await service.createOrReplace({
+      name: "timezone-aware cron",
+      prompt: "watch the build v2",
+      cadence: { type: "cron", expression: "30 9 * * *" },
+      target: { type: "agent", agentId },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.cadence).toEqual({
+      type: "cron",
+      expression: "30 9 * * *",
+      timezone: "America/New_York",
+    });
+    expect(await service.list()).toHaveLength(1);
+  });
+
   test("createOrReplace creates a sibling when name, target, or completion differ", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
