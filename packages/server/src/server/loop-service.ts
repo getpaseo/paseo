@@ -523,8 +523,10 @@ export class LoopService {
   private async executeLoop(loopId: string, signal: AbortSignal): Promise<void> {
     const loop = this.requireLoop(loopId);
     const deadline = loop.maxTimeMs ? Date.now() + loop.maxTimeMs : null;
+    const workspaceId = this.options.ensureWorkspaceForCreate(loop.cwd, { prompt: loop.prompt });
+    workspaceId.catch(() => {});
     const context: LoopExecutionContext = {
-      workspaceId: this.options.ensureWorkspaceForCreate(loop.cwd, { prompt: loop.prompt }),
+      workspaceId,
     };
 
     try {
