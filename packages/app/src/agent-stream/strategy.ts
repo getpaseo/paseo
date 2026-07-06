@@ -2,6 +2,7 @@ import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
+import type { TrailAnchorStore } from "./message-trail-anchor";
 import type {
   BottomAnchorLocalRequest,
   BottomAnchorRouteRequest,
@@ -42,6 +43,7 @@ export interface StreamEdgeSlotProps {
 export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  scrollToMessage: (itemId: string) => void;
 }
 
 export interface StreamSegmentRenderers {
@@ -77,6 +79,10 @@ export interface StreamRenderInput {
   listStyle: StyleProp<ViewStyle>;
   baseListContentContainerStyle: StyleProp<ViewStyle>;
   forwardListContentContainerStyle: StyleProp<ViewStyle>;
+  // Message-trail rail wiring (web/desktop only). Optional so other consumers
+  // (workspace-tab.tsx, tests) can omit them; the web strategy no-ops without them.
+  trailItemIds?: readonly string[];
+  trailAnchor?: TrailAnchorStore;
 }
 
 export interface ResolveStreamRenderStrategyInput {

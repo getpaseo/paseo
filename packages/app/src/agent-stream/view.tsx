@@ -66,6 +66,10 @@ import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/vi
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import { deriveMessageTrailItems } from "./message-trail-items";
+import { createTrailAnchorStore } from "./message-trail-anchor";
+import { MessageTrailRail } from "@/agent-stream/message-trail-rail";
+import { MessageTrailToc } from "@/agent-stream/message-trail-toc";
 import {
   CompletedTurnFooterRow,
   TurnFooter,
@@ -155,7 +159,9 @@ function renderStreamItemWithTurnFooter(input: {
     />
   ) : null;
   const content = (
-    <StreamItemWrapper gapBelow={input.layoutItem.gapBelow}>{input.content}</StreamItemWrapper>
+    <StreamItemWrapper itemId={input.layoutItem.item.id} gapBelow={input.layoutItem.gapBelow}>
+      {input.content}
+    </StreamItemWrapper>
   );
 
   if (input.layoutItem.frameOrder === "footer-then-content") {
@@ -224,6 +230,7 @@ function renderLiveHeadStreamItem(input: {
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
+  scrollToMessage(itemId: string): void;
 }
 
 export interface AgentStreamViewProps {
@@ -516,6 +523,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         streamRenderStrategy,
       ],
     );
+    // Message-trail rail (web/desktop only). Extracted into a hook to keep this component's
+    // complexity in check; it derives ticks, owns the anchor store, and tracks whether the
+    // rail's own live measurement says it currently fits.
+    const {
+      messageTrailItems,
+      trailItemIds,
+      trailAnchorStore,
+      handleRailFitChange,
+      handleJumpToMessage,
+      showMessageTrail,
+      showMessageTrailToc,
+    } = useMessageTrail({
+      tail: effectiveStreamItems,
+      head: effectiveStreamHead,
+      isMobile,
+      viewportRef,
+    });
+
     useImperativeHandle(
       ref,
       () => ({
@@ -524,6 +549,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         },
         prepareForViewportChange() {
           viewportRef.current?.prepareForViewportChange();
+        },
+        scrollToMessage(itemId: string) {
+          viewportRef.current?.scrollToMessage(itemId);
         },
       }),
       [],
@@ -955,8 +983,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               listStyle: stylesheet.list,
               baseListContentContainerStyle: stylesheet.listContentContainer,
               forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
+              trailItemIds: showMessageTrail ? trailItemIds : undefined,
+              trailAnchor: showMessageTrail ? (trailAnchorStore ?? undefined) : undefined,
             })}
           </MessageOuterSpacingProvider>
+          {showMessageTrail && trailAnchorStore ? (
+            <MessageTrailRail
+              items={messageTrailItems}
+              anchor={trailAnchorStore}
+              onJumpToMessage={handleJumpToMessage}
+              onFitChange={handleRailFitChange}
+            />
+          ) : null}
           {!isNearBottom && (
             <View style={stylesheet.scrollToBottomContainer} pointerEvents="box-none">
               <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
@@ -972,6 +1010,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               </Animated.View>
             </View>
           )}
+          {/* Rendered last so it stacks above the (full-width) scroll-to-bottom overlay,
+              which would otherwise swallow the button's clicks when scrolled up. */}
+          {showMessageTrailToc ? (
+            <MessageTrailToc items={messageTrailItems} onJumpToMessage={handleJumpToMessage} />
+          ) : null}
         </View>
       </ToolCallSheetProvider>
     );
@@ -1552,14 +1595,22 @@ const permissionStyles = StyleSheet.create((theme) => ({
 }));
 
 interface StreamItemWrapperProps {
+  itemId: string;
   gapBelow: number;
   children: ReactNode;
 }
 
-function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+function StreamItemWrapper({ itemId, gapBelow, children }: StreamItemWrapperProps) {
   const wrapperStyle = useMemo(
     () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
     [gapBelow],
   );
-  return <View style={wrapperStyle}>{children}</View>;
+  // `nativeID` maps to a DOM `id` on react-native-web (inert on native), so mounted
+  // rows are addressable via document.getElementById(`stream-item-${itemId}`) for
+  // scrollToMessage on web.
+  return (
+    <View style={wrapperStyle} nativeID={`stream-item-${itemId}`}>
+      {children}
+    </View>
+  );
 }
