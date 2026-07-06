@@ -627,23 +627,34 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     [],
   );
 
-  const waitForDaemonRestart = useCallback(async () => {
-    const disconnectTimeoutMs = 7000;
-    const reconnectTimeoutMs = 30000;
-    if (isHostConnected()) {
-      await waitForCondition(() => !isHostConnected(), disconnectTimeoutMs);
-    }
-    const reconnected = await waitForCondition(() => isHostConnected(), reconnectTimeoutMs);
-    if (isMountedRef.current) {
-      setIsRestarting(false);
-      if (!reconnected) {
-        Alert.alert(
-          t("settings.host.daemon.restart.unableToReconnectTitle"),
-          t("settings.host.daemon.restart.unableToReconnectMessage", { name: host.label }),
-        );
+  const waitForDaemonRestart = useCallback(
+    async (restartRequest: Promise<void>) => {
+      const disconnectTimeoutMs = 30000;
+      const reconnectTimeoutMs = 30000;
+      const disconnectedPromise = isHostConnected()
+        ? waitForCondition(() => !isHostConnected(), disconnectTimeoutMs)
+        : Promise.resolve(true);
+      const restartSucceeded = await restartRequest.then(
+        () => true,
+        () => false,
+      );
+      if (!restartSucceeded || !isMountedRef.current) return;
+
+      const disconnected = await disconnectedPromise;
+      const reconnected =
+        disconnected && (await waitForCondition(() => isHostConnected(), reconnectTimeoutMs));
+      if (isMountedRef.current) {
+        setIsRestarting(false);
+        if (!reconnected) {
+          Alert.alert(
+            t("settings.host.daemon.restart.unableToReconnectTitle"),
+            t("settings.host.daemon.restart.unableToReconnectMessage", { name: host.label }),
+          );
+        }
       }
-    }
-  }, [host.label, isHostConnected, t, waitForCondition]);
+    },
+    [host.label, isHostConnected, t, waitForCondition],
+  );
 
   const handleRestart = useCallback(() => {
     if (!daemonClient) {
@@ -671,13 +682,18 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       .then((confirmed) => {
         if (!confirmed) return;
         setIsRestarting(true);
-        void restartDaemonFromSettings(host.serverId, `settings_daemon_restart_${host.serverId}`, {
-          getIsElectron,
-          getDesktopDaemonStatus,
-          getDesktopSettings: loadDesktopSettings,
-          restartDesktopDaemon,
-          restartServer: (reason) => daemonClient.restartServer(reason),
-        }).catch((error) => {
+        const restartRequest = restartDaemonFromSettings(
+          host.serverId,
+          `settings_daemon_restart_${host.serverId}`,
+          {
+            getIsElectron,
+            getDesktopDaemonStatus,
+            getDesktopSettings: loadDesktopSettings,
+            restartDesktopDaemon,
+            restartServer: (reason) => daemonClient.restartServer(reason),
+          },
+        );
+        void restartRequest.catch((error) => {
           console.error(`[HostPage] Failed to restart daemon ${host.label}`, error);
           if (!isMountedRef.current) return;
           setIsRestarting(false);
@@ -686,7 +702,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             t("settings.host.daemon.restart.requestFailedMessage"),
           );
         });
-        void waitForDaemonRestart();
+        void waitForDaemonRestart(restartRequest);
         return;
       })
       .catch((error) => {
@@ -726,7 +742,6 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     </View>
   );
 }
-
 function UpdateDaemonCard({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
