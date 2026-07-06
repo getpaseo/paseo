@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,11 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
 } from "./string-command-shell.js";
+
+function hasBashOnPath(): boolean {
+  const result = spawnSync("bash", ["-c", "true"], { stdio: "ignore" });
+  return !result.error && result.status === 0;
+}
 
 describe("buildStringCommandShellInvocation", () => {
   const tempDirs: string[] = [];
@@ -26,12 +31,12 @@ describe("buildStringCommandShellInvocation", () => {
         platform: "darwin",
       }),
     ).toEqual({
-      shell: "/bin/bash",
+      shell: "bash",
       args: ["-c", 'echo "hello"'],
     });
   });
 
-  it.skipIf(process.platform === "win32" || !existsSync("/bin/bash"))(
+  it.skipIf(process.platform === "win32" || !hasBashOnPath())(
     "preserves the supplied PATH when login profiles rewrite it",
     () => {
       const home = mkdtempSync(join(tmpdir(), "paseo-shell-home-"));

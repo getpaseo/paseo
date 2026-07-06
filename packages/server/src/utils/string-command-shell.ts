@@ -40,7 +40,7 @@ export function buildStringCommandShellInvocation(
   }
 
   return {
-    shell: "/bin/bash",
+    shell: "bash",
     args: ["-c", options.command],
   };
 }
