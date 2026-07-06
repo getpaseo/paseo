@@ -154,6 +154,7 @@ npm run typecheck
 ## コミュニティ
 
 - [paseo-relay](https://github.com/zenghongtu/paseo-relay) — Go 実装のセルフホスト型リレー
+- [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 拡張機能
 
 ---
 

@@ -18,7 +18,7 @@ interface DaemonSelfUpdateRestartIntent {
   type: "restart";
   clientId: string;
   requestId: string;
-  reason?: string;
+  reason: string;
 }
 
 export interface DaemonSelfUpdateSessionControllerOptions {

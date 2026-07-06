@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
+  resolveHostIndexRoute,
   resolveStartupRoute,
   shouldRunStartupGiveUpTimer,
   startHostRuntimeBootstrap,
@@ -250,7 +251,7 @@ describe("resolveStartupRoute", () => {
     ).toEqual({ kind: "splash" });
   });
 
-  it("restores the saved workspace only after the host registry proves the host exists", () => {
+  it("enters the host boundary for saved workspace restore after the host registry proves the host exists", () => {
     expect(
       resolveStartupRoute({
         ...baseIndexInput,
@@ -258,7 +259,19 @@ describe("resolveStartupRoute", () => {
         workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
         workspaceSelectionStatus: "exists",
       }),
-    ).toEqual({ kind: "redirect", href: "/h/server-1/workspace/workspace-a" });
+    ).toEqual({ kind: "redirect", href: "/h/server-1" });
+  });
+
+  it("restores the last workspace host even when a different host is already online", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-offline" }, { serverId: "server-online" }],
+        anyOnlineHostServerId: "server-online",
+        workspaceSelection: { serverId: "server-offline", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "unknown",
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-offline" });
   });
 
   it("does not restore a saved workspace after workspace hydration proves it is missing", () => {
@@ -355,5 +368,57 @@ describe("resolveStartupRoute", () => {
         route: { kind: "host", serverId: "server-removed" },
       }),
     ).toEqual({ kind: "redirect", href: "/welcome" });
+  });
+});
+
+describe("resolveHostIndexRoute", () => {
+  it("restores the remembered workspace when the host index opens for the same host", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+      }),
+    ).toEqual("/h/server-saved/workspace/workspace-a");
+  });
+
+  it("keeps restoring a remembered workspace before the host workspace list hydrates", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "unknown",
+      }),
+    ).toEqual("/h/server-saved/workspace/workspace-a");
+  });
+
+  it("opens global project selection when the remembered workspace is proven missing", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "missing",
+      }),
+    ).toEqual("/open-project");
+  });
+
+  it("opens global project selection when the remembered workspace belongs to another host", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: { serverId: "server-other", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+      }),
+    ).toEqual("/open-project");
+  });
+
+  it("opens global project selection when no workspace is remembered", () => {
+    expect(
+      resolveHostIndexRoute({
+        serverId: "server-saved",
+        workspaceSelection: null,
+        workspaceSelectionStatus: "unknown",
+      }),
+    ).toEqual("/open-project");
   });
 });

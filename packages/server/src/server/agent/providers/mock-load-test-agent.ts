@@ -97,6 +97,7 @@ const MODELS: AgentModelDefinition[] = [
 
 interface ActiveTurn {
   turnId: string;
+  assistantMessageId: string;
   prompt: AgentPromptInput;
   startedAt: number;
   cycle: number;
@@ -609,12 +610,14 @@ export class MockLoadTestAgentSession implements AgentSession {
 
     const profile = resolveModelProfile(this.modelId);
     const turnId = randomUUID();
+    const assistantMessageId = randomUUID();
     let resolve!: (result: AgentRunResult) => void;
     const completed = new Promise<AgentRunResult>((promiseResolve) => {
       resolve = promiseResolve;
     });
     const turn: ActiveTurn = {
       turnId,
+      assistantMessageId,
       prompt,
       startedAt: Date.now(),
       cycle: 0,
@@ -860,6 +863,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
       text: finalText,
+      messageId: turn.assistantMessageId,
     });
     this.activeTurn = null;
     this.emit({
@@ -874,6 +878,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         {
           type: "assistant_message",
           text: finalText,
+          messageId: turn.assistantMessageId,
         },
       ],
       canceled: false,
@@ -989,6 +994,7 @@ export class MockLoadTestAgentSession implements AgentSession {
           ? {
               type: "assistant_message",
               text: `stress-update-${index}`,
+              messageId: turn.assistantMessageId,
             }
           : {
               type: "todo",
@@ -1067,6 +1073,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       this.emitTimeline(turn.turnId, {
         type: "assistant_message",
         text: `data:image/png;base64,${payload}`,
+        messageId: turn.assistantMessageId,
       });
     }
 
@@ -1133,6 +1140,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         this.emitTimeline(turn.turnId, {
           type: "assistant_message",
           text: event.text,
+          messageId: turn.assistantMessageId,
         });
         return;
       }
@@ -1178,6 +1186,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
       text: "\n\n_(end of synthetic stream)_\n",
+      messageId: turn.assistantMessageId,
     });
     this.finishTurnWithText(turn, "Synthetic load test complete");
   }

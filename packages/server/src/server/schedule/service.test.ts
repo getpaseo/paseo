@@ -22,7 +22,7 @@ import type {
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
-import { ScheduleService } from "./service.js";
+import { ScheduleService, ScheduleTargetGoneError } from "./service.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -44,6 +44,36 @@ const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreat
     return { modeId: undefined, featureValues: input.featureValues };
   },
 };
+
+function buildAgentRecord(params: {
+  id: string;
+  cwd: string;
+  iso: string;
+  archivedAt?: string | null;
+}) {
+  return {
+    id: params.id,
+    provider: "claude",
+    cwd: params.cwd,
+    createdAt: params.iso,
+    updatedAt: params.iso,
+    lastActivityAt: params.iso,
+    lastUserMessageAt: null,
+    title: params.id,
+    labels: {},
+    lastStatus: "closed" as const,
+    lastModeId: "default",
+    config: { modeId: "default" },
+    runtimeInfo: null,
+    features: [],
+    persistence: null,
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+    internal: false,
+    archivedAt: params.archivedAt ?? null,
+  };
+}
 
 describe("ScheduleService", () => {
   let tempDir: string;
@@ -1266,7 +1296,7 @@ describe("ScheduleService", () => {
     await expect(service.runOnce(created.id)).rejects.toThrow("already completed");
   });
 
-  test("deleteForAgent removes only schedules targeting that agent", async () => {
+  test("completeForAgent completes only schedules targeting that agent", async () => {
     const service = new ScheduleService({
       paseoHome: tempDir,
       logger: createTestLogger(),
@@ -1299,12 +1329,577 @@ describe("ScheduleService", () => {
       },
     });
 
-    const deleted = await service.deleteForAgent(targetAgentId);
-    expect(deleted).toBe(1);
+    now = new Date("2026-01-01T00:05:00.000Z");
+    const completed = await service.completeForAgent(targetAgentId);
+    expect(completed).toBe(1);
 
     const remaining = await service.list();
-    const remainingIds = remaining.map((schedule) => schedule.id).sort();
-    expect(remainingIds).toEqual([otherTargeted.id, newAgentSchedule.id].sort());
-    expect(remainingIds).not.toContain(targeted.id);
+    expect(remaining.map((schedule) => schedule.id).sort()).toEqual(
+      [targeted.id, otherTargeted.id, newAgentSchedule.id].sort(),
+    );
+
+    const doomed = await service.inspect(targeted.id);
+    expect(doomed.status).toBe("completed");
+    expect(doomed.nextRunAt).toBeNull();
+    expect(doomed.updatedAt).toBe("2026-01-01T00:05:00.000Z");
+
+    expect((await service.inspect(otherTargeted.id)).status).toBe("active");
+    expect((await service.inspect(newAgentSchedule.id)).status).toBe("active");
+  });
+
+  test("startup sweep completes agent-target schedules whose agent is gone", async () => {
+    const missingAgentId = "44444444-4444-4444-8444-444444444444";
+    const archivedAgentId = "55555555-5555-4555-8555-555555555555";
+    const liveAgentId = "66666666-6666-4666-8666-666666666666";
+
+    await agentStorage.upsert(
+      buildAgentRecord({
+        id: archivedAgentId,
+        cwd: tempDir,
+        iso: now.toISOString(),
+        archivedAt: "2026-01-01T00:00:30.000Z",
+      }),
+    );
+    await agentStorage.upsert(
+      buildAgentRecord({ id: liveAgentId, cwd: tempDir, iso: now.toISOString() }),
+    );
+
+    const service1 = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const missing = await service1.create({
+      prompt: "ping missing",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: missingAgentId },
+    });
+    const archived = await service1.create({
+      prompt: "ping archived",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: archivedAgentId },
+    });
+    const live = await service1.create({
+      prompt: "ping live",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: liveAgentId },
+    });
+    const newAgent = await service1.create({
+      prompt: "spawn fresh",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    const pausedMissing = await service1.create({
+      prompt: "paused ping missing",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1" },
+    });
+    await service1.pause(pausedMissing.id);
+    const pausedLive = await service1.create({
+      prompt: "paused ping live",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: liveAgentId },
+    });
+    await service1.pause(pausedLive.id);
+
+    now = new Date("2026-01-01T00:10:00.000Z");
+    const service2 = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    await service2.start();
+    await service2.stop();
+
+    expect((await service2.inspect(missing.id)).status).toBe("completed");
+    expect((await service2.inspect(missing.id)).nextRunAt).toBeNull();
+    expect((await service2.inspect(archived.id)).status).toBe("completed");
+    expect((await service2.inspect(live.id)).status).toBe("active");
+    expect((await service2.inspect(newAgent.id)).status).toBe("active");
+    // Paused schedules are swept too when their agent is gone, but survive when it lives.
+    expect((await service2.inspect(pausedMissing.id)).status).toBe("completed");
+    expect((await service2.inspect(pausedLive.id)).status).toBe("paused");
+  });
+
+  test("completes the schedule when a scheduled run reports the target is gone", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        throw new ScheduleTargetGoneError("Agent 77777777-7777-4777-8777-777777777777 is archived");
+      },
+    });
+
+    const created = await service.create({
+      prompt: "ping gone target",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "77777777-7777-4777-8777-777777777777" },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.nextRunAt).toBeNull();
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toBe("Agent 77777777-7777-4777-8777-777777777777 is archived");
+  });
+
+  test("does not resurrect nextRunAt when the schedule completes during an in-flight run", async () => {
+    const agentId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    let service!: ScheduleService;
+    service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        // Simulate the agent being archived mid-run: the archive callback
+        // completes the schedule before this run finishes.
+        await service.completeForAgent(agentId);
+        return { agentId: null, output: "ok" };
+      },
+    });
+
+    const created = await service.create({
+      prompt: "ping",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.nextRunAt).toBeNull();
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+  });
+
+  test("keeps the schedule active when a run fails for a transient reason", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        throw new Error("network blip");
+      },
+    });
+
+    const created = await service.create({
+      prompt: "ping flaky target",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "88888888-8888-4888-8888-888888888888" },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("active");
+    expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toBe("network blip");
+  });
+
+  test("completes the schedule when a scheduled run targets an archived agent", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const archivedAgentId = "99999999-9999-4999-8999-999999999999";
+    await agentStorage.upsert(
+      buildAgentRecord({
+        id: archivedAgentId,
+        cwd: tempDir,
+        iso: now.toISOString(),
+        archivedAt: "2026-01-01T00:00:30.000Z",
+      }),
+    );
+
+    const created = await service.create({
+      prompt: "ping archived target",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: archivedAgentId },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.nextRunAt).toBeNull();
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toContain("is archived");
+  });
+
+  test("completes the schedule when a scheduled run targets a missing agent", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "ping missing target",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.nextRunAt).toBeNull();
+    expect(inspected.runs[0]?.status).toBe("failed");
+  });
+
+  test("completes the schedule when a new-agent run's cwd no longer exists", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "spawn in a deleted dir",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: join(tempDir, "deleted-worktree"),
+          approvalPolicy: "never",
+        },
+      },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("completed");
+    expect(inspected.nextRunAt).toBeNull();
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toContain("no longer exists");
+  });
+
+  test("keeps the schedule active when a real run fails for a non-gone reason", async () => {
+    // No providers registered: the agent exists and is live, but loading it fails
+    // with a plain error (not ScheduleTargetGoneError), so the schedule must retry.
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const agentId = "12121212-1212-4121-8121-121212121212";
+    await agentStorage.upsert(
+      buildAgentRecord({ id: agentId, cwd: tempDir, iso: now.toISOString() }),
+    );
+
+    const created = await service.create({
+      prompt: "ping live but unavailable",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.status).toBe("active");
+    expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+    expect(inspected.runs[0]?.status).toBe("failed");
+    expect(inspected.runs[0]?.error).toContain("unavailable provider");
+  });
+
+  test("runOnce completes the schedule when the target is gone", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "manual ping gone target",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "13131313-1313-4131-8131-131313131313" },
+    });
+
+    const after = await service.runOnce(created.id);
+    expect(after.status).toBe("completed");
+    expect(after.nextRunAt).toBeNull();
+    expect(after.runs).toHaveLength(1);
+    expect(after.runs[0]?.status).toBe("failed");
+  });
+
+  test("createOrReplace updates the matching schedule in place instead of duplicating", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const agentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const first = await service.createOrReplace({
+      name: "babysit-pr PR 1112",
+      prompt: "watch the build",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+    expect((await service.inspect(first.id)).runs).toHaveLength(1);
+    await service.pause(first.id);
+
+    now = new Date("2026-01-01T00:02:00.000Z");
+    const second = await service.createOrReplace({
+      name: "babysit-pr PR 1112",
+      prompt: "watch the build v2",
+      cadence: { type: "cron", expression: "30 9 * * *" },
+      target: { type: "agent", agentId },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.status).toBe("active");
+    expect(second.prompt).toBe("watch the build v2");
+    expect(second.cadence).toEqual({ type: "cron", expression: "30 9 * * *" });
+    expect(second.nextRunAt).toBe("2026-01-01T09:30:00.000Z");
+    expect(second.createdAt).toBe(first.createdAt);
+    expect(second.runs).toHaveLength(1);
+    expect(await service.list()).toHaveLength(1);
+  });
+
+  test("createOrReplace creates a sibling when name, target, or completion differ", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const agentA = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const agentB = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+    await service.createOrReplace({
+      name: "dup",
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agentA },
+    });
+    await service.createOrReplace({
+      name: "other",
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agentA },
+    });
+    await service.createOrReplace({
+      name: "dup",
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agentB },
+    });
+
+    const done = await service.createOrReplace({
+      name: "done",
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agentA },
+      maxRuns: 1,
+    });
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+    expect((await service.inspect(done.id)).status).toBe("completed");
+
+    const redone = await service.createOrReplace({
+      name: "done",
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agentA },
+    });
+    expect(redone.id).not.toBe(done.id);
+
+    expect(await service.list()).toHaveLength(5);
+  });
+
+  test("createOrReplace never dedups anonymous schedules", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const agentId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    await service.createOrReplace({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId },
+    });
+    await service.createOrReplace({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId },
+    });
+
+    expect(await service.list()).toHaveLength(2);
+  });
+
+  test("createOrReplace matches new-agent targets by config", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const first = await service.createOrReplace({
+      name: "nightly",
+      prompt: "audit",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    const second = await service.createOrReplace({
+      name: "nightly",
+      prompt: "audit v2",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    expect(second.id).toBe(first.id);
+    expect(await service.list()).toHaveLength(1);
+
+    const third = await service.createOrReplace({
+      name: "nightly",
+      prompt: "audit elsewhere",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: join(tempDir, "sub") } },
+    });
+    expect(third.id).not.toBe(first.id);
+    expect(await service.list()).toHaveLength(2);
+  });
+
+  test("createOrReplace dedups new-agent targets regardless of config key order", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    // The stored config is round-tripped through the Zod schema (schema key
+    // order); this incoming literal deliberately uses a different key order.
+    const first = await service.createOrReplace({
+      name: "nightly",
+      prompt: "audit",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          networkAccess: true,
+          title: "nightly job",
+          approvalPolicy: "never",
+        },
+      },
+    });
+    const second = await service.createOrReplace({
+      name: "nightly",
+      prompt: "audit v2",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          networkAccess: true,
+          title: "nightly job",
+          approvalPolicy: "never",
+        },
+      },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(await service.list()).toHaveLength(1);
+  });
+
+  test("completeForAgent skips schedules that are already completed", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const agentId = "33333333-3333-4333-8333-333333333333";
+    await service.create({
+      prompt: "already done",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    expect(await service.completeForAgent(agentId)).toBe(1);
+    expect(await service.completeForAgent(agentId)).toBe(0);
   });
 });

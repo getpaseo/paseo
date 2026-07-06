@@ -29,6 +29,7 @@ import {
 import { WaitForAgentTracker } from "../wait-for-agent-tracker.js";
 import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
+import type { FirstAgentContext } from "../../messages.js";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
@@ -65,6 +66,7 @@ import {
 } from "../lifecycle-command.js";
 import type { GitHubService } from "../../../services/github-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../../workspace-registry.js";
 import { WorktreeRequestError } from "../../worktree-errors.js";
 import {
   archiveCommand,
@@ -73,6 +75,8 @@ import {
   type CreatePaseoWorktreeCommandInput,
   listPaseoWorktreesCommand,
 } from "../../worktree/commands.js";
+import { registerBrowserTools } from "../../browser-tools/tools.js";
+import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
 import type {
   PaseoToolCatalog,
   PaseoToolConfig,
@@ -97,11 +101,17 @@ export interface PaseoToolHostDependencies {
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "upsert">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (cwd: string) => Promise<string>;
+  ensureWorkspaceForCreate?: (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ) => Promise<string>;
+  browserToolsEnabled?: boolean;
+  browserToolsBroker?: BrowserToolsBroker | null;
   paseoHome?: string;
   worktreesRoot?: string;
   /**
@@ -549,6 +559,22 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
 
     return options.ensureWorkspaceForCreate(resolvedCwd);
+  }
+
+  function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
+    const explicitWorkspaceId = requestedWorkspaceId?.trim();
+    if (explicitWorkspaceId) {
+      return explicitWorkspaceId;
+    }
+
+    if (callerAgentId) {
+      const callerAgent = resolveCallerAgent();
+      if (!callerAgent?.workspaceId) {
+        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      }
+      return callerAgent.workspaceId;
+    }
+    throw new Error("workspaceId is required outside an agent-scoped session");
   }
 
   const buildCallerAgentScheduleConfigExtras = (
@@ -1002,6 +1028,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return toCatalog();
   }
 
+  if (options.browserToolsEnabled && options.browserToolsBroker) {
+    registerBrowserTools({
+      registerTool,
+      broker: options.browserToolsBroker,
+      callerAgentId,
+      resolveCallerAgent,
+    });
+  }
+
   registerTool(
     "create_agent",
     {
@@ -1151,7 +1186,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   async function resolveCreateAgentToolArgs(args: unknown): Promise<ResolvedCreateAgentToolArgs> {
     if (callerAgentId) {
       const parsed = agentToAgentCreateAgentArgsSchema.parse(args);
-      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace);
+      const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsed.workspace, {
+        prompt: parsed.initialPrompt,
+      });
       return {
         kind: "agent-scoped",
         parsedArgs: parsed,
@@ -1165,7 +1202,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (parsedArgs.relationship.kind === "subagent") {
       throw new Error("relationship subagent requires an agent-scoped tool session");
     }
-    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsedArgs.workspace);
+    const { cwd, workspaceId, worktree } = await resolveCreateAgentWorkspace(parsedArgs.workspace, {
+      prompt: parsedArgs.initialPrompt,
+    });
     return {
       kind: "top-level",
       parsedArgs,
@@ -1279,6 +1318,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   async function resolveCreateAgentWorkspace(
     workspace: AgentToAgentCreateAgentArgs["workspace"] | TopLevelCreateAgentArgs["workspace"],
+    firstAgentContext: FirstAgentContext | undefined,
   ): Promise<{
     cwd: string | undefined;
     workspaceId: string | undefined;
@@ -1330,7 +1370,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd),
+        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext),
         worktree: undefined,
       };
     }
@@ -1770,6 +1810,66 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "rename_workspace",
+    {
+      title: "Rename workspace",
+      description:
+        "Rename a workspace by setting its user-visible title. Omit workspaceId to rename your current workspace.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Workspace id to rename. Omit to rename your current workspace."),
+        title: z
+          .string()
+          .trim()
+          .min(1, "title is required")
+          .describe("New user-visible workspace title."),
+      },
+      outputSchema: {
+        success: z.boolean(),
+        workspaceId: z.string(),
+        title: z.string(),
+      },
+    },
+    async ({ workspaceId: requestedWorkspaceId, title }) => {
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is required to rename workspaces");
+      }
+      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+        throw new Error("Workspace update emitter is required to rename workspaces");
+      }
+
+      const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+      const existing = await options.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        throw new Error(`Workspace ${workspaceId} not found`);
+      }
+      if (existing.archivedAt) {
+        throw new Error(`Workspace ${workspaceId} is archived`);
+      }
+
+      await options.workspaceRegistry.upsert({
+        ...existing,
+        title,
+        updatedAt: new Date().toISOString(),
+      });
+      await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          success: true,
+          workspaceId,
+          title,
+        }),
+      };
+    },
+  );
+
+  registerTool(
     "list_terminals",
     {
       title: "List terminals",
@@ -1997,7 +2097,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
 
       const expiresAt = buildScheduleExpiry(expiresIn);
-      const schedule = await scheduleService.create({
+      const schedule = await scheduleService.createOrReplace({
         prompt: prompt.trim(),
         cadence: buildCronScheduleCadence({
           cron,
@@ -2046,7 +2146,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       resolveCallerAgent();
 
       const expiresAt = buildScheduleExpiry(expiresIn);
-      const schedule = await scheduleService.create({
+      const schedule = await scheduleService.createOrReplace({
         prompt: prompt.trim(),
         cadence: buildCronScheduleCadence({
           cron,

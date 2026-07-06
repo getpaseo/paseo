@@ -5,6 +5,29 @@ import type { WebSocketRoute } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
 import { daemonWsRoutePattern } from "./daemon-port";
 
+type WebSocketMessage = string | Buffer;
+
+function parseWebSocketJson(message: WebSocketMessage): unknown {
+  const raw = typeof message === "string" ? message : message.toString("utf8");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function getSessionMessage(message: WebSocketMessage): Record<string, unknown> | null {
+  const envelope = parseWebSocketJson(message);
+  if (!envelope || typeof envelope !== "object") {
+    return null;
+  }
+  const maybeEnvelope = envelope as { type?: unknown; message?: unknown };
+  if (maybeEnvelope.type !== "session" || typeof maybeEnvelope.message !== "object") {
+    return null;
+  }
+  return maybeEnvelope.message as Record<string, unknown>;
+}
+
 // --- Navigation ---
 
 export async function openProjects(page: Page): Promise<void> {
@@ -171,33 +194,39 @@ export async function unblockPaseoConfigWrites(repoPath: string): Promise<void> 
 
 // --- WebSocket helpers ---
 
-// Proxies all daemon WS traffic transparently until a read_project_config_request
-// is seen, then closes that connection (triggering readQuery.isError). Subsequent
-// connections pass through so the Reload action can succeed.
-export async function installReadTransportFailure(page: Page): Promise<void> {
-  let armed = true;
+// Proxies all daemon WS traffic transparently, but rejects paseo.json reads
+// until the test explicitly allows recovery. Closing the transport leaves the
+// client-side RPC pending across reconnects, so this injects the same correlated
+// rpc_error shape the daemon emits for failed async session requests.
+export async function installReadTransportFailure(
+  page: Page,
+): Promise<{ allowRecovery: () => void }> {
+  let shouldFailReads = true;
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
-      if (armed && typeof message === "string") {
-        try {
-          const envelope = JSON.parse(message) as {
-            type?: string;
-            message?: { type?: string };
-          };
-          if (
-            envelope.type === "session" &&
-            envelope.message?.type === "read_project_config_request"
-          ) {
-            armed = false;
-            void ws.close({ code: 1001 });
-            return;
-          }
-        } catch {
-          // binary or malformed frame — pass through
+      const sessionMessage = getSessionMessage(message);
+      if (shouldFailReads && sessionMessage?.type === "read_project_config_request") {
+        const requestId = sessionMessage.requestId;
+        if (typeof requestId === "string") {
+          ws.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "rpc_error",
+                payload: {
+                  requestId,
+                  requestType: "read_project_config_request",
+                  error: "Test read transport failure.",
+                  code: "transport",
+                },
+              },
+            }),
+          );
         }
+        return;
       }
       try {
         server.send(message);
@@ -214,6 +243,12 @@ export async function installReadTransportFailure(page: Page): Promise<void> {
       }
     });
   });
+
+  return {
+    allowRecovery() {
+      shouldFailReads = false;
+    },
+  };
 }
 
 // Installs a transparent WS proxy that can later drop all active daemon connections

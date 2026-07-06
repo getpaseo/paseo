@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -22,10 +23,14 @@ interface BrowserStoreState extends BrowserIndexState {
 }
 
 function createBrowserId(): string {
+  let browserId: string;
   if (typeof globalThis.crypto?.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
+    browserId = globalThis.crypto.randomUUID();
+  } else {
+    const randomSuffix = Math.random().toString(16).slice(2) || "0";
+    browserId = `${Date.now()}-${randomSuffix}`;
   }
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return BrowserAutomationBrowserIdSchema.parse(browserId);
 }
 
 export const useBrowserStore = create<BrowserStoreState>()(

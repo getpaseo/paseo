@@ -88,11 +88,13 @@ export async function archiveAgentFromDaemon(
 
 export async function fetchAgentArchivedAt(
   client: {
-    fetchAgent(agentId: string): Promise<{ agent: { archivedAt?: string | null } } | null>;
+    fetchAgent(options: {
+      agentId: string;
+    }): Promise<{ agent: { archivedAt?: string | null } } | null>;
   },
   agentId: string,
 ): Promise<string | null> {
-  const result = await client.fetchAgent(agentId);
+  const result = await client.fetchAgent({ agentId });
   return result?.agent.archivedAt ?? null;
 }
 

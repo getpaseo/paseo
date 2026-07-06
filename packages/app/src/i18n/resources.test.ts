@@ -521,8 +521,23 @@ describe("translation resources", () => {
     expect(en.desktop.updates.status.installing).toBe("Installing app update...");
     expect(en.desktop.updates.status.upToDate).toBe("App is up to date.");
     expect(en.desktop.updates.status.pending).toBe("We'll let you know when the update is ready.");
+    expect(en.desktop.updates.status.pendingWithLastChecked).toBe(
+      "We'll let you know when the update is ready. Last checked at {{time}}.",
+    );
+    expect(en.desktop.updates.status.pendingWithVersion).toBe(
+      "Update found: {{version}}. Downloading...",
+    );
+    expect(en.desktop.updates.status.pendingWithVersionAndLastChecked).toBe(
+      "Update found: {{version}}. Downloading... Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.availableWithVersion).toBe("Update ready: {{version}}");
+    expect(en.desktop.updates.status.availableWithVersionAndLastChecked).toBe(
+      "Update ready: {{version}}. Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.available).toBe("An app update is ready to install.");
+    expect(en.desktop.updates.status.availableWithLastChecked).toBe(
+      "An app update is ready to install. Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.installed).toBe("App update installed. Restart required.");
     expect(en.desktop.updates.status.failed).toBe("Failed to update app.");
     expect(en.desktop.updates.status.idle).toBe("Update status has not been checked yet.");

@@ -256,7 +256,7 @@ function WorkspaceSelectionProbe({
 
 function SidebarFrameProbe({ counts }: { counts: RenderCounts }): ReactElement {
   counts.frame += 1;
-  const { projects } = useSidebarWorkspacesList({ hostFilter: SERVER_ID });
+  const { projects } = useSidebarWorkspacesList({ hostFilters: [SERVER_ID] });
 
   return (
     <>

@@ -22,6 +22,7 @@ export function isWorkspaceAttachment(
   return (
     attachment?.kind === "review" ||
     attachment?.kind === "browser_element" ||
+    attachment?.kind === "chat_history" ||
     isPullRequestContextAttachment(attachment)
   );
 }
@@ -33,6 +34,7 @@ export function userAttachmentsOnly(
     (attachment): attachment is UserComposerAttachment =>
       attachment.kind !== "review" &&
       attachment.kind !== "browser_element" &&
+      attachment.kind !== "chat_history" &&
       !isPullRequestContextAttachment(attachment),
   );
 }
@@ -55,6 +57,9 @@ export function workspaceAttachmentToSubmitAttachment(
       title: attachment.title,
       text: attachment.text,
     };
+  }
+  if (attachment.kind === "chat_history") {
+    return attachment.attachment;
   }
   return attachment.kind === "review" ? attachment.attachment : null;
 }

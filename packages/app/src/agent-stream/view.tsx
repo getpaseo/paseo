@@ -11,6 +11,7 @@ import React, {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
   View,
@@ -59,7 +60,12 @@ import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
-import { CompletedTurnFooterRow, TurnFooter, type TurnContentStrategy } from "./turn-footer";
+import {
+  CompletedTurnFooterRow,
+  TurnFooter,
+  type AssistantTurnForkHandler,
+  type TurnContentStrategy,
+} from "./turn-footer";
 import { layoutStream, type StreamLayoutItem } from "./layout";
 import {
   type BottomAnchorLocalRequest,
@@ -76,11 +82,21 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { MountedTabActiveContext } from "@/components/split-container";
+import { generateDraftId } from "@/stores/draft-keys";
+import {
+  buildDraftWorkspaceAttachmentScopeKey,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
+import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
+import { toErrorMessage } from "@/utils/error-messages";
+import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -121,6 +137,7 @@ function renderStreamItemWithTurnFooter(input: {
   content: ReactNode;
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }): ReactNode {
   if (!input.content) {
     return null;
@@ -133,6 +150,7 @@ function renderStreamItemWithTurnFooter(input: {
       items={footerHost.items}
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
+      onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
   const content = (
@@ -233,6 +251,56 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
 
+function buildChatHistoryAttachment(input: {
+  draftId: string;
+  serverId: string;
+  agentId: string;
+  payload: Awaited<ReturnType<DaemonClient["buildAgentForkContext"]>>;
+  missingAttachmentMessage: string;
+}): WorkspaceComposerAttachment {
+  if (!input.payload.attachment) {
+    throw new Error(input.missingAttachmentMessage);
+  }
+  return {
+    kind: "chat_history",
+    id: `chat_history:${input.draftId}`,
+    attachment: input.payload.attachment,
+    source: {
+      serverId: input.serverId,
+      agentId: input.agentId,
+      boundaryMessageId: input.payload.boundaryMessageId,
+      itemCount: input.payload.itemCount,
+    },
+  };
+}
+
+function buildForkDraftSetup(agent: AgentScreenAgent): WorkspaceDraftTabSetup | undefined {
+  if (!agent.provider) {
+    return undefined;
+  }
+
+  const featureValues: Record<string, unknown> = {};
+  for (const feature of agent.features ?? []) {
+    featureValues[feature.id] = feature.value;
+  }
+
+  return {
+    provider: agent.provider,
+    cwd: agent.cwd,
+    modeId: agent.currentModeId ?? agent.runtimeInfo?.modeId ?? null,
+    model: agent.model ?? agent.runtimeInfo?.model ?? null,
+    thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,
+    featureValues,
+  };
+}
+
+function buildForkDraftTabTarget(
+  setup: WorkspaceDraftTabSetup | undefined,
+  draftId: string,
+): WorkspaceTabTarget {
+  return setup ? { kind: "draft", draftId, setup } : { kind: "draft", draftId };
+}
+
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
@@ -249,6 +317,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     ref,
   ) {
     const { t } = useTranslation();
+    const router = useRouter();
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
@@ -272,6 +341,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const streamHead = useSessionStore((state) =>
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
+    );
+    const supportsAgentForkContext = useSessionStore(
+      (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContext === true,
     );
 
     const workspaceRoot = agent.cwd?.trim() || "";
@@ -360,6 +432,76 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
       handleInlinePathPress({ raw: filePath, path: filePath }, "main");
     });
+
+    const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
+      async ({ target, boundaryMessageId }) => {
+        try {
+          if (!supportsAgentForkContext) {
+            toast?.error(t("message.actions.forkUnavailable"));
+            return;
+          }
+          if (!client) {
+            throw new Error(t("workspace.terminal.hostDisconnected"));
+          }
+          const draftSetup = buildForkDraftSetup(agent);
+          const prepareForkDraft = async () => {
+            const draftId = generateDraftId();
+            const payload = await client.buildAgentForkContext(
+              agentId,
+              boundaryMessageId ? { boundaryMessageId } : {},
+            );
+            const attachment = buildChatHistoryAttachment({
+              draftId,
+              serverId: resolvedServerId,
+              agentId,
+              payload,
+              missingAttachmentMessage: t("message.actions.forkFailed"),
+            });
+            useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+              scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+              attachments: [attachment],
+            });
+            return draftId;
+          };
+
+          if (target === "tab") {
+            const workspaceId = agent.workspaceId;
+            if (!workspaceId) {
+              throw new Error(t("message.actions.forkMissingWorkspace"));
+            }
+            const draftId = await prepareForkDraft();
+            navigateToPreparedWorkspaceTab({
+              serverId: resolvedServerId,
+              workspaceId,
+              target: buildForkDraftTabTarget(draftSetup, draftId),
+            });
+            return;
+          }
+
+          const draftId = await prepareForkDraft();
+          const sourceDirectory =
+            agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
+          if (draftSetup) {
+            useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+              draftId,
+              setup: draftSetup,
+              sourceDirectory,
+            });
+          }
+          router.push(
+            buildNewWorkspaceRoute({
+              serverId: resolvedServerId,
+              sourceDirectory,
+              displayName: agent.projectPlacement?.projectName,
+              projectId: agent.projectPlacement?.projectKey,
+              draftId,
+            }),
+          );
+        } catch (error) {
+          toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
+        }
+      },
+    );
 
     // Freeze stream data while this tab slot is hidden to prevent offscreen FlatList
     // cell-window renders on every 48ms flush from background agents.
@@ -602,9 +744,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           content,
           layoutItem,
           strategy: streamRenderStrategy,
+          onForkAssistantTurn: handleForkAssistantTurn,
         });
       },
-      [renderStreamItemContent, streamRenderStrategy],
+      [handleForkAssistantTurn, renderStreamItemContent, streamRenderStrategy],
     );
 
     const pendingPermissionItems = useMemo(
@@ -629,9 +772,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
+            onForkAssistantTurn={handleForkAssistantTurn}
           />
         ) : null,
       [
+        handleForkAssistantTurn,
         showRunningTurnFooter,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
@@ -788,22 +933,60 @@ function agentCapabilityFlagsEqual(
   return AGENT_CAPABILITY_FLAG_KEYS.every((key) => left?.[key] === right?.[key]);
 }
 
+function collectAgentProjectPlacementDiffs(
+  left: AgentScreenAgent["projectPlacement"],
+  right: AgentScreenAgent["projectPlacement"],
+): string[] {
+  const reasons: string[] = [];
+  if (left?.checkout?.cwd !== right?.checkout?.cwd) {
+    reasons.push("agent.projectPlacement.checkout.cwd");
+  }
+  if (left?.checkout?.isGit !== right?.checkout?.isGit) {
+    reasons.push("agent.projectPlacement.checkout.isGit");
+  }
+  if (left?.projectName !== right?.projectName) {
+    reasons.push("agent.projectPlacement.projectName");
+  }
+  if (left?.projectKey !== right?.projectKey) {
+    reasons.push("agent.projectPlacement.projectKey");
+  }
+  return reasons;
+}
+
+function collectAgentSetupDiffs(left: AgentScreenAgent, right: AgentScreenAgent): string[] {
+  const reasons: string[] = [];
+  if (left.provider !== right.provider) reasons.push("agent.provider");
+  if (left.currentModeId !== right.currentModeId) reasons.push("agent.currentModeId");
+  if (left.model !== right.model) reasons.push("agent.model");
+  if (left.thinkingOptionId !== right.thinkingOptionId) {
+    reasons.push("agent.thinkingOptionId");
+  }
+  if (left.runtimeInfo?.modeId !== right.runtimeInfo?.modeId) {
+    reasons.push("agent.runtimeInfo.modeId");
+  }
+  if (left.runtimeInfo?.model !== right.runtimeInfo?.model) {
+    reasons.push("agent.runtimeInfo.model");
+  }
+  if (left.runtimeInfo?.thinkingOptionId !== right.runtimeInfo?.thinkingOptionId) {
+    reasons.push("agent.runtimeInfo.thinkingOptionId");
+  }
+  if (left.features !== right.features) reasons.push("agent.features");
+  return reasons;
+}
+
 function collectAgentScreenAgentDiffs(left: AgentScreenAgent, right: AgentScreenAgent): string[] {
   const reasons: string[] = [];
   if (left.serverId !== right.serverId) reasons.push("agent.serverId");
   if (left.id !== right.id) reasons.push("agent.id");
+  if (left.workspaceId !== right.workspaceId) reasons.push("agent.workspaceId");
   if (left.status !== right.status) reasons.push("agent.status");
   if (left.cwd !== right.cwd) reasons.push("agent.cwd");
   if (!agentCapabilityFlagsEqual(left.capabilities, right.capabilities)) {
     reasons.push("agent.capabilities");
   }
   if (left.lastError !== right.lastError) reasons.push("agent.lastError");
-  if (left.projectPlacement?.checkout?.cwd !== right.projectPlacement?.checkout?.cwd) {
-    reasons.push("agent.projectPlacement.checkout.cwd");
-  }
-  if (left.projectPlacement?.checkout?.isGit !== right.projectPlacement?.checkout?.isGit) {
-    reasons.push("agent.projectPlacement.checkout.isGit");
-  }
+  reasons.push(...collectAgentSetupDiffs(left, right));
+  reasons.push(...collectAgentProjectPlacementDiffs(left.projectPlacement, right.projectPlacement));
   return reasons;
 }
 

@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import { useToast } from "@/contexts/toast-context";
@@ -420,7 +421,7 @@ export function WorkspaceSetupDialog() {
       testID="workspace-setup-dialog"
       desktopMaxWidth={640}
     >
-      <View style={styles.section}>
+      <FileDropZone style={styles.section}>
         <Composer
           agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
           serverId={serverId}
@@ -440,7 +441,7 @@ export function WorkspaceSetupDialog() {
           inputWrapperStyle={styles.composerInputWrapper}
           footer={composerFooter}
         />
-      </View>
+      </FileDropZone>
 
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>

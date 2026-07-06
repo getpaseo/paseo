@@ -1,5 +1,6 @@
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
@@ -45,6 +46,10 @@ function getCliShimPath(appPath) {
   }
 
   return path.join(appPath, "resources", "bin", "paseo");
+}
+
+function getMacMainExecutablePath(appPath) {
+  return path.join(appPath, "Contents", "MacOS", EXECUTABLE_NAME);
 }
 
 function getLaunchCommand(executablePath) {
@@ -96,6 +101,108 @@ function createDefaultDaemonEnv(extraEnv) {
   delete env.PASEO_HOME;
   delete env.PASEO_LISTEN;
   return env;
+}
+
+function reserveLocalTcpPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to reserve a TCP port for smoke test")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+async function waitForFile(filePath, label) {
+  const deadline = Date.now() + SMOKE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf8");
+    }
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${label}: ${filePath}`);
+}
+
+async function waitForChildPids(parentPid) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const childPids = listChildPids(parentPid);
+    if (childPids.length > 0) {
+      return childPids;
+    }
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for daemon worker child of supervisor PID ${parentPid}`);
+}
+
+function listChildPids(parentPid) {
+  const result = spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`ps failed while listing child processes: ${result.stderr.trim()}`);
+  }
+
+  const children = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const [pidText, ppidText] = line.trim().split(/\s+/);
+    const pid = Number(pidText);
+    const ppid = Number(ppidText);
+    if (Number.isInteger(pid) && ppid === parentPid) {
+      children.push(pid);
+    }
+  }
+  return children;
+}
+
+function listDarwinTextExecutables(pid) {
+  const result = spawnSync("lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
+    encoding: "utf8",
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `lsof failed while inspecting PID ${pid}: ${
+        result.stderr.trim() || result.stdout.trim() || "<empty>"
+      }`,
+    );
+  }
+
+  return result.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("n"))
+    .map((line) => line.slice(1));
+}
+
+function assertDarwinProcessDoesNotUseMainAppExecutable({ appPath, pid, label }) {
+  const mainExecutablePath = getMacMainExecutablePath(appPath);
+  assertExecutable(mainExecutablePath, "Packaged app executable");
+
+  const textExecutables = listDarwinTextExecutables(pid);
+  if (textExecutables.includes(mainExecutablePath)) {
+    throw new Error(
+      `${label} PID ${pid} launched through the main app executable ${mainExecutablePath}.\nText executables:\n${textExecutables.join(
+        "\n",
+      )}`,
+    );
+  }
 }
 
 function parseSmokeLine(line) {
@@ -370,6 +477,67 @@ async function smokeCliShim({ appPath, env }) {
   assertCleanDaemonStatusOutput(`${result.stdout}\n${result.stderr}`);
 }
 
+async function smokeColdCliDaemonStart({ appPath }) {
+  const home = createTempDir("paseo-smoke-cli-daemon-home-");
+  const pidPath = path.join(home, "paseo.pid");
+  const port = await reserveLocalTcpPort();
+  const listen = `127.0.0.1:${port}`;
+  const env = createDefaultDaemonEnv();
+
+  try {
+    console.log("Packaged desktop smoke: cold-starting daemon through bundled CLI shim");
+    await runCliShimCommand({
+      appPath,
+      env,
+      args: [
+        "daemon",
+        "start",
+        "--home",
+        home,
+        "--listen",
+        listen,
+        "--no-relay",
+        "--no-mcp",
+        "--no-inject-mcp",
+      ],
+      label: "Bundled CLI shim cold daemon start",
+    });
+
+    const pidInfo = JSON.parse(await waitForFile(pidPath, "cold CLI daemon pid file"));
+    if (!pidInfo || typeof pidInfo.pid !== "number") {
+      throw new Error(`Cold CLI daemon wrote invalid pid file: ${JSON.stringify(pidInfo)}`);
+    }
+
+    if (process.platform === "darwin") {
+      assertDarwinProcessDoesNotUseMainAppExecutable({
+        appPath,
+        pid: pidInfo.pid,
+        label: "Cold CLI daemon supervisor",
+      });
+      const childPids = await waitForChildPids(pidInfo.pid);
+      for (const childPid of childPids) {
+        assertDarwinProcessDoesNotUseMainAppExecutable({
+          appPath,
+          pid: childPid,
+          label: "Cold CLI daemon worker",
+        });
+      }
+    }
+  } finally {
+    if (fs.existsSync(pidPath)) {
+      await runCliShimCommand({
+        appPath,
+        env,
+        args: ["daemon", "stop", "--home", home, "--force"],
+        label: "Bundled CLI shim cold daemon stop",
+      }).catch((error) => {
+        console.warn(`Packaged desktop smoke: failed to stop cold CLI daemon: ${error}`);
+      });
+    }
+    await removeTempDir(home);
+  }
+}
+
 function assertCleanDaemonStatusOutput(output) {
   const failureNeedles = [
     "Get-CimInstance",
@@ -466,6 +634,7 @@ async function stopCliDaemon({ appPath, env }) {
 async function smokePackagedDesktopApp({ appPath }) {
   const executablePath = getExecutablePath(appPath);
   assertExecutable(executablePath, "Packaged app executable");
+  await smokeColdCliDaemonStart({ appPath });
 
   const userData = createTempDir("paseo-smoke-user-data-");
   const env = createDefaultDaemonEnv({

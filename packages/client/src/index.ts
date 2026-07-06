@@ -30,6 +30,8 @@ export { DaemonClient };
 export type {
   DaemonClientConfig,
   DaemonEvent,
+  BrowserAutomationExecuteRequestMessage,
+  BrowserAutomationExecuteResponseMessage,
   WebSocketFactory,
   WebSocketLike,
 } from "./daemon-client.js";
@@ -472,7 +474,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       latest: () => latest,
       refetch: async (requestId) => {
-        const result = await daemonClient.fetchAgent(id, requestId);
+        const result = await daemonClient.fetchAgent({ agentId: id, requestId });
         latest = result?.agent ?? null;
         return result;
       },

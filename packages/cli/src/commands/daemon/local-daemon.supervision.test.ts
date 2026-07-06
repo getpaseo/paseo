@@ -97,6 +97,7 @@ describe("local daemon launch supervision", () => {
     await Promise.all(
       tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
     );
+    vi.restoreAllMocks();
   });
 
   test("foreground start spawns supervisor-entrypoint instead of server/index", async () => {

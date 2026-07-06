@@ -12,7 +12,7 @@ import {
 export type DaemonClientConfig = Omit<
   SharedDaemonClientConfig,
   "webSocketFactory" | "transportFactory" | "clientId"
->;
+> & { clientId?: string };
 export type CreateAgentOptions = CreateAgentRequestOptions;
 export { type SendMessageOptions, type DaemonEvent, type DaemonEventHandler };
 
@@ -25,7 +25,7 @@ function nextTestClientId(): string {
 
 export class DaemonClient extends SharedDaemonClient {
   constructor(config: DaemonClientConfig) {
-    const clientId = nextTestClientId();
+    const clientId = config.clientId ?? nextTestClientId();
     super({
       ...config,
       clientId,

@@ -1,37 +1,81 @@
 # Changelog
 
-## 0.1.102-beta.1 - 2026-06-27
+## 0.1.104-beta.3 - 2026-07-04
 
 ### Added
 
-- Use Paseo from a browser served directly by your daemon ([#1635](https://github.com/getpaseo/paseo/pull/1635))
-- Run Paseo from an official Docker image ([#1740](https://github.com/getpaseo/paseo/pull/1740) by [@Herbrant](https://github.com/Herbrant))
-- Update a remote host from the app when a newer daemon is available ([#1513](https://github.com/getpaseo/paseo/pull/1513) by [@thedavidweng](https://github.com/thedavidweng))
-- Dropped files can be attached from every composer ([#1750](https://github.com/getpaseo/paseo/pull/1750))
-- MiniMax usage is available in provider quota views ([#1662](https://github.com/getpaseo/paseo/pull/1662) by [@ilteoood](https://github.com/ilteoood))
-- C# code blocks now have syntax highlighting ([#1651](https://github.com/getpaseo/paseo/pull/1651) by [@dev693](https://github.com/dev693))
+- Agents can drive the in-app browser with page snapshots, trusted input, dialogs, and tab controls ([#1881](https://github.com/getpaseo/paseo/pull/1881))
+- Inspect, annotate, and send page elements from a browser tab to the agent ([#1708](https://github.com/getpaseo/paseo/pull/1708) by [@huiliaoning](https://github.com/huiliaoning))
+- Schedules screen to create and manage recurring agents ([#1246](https://github.com/getpaseo/paseo/pull/1246))
+- Open a project from anywhere with Cmd+O ([#1849](https://github.com/getpaseo/paseo/pull/1849))
+- Agents can rename workspaces after they understand the task ([#1876](https://github.com/getpaseo/paseo/pull/1876))
+- Claude Ultra Code is available for supported Claude models ([#1872](https://github.com/getpaseo/paseo/pull/1872))
+- ByteDance TRAE CLI available as an agent provider ([#1831](https://github.com/getpaseo/paseo/pull/1831) by [@park0er](https://github.com/park0er))
 
 ### Improved
 
-- The sidebar can show workspaces across all connected hosts ([#1538](https://github.com/getpaseo/paseo/pull/1538))
-- Creating a new workspace is available from an app-wide screen ([#1746](https://github.com/getpaseo/paseo/pull/1746))
-- Project search shows loading progress while results are fetched ([#1762](https://github.com/getpaseo/paseo/pull/1762))
-- Pi waits longer for extension results before timing out ([#1732](https://github.com/getpaseo/paseo/pull/1732) by [@theslava](https://github.com/theslava))
+- Workspaces created by agents now get readable generated names ([#1887](https://github.com/getpaseo/paseo/pull/1887))
+- Browser tabs opened by agents stay in the background until you switch to them ([#1875](https://github.com/getpaseo/paseo/pull/1875))
+- Clearer cards when an agent asks a question ([#1643](https://github.com/getpaseo/paseo/pull/1643) by [@cleiter](https://github.com/cleiter))
+
+### Fixed
+
+- Docker images keep running during provider cleanup and diagnostics ([#1877](https://github.com/getpaseo/paseo/pull/1877))
+- New Workspace drafts survive archiving a workspace ([#1838](https://github.com/getpaseo/paseo/pull/1838))
+- Composer autocomplete stays open after switching screens ([#1851](https://github.com/getpaseo/paseo/pull/1851))
+- Claude usage appears when a quota window has no scheduled reset ([#1855](https://github.com/getpaseo/paseo/pull/1855))
+- New workspace action shows for non-git projects in the sidebar ([#1857](https://github.com/getpaseo/paseo/pull/1857) by [@cleiter](https://github.com/cleiter))
+
+## 0.1.103 - 2026-07-01
+
+### Added
+
+- Claude Sonnet 5 is available in the Claude model picker ([#1850](https://github.com/getpaseo/paseo/pull/1850))
+
+## 0.1.102 - 2026-06-30
+
+### Added
+
+- Fork chats into a new tab or new worktree ([#1788](https://github.com/getpaseo/paseo/pull/1788))
+- See workspaces from all connected hosts ([#1538](https://github.com/getpaseo/paseo/pull/1538), [#1775](https://github.com/getpaseo/paseo/pull/1775), [#1825](https://github.com/getpaseo/paseo/pull/1825))
+- Daemon can now serve the web UI ([#1635](https://github.com/getpaseo/paseo/pull/1635), [#1739](https://github.com/getpaseo/paseo/pull/1739))
+- Run Paseo from an official Docker image ([#1740](https://github.com/getpaseo/paseo/pull/1740) by [@Herbrant](https://github.com/Herbrant))
+- Update a daemon remotely from the app ([#1513](https://github.com/getpaseo/paseo/pull/1513) by [@thedavidweng](https://github.com/thedavidweng))
+- Configure separate OpenAI endpoints for speech-to-text and text-to-speech ([#1823](https://github.com/getpaseo/paseo/pull/1823))
+- Drop files into any composer ([#1750](https://github.com/getpaseo/paseo/pull/1750), [#1801](https://github.com/getpaseo/paseo/pull/1801))
+- Show MiniMax usage in quota views ([#1662](https://github.com/getpaseo/paseo/pull/1662) by [@ilteoood](https://github.com/ilteoood))
+- Highlight C# code blocks ([#1651](https://github.com/getpaseo/paseo/pull/1651) by [@dev693](https://github.com/dev693))
+
+### Improved
+
+- New Workspace opens from anywhere ([#1746](https://github.com/getpaseo/paseo/pull/1746), [#1806](https://github.com/getpaseo/paseo/pull/1806))
+- Project search shows loading progress ([#1762](https://github.com/getpaseo/paseo/pull/1762))
+- Desktop update checks show clearer status ([#1808](https://github.com/getpaseo/paseo/pull/1808), [#1815](https://github.com/getpaseo/paseo/pull/1815))
+- Slow remote hosts time out less aggressively ([#1789](https://github.com/getpaseo/paseo/pull/1789))
+- Pi waits longer for extension results ([#1732](https://github.com/getpaseo/paseo/pull/1732) by [@theslava](https://github.com/theslava))
 - Open file tabs refresh when you revisit them ([#1699](https://github.com/getpaseo/paseo/pull/1699) by [@cleiter](https://github.com/cleiter))
-- Web terminals stay smoother while scrolling ([#1622](https://github.com/getpaseo/paseo/pull/1622) by [@TommyLike](https://github.com/TommyLike))
-- ACP provider catalog updated to the latest registry versions
+- Web terminals scroll more smoothly ([#1622](https://github.com/getpaseo/paseo/pull/1622) by [@TommyLike](https://github.com/TommyLike))
 
 ### Fixed
 
 - Freshly added projects can be edited without restarting ([#1761](https://github.com/getpaseo/paseo/pull/1761) by [@huiliaoning](https://github.com/huiliaoning))
-- Opening projects and directory suggestions work better in large repos ([#1620](https://github.com/getpaseo/paseo/pull/1620) by [@jms830](https://github.com/jms830))
-- Desktop file uploads keep their file extensions ([#1741](https://github.com/getpaseo/paseo/pull/1741))
-- Closing Claude Code sessions no longer leaves child processes running ([#1540](https://github.com/getpaseo/paseo/pull/1540) by [@TommyLike](https://github.com/TommyLike))
-- OpenCode no longer indexes your home directory by mistake ([#1704](https://github.com/getpaseo/paseo/pull/1704) by [@rex-chang](https://github.com/rex-chang))
-- ACP sessions load with the correct project folder and MCP server settings ([#1624](https://github.com/getpaseo/paseo/pull/1624) by [@theslava](https://github.com/theslava))
-- Docker images serve the bundled web UI from global installs
-- Docker web UI connections work when opened through either `localhost` or `127.0.0.1`
-- Docker images can extract downloaded local speech models
+- Large repos open more reliably ([#1620](https://github.com/getpaseo/paseo/pull/1620) by [@jms830](https://github.com/jms830))
+- Mobile restores the saved workspace on launch ([#1777](https://github.com/getpaseo/paseo/pull/1777))
+- Agent prompts no longer rename workspaces ([#1779](https://github.com/getpaseo/paseo/pull/1779))
+- Chat stays put when delayed history arrives ([#1776](https://github.com/getpaseo/paseo/pull/1776))
+- Streamed chat images stay in order ([#1805](https://github.com/getpaseo/paseo/pull/1805))
+- Chat actions stay below tool output ([#1827](https://github.com/getpaseo/paseo/pull/1827))
+- Claude subagent narration stays out of chat ([#1807](https://github.com/getpaseo/paseo/pull/1807))
+- Kiro slash commands and skills appear in Paseo ([#1792](https://github.com/getpaseo/paseo/pull/1792) by [@park0er](https://github.com/park0er))
+- Agent lists survive stale project records ([#1812](https://github.com/getpaseo/paseo/pull/1812))
+- Windows image previews handle drive-letter paths ([#1811](https://github.com/getpaseo/paseo/pull/1811))
+- OpenCode closes cleanly on Windows ([#1771](https://github.com/getpaseo/paseo/pull/1771) by [@agamotto](https://github.com/agamotto))
+- Desktop file uploads keep their extensions ([#1741](https://github.com/getpaseo/paseo/pull/1741))
+- Claude Code cleanup kills child processes ([#1540](https://github.com/getpaseo/paseo/pull/1540) by [@TommyLike](https://github.com/TommyLike))
+- OpenCode no longer indexes your home directory ([#1704](https://github.com/getpaseo/paseo/pull/1704) by [@rex-chang](https://github.com/rex-chang))
+- Packaged macOS CLI daemon no longer shows extra Dock icons ([#1759](https://github.com/getpaseo/paseo/pull/1759) by [@yzim](https://github.com/yzim))
+- `paseo daemon status` works without loading agents ([#1810](https://github.com/getpaseo/paseo/pull/1810))
+- PR worktrees show pushed state correctly ([#1804](https://github.com/getpaseo/paseo/pull/1804))
 
 ## 0.1.101 - 2026-06-26
 

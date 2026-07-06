@@ -37,6 +37,9 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { getDesktopHost } from "@/desktop/host";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -45,6 +48,7 @@ import {
 } from "@/workspace/legacy-daemon-workspaces";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
 import { queryClient } from "@/query/query-client";
+import { mountBrowserAutomationDaemonClientHandler } from "@/browser-automation/handler";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 export type HostRegistryStatus = "loading" | "ready";
@@ -138,6 +142,11 @@ export interface HostRuntimeControllerDeps {
   }>;
   getClientId: () => Promise<string>;
   readInitialConnectionHint?: () => InitialDaemonConnectionHint | null;
+  mountClientHandlers?: (input: {
+    client: DaemonClient;
+    host: HostProfile;
+    connection: HostConnection;
+  }) => () => void;
 }
 
 export interface HostRuntimeStorage {
@@ -514,6 +523,17 @@ function probeIntervalForConnection(
 }
 
 function createDefaultDeps(): HostRuntimeControllerDeps {
+  const browserHostAvailable =
+    typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
+  const browserAutomationCapabilities = browserHostAvailable
+    ? {
+        [CLIENT_CAPS.browserHost]: {
+          supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+          hostKind: "desktop app",
+        },
+      }
+    : undefined;
+
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const localTransportFactory = createDesktopLocalDaemonTransportFactory();
@@ -523,6 +543,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         clientType: "mobile" as const,
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
+        ...(browserAutomationCapabilities ? { capabilities: browserAutomationCapabilities } : {}),
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -560,8 +581,15 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       connectToDaemon(connection, {
         ...(host.serverId ? { serverId: host.serverId } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(browserAutomationCapabilities ? { capabilities: browserAutomationCapabilities } : {}),
       }),
     getClientId: () => getOrCreateClientId(),
+    mountClientHandlers: ({ client, host }) => {
+      if (!browserAutomationCapabilities) {
+        return () => {};
+      }
+      return mountBrowserAutomationDaemonClientHandler(client, { serverId: host.serverId });
+    },
   };
 }
 
@@ -574,6 +602,7 @@ export class HostRuntimeController {
   private listeners = new Set<() => void>();
   private activeClient: DaemonClient | null = null;
   private unsubscribeClientStatus: (() => void) | null = null;
+  private unsubscribeClientHandlers: (() => void) | null = null;
   private probeIntervalHandle: ReturnType<typeof setInterval> | null = null;
   private started = false;
   private connectionFirstSeenAt = new Map<string, number>();
@@ -655,6 +684,10 @@ export class HostRuntimeController {
     if (this.unsubscribeClientStatus) {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
+    }
+    if (this.unsubscribeClientHandlers) {
+      this.unsubscribeClientHandlers();
+      this.unsubscribeClientHandlers = null;
     }
     if (this.activeClient) {
       const prev = this.activeClient;
@@ -1133,6 +1166,10 @@ export class HostRuntimeController {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
     }
+    if (this.unsubscribeClientHandlers) {
+      this.unsubscribeClientHandlers();
+      this.unsubscribeClientHandlers = null;
+    }
     if (this.activeClient) {
       const previousClient = this.activeClient;
       this.activeClient = null;
@@ -1206,6 +1243,8 @@ export class HostRuntimeController {
     }
 
     this.activeClient = client;
+    this.unsubscribeClientHandlers =
+      this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
     this.applyConnectionEvent({
       type: "select_connection",
       connectionId: connection.id,
@@ -2200,6 +2239,28 @@ export function useHostRuntimeConnectionStatus(serverId: string): HostRuntimeCon
     () => store.getSnapshot(serverId)?.connectionStatus ?? "connecting",
     () => store.getSnapshot(serverId)?.connectionStatus ?? "connecting",
   );
+}
+
+export function useHostRuntimeConnectionStatuses(
+  serverIds: readonly string[],
+): ReadonlyMap<string, HostRuntimeConnectionStatus> {
+  const store = getHostRuntimeStore();
+  const version = useSyncExternalStore(
+    (onStoreChange) => store.subscribeAll(onStoreChange),
+    () => store.getVersion(),
+    () => store.getVersion(),
+  );
+
+  return useMemo(() => {
+    // The aggregate version is the reactivity trigger; re-read snapshots on every host tick.
+    void version;
+    return new Map(
+      serverIds.map(
+        (serverId) =>
+          [serverId, store.getSnapshot(serverId)?.connectionStatus ?? "connecting"] as const,
+      ),
+    );
+  }, [serverIds, store, version]);
 }
 
 export function useHostRuntimeLastError(serverId: string): string | null {

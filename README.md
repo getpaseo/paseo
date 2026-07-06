@@ -169,6 +169,7 @@ npm run typecheck
 ## Community
 
 - [paseo-relay](https://github.com/zenghongtu/paseo-relay) — self-hosted relay in Go
+- [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code extension
 
 ---
 

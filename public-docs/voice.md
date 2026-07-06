@@ -90,7 +90,11 @@ You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider
   },
   "providers": {
     "openai": {
-      "voice": {
+      "stt": {
+        "apiKey": "...",
+        "baseUrl": "https://api.openai.com/v1"
+      },
+      "tts": {
         "apiKey": "...",
         "baseUrl": "https://api.openai.com/v1"
       }
@@ -99,7 +103,7 @@ You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider
 }
 ```
 
-`providers.openai.voice.apiKey` and `providers.openai.voice.baseUrl` configure only Paseo OpenAI voice traffic, without changing Codex or other OpenAI-backed tools.
+`providers.openai.stt` covers dictation and voice mode speech-to-text, and `providers.openai.tts` covers voice mode text-to-speech. Because they resolve independently, you can point STT and TTS at different endpoints. Each falls back to `providers.openai.apiKey`/`baseUrl`, then `OPENAI_API_KEY`/`OPENAI_BASE_URL`, when unset. These settings configure only Paseo OpenAI speech traffic, without changing Codex or other OpenAI-backed tools.
 
 Paseo uses these paths under the configured OpenAI base URL:
 
@@ -111,6 +115,8 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 - `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override
 - `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, speech provider selection (`local` or `openai`)
+- `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, OpenAI speech-to-text endpoint (dictation + voice mode STT)
+- `OPENAI_TTS_API_KEY`, `OPENAI_TTS_BASE_URL`, OpenAI text-to-speech endpoint (voice mode TTS)
 - `PASEO_LOCAL_MODELS_DIR`, local model storage directory
 - `PASEO_DICTATION_LOCAL_STT_MODEL`, local dictation STT model ID
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, local voice STT/TTS model IDs

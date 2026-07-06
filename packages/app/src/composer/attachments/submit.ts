@@ -26,6 +26,9 @@ export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachmen
     }
 
     if (isWorkspaceAttachment(attachment)) {
+      if (attachment.kind === "browser_element" && attachment.attachment.screenshot) {
+        images.push(attachment.attachment.screenshot);
+      }
       const workspaceAttachment = workspaceAttachmentToSubmitAttachment(attachment);
       if (workspaceAttachment) {
         agentAttachments.push(workspaceAttachment);

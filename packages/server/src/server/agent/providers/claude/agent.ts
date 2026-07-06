@@ -29,7 +29,12 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./task-notification-tool-call.js";
-import { getClaudeModelsWithSettings, normalizeClaudeRuntimeModelId } from "./models.js";
+import {
+  findClaudeModel,
+  getClaudeModelsWithSettings,
+  normalizeClaudeRuntimeModelId,
+} from "./models.js";
+import { CLAUDE_ULTRACODE_THINKING_OPTION_ID } from "./model-manifest.js";
 import { parsePartialJsonObject } from "./partial-json.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
@@ -369,7 +374,7 @@ interface ClaudeAgentSessionOptions {
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
-type ClaudeThinkingOption = ClaudeThinkingEffort | "ultracode";
+type ClaudeThinkingOption = ClaudeThinkingEffort | typeof CLAUDE_ULTRACODE_THINKING_OPTION_ID;
 
 function resolvePathEnvKey(): "Path" | "PATH" | null {
   if (process.env["Path"] !== undefined) return "Path";
@@ -417,7 +422,7 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
 }
 
 function isClaudeThinkingOption(value: string | null | undefined): value is ClaudeThinkingOption {
-  return value === "ultracode" || isClaudeThinkingEffort(value);
+  return value === CLAUDE_ULTRACODE_THINKING_OPTION_ID || isClaudeThinkingEffort(value);
 }
 
 interface ClaudeOptionsLogSummary {
@@ -1626,23 +1631,6 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function resolveInitialContextWindowSize(modelId: string | null | undefined): number | undefined {
-  const normalized = typeof modelId === "string" ? modelId.trim().toLowerCase() : "";
-  if (!normalized) {
-    return undefined;
-  }
-  if (normalized.includes("[1m]") || normalized.includes("context-1m")) {
-    return 1_000_000;
-  }
-  if (normalized.includes("claude-fable-5")) {
-    return 1_000_000;
-  }
-  if (/(?:^|[~/_-])(?:claude[-_ ]*)?(opus|sonnet|haiku)(?:$|[-_ ./])/.test(normalized)) {
-    return 200_000;
-  }
-  return undefined;
-}
-
 function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
   const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
   if (!messageUsage) {
@@ -1729,6 +1717,14 @@ function readLegacyResultUsageTokens(usage: unknown): number | undefined {
 
 function isClaudeSubagentToolName(name: string | undefined): boolean {
   return name === "Task" || name === "Agent";
+}
+
+function readClaudeParentToolUseId(message: SDKMessage): string | null {
+  if (!("parent_tool_use_id" in message)) {
+    return null;
+  }
+  const parentToolUseId = (message as { parent_tool_use_id?: unknown }).parent_tool_use_id;
+  return typeof parentToolUseId === "string" && parentToolUseId.length > 0 ? parentToolUseId : null;
 }
 
 class ClaudeContextUsageState {
@@ -1933,7 +1929,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.contextUsage = new ClaudeContextUsageState(
-      resolveInitialContextWindowSize(this.config.model),
+      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
     const handle = options.handle;
 
@@ -2179,7 +2175,7 @@ class ClaudeAgentSession implements AgentSession {
       await this.applyFastModeFeature(false, activeQuery);
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
-      resolveInitialContextWindowSize(this.config.model),
+      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -2869,7 +2865,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
         : undefined;
-    if (thinkingOptionId === "ultracode") {
+    if (thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) {
       return { thinking: { type: "adaptive" }, effort: "xhigh", ultracode: true };
     }
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
@@ -3495,20 +3491,22 @@ class ClaudeAgentSession implements AgentSession {
       suppressAssistantText: true,
       suppressReasoning: true,
     });
-    const assistantTimelineEvents = this.timelineAssembler
-      .consume({
-        message,
-        runId: turnId,
-        messageIdHint,
-      })
-      .map(
-        (item) =>
-          ({
-            type: "timeline",
-            item,
-            provider: "claude",
-          }) satisfies AgentStreamEvent,
-      );
+    const assistantTimelineEvents = readClaudeParentToolUseId(message)
+      ? []
+      : this.timelineAssembler
+          .consume({
+            message,
+            runId: turnId,
+            messageIdHint,
+          })
+          .map(
+            (item) =>
+              ({
+                type: "timeline",
+                item,
+                provider: "claude",
+              }) satisfies AgentStreamEvent,
+          );
 
     return [...messageEvents, ...assistantTimelineEvents];
   }
@@ -3582,10 +3580,7 @@ class ClaudeAgentSession implements AgentSession {
       suppressReasoning?: boolean;
     },
   ): AgentStreamEvent[] {
-    const parentToolUseId =
-      "parent_tool_use_id" in message
-        ? (message as { parent_tool_use_id: string | null }).parent_tool_use_id
-        : null;
+    const parentToolUseId = readClaudeParentToolUseId(message);
     if (parentToolUseId) {
       return this.sidechainTracker.handleMessage(message, parentToolUseId);
     }

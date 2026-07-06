@@ -87,6 +87,7 @@ import { polyfillCrypto } from "@/polyfills/crypto";
 import { queryClient } from "@/query/query-client";
 import {
   getHostRuntimeStore,
+  hasConfiguredLocalDaemonOverride,
   useHostRegistryLoaded,
   useHostMutations,
   useHostRuntimeClient,
@@ -133,14 +134,13 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
 
 function PushNotificationRouter() {
   const router = useRouter();
-  const pathname = usePathname();
   const lastHandledIdRef = useRef<string | null>(null);
   const openNotification = useStableEvent((data: Record<string, unknown> | undefined) => {
     const target = resolveNotificationTarget(data);
     const serverId = target.serverId;
     const agentId = target.agentId;
     if (serverId && agentId) {
-      navigateToAgent({ serverId, agentId, currentPathname: pathname, pin: true });
+      navigateToAgent({ serverId, agentId, pin: true });
       return;
     }
 
@@ -311,6 +311,9 @@ const STARTUP_GIVE_UP_TIMEOUT_MS = 5_000;
 
 async function shouldStartBuiltInDaemon(): Promise<boolean> {
   if (!shouldUseDesktopDaemon()) {
+    return false;
+  }
+  if (hasConfiguredLocalDaemonOverride()) {
     return false;
   }
   const settings = await loadDesktopSettings();
@@ -889,6 +892,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
     (pathname === "/open-project" ||
       pathname === "/new" ||
       pathname === "/sessions" ||
+      pathname === "/schedules" ||
       routeHasKnownHost);
 
   // Parse selectedAgentKey directly from pathname
@@ -947,6 +951,7 @@ function RootStack() {
         <Stack.Screen name="new" />
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
+        <Stack.Screen name="schedules" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />

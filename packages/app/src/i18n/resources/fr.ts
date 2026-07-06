@@ -248,6 +248,12 @@ export const fr: TranslationResources = {
       copyCode: "Copier le code",
       copyTurn: "Copier le tour",
       copyMessage: "Copier le message",
+      forkMenu: "Dupliquer le message",
+      forkInNewTab: "Dupliquer dans un nouvel onglet",
+      forkInNewWorkspace: "Dupliquer dans un nouvel espace de travail",
+      forkUnavailable: "Mettez l'hôte à jour pour utiliser ceci.",
+      forkMissingWorkspace: "Cet agent n'est pas dans un espace de travail.",
+      forkFailed: "Impossible de dupliquer le chat",
       openFile: "Ouvrir le fichier",
       copied: "Copié",
     },
@@ -420,7 +426,21 @@ export const fr: TranslationResources = {
         enterUrl: "EntrezURL",
         openDevTools: "Outils de développement du navigateur ouvert",
         cancelSelector: "Annuler le sélecteur d'élément",
-        selectElement: "Sélectionner un élément",
+        annotateElement: "Annoter l'élément",
+        screenshotElement: "Capturer l'élément",
+        screenshotCopied: "Capture d'écran copiée dans le presse-papiers",
+        elementCopied: "Élément copié dans le presse-papiers",
+        screenshotFailed: "Impossible de copier la capture",
+      },
+      annotate: {
+        title: "Annoter l'élément",
+        placeholder: "Message à l'agent concernant cet élément…",
+        submit: "Joindre",
+        cancel: "Annuler",
+      },
+      devices: {
+        label: "Taille de l'appareil",
+        responsive: "Adaptatif",
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
@@ -790,6 +810,7 @@ export const fr: TranslationResources = {
     },
     sections: {
       sessions: "Historique",
+      schedules: "Planifications",
     },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
@@ -958,8 +979,17 @@ export const fr: TranslationResources = {
         upToDate: "L'application est à jour.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Nous vous informerons lorsque la mise à jour sera prête.",
+        pendingWithLastChecked:
+          "Nous vous informerons lorsque la mise à jour sera prête. Dernière vérification à {{time}}.",
+        pendingWithVersion: "Mise à jour trouvée : {{version}}. Téléchargement...",
+        pendingWithVersionAndLastChecked:
+          "Mise à jour trouvée : {{version}}. Téléchargement... Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête:{{version}}",
+        availableWithVersionAndLastChecked:
+          "Mise à jour prête:{{version}}. Dernière vérification à {{time}}.",
         available: "Une mise à jour de l'application est prête à être installée.",
+        availableWithLastChecked:
+          "Une mise à jour de l'application est prête à être installée. Dernière vérification à {{time}}.",
         installed: "Mise à jour de l'application installée. Redémarrage requis.",
         failed: "Échec de la mise à jour de l'application.",
         idle: "L'état de la mise à jour n'a pas encore été vérifié.",

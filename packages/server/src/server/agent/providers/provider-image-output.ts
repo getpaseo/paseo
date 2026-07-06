@@ -66,11 +66,10 @@ export function materializeProviderImage(image: {
   return { path: filePath };
 }
 
-// Recognizes the markdown renderProviderImageOutputAsAssistantMarkdown emits for a materialized
-// provider image: its source is a content-hashed file in the attachments dir. Matching the full
-// <hash>.<ext> shape (not just a leading "![") keeps user-authored text from being mistaken for a
-// provider image when it reaches the history-replay filter. The separator class allows one-or-more
-// because on Windows the path uses "\\" and escapeMarkdownImageSource doubles each backslash.
+// Recognizes markdown rendered for a materialized provider image: its source is a content-hashed
+// file in the attachments dir. Matching the full <hash>.<ext> shape (not just a leading "![")
+// keeps user-authored text from being mistaken for a provider image during history replay. The
+// separator still accepts old doubled-backslash Windows history; new Windows output uses file URIs.
 const PROVIDER_IMAGE_MARKDOWN = new RegExp(
   `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\]+[0-9a-f]{64}\\.[a-z0-9]+\\)`,
 );
@@ -96,8 +95,15 @@ function escapeMarkdownImageAlt(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
 }
 
+function markdownImageSource(value: string): string {
+  if (/^[A-Za-z]:[\\/]/.test(value)) {
+    return `file:///${value.replace(/\\/g, "/")}`;
+  }
+  return value;
+}
+
 function escapeMarkdownImageSource(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
+  return markdownImageSource(value).replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
 }
 
 export function renderProviderImageOutputAsAssistantMarkdown(

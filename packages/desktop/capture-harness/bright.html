@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Paseo Capture Harness Target</title>
+    <style>
+      html,
+      body {
+        width: 1280px;
+        min-height: 1600px;
+        margin: 0;
+        background: #ff00ff;
+        overflow: auto;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      .label {
+        position: absolute;
+        left: 48px;
+        top: 48px;
+        color: #ffffff;
+        font-size: 72px;
+        font-weight: 800;
+        line-height: 1;
+        text-shadow:
+          5px 5px 0 #000000,
+          -2px -2px 0 #000000;
+      }
+
+      .sub {
+        position: absolute;
+        left: 54px;
+        top: 150px;
+        color: #000000;
+        background: #ffffff;
+        font-size: 34px;
+        font-weight: 700;
+        padding: 10px 18px;
+      }
+
+      .block {
+        position: absolute;
+        left: 56px;
+        top: 220px;
+        width: 360px;
+        height: 92px;
+        background: linear-gradient(
+          90deg,
+          #000000 0 25%,
+          #ffffff 25% 50%,
+          #000000 50% 75%,
+          #ffffff 75% 100%
+        );
+        border: 8px solid #000000;
+      }
+
+      .bottom {
+        position: absolute;
+        left: 48px;
+        top: 1370px;
+        color: #ffffff;
+        font-size: 60px;
+        font-weight: 800;
+        text-shadow: 5px 5px 0 #000000;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="label">PASEO CAPTURE HARNESS</div>
+    <div class="sub">LOCAL MAGENTA TARGET 1280x800 VIEWPORT</div>
+    <div class="block"></div>
+    <div class="bottom">FULL PAGE MARKER AT Y=1370</div>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const label = params.get("label");
+      const sub = params.get("sub");
+      const bottom = params.get("bottom");
+      if (label) {
+        document.querySelector(".label").textContent = label;
+      }
+      if (sub) {
+        document.querySelector(".sub").textContent = sub;
+      }
+      if (bottom) {
+        document.querySelector(".bottom").textContent = bottom;
+      }
+    </script>
+  </body>
+</html>

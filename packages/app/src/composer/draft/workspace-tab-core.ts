@@ -5,6 +5,13 @@ export interface WorkspaceDraftAutoSubmitConfig {
   model: string | null;
 }
 
+export function shouldAllowEmptyDraftText(input: {
+  allowsEmptyAutoSubmit: boolean;
+  attachments: readonly unknown[];
+}): boolean {
+  return input.allowsEmptyAutoSubmit || input.attachments.length > 0;
+}
+
 export function validateDraftSubmission(input: {
   text: string;
   allowsEmptyAutoSubmit: boolean;

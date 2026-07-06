@@ -1,4 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test } from "vitest";
 
@@ -146,7 +147,8 @@ function markdownImageSource(markdown: string): string {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
   // Reverse escapeMarkdownImageSource: "\\" -> "\" and "\)" -> ")" (Windows paths are escaped).
-  return match[1].replace(/\\(.)/g, "$1");
+  const source = match[1].replace(/\\(.)/g, "$1");
+  return source.startsWith("file://") ? fileURLToPath(source) : source;
 }
 
 describe("Claude tool_result image rendering", () => {

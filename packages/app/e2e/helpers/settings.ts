@@ -393,9 +393,9 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   await expect(sidebar).toBeVisible({ timeout: 15_000 });
 
   // Single-host fixture: the picker is a non-interactive chip (no dropdown to
-  // open) that surfaces the local host by its label. The "Local" marker only
-  // appears on dropdown rows in the multi-host case, which this fixture does not
-  // exercise.
+  // open) that surfaces the local host by its label. The per-row connection
+  // endpoint only appears on dropdown rows in the multi-host case, which this
+  // fixture does not exercise.
   const picker = sidebar.getByTestId("settings-host-picker");
   await expect(picker).toBeVisible();
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();

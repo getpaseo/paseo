@@ -121,7 +121,6 @@ const SHORTCUT_HELP_SECTION_LABEL_KEYS: Record<ShortcutSectionId, string> = {
 const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
-  "new-worktree": "settings.shortcuts.help.newWorktree",
   "archive-worktree": "settings.shortcuts.help.archiveWorktree",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
@@ -166,29 +165,33 @@ const SHORTCUT_HELP_NOTE_KEYS: Record<string, string> = {
 // --- Binding definitions ---
 
 const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
-  // --- New agent ---
+  // --- Open project ---
+  // Open project moved from Cmd+Shift+O to Cmd+O. The binding ids intentionally
+  // keep their original "cmd-shift-o" / "ctrl-shift-o" names: user shortcut
+  // overrides are keyed by binding id, so renaming them would silently drop a
+  // user's customized Open project shortcut on upgrade.
   {
     id: "agent-new-cmd-shift-o-mac",
     action: "agent.new",
-    combo: "Cmd+Shift+O",
+    combo: "Cmd+O",
     when: { mac: true },
     help: {
       id: "new-agent",
       section: "projects",
       label: "Open project",
-      keys: ["mod", "shift", "O"],
+      keys: ["mod", "O"],
     },
   },
   {
     id: "agent-new-ctrl-shift-o-non-mac",
     action: "agent.new",
-    combo: "Ctrl+Shift+O",
+    combo: "Ctrl+O",
     when: { mac: false, terminal: false },
     help: {
       id: "new-agent",
       section: "projects",
       label: "Open project",
-      keys: ["mod", "shift", "O"],
+      keys: ["mod", "O"],
     },
   },
 
@@ -215,32 +218,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "projects",
       label: "New workspace",
       keys: ["mod", "N"],
-    },
-  },
-
-  // --- New worktree ---
-  {
-    id: "worktree-new-cmd-o-mac",
-    action: "worktree.new",
-    combo: "Cmd+O",
-    when: { mac: true, commandCenter: false },
-    help: {
-      id: "new-worktree",
-      section: "projects",
-      label: "New worktree",
-      keys: ["mod", "O"],
-    },
-  },
-  {
-    id: "worktree-new-ctrl-o-non-mac",
-    action: "worktree.new",
-    combo: "Ctrl+O",
-    when: { mac: false, commandCenter: false, terminal: false },
-    help: {
-      id: "new-worktree",
-      section: "projects",
-      label: "New worktree",
-      keys: ["mod", "O"],
     },
   },
 

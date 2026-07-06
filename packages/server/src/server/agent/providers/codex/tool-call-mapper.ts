@@ -76,6 +76,16 @@ interface CodexResolvedToolCall {
   cwd: string | null;
 }
 
+export interface CodexMcpToolResultImage {
+  data: string;
+  mimeType: string;
+}
+
+interface CodexMcpToolResultImagesSplit {
+  images: CodexMcpToolResultImage[];
+  output: unknown;
+}
+
 function toToolCallTimelineItem(envelope: CodexResolvedToolCall): ToolCallTimelineItem {
   const name = envelope.toolKind === "speak" ? ("speak" as const) : envelope.name;
   const parsedDetail = deriveCodexToolDetail({
@@ -596,6 +606,50 @@ function buildMcpToolName(server: string | undefined, tool: string): string {
   return trimmedTool;
 }
 
+function readMcpImageContent(block: unknown): CodexMcpToolResultImage | null {
+  if (!isRecord(block)) {
+    return null;
+  }
+  if (block.type !== "image") {
+    return null;
+  }
+  if (typeof block.data !== "string" || typeof block.mimeType !== "string") {
+    return null;
+  }
+  return {
+    data: block.data,
+    mimeType: block.mimeType,
+  };
+}
+
+export function splitCodexMcpToolResultImages(result: unknown): CodexMcpToolResultImagesSplit {
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    return { images: [], output: result };
+  }
+
+  const images: CodexMcpToolResultImage[] = [];
+  const content = result.content.map((block) => {
+    const image = readMcpImageContent(block);
+    if (!image) {
+      return block;
+    }
+    images.push(image);
+    return { type: "text", text: "[image]" };
+  });
+
+  if (images.length === 0) {
+    return { images, output: result };
+  }
+
+  return {
+    images,
+    output: {
+      ...result,
+      content,
+    },
+  };
+}
+
 function toNullableObject(value: Record<string, unknown>): Record<string, unknown> | null {
   return Object.keys(value).length > 0 ? value : null;
 }
@@ -855,7 +909,7 @@ function mapMcpToolCallItem(
   }
   const name = buildMcpToolName(item.server, tool);
   const input = item.arguments ?? null;
-  const output = item.result ?? null;
+  const { output } = splitCodexMcpToolResultImages(item.result ?? null);
   const error = item.error ?? null;
   const status = normalizeToolCallStatus(item.status, error, output);
 

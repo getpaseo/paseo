@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/protocol",
-  "version": "0.1.102-beta.1",
+  "version": "0.1.104-beta.3",
   "description": "Paseo shared protocol schemas and wire types",
   "files": [
     "dist",
@@ -23,7 +23,12 @@
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
     "typecheck": "tsgo --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "generate:validators": "node scripts/generate-validation-aot.mjs",
+    "watch": "concurrently --kill-others --names validation,tsc --prefix-colors green,yellow \"node scripts/watch-validation-aot.mjs\" \"tsc -p tsconfig.json --watch --preserveWatchOutput\"",
+    "prebuild": "npm run generate:validators",
+    "pretypecheck": "npm run generate:validators",
+    "pretest": "npm run generate:validators"
   },
   "dependencies": {
     "zod": "^4.4.3"
@@ -31,6 +36,7 @@
   "devDependencies": {
     "@types/node": "^20.9.0",
     "typescript": "^5.2.2",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.6",
+    "zod-aot": "0.20.4"
   }
 }

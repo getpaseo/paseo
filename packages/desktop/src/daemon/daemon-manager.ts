@@ -46,6 +46,19 @@ const STARTUP_POLL_MAX_ATTEMPTS = 150;
 const DETACHED_STARTUP_GRACE_MS = 1200;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
+const DESKTOP_DAEMON_STOP_REASON_VALUES = [
+  "manual_ipc",
+  "settings",
+  "host_remove",
+  "quit",
+  "app_update",
+  "version_mismatch",
+  "restart",
+] as const;
+export type DesktopDaemonStopReason = (typeof DESKTOP_DAEMON_STOP_REASON_VALUES)[number];
+
+const DESKTOP_DAEMON_STOP_REASONS = new Set<string>(DESKTOP_DAEMON_STOP_REASON_VALUES);
+const DEFAULT_DESKTOP_DAEMON_STOP_REASON: DesktopDaemonStopReason = "manual_ipc";
 
 export interface DesktopDaemonStatus {
   serverId: string;
@@ -88,6 +101,16 @@ function parseAppUpdateCheckIntent(
   return args?.intent === "manual" ? "manual" : "automatic";
 }
 
+function parseDesktopDaemonStopReason(
+  args: Record<string, unknown> | undefined,
+): DesktopDaemonStopReason {
+  const reason = args?.reason;
+  if (typeof reason === "string" && DESKTOP_DAEMON_STOP_REASONS.has(reason)) {
+    return reason as DesktopDaemonStopReason;
+  }
+  return DEFAULT_DESKTOP_DAEMON_STOP_REASON;
+}
+
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
@@ -112,17 +135,62 @@ export function isDesktopManagedDaemonRunningSync(): boolean {
   }
 }
 
-export async function stopDesktopDaemonViaCli(): Promise<void> {
-  await runExternalCliJsonCommand([
-    "daemon",
-    "stop",
-    "--json",
-    "--timeout",
-    "5",
-    "--force",
-    "--kill-timeout",
-    "5",
-  ]);
+function summarizeDesktopDaemonStatus(status: DesktopDaemonStatus): Record<string, unknown> {
+  return {
+    status: status.status,
+    pid: status.pid,
+    listen: status.listen,
+    serverId: status.serverId || null,
+    version: status.version,
+    desktopManaged: status.desktopManaged,
+    error: status.error,
+  };
+}
+
+const DESKTOP_DAEMON_STOP_CLI_ARGS = [
+  "daemon",
+  "stop",
+  "--json",
+  "--timeout",
+  "5",
+  "--force",
+  "--kill-timeout",
+  "5",
+];
+
+async function runDesktopDaemonStopViaCli({
+  reason,
+  statusBefore,
+  resolveStatusAfter = false,
+}: {
+  reason: DesktopDaemonStopReason;
+  statusBefore?: DesktopDaemonStatus | null;
+  resolveStatusAfter?: boolean;
+}): Promise<{
+  cliResult: unknown;
+  statusAfter: DesktopDaemonStatus | null;
+}> {
+  logDesktopDaemonLifecycle("desktop daemon stop requested", {
+    reason,
+    statusBefore: statusBefore ? summarizeDesktopDaemonStatus(statusBefore) : null,
+  });
+
+  const cliResult = await runExternalCliJsonCommand(DESKTOP_DAEMON_STOP_CLI_ARGS);
+  const statusAfter = resolveStatusAfter ? await resolveDesktopDaemonStatus() : null;
+
+  logDesktopDaemonLifecycle("desktop daemon stop completed", {
+    reason,
+    cliResult,
+    statusAfter: statusAfter ? summarizeDesktopDaemonStatus(statusAfter) : null,
+  });
+
+  return { cliResult, statusAfter };
+}
+
+export async function stopDesktopDaemonViaCli(
+  reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
+): Promise<void> {
+  await runDesktopDaemonStopViaCli({ reason });
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -317,7 +385,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
         appVersion: normalizeVersion(resolveDesktopAppVersion()),
         daemonVersion: normalizeVersion(current.version),
       });
-      await stopDesktopDaemon();
+      await stopDesktopDaemon("version_mismatch");
     } else {
       return current;
     }
@@ -405,17 +473,29 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   return pollForRunningDaemon();
 }
 
-export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {
+export async function stopDesktopDaemon(
+  reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
+): Promise<DesktopDaemonStatus> {
   const status = await resolveDesktopDaemonStatus();
-  if (status.status !== "running") return status;
+  if (status.status !== "running") {
+    logDesktopDaemonLifecycle("desktop daemon stop skipped", {
+      reason,
+      statusBefore: summarizeDesktopDaemonStatus(status),
+    });
+    return status;
+  }
 
-  await stopDesktopDaemonViaCli();
-  return await resolveDesktopDaemonStatus();
+  const { statusAfter } = await runDesktopDaemonStopViaCli({
+    reason,
+    statusBefore: status,
+    resolveStatusAfter: true,
+  });
+  return statusAfter ?? (await resolveDesktopDaemonStatus());
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
   assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
-  await stopDesktopDaemon();
+  await stopDesktopDaemon("restart");
   return startDaemon();
 }
 
@@ -491,7 +571,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
     start_desktop_daemon: () => startDaemon(),
-    stop_desktop_daemon: () => stopDesktopDaemon(),
+    stop_desktop_daemon: (args) => stopDesktopDaemon(parseDesktopDaemonStopReason(args)),
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
@@ -532,7 +612,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       return downloadAndInstallUpdate(
         { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
         async () => {
-          await stopDesktopDaemon();
+          await stopDesktopDaemon("app_update");
         },
       );
     },

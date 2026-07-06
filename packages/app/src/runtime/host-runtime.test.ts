@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, "__DEV__", { value: false, configurable: true });
+});
 import type {
   DaemonClient,
   ConnectionState,
@@ -15,6 +19,10 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
+
+vi.mock("@/browser-automation/handler", () => ({
+  mountBrowserAutomationDaemonClientHandler: vi.fn(() => () => undefined),
+}));
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -342,6 +350,18 @@ function onceHostListMatches(store: HostRuntimeStore, predicate: () => boolean):
   });
 }
 
+class BrowserClientLifecycle {
+  public active: Array<{ serverId: string; connectionId: string }> = [];
+
+  mount(input: { host: HostProfile; connection: HostConnection }): () => void {
+    const entry = { serverId: input.host.serverId, connectionId: input.connection.id };
+    this.active.push(entry);
+    return () => {
+      this.active = this.active.filter((current) => current !== entry);
+    };
+  }
+}
+
 describe("HostRuntimeController", () => {
   it("replaces the active relay client when re-pairing changes the daemon public key", async () => {
     const oldRelay: HostConnection = {
@@ -456,6 +476,39 @@ describe("HostRuntimeController", () => {
 
     expect(seenClientIds).toEqual(["cid_runtime_stable"]);
     expect(controller.getSnapshot().connectionStatus).toBe("online");
+  });
+
+  it("keeps browser client lifecycle tied to the active host runtime client", async () => {
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const fakeClient = makeConnectedProbeClient(12);
+    const lifecycle = new BrowserClientLifecycle();
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile, connection }) => ({
+          client: makeConnectedProbeClient(10) as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_runtime_stable",
+        mountClientHandlers: (input) => lifecycle.mount(input),
+      },
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: "direct:lan:6767",
+        existingClient: fakeClient as unknown as DaemonClient,
+      },
+    });
+
+    expect(lifecycle.active).toEqual([{ serverId: "srv_test", connectionId: "direct:lan:6767" }]);
+
+    await controller.stop();
+
+    expect(lifecycle.active).toEqual([]);
   });
 
   it("adopts the first successful probe on startup", async () => {
@@ -1431,7 +1484,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-recent",
-            cwd: "/Users/moboudra/dev/paseo",
+            cwd: "/workspaces/paseo",
             updatedAt: "2026-03-04T12:00:00.000Z",
             title: "Recent agent",
           }),
@@ -1444,7 +1497,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-stale-attention",
-            cwd: "/Users/moboudra/dev/paseo-pr67-review",
+            cwd: "/workspaces/paseo-pr67-review",
             updatedAt: "2026-02-20T08:00:00.000Z",
             title: "Needs triage",
             requiresAttention: true,
@@ -1612,7 +1665,7 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().setAgents(host.serverId, () => {
       const stale = makeFetchAgentsEntry({
         id: "agent-archived",
-        cwd: "/Users/moboudra/dev/paseo",
+        cwd: "/workspaces/paseo",
         updatedAt: "2026-03-30T15:29:00.000Z",
         archivedAt: null,
         title: "Stale active copy",

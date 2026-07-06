@@ -32,7 +32,6 @@ import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
   Circle,
-  CircleDot,
   Info,
   CheckCircle,
   XCircle,
@@ -42,15 +41,13 @@ import {
   Check,
   CheckSquare,
   Copy,
-  GitPullRequest,
-  MessageSquareCode,
   TriangleAlertIcon,
   Scissors,
   MicVocal,
   FileSymlink,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -89,6 +86,7 @@ import {
   getFileNameFromPath,
   parseImageDataUrl,
 } from "@/attachments/utils";
+import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
@@ -104,7 +102,6 @@ import {
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
-import { getFileTypeLabel } from "@/attachments/file-types";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -116,7 +113,9 @@ import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
+import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 export type { InlinePathTarget } from "@/assistant-file-links";
+export type { AssistantForkTarget };
 
 interface UserMessageProps {
   serverId?: string;
@@ -170,10 +169,6 @@ const ThemedTodoCheckIcon = withUnistyles(Check);
 const ThemedFileSymlinkIcon = withUnistyles(FileSymlink);
 const ThemedTriangleAlertIcon = withUnistyles(TriangleAlertIcon);
 const ThemedChevronRightIcon = withUnistyles(ChevronRight);
-const ThemedAttachmentFileText = withUnistyles(FileText);
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
-const ThemedCircleDot = withUnistyles(CircleDot);
-const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -402,19 +397,6 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-const attachmentReviewIcon = (
-  <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const attachmentGithubPrIcon = (
-  <ThemedGitPullRequest size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const attachmentGithubIssueIcon = (
-  <ThemedCircleDot size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-const attachmentFileIcon = (
-  <ThemedAttachmentFileText size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-);
-
 interface UserMessageImagePillProps {
   image: UserMessageImageAttachment;
   onOpen: (image: UserMessageImageAttachment) => void;
@@ -430,55 +412,6 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
       <AttachmentThumbnail metadata={image} />
     </AttachmentFrame>
   );
-}
-
-interface UserMessageAttachmentContent {
-  icon: ReactNode;
-  title: string;
-  subtitle: string;
-}
-
-function getUserMessageAttachmentContent(
-  attachment: AgentAttachment,
-  t: ReturnType<typeof useTranslation>["t"],
-): UserMessageAttachmentContent {
-  switch (attachment.type) {
-    case "review": {
-      const count = attachment.comments.length;
-      return {
-        icon: attachmentReviewIcon,
-        title: t("message.attachments.review"),
-        subtitle:
-          count === 1
-            ? t("message.attachments.commentsOne")
-            : t("message.attachments.commentsMany", { count }),
-      };
-    }
-    case "github_pr":
-      return {
-        icon: attachmentGithubPrIcon,
-        title: attachment.title,
-        subtitle: `PR #${attachment.number}`,
-      };
-    case "github_issue":
-      return {
-        icon: attachmentGithubIssueIcon,
-        title: attachment.title,
-        subtitle: `Issue #${attachment.number}`,
-      };
-    case "text":
-      return {
-        icon: attachmentFileIcon,
-        title: attachment.title ?? t("message.attachments.textAttachment"),
-        subtitle: t("message.attachments.text"),
-      };
-    case "uploaded_file":
-      return {
-        icon: attachmentFileIcon,
-        title: attachment.fileName,
-        subtitle: getFileTypeLabel(attachment.fileName) ?? t("message.attachments.file"),
-      };
-  }
 }
 
 export const UserMessage = memo(function UserMessage({
@@ -579,7 +512,7 @@ export const UserMessage = memo(function UserMessage({
           {hasAttachments ? (
             <View style={attachmentPreviewContainerStyle}>
               {attachments.map((attachment, index) => {
-                const content = getUserMessageAttachmentContent(attachment, t);
+                const content = getAgentAttachmentPillContent(attachment, t);
                 return (
                   <AttachmentFrame
                     key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
@@ -628,6 +561,11 @@ interface AssistantTurnFooterProps {
   getContent: () => string;
   completedAt?: Date;
   durationMs?: number;
+  forkBoundaryMessageId?: string;
+  onFork?: (input: {
+    target: AssistantForkTarget;
+    boundaryMessageId?: string;
+  }) => Promise<void> | void;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -672,6 +610,8 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
   completedAt,
   durationMs,
+  forkBoundaryMessageId,
+  onFork,
 }: AssistantTurnFooterProps) {
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
@@ -711,6 +651,13 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       revealTimerRef.current = null;
     }, TIMESTAMP_REVEAL_MS);
   }, [canSwap]);
+  const handleFork = useCallback(
+    (target: AssistantForkTarget) => {
+      return onFork?.({ target, boundaryMessageId: forkBoundaryMessageId });
+    },
+    [forkBoundaryMessageId, onFork],
+  );
+  const canFork = Boolean(onFork && forkBoundaryMessageId);
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
@@ -718,6 +665,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
+      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {durationLabel ? (
         <Pressable
           onPress={handlePress}

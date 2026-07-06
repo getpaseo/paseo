@@ -14,7 +14,7 @@ export interface PaseoToolConfig {
   title?: string;
   description?: string;
   inputSchema?: z.ZodRawShape | z.ZodType;
-  outputSchema?: z.ZodRawShape | z.ZodType;
+  outputSchema?: z.ZodRawShape;
 }
 
 export interface PaseoToolDefinition extends PaseoToolConfig {

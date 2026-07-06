@@ -234,6 +234,7 @@ describe("relay-transport control lifecycle", () => {
       {
         transport: "relay",
         externalSessionKey: "session:clt_test",
+        relayConnectionId: "clt_test",
       },
     ]);
   });

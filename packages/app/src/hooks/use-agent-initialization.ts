@@ -3,18 +3,35 @@ import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import {
-  attachInitTimeout,
   createInitDeferred,
   getInitDeferred,
   getInitKey,
+  INIT_TIMEOUT_MS,
   rejectInitDeferred,
+  refreshInitTimeout,
 } from "@/utils/agent-initialization";
 import { planInitialAgentTimelineSync, planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { i18n } from "@/i18n/i18next";
 
-export const INIT_TIMEOUT_MS = 30_000;
-
 export type SetAgentInitializing = (agentId: string, initializing: boolean) => void;
+
+export function createHistorySyncTimeoutError(): Error {
+  return new Error(`History sync timed out after ${Math.round(INIT_TIMEOUT_MS / 1000)}s`);
+}
+
+export function refreshAgentInitializationTimeout(input: {
+  key: string;
+  agentId: string;
+  setAgentInitializing: SetAgentInitializing;
+}): void {
+  refreshInitTimeout({
+    key: input.key,
+    onTimeout: () => {
+      input.setAgentInitializing(input.agentId, false);
+      rejectInitDeferred(input.key, createHistorySyncTimeoutError());
+    },
+  });
+}
 
 export interface EnsureAgentIsInitializedInput {
   serverId: string;
@@ -38,14 +55,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
   const timelineRequest = planInitialAgentTimelineSync({ cursor, hasAuthoritativeHistory });
 
   const deferred = createInitDeferred(key, timelineRequest.direction);
-  const timeoutId = setTimeout(() => {
-    setAgentInitializing(agentId, false);
-    rejectInitDeferred(
-      key,
-      new Error(`History sync timed out after ${Math.round(INIT_TIMEOUT_MS / 1000)}s`),
-    );
-  }, INIT_TIMEOUT_MS);
-  attachInitTimeout(key, timeoutId);
+  refreshAgentInitializationTimeout({ key, agentId, setAgentInitializing });
 
   setAgentInitializing(agentId, true);
 

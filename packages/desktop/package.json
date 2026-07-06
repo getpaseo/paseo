@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.1.102-beta.1",
+  "version": "0.1.104-beta.3",
   "private": true,
   "description": "Paseo desktop app (Electron wrapper)",
   "homepage": "https://paseo.sh",
@@ -17,6 +17,7 @@
   "scripts": {
     "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json",
+    "capture-harness": "./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run",

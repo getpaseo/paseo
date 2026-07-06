@@ -12,6 +12,7 @@ import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
+import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
 import { AgentModeControl } from "@/composer/agent-controls/mode-control";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
@@ -23,10 +24,7 @@ import {
   type ToastState,
 } from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
-import {
-  useWorkspaceAttachments,
-  useWorkspaceAttachmentScopeKey,
-} from "@/attachments/workspace-attachments-store";
+import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
@@ -85,10 +83,16 @@ import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-co
 interface ChatAgentStateShape {
   serverId: string | null;
   id: string | null;
+  provider?: Agent["provider"];
   status: Agent["status"] | null;
   cwd: string | null;
   workspaceId?: string;
   capabilities?: Agent["capabilities"];
+  currentModeId?: Agent["currentModeId"];
+  model?: Agent["model"];
+  thinkingOptionId?: Agent["thinkingOptionId"];
+  runtimeInfo?: Agent["runtimeInfo"];
+  features?: Agent["features"];
   lastError?: Agent["lastError"] | null;
 }
 
@@ -129,10 +133,16 @@ function selectChatAgentState(
   return {
     serverId: agent.serverId,
     id: agent.id,
+    provider: agent.provider,
     status: agent.status,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
     capabilities: agent.capabilities,
+    currentModeId: agent.currentModeId,
+    model: agent.model,
+    thinkingOptionId: agent.thinkingOptionId,
+    runtimeInfo: agent.runtimeInfo,
+    features: agent.features,
     lastError: agent.lastError ?? null,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
@@ -150,10 +160,16 @@ function buildChatAgentFromState(
   return {
     serverId: state.serverId,
     id: state.id,
+    provider: state.provider,
     status: state.status,
     cwd: state.cwd,
     workspaceId: state.workspaceId,
     capabilities: state.capabilities,
+    currentModeId: state.currentModeId,
+    model: state.model,
+    thinkingOptionId: state.thinkingOptionId,
+    runtimeInfo: state.runtimeInfo,
+    features: state.features,
     lastError: state.lastError ?? null,
     projectPlacement,
   };
@@ -545,18 +561,7 @@ function AgentPanelBody({
     (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
   );
   const agentState = useSessionStore(
-    useShallow((state) => {
-      const agent = resolveChatAgentFromSession(state, serverId, agentId);
-      return {
-        serverId: agent?.serverId ?? null,
-        id: agent?.id ?? null,
-        status: agent?.status ?? null,
-        cwd: agent?.cwd ?? null,
-        workspaceId: agent?.workspaceId,
-        lastError: agent?.lastError ?? null,
-        archivedAt: agent?.archivedAt ?? null,
-      };
-    }),
+    useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
   const [lookupState, setLookupState] = useState<AgentLookupState>({ tag: "idle" });
   const lookupAttemptTokenRef = useRef(0);
@@ -587,7 +592,7 @@ function AgentPanelBody({
     const attemptToken = ++lookupAttemptTokenRef.current;
 
     client
-      .fetchAgent(agentId)
+      .fetchAgent({ agentId })
       .then((result) => {
         if (attemptToken !== lookupAttemptTokenRef.current) {
           return;
@@ -643,9 +648,16 @@ function AgentPanelBody({
       ? {
           serverId: agentState.serverId,
           id: agentState.id,
+          provider: agentState.provider,
           status: agentState.status,
           cwd: agentState.cwd,
           workspaceId: agentState.workspaceId,
+          capabilities: agentState.capabilities,
+          currentModeId: agentState.currentModeId,
+          model: agentState.model,
+          thinkingOptionId: agentState.thinkingOptionId,
+          runtimeInfo: agentState.runtimeInfo,
+          features: agentState.features,
           lastError: agentState.lastError ?? null,
           projectPlacement,
         }
@@ -984,7 +996,7 @@ function ChatAgentContent({
         const currentAgent =
           currentSession?.agents.get(agentId) ?? currentSession?.agentDetails.get(agentId);
         if (!currentAgent) {
-          const result = await client.fetchAgent(agentId);
+          const result = await client.fetchAgent({ agentId });
           if (attemptToken !== initAttemptTokenRef.current) {
             return;
           }
@@ -1177,7 +1189,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
       <View style={styles.root}>
-        <View style={styles.container}>
+        <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
           {contentContainer}
 
           {composerSection}
@@ -1189,7 +1201,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           ) : null}
 
           <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
-        </View>
+        </FileDropZone>
 
         {isArchivingCurrentAgent ? (
           <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
@@ -1377,7 +1389,10 @@ function ActiveAgentComposer({
     cwd,
     workspaceId,
   });
-  const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey);
+  const attachmentScopeKeys = useMemo(
+    () => [workspaceAttachmentScopeKey],
+    [workspaceAttachmentScopeKey],
+  );
   const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
   const handleOpenWorkspaceAttachment = useCallback(
@@ -1478,7 +1493,7 @@ function ActiveAgentComposer({
         value={agentInputDraft.text}
         onChangeText={agentInputDraft.setText}
         attachments={agentInputDraft.attachments}
-        workspaceAttachments={workspaceAttachments}
+        attachmentScopeKeys={attachmentScopeKeys}
         onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
         onChangeAttachments={agentInputDraft.setAttachments}
         cwd={cwd}

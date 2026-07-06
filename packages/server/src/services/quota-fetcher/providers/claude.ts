@@ -37,7 +37,7 @@ const ClaudeCredentialsSchema = z.object({
 
 const ClaudeUsageWindowSchema = z.object({
   utilization: ApiNumberSchema,
-  resets_at: z.string().optional(),
+  resets_at: z.string().nullish(),
 });
 
 const ClaudeUsageResponseSchema = z.object({

@@ -42,6 +42,14 @@ export interface BrowserElementAttachment {
   } | null;
   parentChain: string[];
   children: string[];
+  /** Free-text review note the user wrote about this element, if any. */
+  comment?: string;
+  /**
+   * Cropped screenshot of the selected element, sent to the agent as an image
+   * alongside the textual element context. Persisted via the attachment store;
+   * referenced by id so the draft-store GC keeps it alive.
+   */
+  screenshot?: AttachmentMetadata;
   formatted: string;
 }
 
@@ -63,6 +71,18 @@ export type PullRequestContextAttachment =
   | ({ kind: "github.pull_request_review" } & PullRequestContextAttachmentFields)
   | ({ kind: "github.pull_request_check" } & PullRequestContextAttachmentFields);
 
+export interface ChatHistoryContextAttachment {
+  kind: "chat_history";
+  id: string;
+  attachment: Extract<AgentAttachment, { type: "text" }>;
+  source: {
+    serverId: string;
+    agentId: string;
+    boundaryMessageId?: string | null;
+    itemCount?: number;
+  };
+}
+
 export type UserComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "file"; attachment: UploadedFileAttachment }
@@ -75,6 +95,7 @@ export type WorkspaceComposerAttachment =
       attachment: BrowserElementAttachment;
     }
   | PullRequestContextAttachment
+  | ChatHistoryContextAttachment
   | {
       kind: "review";
       attachment: Extract<AgentAttachment, { type: "review" }>;

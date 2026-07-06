@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   runExternalCliJsonCommand: vi.fn(),
   runExternalCliTextCommand: vi.fn(),
   spawnProcess: vi.fn(),
+  logInfo: vi.fn(),
+  logError: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -30,7 +32,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("electron-log/main", () => ({
-  default: { info: vi.fn(), error: vi.fn() },
+  default: { info: mocks.logInfo, error: mocks.logError },
 }));
 
 vi.mock("@getpaseo/server", () => ({
@@ -101,6 +103,8 @@ describe("daemon-manager commands", () => {
     mocks.runExternalCliJsonCommand.mockReset();
     mocks.runExternalCliTextCommand.mockReset();
     mocks.spawnProcess.mockReset();
+    mocks.logInfo.mockReset();
+    mocks.logError.mockReset();
     rmSync(mocks.paseoHome, { recursive: true, force: true });
   });
 
@@ -194,6 +198,31 @@ describe("daemon-manager commands", () => {
       "status",
       "--json",
     ]);
+    expect(mocks.logInfo).toHaveBeenCalledWith(
+      "[desktop daemon]",
+      "desktop daemon stop requested",
+      expect.objectContaining({
+        reason: "manual_ipc",
+        statusBefore: expect.objectContaining({
+          status: "running",
+          pid: 4242,
+          serverId: "server-1",
+          desktopManaged: true,
+        }),
+      }),
+    );
+    expect(mocks.logInfo).toHaveBeenCalledWith(
+      "[desktop daemon]",
+      "desktop daemon stop completed",
+      expect.objectContaining({
+        reason: "manual_ipc",
+        cliResult: { action: "stopped" },
+        statusAfter: expect.objectContaining({
+          status: "stopped",
+          serverId: null,
+        }),
+      }),
+    );
   });
 
   it("routes stale reachable desktop daemon stops through external CLI daemon stop", async () => {
@@ -237,6 +266,39 @@ describe("daemon-manager commands", () => {
       "--kill-timeout",
       "5",
     ]);
+  });
+
+  it("records the renderer stop reason when stopping the desktop daemon", async () => {
+    mocks.runExternalCliJsonCommand
+      .mockResolvedValueOnce({
+        localDaemon: "running",
+        serverId: "server-1",
+        pid: 4242,
+        listen: "127.0.0.1:6767",
+        desktopManaged: true,
+      })
+      .mockResolvedValueOnce({ action: "stopped", reason: "lifecycle_shutdown_rpc" })
+      .mockResolvedValueOnce({
+        localDaemon: "stopped",
+        serverId: "",
+      });
+    const handlers = createDaemonCommandHandlers();
+
+    await handlers.stop_desktop_daemon({ reason: "host_remove" });
+
+    expect(mocks.logInfo).toHaveBeenCalledWith(
+      "[desktop daemon]",
+      "desktop daemon stop requested",
+      expect.objectContaining({ reason: "host_remove" }),
+    );
+    expect(mocks.logInfo).toHaveBeenCalledWith(
+      "[desktop daemon]",
+      "desktop daemon stop completed",
+      expect.objectContaining({
+        reason: "host_remove",
+        cliResult: { action: "stopped", reason: "lifecycle_shutdown_rpc" },
+      }),
+    );
   });
 
   it("uses a stale reachable desktop daemon when the version matches", async () => {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { AgentManager } from "../agent/agent-manager.js";
@@ -26,6 +27,16 @@ import type {
 } from "@getpaseo/protocol/schedule/types";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
+
+// A run failed because its target no longer exists: the agent was deleted or
+// archived, or a new-agent cwd was removed. These are permanent, so the schedule
+// is completed instead of retried until it burns down to its expiry.
+export class ScheduleTargetGoneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScheduleTargetGoneError";
+  }
+}
 
 function trimOptionalName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -112,6 +123,35 @@ function shouldCompleteSchedule(schedule: StoredSchedule, now: Date): boolean {
   return countCompletedRuns(schedule) >= schedule.maxRuns;
 }
 
+// Sort object keys recursively so two structurally-equal configs serialize
+// identically regardless of key order. Stored configs come back from disk in Zod
+// schema order while incoming configs keep their construction order, so a plain
+// JSON.stringify comparison would wrongly treat identical targets as different.
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(source)
+        .sort()
+        .map((key) => [key, canonicalize(source[key])]),
+    );
+  }
+  return value;
+}
+
+function scheduleTargetsEqual(a: ScheduleTarget, b: ScheduleTarget): boolean {
+  if (a.type === "agent" && b.type === "agent") {
+    return a.agentId === b.agentId;
+  }
+  if (a.type === "new-agent" && b.type === "new-agent") {
+    return JSON.stringify(canonicalize(a.config)) === JSON.stringify(canonicalize(b.config));
+  }
+  return false;
+}
+
 function completeSchedule(schedule: StoredSchedule, now: Date): StoredSchedule {
   return {
     ...schedule,
@@ -177,6 +217,7 @@ export class ScheduleService {
 
   async start(): Promise<void> {
     await this.recoverInterruptedRuns();
+    await this.sweepOrphanedSchedules();
     if (this.tickTimer) {
       return;
     }
@@ -218,6 +259,44 @@ export class ScheduleService {
       runs: [],
     });
     return schedule;
+  }
+
+  // Idempotent create for the MCP write path: repeating a create with the same
+  // name and target (e.g. babysit-pr re-registering its heartbeat) refreshes the
+  // existing non-completed schedule in place instead of minting a duplicate.
+  async createOrReplace(input: CreateScheduleInput): Promise<StoredSchedule> {
+    const name = trimOptionalName(input.name);
+    if (name !== null) {
+      const existing = (await this.store.list()).find(
+        (schedule) =>
+          schedule.status !== "completed" &&
+          trimOptionalName(schedule.name) === name &&
+          scheduleTargetsEqual(schedule.target, input.target),
+      );
+      if (existing) {
+        const now = this.now();
+        const prompt = normalizePrompt(input.prompt);
+        validateScheduleCadence(input.cadence);
+        const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
+        const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+        const replaced: StoredSchedule = {
+          ...existing,
+          name,
+          prompt,
+          cadence: input.cadence,
+          target: input.target,
+          status: "active",
+          pausedAt: null,
+          nextRunAt: nextRunAt.toISOString(),
+          expiresAt: input.expiresAt ?? null,
+          maxRuns: normalizeMaxRuns(input.maxRuns),
+          updatedAt: now.toISOString(),
+        };
+        await this.store.put(replaced);
+        return replaced;
+      }
+    }
+    return this.create(input);
   }
 
   async list(): Promise<StoredSchedule[]> {
@@ -321,26 +400,30 @@ export class ScheduleService {
     await this.store.delete(id);
   }
 
-  async deleteForAgent(agentId: string): Promise<number> {
+  async completeForAgent(agentId: string): Promise<number> {
+    const now = this.now();
     const schedules = await this.store.list();
     const matches = schedules.filter(
-      (schedule) => schedule.target.type === "agent" && schedule.target.agentId === agentId,
+      (schedule) =>
+        schedule.target.type === "agent" &&
+        schedule.target.agentId === agentId &&
+        schedule.status !== "completed",
     );
     const results = await Promise.allSettled(
-      matches.map((schedule) => this.store.delete(schedule.id)),
+      matches.map((schedule) => this.store.put(completeSchedule(schedule, now))),
     );
-    let deleted = 0;
+    let completed = 0;
     for (const [index, result] of results.entries()) {
       if (result.status === "fulfilled") {
-        deleted += 1;
+        completed += 1;
       } else {
         this.logger.warn(
           { err: result.reason, scheduleId: matches[index].id, agentId },
-          "Failed to delete schedule for archived agent; continuing",
+          "Failed to complete schedule for archived agent; continuing",
         );
       }
     }
-    return deleted;
+    return completed;
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
@@ -420,6 +503,26 @@ export class ScheduleService {
     );
   }
 
+  // Orphaned agent-target schedules (agent deleted while the daemon was down, or
+  // archived before completeForAgent existed) can never fire successfully. Complete
+  // them on startup so they stop ticking and surface as ended in the UI.
+  private async sweepOrphanedSchedules(): Promise<void> {
+    const now = this.now();
+    const schedules = await this.store.list();
+    await Promise.all(
+      schedules.map(async (schedule) => {
+        if (schedule.target.type !== "agent" || schedule.status === "completed") {
+          return;
+        }
+        const record = await this.agentStorage.get(schedule.target.agentId);
+        if (record && !record.archivedAt) {
+          return;
+        }
+        await this.store.put(completeSchedule(schedule, now));
+      }),
+    );
+  }
+
   private async runSchedule(
     schedule: StoredSchedule,
     now: Date,
@@ -454,6 +557,7 @@ export class ScheduleService {
         agentId: result.agentId,
         output: result.output,
         error: null,
+        targetGone: false,
         manual,
       });
     } catch (error) {
@@ -464,6 +568,7 @@ export class ScheduleService {
         agentId: null,
         output: null,
         error: error instanceof Error ? error.message : String(error),
+        targetGone: error instanceof ScheduleTargetGoneError,
         manual,
       });
     } finally {
@@ -478,6 +583,7 @@ export class ScheduleService {
     agentId: string | null;
     output: string | null;
     error: string | null;
+    targetGone: boolean;
     manual: boolean;
   }): Promise<void> {
     const schedule = await this.inspect(params.scheduleId);
@@ -501,7 +607,14 @@ export class ScheduleService {
       updatedAt: now.toISOString(),
     };
 
-    if (params.manual) {
+    if (params.targetGone) {
+      // The target is permanently gone; retrying only burns the schedule down to
+      // its expiry, so complete it now regardless of manual/scheduled origin.
+      updated = completeSchedule(updated, now);
+    } else if (updated.status === "completed") {
+      // Completed concurrently (e.g. the target agent was archived mid-run);
+      // record the run outcome but leave the schedule terminal — don't advance.
+    } else if (params.manual) {
       // Manual one-shot runs do not advance the cadence or recompute completion.
     } else if (shouldCompleteSchedule(updated, now)) {
       updated = completeSchedule(updated, now);
@@ -532,8 +645,11 @@ export class ScheduleService {
     if (schedule.target.type === "agent") {
       const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
       const record = await this.agentStorage.get(schedule.target.agentId);
-      if (record?.archivedAt) {
-        throw new Error(`Agent ${schedule.target.agentId} is archived`);
+      if (!record) {
+        throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} no longer exists`);
+      }
+      if (record.archivedAt) {
+        throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} is archived`);
       }
 
       const agent = await ensureAgentLoaded(schedule.target.agentId, {
@@ -557,6 +673,14 @@ export class ScheduleService {
     }
 
     const targetConfig = schedule.target.config;
+    try {
+      await stat(targetConfig.cwd);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ScheduleTargetGoneError(`Working directory ${targetConfig.cwd} no longer exists`);
+      }
+      throw error;
+    }
     const resolvedUnattendedConfig = targetConfig.modeId
       ? { modeId: targetConfig.modeId, featureValues: targetConfig.featureValues }
       : await this.resolveProviderCreateConfig({

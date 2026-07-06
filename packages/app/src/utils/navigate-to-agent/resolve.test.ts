@@ -69,7 +69,6 @@ describe("resolveNavigateToAgent", () => {
         serverId: SERVER_ID,
         workspaceId: WORKSPACE_ID,
         target: { kind: "agent", agentId: AGENT_ID },
-        currentPathname: undefined,
         pin: true,
       },
     ]);
@@ -107,7 +106,6 @@ describe("resolveNavigateToAgent", () => {
         serverId: SERVER_ID,
         workspaceId: WORKSPACE_ID,
         target: { kind: "agent", agentId: AGENT_ID },
-        currentPathname: undefined,
         pin: undefined,
       },
     ]);

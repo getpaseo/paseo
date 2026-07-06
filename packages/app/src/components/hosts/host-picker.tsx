@@ -1,11 +1,12 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import { Plus, Server, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { useHostRuntimeSnapshot, type ActiveConnection } from "@/runtime/host-runtime";
 import { orderHostsLocalFirst } from "@/types/host-connection";
 import {
   ADD_HOST_OPTION_ID,
@@ -30,30 +31,48 @@ export function HostStatusDotSlot({ serverId }: { serverId: string }): ReactElem
   );
 }
 
+// Standard secure/plain web ports carry no information in the host display, so
+// "relay.paseo.sh:443" reads as "relay.paseo.sh" while "127.0.0.1:6767" is kept.
+function formatConnectionEndpoint(endpoint: string): string {
+  return endpoint.replace(/:(?:443|80)$/, "");
+}
+
+// Socket/pipe transports have no host:port — their endpoint is a filesystem
+// path, so they read as "Local". TCP and relay show the address being used.
+function formatActiveConnectionLabel(connection: ActiveConnection): string {
+  if (connection.type === "directSocket" || connection.type === "directPipe") {
+    return "Local";
+  }
+  return formatConnectionEndpoint(connection.endpoint);
+}
+
 export interface HostPickerOptionProps {
   serverId: string;
   label: string;
-  isLocal: boolean;
+  showActiveConnection: boolean;
   selected?: boolean;
   active: boolean;
   onPress: () => void;
   onOpenHostSettings?: (serverId: string) => void;
-  localMarkerTestID?: string;
   testID?: string;
 }
 
 export function HostPickerOption({
   serverId,
   label,
-  isLocal,
+  showActiveConnection,
   selected,
   active,
   onPress,
   onOpenHostSettings,
-  localMarkerTestID,
   testID,
 }: HostPickerOptionProps): ReactElement {
   const { theme } = useUnistyles();
+  const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
+  const connectionLabel =
+    showActiveConnection && activeConnection
+      ? formatActiveConnectionLabel(activeConnection)
+      : undefined;
   const leadingSlot = useMemo(() => <HostStatusDotSlot serverId={serverId} />, [serverId]);
   const handleSettingsPress = useCallback(
     (event: GestureResponderEvent) => {
@@ -63,31 +82,20 @@ export function HostPickerOption({
     [onOpenHostSettings, serverId],
   );
   const trailingSlot = useMemo(() => {
-    if (!isLocal && !onOpenHostSettings) return undefined;
+    if (!onOpenHostSettings) return undefined;
     return (
-      <>
-        {isLocal ? (
-          <Text style={styles.localMarker} testID={localMarkerTestID}>
-            Local
-          </Text>
-        ) : null}
-        {onOpenHostSettings ? (
-          <Pressable
-            onPress={handleSettingsPress}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={`Open ${label} settings`}
-          >
-            <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </Pressable>
-        ) : null}
-      </>
+      <Pressable
+        onPress={handleSettingsPress}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${label} settings`}
+      >
+        <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      </Pressable>
     );
   }, [
     handleSettingsPress,
-    isLocal,
     label,
-    localMarkerTestID,
     onOpenHostSettings,
     theme.colors.foregroundMuted,
     theme.iconSize.sm,
@@ -96,6 +104,7 @@ export function HostPickerOption({
   return (
     <ComboboxItem
       label={label}
+      description={connectionLabel}
       leadingSlot={leadingSlot}
       trailingSlot={trailingSlot}
       selected={selected}
@@ -149,7 +158,7 @@ export interface HostPickerProps {
   includeAllHost?: boolean;
   includeAddHost?: boolean;
   onAddHost?: () => void;
-  showLocalMarker?: boolean;
+  showActiveConnection?: boolean;
   onOpenHostSettings?: (serverId: string) => void;
   searchable?: boolean;
   title?: string;
@@ -157,7 +166,6 @@ export interface HostPickerProps {
   desktopMinWidth?: number;
   addHostTestID?: string;
   hostOptionTestID?: (serverId: string) => string;
-  hostLocalMarkerTestID?: (serverId: string) => string;
   children: ReactNode;
 }
 
@@ -171,7 +179,7 @@ export function HostPicker({
   includeAllHost,
   includeAddHost,
   onAddHost,
-  showLocalMarker,
+  showActiveConnection,
   onOpenHostSettings,
   searchable,
   title,
@@ -179,7 +187,6 @@ export function HostPicker({
   desktopMinWidth,
   addHostTestID,
   hostOptionTestID,
-  hostLocalMarkerTestID,
   children,
 }: HostPickerProps): ReactElement {
   const localServerId = useLocalDaemonServerId();
@@ -243,23 +250,20 @@ export function HostPicker({
         <HostPickerOption
           serverId={option.id}
           label={option.label}
-          isLocal={showLocalMarker === true && localServerId === option.id}
+          showActiveConnection={showActiveConnection === true}
           selected={selected}
           active={active}
           onPress={onPress}
           onOpenHostSettings={onOpenHostSettings ? handleOpenHostSettings : undefined}
-          localMarkerTestID={hostLocalMarkerTestID?.(option.id)}
           testID={hostOptionTestID?.(option.id)}
         />
       );
     },
     [
       addHostTestID,
-      hostLocalMarkerTestID,
       hostOptionTestID,
-      localServerId,
       onOpenHostSettings,
-      showLocalMarker,
+      showActiveConnection,
       handleOpenHostSettings,
     ],
   );
@@ -291,10 +295,5 @@ const styles = StyleSheet.create((theme) => ({
     height: theme.iconSize.sm,
     alignItems: "center",
     justifyContent: "center",
-  },
-  localMarker: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    marginLeft: theme.spacing[1],
   },
 }));

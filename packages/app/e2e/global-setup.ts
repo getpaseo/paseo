@@ -10,6 +10,7 @@ import dotenv from "dotenv";
 import { loadDaemonClientConstructor } from "./helpers/daemon-client-loader";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./helpers/node-ws-factory";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./helpers/paseo-home-fork";
+import { withDisabledE2ESpeechEnv } from "./helpers/speech-env";
 
 const wranglerCliPath = path.resolve(__dirname, "../node_modules/wrangler/bin/wrangler.js");
 
@@ -405,15 +406,6 @@ async function waitForPairingOfferFromDaemon(args: {
   );
 }
 
-const LOCAL_SPEECH_ENV_KEYS = [
-  "PASEO_LOCAL_MODELS_DIR",
-  "PASEO_DICTATION_LOCAL_STT_MODEL",
-  "PASEO_VOICE_LOCAL_STT_MODEL",
-  "PASEO_VOICE_LOCAL_TTS_MODEL",
-  "PASEO_VOICE_LOCAL_TTS_SPEAKER_ID",
-  "PASEO_VOICE_LOCAL_TTS_SPEED",
-] as const;
-
 async function loadEnvTestFile(repoRoot: string): Promise<void> {
   const envTestPath = path.join(repoRoot, ".env.test");
   if (existsSync(envTestPath)) {
@@ -675,7 +667,7 @@ interface DaemonSpawnArgs {
 function startDaemon(args: DaemonSpawnArgs): ChildProcess {
   const serverDir = path.resolve(__dirname, "../../..", "packages/server");
   const tsxBin = execSync("which tsx").toString().trim();
-  const env: NodeJS.ProcessEnv = {
+  const env = withDisabledE2ESpeechEnv({
     ...process.env,
     PATH: `${args.fakeEditorBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
     PASEO_HOME: args.paseoHome,
@@ -684,21 +676,9 @@ function startDaemon(args: DaemonSpawnArgs): ChildProcess {
     PASEO_LISTEN: `0.0.0.0:${args.port}`,
     PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
     PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
-    // Default app E2E does not cover speech flows. Keep these disabled so
-    // unrelated tests never start background local-model downloads.
-    PASEO_DICTATION_ENABLED: "0",
-    PASEO_VOICE_MODE_ENABLED: "0",
-    PASEO_DICTATION_STT_PROVIDER: "openai",
-    PASEO_VOICE_TURN_DETECTION_PROVIDER: "openai",
-    PASEO_VOICE_STT_PROVIDER: "openai",
-    PASEO_VOICE_TTS_PROVIDER: "openai",
     PASEO_NODE_ENV: "development",
     NODE_ENV: "development",
-  };
-
-  for (const key of LOCAL_SPEECH_ENV_KEYS) {
-    delete env[key];
-  }
+  });
 
   const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
     cwd: serverDir,
