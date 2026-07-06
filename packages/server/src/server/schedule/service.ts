@@ -271,7 +271,10 @@ export class ScheduleService {
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
-  private readonly workspaceStampPromises = new Map<string, Promise<ScheduleTarget>>();
+  private readonly workspaceStampPromises = new Map<
+    string,
+    Promise<Extract<ScheduleTarget, { type: "new-agent" }>>
+  >();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
@@ -927,7 +930,17 @@ export class ScheduleService {
     if (key) {
       const existing = this.workspaceStampPromises.get(key);
       if (existing) {
-        return existing;
+        const stampedTarget = await existing;
+        const workspaceId = stampedTarget.config.workspaceId;
+        if (
+          workspaceId &&
+          (await this.hasActiveWorkspaceStamp(workspaceId, stampedTarget.config.cwd))
+        ) {
+          return stampedTarget;
+        }
+        if (this.workspaceStampPromises.get(key) === existing) {
+          this.workspaceStampPromises.delete(key);
+        }
       }
     }
 

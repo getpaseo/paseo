@@ -771,6 +771,73 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.status).toBe("succeeded");
   });
 
+  test("new-agent schedules do not reuse a cached stamp after its workspace is archived", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tempDir);
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const legacy = await store.create({
+      name: null,
+      prompt: "cached archived workspace stamp",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+        },
+      },
+      status: "active",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      nextRunAt: now.toISOString(),
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: 2,
+      runs: [],
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate,
+      workspaceRegistry,
+      now: () => now,
+    });
+
+    await service.tick();
+    const firstFire = await service.inspect(legacy.id);
+    const archivedWorkspaceId = firstFire.target.config.workspaceId!;
+    await workspaceRegistry.archive(archivedWorkspaceId, "2026-01-01T00:00:30.000Z");
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(legacy.id);
+    expect(inspected.target.config.workspaceId).toMatch(/^wks_/);
+    expect(inspected.target.config.workspaceId).not.toBe(archivedWorkspaceId);
+    expect(await workspaceRegistry.get(archivedWorkspaceId)).toMatchObject({
+      archivedAt: "2026-01-01T00:00:30.000Z",
+    });
+    expect(await workspaceRegistry.get(inspected.target.config.workspaceId!)).toMatchObject({
+      workspaceId: inspected.target.config.workspaceId,
+      cwd: tempDir,
+      archivedAt: null,
+    });
+    expect(inspected.runs).toHaveLength(2);
+    expect(inspected.runs[1]?.status).toBe("succeeded");
+    const secondAgent = await agentStorage.get(inspected.runs[1]!.agentId!);
+    expect(secondAgent?.workspaceId).toBe(inspected.target.config.workspaceId);
+  });
+
   test("new-agent schedule cwd updates restamp the workspace for the new cwd", async () => {
     const { workspaceRegistry, ensureWorkspaceForCreate } =
       await createRegistryBackedWorkspaceEnsure(tempDir);

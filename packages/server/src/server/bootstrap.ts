@@ -872,6 +872,14 @@ export async function createPaseoDaemon(
       ),
     );
   };
+  const ensureWorkspaceForCreateAndBroadcastExternal = async (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ): Promise<string> => {
+    const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext);
+    await emitWorkspaceUpdatesExternal([workspaceId]);
+    return workspaceId;
+  };
   const emitWorkspaceUpdateForCwdExternal = async (cwd: string) => {
     const workspaceIds = workspaceIdsOnCheckout(await workspaceRegistry.list(), cwd);
     await emitWorkspaceUpdatesExternal(workspaceIds);
@@ -974,7 +982,7 @@ export async function createPaseoDaemon(
     terminalManager,
     providerSnapshotManager,
     createPaseoWorktree: createPaseoWorktreeForTools,
-    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
@@ -984,7 +992,7 @@ export async function createPaseoDaemon(
     logger,
     agentManager,
     createAgent,
-    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
   });
   await loopService.initialize();
   logger.info({ elapsed: elapsed() }, "Loop service initialized");
@@ -994,7 +1002,7 @@ export async function createPaseoDaemon(
     agentManager,
     agentStorage,
     createAgent,
-    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
     workspaceRegistry,
   });
   await scheduleService.start();
