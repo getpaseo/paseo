@@ -516,10 +516,12 @@ export class LoopService {
       level: "info",
       text: "Stop requested.",
     });
+    if (running) {
+      running.abortController.abort(new Error("Loop aborted"));
+    }
     await this.persist();
 
     if (running) {
-      running.abortController.abort(new Error("Loop aborted"));
       if (loop.activeWorkerAgentId) {
         await this.options.agentManager.cancelAgentRun(loop.activeWorkerAgentId).catch(() => {});
       }
@@ -628,11 +630,11 @@ export class LoopService {
     loopId: string,
     error: unknown,
   ): Promise<void> {
+    const iteration = loop.activeIteration
+      ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
+      : null;
     if (isAbortError(error)) {
       this.finishLoop(loop, "stopped", "Loop stopped.");
-      const iteration = loop.activeIteration
-        ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
-        : null;
       if (iteration && iteration.status === "running") {
         iteration.status = "stopped";
         iteration.failureReason = "Loop stopped";
@@ -645,9 +647,6 @@ export class LoopService {
     const message = error instanceof Error ? error.message : String(error);
     this.logger.error({ err: error, loopId }, "Loop execution failed");
     this.finishLoop(loop, "failed", message);
-    const iteration = loop.activeIteration
-      ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
-      : null;
     if (iteration && iteration.status === "running") {
       iteration.status = "failed";
       iteration.failureReason = message;
@@ -662,11 +661,15 @@ export class LoopService {
     signal: AbortSignal,
     context: LoopExecutionContext,
   ): Promise<boolean> {
+    const workspaceId = await context.workspaceId;
+    if (signal.aborted) {
+      throw new Error("Loop aborted");
+    }
     const created = await this.options.createAgent({
       kind: "mcp",
       provider: this.formatWorkerProviderModel(loop),
       cwd: loop.cwd,
-      workspaceId: await context.workspaceId,
+      workspaceId,
       title: buildWorkerTitle(loop, iteration.index),
       mode: loop.modeId ?? undefined,
       unattended: true,

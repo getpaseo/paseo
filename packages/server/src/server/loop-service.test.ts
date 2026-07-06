@@ -1033,6 +1033,63 @@ describe("LoopService", () => {
     expect(finalLoop.logs.some((entry) => entry.text.includes("Stop requested"))).toBe(true);
   });
 
+  test("stops while waiting for loop workspace provisioning without starting a worker", async () => {
+    let resolveWorkspace: ((workspaceId: string) => void) | null = null;
+    const workspaceProvisioned = new Promise<string>((resolve) => {
+      resolveWorkspace = resolve;
+    });
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun() {
+            return "worker should not start";
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const createAgent = manager.createAgent.bind(manager);
+    let createAgentCalls = 0;
+    manager.createAgent = async (...args) => {
+      createAgentCalls += 1;
+      return createAgent(...args);
+    };
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+      ensureWorkspaceForCreate: async () => workspaceProvisioned,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Stop before workspace is ready",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyPrompt: "Should not run.",
+      maxIterations: 1,
+    });
+    await waitForLoopIteration(service, loop.id);
+
+    const stopPromise = service.stopLoop(loop.id);
+    await waitForStopRequested(service, loop.id);
+    resolveWorkspace?.("workspace-created-after-stop");
+    const stopped = await stopPromise;
+
+    expect(stopped.status).toBe("stopped");
+    expect(createAgentCalls).toBe(0);
+    const finalLoop = await service.inspectLoop(loop.id);
+    expect(finalLoop.status).toBe("stopped");
+    expect(finalLoop.activeWorkerAgentId).toBeNull();
+    expect(finalLoop.iterations[0]).toMatchObject({
+      workerAgentId: null,
+      status: "stopped",
+      failureReason: "Loop stopped",
+    });
+  });
+
   test("treats externally canceled worker turns as failures", async () => {
     let release: (() => void) | null = null;
     const blocker = new Promise<void>((resolve) => {
@@ -1116,6 +1173,30 @@ async function waitForActiveWorkerRun(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Timed out waiting for loop worker run to start");
+}
+
+async function waitForLoopIteration(service: LoopService, loopId: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const loop = await service.inspectLoop(loopId);
+    if (loop.iterations.length > 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for loop iteration to start");
+}
+
+async function waitForStopRequested(service: LoopService, loopId: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const loop = await service.inspectLoop(loopId);
+    if (loop.stopRequestedAt) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for loop stop request");
 }
 
 async function waitForCancelledAgent(

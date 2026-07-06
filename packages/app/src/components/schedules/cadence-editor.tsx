@@ -138,6 +138,8 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
     }
     rememberedCronTimeZone.current = deviceTimeZone;
     lastCronExpression.current = DEFAULT_CRON_EXPRESSION;
+    setCronText(DEFAULT_CRON_EXPRESSION);
+    bumpFieldResetKey();
   }, [deviceTimeZone, value]);
 
   const parsedIntervalValue = useMemo(() => {
