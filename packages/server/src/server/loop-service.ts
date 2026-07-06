@@ -14,7 +14,8 @@ import type {
   AgentTimelineItem,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
-import { execCommand, platformShell } from "../utils/spawn.js";
+import { buildStringCommandShellInvocation } from "../utils/string-command-shell.js";
+import { execCommand } from "../utils/spawn.js";
 import type {
   ProviderSnapshotManager,
   ResolvedProviderCreateConfig,
@@ -266,10 +267,11 @@ async function runVerifyCheck(options: {
 }): Promise<LoopVerifyCheckResult> {
   const startedAt = nowIso();
   try {
-    const shell = platformShell();
-    const result = await execCommand(shell.command, [...shell.flag, options.command], {
+    const shell = buildStringCommandShellInvocation({ command: options.command });
+    const result = await execCommand(shell.shell, shell.args, {
       cwd: options.cwd,
       maxBuffer: MAX_VERIFY_OUTPUT_BYTES,
+      shell: false,
     });
     return {
       command: options.command,

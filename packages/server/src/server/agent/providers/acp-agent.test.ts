@@ -46,6 +46,7 @@ import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
 
@@ -540,7 +541,9 @@ describe("ACPAgentSession terminal tools", () => {
     const child = createTerminalChildStub();
     const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
     const session = createSession();
-    const shell = spawnUtils.platformShell();
+    const shell = buildStringCommandShellInvocation({
+      command: "git -C /repo status --short",
+    });
 
     await session.createTerminal({
       sessionId: "session-1",
@@ -549,9 +552,9 @@ describe("ACPAgentSession terminal tools", () => {
     });
 
     expect(spawn).toHaveBeenCalledWith(
-      shell.command,
-      [...shell.flag, "git -C /repo status --short"],
-      expect.objectContaining({ cwd: "/repo" }),
+      shell.shell,
+      shell.args,
+      expect.objectContaining({ cwd: "/repo", shell: false }),
     );
   });
 

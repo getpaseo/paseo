@@ -13,6 +13,8 @@ export function buildStringCommandShellInvocation(
 ): StringCommandShellInvocation {
   const platform = options.platform ?? process.platform;
 
+  // Project-authored command strings use a stable script shell. The caller supplies
+  // the environment; shell startup files should not rewrite it behind our back.
   if (platform === "win32") {
     return {
       shell: "powershell",
@@ -29,6 +31,6 @@ export function buildStringCommandShellInvocation(
 
   return {
     shell: "/bin/bash",
-    args: ["-lc", options.command],
+    args: ["-c", options.command],
   };
 }
