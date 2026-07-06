@@ -113,4 +113,78 @@ describe("ScheduleStore", () => {
     expect(await store.get(created.id)).toBeNull();
     expect(await store.list()).toEqual([]);
   });
+
+  test("serializes concurrent updates on one schedule without losing writes", async () => {
+    const created = await store.create({
+      name: "before",
+      prompt: "before",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      nextRunAt: "2026-01-01T00:01:00.000Z",
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    });
+
+    let releaseFirstUpdate: (() => void) | null = null;
+    const firstUpdateBlocked = new Promise<void>((resolve) => {
+      releaseFirstUpdate = resolve;
+    });
+    let firstUpdaterEntered: (() => void) | null = null;
+    const firstUpdaterStarted = new Promise<void>((resolve) => {
+      firstUpdaterEntered = resolve;
+    });
+    let secondSawRunCount = -1;
+
+    const firstUpdate = store.update(created.id, async (schedule) => {
+      firstUpdaterEntered?.();
+      await firstUpdateBlocked;
+      return {
+        ...schedule,
+        runs: [
+          ...schedule.runs,
+          {
+            id: "run-1",
+            scheduledFor: "2026-01-01T00:01:00.000Z",
+            startedAt: "2026-01-01T00:01:00.000Z",
+            endedAt: null,
+            status: "running" as const,
+            agentId: null,
+            output: null,
+            error: null,
+          },
+        ],
+      };
+    });
+    await firstUpdaterStarted;
+
+    const secondUpdate = store.update(created.id, (schedule) => {
+      secondSawRunCount = schedule.runs.length;
+      return {
+        ...schedule,
+        prompt: "after",
+      };
+    });
+
+    releaseFirstUpdate?.();
+    const [, second] = await Promise.all([firstUpdate, secondUpdate]);
+
+    expect(secondSawRunCount).toBe(1);
+    expect(second).toMatchObject({
+      prompt: "after",
+      runs: [{ id: "run-1" }],
+    });
+    await expect(new ScheduleStore(tempDir).get(created.id)).resolves.toMatchObject({
+      prompt: "after",
+      runs: [{ id: "run-1" }],
+    });
+  });
 });

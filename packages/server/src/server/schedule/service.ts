@@ -192,8 +192,15 @@ function carryExistingWorkspaceStamp(
   };
 }
 
-function createOrReplaceMutationKey(name: string, target: ScheduleTarget): string {
+function createOrReplaceIdentity(name: string, target: ScheduleTarget): string {
   return JSON.stringify(canonicalize({ name, target }));
+}
+
+function requireSchedule(schedule: StoredSchedule | null, id: string): StoredSchedule {
+  if (!schedule) {
+    throw new Error(`Schedule not found: ${id}`);
+  }
+  return schedule;
 }
 
 function completeSchedule(schedule: StoredSchedule, now: Date): StoredSchedule {
@@ -264,8 +271,6 @@ export class ScheduleService {
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
-  private readonly scheduleMutationPromises = new Map<string, Promise<unknown>>();
-  private readonly createOrReplaceMutationPromises = new Map<string, Promise<unknown>>();
   private readonly workspaceStampPromises = new Map<string, Promise<ScheduleTarget>>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -318,10 +323,17 @@ export class ScheduleService {
     input: CreateScheduleInput,
     fields: { name: string | null; prompt: string; target: ScheduleTarget },
   ): Promise<StoredSchedule> {
+    return this.store.create(this.buildScheduleRecord(input, fields));
+  }
+
+  private buildScheduleRecord(
+    input: CreateScheduleInput,
+    fields: { name: string | null; prompt: string; target: ScheduleTarget },
+  ): Omit<StoredSchedule, "id"> {
     const now = this.now();
     const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
     const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
-    return this.store.create({
+    return {
       name: fields.name,
       prompt: fields.prompt,
       cadence: input.cadence,
@@ -335,7 +347,7 @@ export class ScheduleService {
       expiresAt: input.expiresAt ?? null,
       maxRuns: normalizeMaxRuns(input.maxRuns),
       runs: [],
-    });
+    };
   }
 
   // Idempotent create for the MCP write path: repeating a create with the same
@@ -350,51 +362,38 @@ export class ScheduleService {
       return this.createScheduleRecord(input, { name, prompt, target });
     }
 
-    return this.serializeCreateOrReplaceMutation(
-      createOrReplaceMutationKey(name, input.target),
-      async () => this.createOrReplaceWithName(input, { name, prompt }),
-    );
-  }
-
-  private async createOrReplaceWithName(
-    input: CreateScheduleInput,
-    fields: { name: string; prompt: string },
-  ): Promise<StoredSchedule> {
-    const existing = (await this.store.list()).find(
-      (schedule) =>
+    return this.store.upsertByIdentity({
+      identity: createOrReplaceIdentity(name, input.target),
+      matches: (schedule) =>
         schedule.status !== "completed" &&
-        trimOptionalName(schedule.name) === fields.name &&
+        trimOptionalName(schedule.name) === name &&
         scheduleTargetsEqualForCreateOrReplace(schedule.target, input.target),
-    );
-    if (!existing) {
-      const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
-      return this.createScheduleRecord(input, { ...fields, target });
-    }
-
-    return this.serializeScheduleMutation(existing.id, async () => {
-      const current = await this.inspect(existing.id);
-      const now = this.now();
-      const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
-      const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
-      const target = await this.stampNewAgentWorkspace(
-        carryExistingWorkspaceStamp(current.target, input.target),
-        input.prompt,
-      );
-      const replaced: StoredSchedule = {
-        ...current,
-        name: fields.name,
-        prompt: fields.prompt,
-        cadence: input.cadence,
-        target,
-        status: "active",
-        pausedAt: null,
-        nextRunAt: nextRunAt.toISOString(),
-        expiresAt: input.expiresAt ?? null,
-        maxRuns: normalizeMaxRuns(input.maxRuns),
-        updatedAt: now.toISOString(),
-      };
-      await this.store.put(replaced);
-      return replaced;
+      create: async () => {
+        const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+        return this.buildScheduleRecord(input, { name, prompt, target });
+      },
+      update: async (current) => {
+        const now = this.now();
+        const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
+        const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+        const target = await this.stampNewAgentWorkspace(
+          carryExistingWorkspaceStamp(current.target, input.target),
+          input.prompt,
+        );
+        return {
+          ...current,
+          name,
+          prompt,
+          cadence: input.cadence,
+          target,
+          status: "active",
+          pausedAt: null,
+          nextRunAt: nextRunAt.toISOString(),
+          expiresAt: input.expiresAt ?? null,
+          maxRuns: normalizeMaxRuns(input.maxRuns),
+          updatedAt: now.toISOString(),
+        };
+      },
     });
   }
 
@@ -416,8 +415,7 @@ export class ScheduleService {
   }
 
   async pause(id: string): Promise<StoredSchedule> {
-    return this.serializeScheduleMutation(id, async () => {
-      const schedule = await this.inspect(id);
+    const paused = await this.store.update(id, (schedule) => {
       if (schedule.status === "completed") {
         throw new Error(`Schedule ${id} is already completed`);
       }
@@ -425,21 +423,19 @@ export class ScheduleService {
         return schedule;
       }
       const now = this.now();
-      const paused = {
+      return {
         ...schedule,
         status: "paused" as const,
         nextRunAt: null,
         pausedAt: now.toISOString(),
         updatedAt: now.toISOString(),
       };
-      await this.store.put(paused);
-      return paused;
     });
+    return requireSchedule(paused, id);
   }
 
   async resume(id: string): Promise<StoredSchedule> {
-    return this.serializeScheduleMutation(id, async () => {
-      const schedule = await this.inspect(id);
+    const resumed = await this.store.update(id, (schedule) => {
       if (schedule.status === "completed") {
         throw new Error(`Schedule ${id} is already completed`);
       }
@@ -447,21 +443,19 @@ export class ScheduleService {
         return schedule;
       }
       const now = this.now();
-      const resumed = {
+      return {
         ...schedule,
         status: "active" as const,
         pausedAt: null,
         nextRunAt: computeNextRunAt(schedule.cadence, now).toISOString(),
         updatedAt: now.toISOString(),
       };
-      await this.store.put(resumed);
-      return resumed;
     });
+    return requireSchedule(resumed, id);
   }
 
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
-    return this.serializeScheduleMutation(input.id, async () => {
-      const schedule = await this.inspect(input.id);
+    const next = await this.store.update(input.id, async (schedule) => {
       const now = this.now();
       let updated: StoredSchedule = schedule;
 
@@ -503,16 +497,13 @@ export class ScheduleService {
         ...updated,
         target: await this.stampNewAgentWorkspace(updated.target, updated.prompt),
       };
-      updated = { ...updated, updatedAt: now.toISOString() };
-      await this.store.put(updated);
-      return updated;
+      return { ...updated, updatedAt: now.toISOString() };
     });
+    return requireSchedule(next, input.id);
   }
 
   async delete(id: string): Promise<void> {
-    await this.serializeScheduleMutation(id, async () => {
-      await this.store.delete(id);
-    });
+    await this.store.delete(id);
   }
 
   async completeForAgent(agentId: string): Promise<number> {
@@ -550,18 +541,20 @@ export class ScheduleService {
     agentId: string,
     now: Date,
   ): Promise<boolean> {
-    return this.serializeScheduleMutation(scheduleId, async () => {
-      const schedule = await this.inspect(scheduleId);
+    let completed = false;
+    const updated = await this.store.update(scheduleId, (schedule) => {
       if (
         schedule.target.type !== "agent" ||
         schedule.target.agentId !== agentId ||
         schedule.status === "completed"
       ) {
-        return false;
+        return schedule;
       }
-      await this.store.put(completeSchedule(schedule, now));
-      return true;
+      completed = true;
+      return completeSchedule(schedule, now);
     });
+    requireSchedule(updated, scheduleId);
+    return completed;
   }
 
   async runOnce(id: string): Promise<StoredSchedule> {
@@ -598,17 +591,17 @@ export class ScheduleService {
   }
 
   private async completeScheduleIfDue(scheduleId: string, now: Date): Promise<void> {
-    await this.serializeScheduleMutation(scheduleId, async () => {
-      const schedule = await this.inspect(scheduleId);
+    const updated = await this.store.update(scheduleId, (schedule) => {
       if (
         schedule.status !== "active" ||
         !schedule.nextRunAt ||
         !shouldCompleteSchedule(schedule, now)
       ) {
-        return;
+        return schedule;
       }
-      await this.store.put(completeSchedule(schedule, now));
+      return completeSchedule(schedule, now);
     });
+    requireSchedule(updated, scheduleId);
   }
 
   private async recoverInterruptedRuns(): Promise<void> {
@@ -620,11 +613,7 @@ export class ScheduleService {
   }
 
   private async recoverInterruptedSchedule(scheduleId: string, now: Date): Promise<void> {
-    await this.serializeScheduleMutation(scheduleId, async () => {
-      const current = await this.store.get(scheduleId);
-      if (!current) {
-        return;
-      }
+    await this.store.update(scheduleId, (current) => {
       let updated = { ...current };
       let dirty = false;
 
@@ -655,9 +644,9 @@ export class ScheduleService {
       }
 
       if (dirty) {
-        updated = { ...updated, updatedAt: now.toISOString() };
-        await this.store.put(updated);
+        return { ...updated, updatedAt: now.toISOString() };
       }
+      return current;
     });
   }
 
@@ -671,16 +660,15 @@ export class ScheduleService {
   }
 
   private async sweepOrphanedSchedule(scheduleId: string, now: Date): Promise<void> {
-    await this.serializeScheduleMutation(scheduleId, async () => {
-      const schedule = await this.store.get(scheduleId);
-      if (!schedule || schedule.target.type !== "agent" || schedule.status === "completed") {
-        return;
+    await this.store.update(scheduleId, async (schedule) => {
+      if (schedule.target.type !== "agent" || schedule.status === "completed") {
+        return schedule;
       }
       const record = await this.agentStorage.get(schedule.target.agentId);
       if (record && !record.archivedAt) {
-        return;
+        return schedule;
       }
-      await this.store.put(completeSchedule(schedule, now));
+      return completeSchedule(schedule, now);
     });
   }
 
@@ -736,16 +724,12 @@ export class ScheduleService {
     scheduleId: string,
     runningRun: ScheduleRun,
   ): Promise<StoredSchedule> {
-    return this.serializeScheduleMutation(scheduleId, async () => {
-      const schedule = await this.inspect(scheduleId);
-      const updated = {
-        ...schedule,
-        updatedAt: runningRun.startedAt,
-        runs: [...schedule.runs, runningRun],
-      };
-      await this.store.put(updated);
-      return updated;
-    });
+    const updated = await this.store.update(scheduleId, (schedule) => ({
+      ...schedule,
+      updatedAt: runningRun.startedAt,
+      runs: [...schedule.runs, runningRun],
+    }));
+    return requireSchedule(updated, scheduleId);
   }
 
   private async finishRun(params: {
@@ -758,8 +742,7 @@ export class ScheduleService {
     targetGone: boolean;
     manual: boolean;
   }): Promise<void> {
-    await this.serializeScheduleMutation(params.scheduleId, async () => {
-      const schedule = await this.inspect(params.scheduleId);
+    const updatedSchedule = await this.store.update(params.scheduleId, (schedule) => {
       const now = this.now();
       const completedRuns = schedule.runs.map((run) =>
         run.id === params.runId
@@ -808,8 +791,9 @@ export class ScheduleService {
         };
       }
 
-      await this.store.put(updated);
+      return updated;
     });
+    requireSchedule(updatedSchedule, params.scheduleId);
   }
 
   private async executeSchedule(
@@ -903,37 +887,6 @@ export class ScheduleService {
     }
   }
 
-  private async serializeScheduleMutation<T>(
-    scheduleId: string,
-    mutation: () => Promise<T>,
-  ): Promise<T> {
-    return this.serializeMutation(this.scheduleMutationPromises, scheduleId, mutation);
-  }
-
-  private async serializeCreateOrReplaceMutation<T>(
-    key: string,
-    mutation: () => Promise<T>,
-  ): Promise<T> {
-    return this.serializeMutation(this.createOrReplaceMutationPromises, key, mutation);
-  }
-
-  private async serializeMutation<T>(
-    promises: Map<string, Promise<unknown>>,
-    key: string,
-    mutation: () => Promise<T>,
-  ): Promise<T> {
-    const previous = promises.get(key) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(mutation);
-    promises.set(key, next);
-    try {
-      return await next;
-    } finally {
-      if (promises.get(key) === next) {
-        promises.delete(key);
-      }
-    }
-  }
-
   private async assertNewAgentCwdExists(cwd: string): Promise<void> {
     try {
       await stat(cwd);
@@ -1015,19 +968,18 @@ export class ScheduleService {
       updatedAt: this.now().toISOString(),
     };
 
-    await this.serializeScheduleMutation(schedule.id, async () => {
-      const latest = await this.store.get(schedule.id);
-      if (!latest || latest.target.type !== "new-agent") {
-        return;
+    await this.store.update(schedule.id, (latest) => {
+      if (latest.target.type !== "new-agent") {
+        return latest;
       }
       if (!scheduleTargetsEqual(latest.target, schedule.target)) {
-        return;
+        return latest;
       }
-      await this.store.put({
+      return {
         ...latest,
         target,
         updatedAt: stamped.updatedAt,
-      });
+      };
     });
 
     return stamped;
