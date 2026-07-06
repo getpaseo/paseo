@@ -235,6 +235,7 @@ export function buildProjectPlacementForCwd(input: {
   const membership = classifyDirectoryForProjectMembership(input);
   return {
     projectKey: membership.projectKey,
+    remoteKey: membership.projectRemoteKey,
     projectName: membership.projectName,
     checkout: membership.checkout,
   };

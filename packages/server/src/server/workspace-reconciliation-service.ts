@@ -331,8 +331,9 @@ export class WorkspaceReconciliationService {
       projectUpdates.displayName = currentGit.projectDisplayName;
     }
 
-    // Backfill the cross-host grouping key on records created before it existed.
-    // Only set it from a live remote; never clear an existing key. See #987.
+    // Keep the cross-host grouping key fresh from the live remote: set it on records
+    // that predate it, and update it when the repo's remote changes. It is only ever
+    // assigned from a non-null live remote, so it is never cleared to null. See #987.
     if (currentGit.remoteKey && project.remoteKey !== currentGit.remoteKey) {
       projectUpdates.remoteKey = currentGit.remoteKey;
     }
