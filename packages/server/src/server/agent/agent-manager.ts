@@ -125,6 +125,16 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   return stripInternalPaseoMcpServer(config);
 }
 
+function resolvePlacementWorkspaceId(placement: AgentPlacement): string | undefined {
+  switch (placement.kind) {
+    case "workspace":
+    case "restored":
+      return placement.workspaceId;
+    case "ephemeral":
+      return undefined;
+  }
+}
+
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 export type {
   AgentTimelineCursor,
@@ -195,6 +205,34 @@ interface ProviderEnabledFlag {
 }
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
+
+export interface WorkspaceAgentPlacement {
+  kind: "workspace";
+  workspaceId: string;
+}
+
+export interface EphemeralAgentPlacement {
+  kind: "ephemeral";
+}
+
+export interface RestoredAgentPlacement {
+  kind: "restored";
+  workspaceId: string | undefined;
+}
+
+export type AgentPlacement =
+  | WorkspaceAgentPlacement
+  | EphemeralAgentPlacement
+  | RestoredAgentPlacement;
+
+export interface CreateAgentOptions {
+  labels?: Record<string, string>;
+  initialPrompt?: string;
+  env?: Record<string, string>;
+  persistSession?: boolean;
+  initialTitle?: string | null;
+  placement: AgentPlacement;
+}
 
 export interface AgentManagerOptions {
   clients?: ProviderClientMap;
@@ -914,15 +952,8 @@ export class AgentManager {
 
   async createAgent(
     config: AgentSessionConfig,
-    agentId?: string,
-    options?: {
-      labels?: Record<string, string>;
-      initialPrompt?: string;
-      env?: Record<string, string>;
-      persistSession?: boolean;
-      initialTitle?: string | null;
-      workspaceId?: string;
-    },
+    agentId: string | undefined,
+    options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
@@ -935,9 +966,9 @@ export class AgentManager {
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
-      labels: options?.labels,
-      initialTitle: options?.initialTitle,
-      workspaceId: options?.workspaceId,
+      labels: options.labels,
+      initialTitle: options.initialTitle,
+      workspaceId: resolvePlacementWorkspaceId(options.placement),
     });
   }
 

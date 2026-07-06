@@ -8,6 +8,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
+import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
@@ -187,6 +188,7 @@ export interface ScheduleServiceOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   providerSnapshotManager: CreateConfigResolver;
+  createAgent: BoundCreateAgentCommand;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -719,6 +721,8 @@ export class ScheduleService {
       labels,
       initialPrompt: schedule.prompt,
       initialTitle: provisionalTitle,
+      // Phase 2 routes scheduled agents through createAgentCommand with a workspace.
+      placement: { kind: "ephemeral" },
     });
     let result;
     try {

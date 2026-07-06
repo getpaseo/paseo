@@ -278,6 +278,7 @@ async function createManagedSession(
       cwd: workdir,
     },
     agentId,
+    { placement: { kind: "ephemeral" } },
   );
   return {
     agentId,

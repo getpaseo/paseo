@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Logger } from "pino";
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { curateAgentActivity } from "./agent/activity-curator.js";
+import type { BoundCreateAgentCommand } from "./agent/create-agent/create.js";
 import type { AgentManager } from "./agent/agent-manager.js";
 import { getStructuredAgentResponse } from "./agent/agent-response-loop.js";
 import type {
@@ -321,6 +322,7 @@ export class LoopService {
       agentManager: AgentManager;
       logger: Logger;
       providerSnapshotManager: CreateConfigResolver;
+      createAgent: BoundCreateAgentCommand;
     },
   ) {
     this.storePath = path.join(options.paseoHome, "loops", "loops.json");
@@ -631,6 +633,11 @@ export class LoopService {
   ): Promise<boolean> {
     const agent = await this.options.agentManager.createAgent(
       await this.buildWorkerConfig(loop, iteration),
+      undefined,
+      {
+        // Phase 3 routes loop worker agents through createAgentCommand with a workspace.
+        placement: { kind: "ephemeral" },
+      },
     );
     iteration.workerAgentId = agent.id;
     loop.activeWorkerAgentId = agent.id;
@@ -738,6 +745,11 @@ export class LoopService {
     const startedAt = nowIso();
     const verifierAgent = await this.options.agentManager.createAgent(
       await this.buildVerifierConfig(loop, iteration),
+      undefined,
+      {
+        // Phase 3 routes loop verifier agents through createAgentCommand with a workspace.
+        placement: { kind: "ephemeral" },
+      },
     );
     iteration.verifierAgentId = verifierAgent.id;
     loop.activeVerifierAgentId = verifierAgent.id;

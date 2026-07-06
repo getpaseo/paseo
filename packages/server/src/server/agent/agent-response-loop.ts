@@ -347,7 +347,10 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
-  const agent = await manager.createAgent(agentConfig, agentId, { persistSession });
+  const agent = await manager.createAgent(agentConfig, agentId, {
+    persistSession,
+    placement: { kind: "ephemeral" },
+  });
   try {
     const caller: AgentCaller = async (nextPrompt) => {
       const result = await manager.runAgent(agent.id, nextPrompt);

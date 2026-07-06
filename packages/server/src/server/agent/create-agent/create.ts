@@ -12,7 +12,7 @@ import type {
   CreatePaseoWorktreeWorkflowResult,
 } from "../../worktree-session.js";
 import type { AgentAttachment, FirstAgentContext, GitSetupOptions } from "../../messages.js";
-import type { AgentManager, ManagedAgent } from "../agent-manager.js";
+import type { AgentManager, CreateAgentOptions, ManagedAgent } from "../agent-manager.js";
 import type {
   AgentPromptContentBlock,
   AgentPromptInput,
@@ -37,7 +37,7 @@ export interface CreateAgentSessionWorktreeResult {
   createdWorkspaceId?: string;
 }
 
-interface CreateAgentCommandDependencies {
+export interface CreateAgentCommandDependencies {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -115,23 +115,26 @@ export interface CreateAgentCommandResult {
   initialPromptStarted: boolean;
 }
 
+export type BoundCreateAgentCommand = (
+  input: CreateAgentCommandInput,
+) => Promise<CreateAgentCommandResult>;
+
+function requireResolvedWorkspaceId(workspaceId: string | undefined): string {
+  if (!workspaceId) {
+    throw new Error("createAgentCommand requires a resolved workspaceId");
+  }
+  return workspaceId;
+}
+
 interface ResolvedCreateAgent {
   config: AgentSessionConfig;
-  createOptions?: AgentCreateOptions;
+  createOptions: CreateAgentOptions;
   prompt?: AgentPromptInput;
   runOptions?: AgentRunOptions;
   setupContinuation?: AgentWorktreeSetupContinuation;
   background: boolean;
   promptFailure: "throw" | "log";
   promptLogger?: Logger;
-}
-
-interface AgentCreateOptions {
-  labels?: Record<string, string>;
-  initialPrompt?: string;
-  env?: Record<string, string>;
-  initialTitle?: string | null;
-  workspaceId?: string;
 }
 
 export async function createAgentCommand(
@@ -200,6 +203,7 @@ async function resolveSessionCreateAgent(
           ...(clientMessageId ? { messageId: clientMessageId } : {}),
         }
       : undefined;
+  const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;
 
   return {
     config: sessionConfig,
@@ -211,7 +215,10 @@ async function resolveSessionCreateAgent(
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
       // agent belongs to that workspace, not the source one (mirrors the MCP
       // path). createdWorkspaceId is the freshly created worktree's workspace.
-      workspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
+      placement: {
+        kind: "workspace",
+        workspaceId: requireResolvedWorkspaceId(workspaceId),
+      },
     },
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
@@ -286,13 +293,13 @@ async function resolveMcpCreateAgent(
       thinkingOptionId: input.thinking,
       ...(resolvedFeatures ? { featureValues: resolvedFeatures } : {}),
     },
-    createOptions:
-      labels || workspaceId
-        ? {
-            ...(labels ? { labels } : {}),
-            ...(workspaceId ? { workspaceId } : {}),
-          }
-        : undefined,
+    createOptions: {
+      ...(labels ? { labels } : {}),
+      placement: {
+        kind: "workspace",
+        workspaceId: requireResolvedWorkspaceId(workspaceId),
+      },
+    },
     prompt: trimmedPrompt,
     setupContinuation,
     background: input.background,
