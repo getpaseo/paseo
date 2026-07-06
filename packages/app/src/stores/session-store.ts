@@ -490,6 +490,7 @@ interface SessionStoreActions {
   setEmptyProjects: (serverId: string, emptyProjects: Iterable<EmptyProjectDescriptor>) => void;
   addEmptyProject: (serverId: string, emptyProject: EmptyProjectDescriptor) => void;
   removeEmptyProject: (serverId: string, projectId: string) => void;
+  applyProjectRename: (serverId: string, projectId: string, customName: string | null) => void;
   setWorkspaceRestoreStatus: (
     serverId: string,
     workspaceId: string,
@@ -1303,6 +1304,31 @@ export const useSessionStore = create<SessionStore>()(
           }
           const next = new Map(session.emptyProjects);
           next.delete(projectId);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, emptyProjects: next },
+            },
+          };
+        });
+      },
+
+      applyProjectRename: (serverId, projectId, customName) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const existing = session.emptyProjects.get(projectId);
+          // Only workspace-less (empty) projects need this optimistic update: the daemon
+          // re-emits workspace descriptors for projects that have workspaces, but sends
+          // nothing for empty ones, so the sidebar would otherwise miss the rename. #987.
+          if (!existing || (existing.projectCustomName ?? null) === (customName ?? null)) {
+            return prev;
+          }
+          const next = new Map(session.emptyProjects);
+          next.set(projectId, { ...existing, projectCustomName: customName });
           return {
             ...prev,
             sessions: {

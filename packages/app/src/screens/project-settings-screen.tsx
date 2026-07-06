@@ -31,6 +31,7 @@ import { SettingsGroup } from "@/screens/settings/settings-group";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
+import { useSessionStore } from "@/stores/session-store";
 import { useProjectIconDataByProjectKey } from "@/projects/project-icons";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -241,7 +242,7 @@ function ProjectSettingsBody({
             projectName={project.projectName}
             projectKey={project.projectKey}
           />
-          <ProjectNameEditor project={project} client={client} />
+          <ProjectNameEditor project={project} client={client} serverId={selectedHost.serverId} />
         </View>
         <HostContext hosts={hosts} selectedHost={selectedHost} onSelectHost={onSelectHost} />
       </View>
@@ -791,9 +792,10 @@ function ResolveSpinnerColor(): string {
 interface ProjectNameEditorProps {
   project: ProjectSummary;
   client: DaemonClient;
+  serverId: string;
 }
 
-function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
+function ProjectNameEditor({ project, client, serverId }: ProjectNameEditorProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -802,7 +804,11 @@ function ProjectNameEditor({ project, client }: ProjectNameEditorProps) {
 
   const renameMutation = useMutation({
     mutationFn: (customName: string | null) => client.renameProject(project.projectKey, customName),
-    onSuccess: () => {
+    onSuccess: (_result, customName) => {
+      // Reflect the rename immediately in the session-store-driven sidebar. The daemon
+      // re-emits workspace descriptors for workspace-backed projects, but sends nothing
+      // for empty (workspace-less) ones, so update the store here too. See #987.
+      useSessionStore.getState().applyProjectRename(serverId, project.projectKey, customName);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setIsEditing(false);
       toast.show(t("settings.project.rename.renamedToast"), { variant: "success" });

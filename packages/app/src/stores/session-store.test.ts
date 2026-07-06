@@ -493,6 +493,69 @@ describe("removeEmptyProject", () => {
   });
 });
 
+describe("applyProjectRename", () => {
+  it("updates an empty project's custom name so the sidebar reflects the rename (#987)", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setEmptyProjects("test-server", [
+      {
+        projectId: "/repo/app",
+        remoteKey: "remote:github.com/acme/app",
+        projectDisplayName: "acme/app",
+        projectCustomName: null,
+        projectRootPath: "/repo/app",
+        projectKind: "git",
+      },
+    ]);
+
+    store.applyProjectRename("test-server", "/repo/app", "acme (work)");
+
+    expect(getTestSessionReferences().emptyProjects.get("/repo/app")?.projectCustomName).toBe(
+      "acme (work)",
+    );
+  });
+
+  it("clears the custom name on reset", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setEmptyProjects("test-server", [
+      {
+        projectId: "/repo/app",
+        remoteKey: null,
+        projectDisplayName: "app",
+        projectCustomName: "Renamed",
+        projectRootPath: "/repo/app",
+        projectKind: "git",
+      },
+    ]);
+
+    store.applyProjectRename("test-server", "/repo/app", null);
+
+    expect(getTestSessionReferences().emptyProjects.get("/repo/app")?.projectCustomName).toBeNull();
+  });
+
+  it("preserves identity when the project id is unknown (workspace-backed projects use the daemon re-emit)", () => {
+    const store = useSessionStore.getState();
+    initializeTestSession();
+    store.setEmptyProjects("test-server", [
+      {
+        projectId: "/repo/app",
+        remoteKey: null,
+        projectDisplayName: "app",
+        projectCustomName: null,
+        projectRootPath: "/repo/app",
+        projectKind: "git",
+      },
+    ]);
+    const before = getTestSessionReferences();
+
+    store.applyProjectRename("test-server", "/repo/other", "X");
+    const after = getTestSessionReferences();
+
+    expect(after.emptyProjects).toBe(before.emptyProjects);
+  });
+});
+
 describe("patchWorkspaceScripts", () => {
   it("preserves workspace entry identity when scripts are content-equal", () => {
     const script = {
