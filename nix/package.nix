@@ -5,6 +5,7 @@
   nodejs_22,
   python3,
   makeWrapper,
+  autoPatchelfHook,
   # node-pty needs libuv headers on Linux
   libuv,
   # Exposed so downstream flakes that follow a different nixpkgs revision
@@ -61,10 +62,13 @@ buildNpmPackage rec {
   nativeBuildInputs = [
     python3 # for node-gyp (node-pty compilation)
     makeWrapper
+  ] ++ lib.optionals stdenv.hostPlatform.isLinux [
+    autoPatchelfHook
   ];
 
   buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
     libuv
+    stdenv.cc.cc.lib # libstdc++ for sherpa-onnx prebuilt binaries
   ];
 
   # Don't use the default npm build hook — we need a custom build sequence
