@@ -29,6 +29,36 @@ function makeSources(): DesktopDiagnosticSources {
 }
 
 describe("desktop diagnostic report", () => {
+  test("starts desktop diagnostic requests together", async () => {
+    const calls: string[] = [];
+    let releaseAppLogs: () => void = () => {};
+    const appLogGate = new Promise<void>((resolve) => {
+      releaseAppLogs = resolve;
+    });
+    const sources: DesktopDiagnosticSources = {
+      ...makeSources(),
+      getStatus: async () => {
+        calls.push("status");
+        return makeSources().getStatus();
+      },
+      getDaemonLogs: async () => {
+        calls.push("daemonLogs");
+        return makeSources().getDaemonLogs();
+      },
+      getAppLogs: async () => {
+        calls.push("appLogs");
+        await appLogGate;
+        return makeSources().getAppLogs();
+      },
+    };
+
+    const resultPromise = collectDesktopDiagnosticSectionsFromSources(sources);
+
+    expect(calls).toEqual(["status", "daemonLogs", "appLogs"]);
+    releaseAppLogs();
+    await expect(resultPromise).resolves.toMatchObject({ status: "done" });
+  });
+
   test("includes the Electron main-process log after the daemon log", async () => {
     const result = await collectDesktopDiagnosticSectionsFromSources(makeSources());
     const report = result.sections.join("\n\n");

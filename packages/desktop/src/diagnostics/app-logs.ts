@@ -12,6 +12,6 @@ export function getDesktopAppLogs(): DesktopAppLogs {
   const logPath = log.transports.file.getFile().path;
   return {
     logPath,
-    contents: tailFile(logPath, APP_LOG_TAIL_LINES),
+    contents: tailFile(logPath, APP_LOG_TAIL_LINES, { throwOnReadError: true }),
   };
 }

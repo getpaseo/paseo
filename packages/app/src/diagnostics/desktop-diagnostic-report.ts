@@ -34,31 +34,34 @@ export async function collectDesktopDiagnosticSectionsFromSources(
 ): Promise<DesktopDiagnosticCollectionResult> {
   const sections: string[] = [];
   let failed = false;
-  let appLogs: DesktopAppLogs | null = null;
 
-  try {
-    appLogs = await sources.getAppLogs();
-  } catch (error) {
+  const [daemonResult, appLogsResult] = await Promise.allSettled([
+    Promise.all([sources.getStatus(), sources.getDaemonLogs()]),
+    sources.getAppLogs(),
+  ]);
+
+  if (daemonResult.status === "fulfilled") {
+    const [status, daemonLogs] = daemonResult.value;
+    const appLogs = appLogsResult.status === "fulfilled" ? appLogsResult.value : null;
+    sections.unshift(...formatDesktopDaemonSections({ status, daemonLogs, appLogs }));
+  } else {
     failed = true;
-    sections.push(
-      formatDiagnosticSection("Desktop app log tail", [
-        { label: "Error", value: toMessage(error) },
+    sections.unshift(
+      formatDiagnosticSection("Desktop", [
+        { label: "Error", value: toMessage(daemonResult.reason) },
       ]),
     );
   }
 
-  try {
-    const [status, daemonLogs] = await Promise.all([sources.getStatus(), sources.getDaemonLogs()]);
-    sections.unshift(...formatDesktopDaemonSections({ status, daemonLogs, appLogs }));
-  } catch (error) {
+  if (appLogsResult.status === "fulfilled") {
+    sections.push(formatLogTailSection("Desktop app log tail", appLogsResult.value.contents));
+  } else {
     failed = true;
-    sections.unshift(
-      formatDiagnosticSection("Desktop", [{ label: "Error", value: toMessage(error) }]),
+    sections.push(
+      formatDiagnosticSection("Desktop app log tail", [
+        { label: "Error", value: toMessage(appLogsResult.reason) },
+      ]),
     );
-  }
-
-  if (appLogs) {
-    sections.push(formatLogTailSection("Desktop app log tail", appLogs.contents));
   }
 
   return {
