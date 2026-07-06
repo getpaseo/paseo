@@ -19,19 +19,28 @@ export interface SettingsDaemonRestartDeps {
   restartServer: (reason: string) => Promise<unknown>;
 }
 
-function isLocalDesktopManagedDaemon(
+async function isLocalDesktopManagedDaemon(
   hostServerId: string,
-  desktopDaemonStatus: DesktopDaemonRestartStatus,
-  desktopSettings: DesktopDaemonRestartSettings,
-): boolean {
-  if (!desktopDaemonStatus.desktopManaged || !desktopSettings.daemon.manageBuiltInDaemon) {
+  deps: SettingsDaemonRestartDeps,
+): Promise<boolean> {
+  if (!deps.getIsElectron()) {
+    return false;
+  }
+
+  const desktopDaemonStatus = await deps.getDesktopDaemonStatus();
+  if (!desktopDaemonStatus.desktopManaged) {
     return false;
   }
 
   const normalizedHostServerId = hostServerId.trim();
   const normalizedDesktopServerId = desktopDaemonStatus.serverId.trim();
 
-  return normalizedHostServerId.length > 0 && normalizedHostServerId === normalizedDesktopServerId;
+  if (normalizedHostServerId.length === 0 || normalizedHostServerId !== normalizedDesktopServerId) {
+    return false;
+  }
+
+  const desktopSettings = await deps.getDesktopSettings();
+  return desktopSettings.daemon.manageBuiltInDaemon;
 }
 
 export async function restartDaemonFromSettings(
@@ -39,17 +48,9 @@ export async function restartDaemonFromSettings(
   reason: string,
   deps: SettingsDaemonRestartDeps,
 ): Promise<void> {
-  const isElectron = deps.getIsElectron();
-
-  if (isElectron) {
-    const [desktopDaemonStatus, desktopSettings] = await Promise.all([
-      deps.getDesktopDaemonStatus(),
-      deps.getDesktopSettings(),
-    ]);
-    if (isLocalDesktopManagedDaemon(hostServerId, desktopDaemonStatus, desktopSettings)) {
-      await deps.restartDesktopDaemon();
-      return;
-    }
+  if (await isLocalDesktopManagedDaemon(hostServerId, deps)) {
+    await deps.restartDesktopDaemon();
+    return;
   }
 
   await deps.restartServer(reason);

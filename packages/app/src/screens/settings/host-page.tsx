@@ -631,16 +631,38 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     async (restartRequest: Promise<void>) => {
       const disconnectTimeoutMs = 30000;
       const reconnectTimeoutMs = 30000;
+      const requestFailureDisconnectGraceMs = 2000;
       const disconnectedPromise = isHostConnected()
         ? waitForCondition(() => !isHostConnected(), disconnectTimeoutMs)
         : Promise.resolve(true);
-      const restartSucceeded = await restartRequest.then(
-        () => true,
-        () => false,
+      const restartResult = await restartRequest.then(
+        () => ({ status: "accepted" as const }),
+        async (error) => ({
+          status: "rejected" as const,
+          error,
+          disconnectedAfterFailure: await waitForCondition(
+            () => !isHostConnected(),
+            requestFailureDisconnectGraceMs,
+            100,
+          ),
+        }),
       );
-      if (!restartSucceeded || !isMountedRef.current) return;
+      if (!isMountedRef.current) return;
 
-      const disconnected = await disconnectedPromise;
+      if (restartResult.status === "rejected" && !restartResult.disconnectedAfterFailure) {
+        console.error(`[HostPage] Failed to restart daemon ${host.label}`, restartResult.error);
+        setIsRestarting(false);
+        Alert.alert(
+          t("settings.host.daemon.restart.requestFailedTitle"),
+          t("settings.host.daemon.restart.requestFailedMessage"),
+        );
+        return;
+      }
+
+      const disconnected =
+        restartResult.status === "rejected"
+          ? restartResult.disconnectedAfterFailure
+          : await disconnectedPromise;
       const reconnected =
         disconnected && (await waitForCondition(() => isHostConnected(), reconnectTimeoutMs));
       if (isMountedRef.current) {
@@ -693,15 +715,6 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             restartServer: (reason) => daemonClient.restartServer(reason),
           },
         );
-        void restartRequest.catch((error) => {
-          console.error(`[HostPage] Failed to restart daemon ${host.label}`, error);
-          if (!isMountedRef.current) return;
-          setIsRestarting(false);
-          Alert.alert(
-            t("settings.host.daemon.restart.requestFailedTitle"),
-            t("settings.host.daemon.restart.requestFailedMessage"),
-          );
-        });
         void waitForDaemonRestart(restartRequest);
         return;
       })

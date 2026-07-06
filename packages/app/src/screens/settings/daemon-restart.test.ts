@@ -24,6 +24,7 @@ function makeDeps(overrides?: {
   isElectron?: boolean;
   desktopDaemonStatus?: DesktopDaemonStatus;
   desktopSettings?: typeof desktopSettings;
+  desktopSettingsError?: Error;
   restartDesktopDaemon?: () => Promise<DesktopDaemonStatus>;
   restartServer?: (reason: string) => Promise<void>;
 }) {
@@ -36,6 +37,9 @@ function makeDeps(overrides?: {
     },
     getDesktopSettings: async () => {
       calls.push("desktop-settings");
+      if (overrides?.desktopSettingsError) {
+        throw overrides.desktopSettingsError;
+      }
       return overrides?.desktopSettings ?? desktopSettings;
     },
     restartDesktopDaemon:
@@ -62,30 +66,25 @@ describe("restartDaemonFromSettings", () => {
     expect(calls).toEqual(["desktop-status", "desktop-settings", "desktop-restart"]);
   });
 
-  it("restarts remote hosts over the daemon RPC", async () => {
-    const { calls, deps } = makeDeps();
+  it("restarts remote hosts over the daemon RPC without reading desktop settings", async () => {
+    const { calls, deps } = makeDeps({
+      desktopSettingsError: new Error("Unreadable desktop settings."),
+    });
 
     await restartDaemonFromSettings("remote-host", "settings_daemon_restart_remote", deps);
 
-    expect(calls).toEqual([
-      "desktop-status",
-      "desktop-settings",
-      "rpc-restart:settings_daemon_restart_remote",
-    ]);
+    expect(calls).toEqual(["desktop-status", "rpc-restart:settings_daemon_restart_remote"]);
   });
 
-  it("keeps manually managed local daemons on the RPC path", async () => {
+  it("keeps manually managed local daemons on the RPC path without reading desktop settings", async () => {
     const { calls, deps } = makeDeps({
       desktopDaemonStatus: { ...runningDesktopDaemonStatus, desktopManaged: false },
+      desktopSettingsError: new Error("Unreadable desktop settings."),
     });
 
     await restartDaemonFromSettings("local-desktop", "settings_daemon_restart_local", deps);
 
-    expect(calls).toEqual([
-      "desktop-status",
-      "desktop-settings",
-      "rpc-restart:settings_daemon_restart_local",
-    ]);
+    expect(calls).toEqual(["desktop-status", "rpc-restart:settings_daemon_restart_local"]);
   });
 
   it("keeps the RPC path when built-in daemon management is disabled", async () => {
