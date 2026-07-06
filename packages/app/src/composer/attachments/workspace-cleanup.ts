@@ -11,6 +11,7 @@ export function getAttachmentKey(attachment: WorkspaceComposerAttachment): strin
       tag: attachment.attachment.tag,
       text: attachment.attachment.text,
       html: attachment.attachment.outerHTML,
+      comment: attachment.attachment.comment ?? null,
     });
   }
   if (isPullRequestContextAttachment(attachment)) {

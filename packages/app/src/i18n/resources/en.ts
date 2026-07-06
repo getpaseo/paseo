@@ -422,7 +422,21 @@ export const en = {
         enterUrl: "Enter URL",
         openDevTools: "Open browser dev tools",
         cancelSelector: "Cancel element selector",
-        selectElement: "Select element",
+        annotateElement: "Annotate element",
+        screenshotElement: "Screenshot element",
+        screenshotCopied: "Copied screenshot to clipboard",
+        elementCopied: "Copied element to clipboard",
+        screenshotFailed: "Couldn't copy screenshot",
+      },
+      annotate: {
+        title: "Annotate element",
+        placeholder: "Message to the agent about this element…",
+        submit: "Attach",
+        cancel: "Cancel",
+      },
+      devices: {
+        label: "Device size",
+        responsive: "Responsive",
       },
       errors: {
         failedToLoad: "Failed to load page",
@@ -777,6 +791,7 @@ export const en = {
     },
     sections: {
       sessions: "History",
+      schedules: "Schedules",
     },
     grouping: {
       title: "Group by",
@@ -968,6 +983,9 @@ export const en = {
         pending: "We'll let you know when the update is ready.",
         pendingWithLastChecked:
           "We'll let you know when the update is ready. Last checked at {{time}}.",
+        pendingWithVersion: "Update found: {{version}}. Downloading...",
+        pendingWithVersionAndLastChecked:
+          "Update found: {{version}}. Downloading... Last checked at {{time}}.",
         availableWithVersion: "Update ready: {{version}}",
         availableWithVersionAndLastChecked: "Update ready: {{version}}. Last checked at {{time}}.",
         available: "An app update is ready to install.",

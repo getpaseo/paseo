@@ -6,7 +6,7 @@ export interface SidebarProjectHostTarget {
 }
 
 export type SidebarProjectTrailingAction =
-  | { kind: "new_worktree"; target: SidebarProjectHostTarget }
+  | { kind: "new_workspace"; target: SidebarProjectHostTarget }
   | { kind: "none" };
 
 export interface SidebarProjectSectionRowModel {
@@ -16,6 +16,8 @@ export interface SidebarProjectSectionRowModel {
 }
 
 export type SidebarProjectRowModel = SidebarProjectSectionRowModel;
+
+const EMPTY_MULTIPLICITY_MAP: ReadonlyMap<string, boolean> = new Map();
 
 function hostTarget(input: {
   serverId: string;
@@ -40,9 +42,18 @@ export function resolveSidebarProjectIconTarget(
   return null;
 }
 
-function resolveNewWorktreeTarget(project: SidebarProjectEntry): SidebarProjectHostTarget | null {
+// A project can host a brand-new workspace on a host when that host can create a
+// git worktree (git projects) OR the host supports running multiple independent
+// workspaces per directory (`workspaceMultiplicity`), which is what lets non-git
+// directories add a second workspace. Mirrors the gate used by the global "New
+// workspace" affordances (use-global-new-workspace-action.ts and left-sidebar's
+// SidebarNewWorkspaceHeaderRow): `canCreateWorktree || supportsMultiplicity`.
+function resolveNewWorkspaceTarget(
+  project: SidebarProjectEntry,
+  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
+): SidebarProjectHostTarget | null {
   for (const host of project.hosts) {
-    if (!host.canCreateWorktree) {
+    if (!host.canCreateWorktree && !supportsMultiplicityByServerId.get(host.serverId)) {
       continue;
     }
     const target = hostTarget(host);
@@ -53,18 +64,25 @@ function resolveNewWorktreeTarget(project: SidebarProjectEntry): SidebarProjectH
   return null;
 }
 
-function projectTrailingAction(project: SidebarProjectEntry): SidebarProjectTrailingAction {
-  const target = resolveNewWorktreeTarget(project);
-  return target ? { kind: "new_worktree", target } : { kind: "none" };
+function projectTrailingAction(
+  project: SidebarProjectEntry,
+  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
+): SidebarProjectTrailingAction {
+  const target = resolveNewWorkspaceTarget(project, supportsMultiplicityByServerId);
+  return target ? { kind: "new_workspace", target } : { kind: "none" };
 }
 
 export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
+  supportsMultiplicityByServerId?: ReadonlyMap<string, boolean>;
 }): SidebarProjectRowModel {
   return {
     kind: "project_section",
     chevron: input.collapsed ? "expand" : "collapse",
-    trailingAction: projectTrailingAction(input.project),
+    trailingAction: projectTrailingAction(
+      input.project,
+      input.supportsMultiplicityByServerId ?? EMPTY_MULTIPLICITY_MAP,
+    ),
   };
 }

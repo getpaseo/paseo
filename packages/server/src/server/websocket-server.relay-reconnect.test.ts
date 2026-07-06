@@ -9,6 +9,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
 import {
@@ -215,6 +216,13 @@ function createLogger() {
   return logger;
 }
 
+function createWorkspaceAutoNameStub(): WorkspaceAutoName {
+  return createStub<WorkspaceAutoName>({
+    scheduleForWorktree: () => {},
+    scheduleForDirectory: () => {},
+  });
+}
+
 function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
   logger?: ReturnType<typeof createLogger>;
@@ -246,6 +254,7 @@ function createServer(options?: {
     createStub<DaemonConfigStore>(daemonConfigStore),
     null,
     { allowedOrigins: new Set() },
+    createWorkspaceAutoNameStub(),
     undefined,
     speechReadiness
       ? {

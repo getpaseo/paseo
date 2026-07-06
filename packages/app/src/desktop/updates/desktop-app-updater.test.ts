@@ -114,15 +114,17 @@ describe("desktop app updater — check", () => {
     });
   });
 
-  it("reports 'pending' when the check resolves with an update that is not yet downloaded", async () => {
+  it("reports the found update while it is still preparing", async () => {
     const { updater, port } = createUpdater();
-    port.nextCheckResult(buildFakeCheckResult({ hasUpdate: true, readyToInstall: false }));
+    port.nextCheckResult(
+      buildFakeCheckResult({ hasUpdate: true, readyToInstall: false, latestVersion: "1.2.3" }),
+    );
 
     await updater.checkForUpdates({ releaseChannel: "stable" });
 
     expect(updater.getSnapshot()).toMatchObject({
       status: "pending",
-      availableUpdate: null,
+      availableUpdate: { latestVersion: "1.2.3", readyToInstall: false },
     });
   });
 
@@ -408,17 +410,17 @@ describe("formatStatusText", () => {
     ).toBe("Update ready: v1.2.3");
   });
 
-  it("keeps manual check feedback visible while an update is pending", () => {
+  it("shows the found version while an update is pending", () => {
     expect(
       formatStatusText({
         status: "pending",
-        availableUpdate: null,
+        availableUpdate: buildFakeCheckResult({ latestVersion: "1.2.3" }),
         installMessage: null,
         lastCheckedAt: 42,
         formatVersion,
         formatLastCheckedAt,
       }),
-    ).toBe("We'll let you know when the update is ready. Last checked at time-42.");
+    ).toBe("Update found: v1.2.3. Downloading... Last checked at time-42.");
   });
 
   it("keeps manual check feedback visible when an update is available", () => {

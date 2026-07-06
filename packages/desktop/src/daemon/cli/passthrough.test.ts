@@ -65,6 +65,16 @@ describe("passthrough CLI", () => {
     ).toBeNull();
   });
 
+  it("ignores Electron remote debugging switches", () => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["/usr/bin/Paseo", "--remote-debugging-port=9233"],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toBeNull();
+  });
+
   it("preserves CLI flags for direct app invocations", () => {
     expect(
       parsePassthroughCliArgs({

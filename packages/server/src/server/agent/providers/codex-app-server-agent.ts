@@ -49,6 +49,7 @@ import { curateAgentActivity } from "../activity-curator.js";
 import {
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
+  splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
 import {
   checkProviderLaunchAvailable,
@@ -1696,6 +1697,39 @@ export function threadItemToTimeline(
   }
 }
 
+function mcpToolResultImagesToTimeline(item: unknown): AgentTimelineItem[] {
+  const itemRecord = toObjectRecord(item);
+  if (!itemRecord) {
+    return [];
+  }
+  const normalizedType = normalizeCodexThreadItemType(
+    typeof itemRecord.type === "string" ? itemRecord.type : undefined,
+  );
+  if (normalizedType !== "mcpToolCall") {
+    return [];
+  }
+
+  const { images } = splitCodexMcpToolResultImages(itemRecord.result);
+  return images
+    .map((image) =>
+      renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      }),
+    )
+    .filter((timelineItem): timelineItem is AgentTimelineItem => timelineItem !== null);
+}
+
+function threadItemToTimelineEntries(
+  item: unknown,
+  options?: { includeUserMessage?: boolean; cwd?: string | null },
+): AgentTimelineItem[] {
+  const timelineItem = threadItemToTimeline(item, options);
+  if (!timelineItem) {
+    return [];
+  }
+  return [timelineItem, ...mcpToolResultImagesToTimeline(item)];
+}
+
 const CodexThreadReadResponseSchema = z
   .object({
     thread: z
@@ -1735,8 +1769,7 @@ async function loadCodexThreadHistoryTimeline(params: {
   const timeline: PersistedTimelineEntry[] = [];
   for (const turn of response.thread.turns) {
     for (const item of turn.items) {
-      const timelineItem = threadItemToTimeline(item, { cwd: params.cwd });
-      if (timelineItem) {
+      for (const timelineItem of threadItemToTimelineEntries(item, { cwd: params.cwd })) {
         const timestamp =
           readCodexHistoryTimestamp(item) ?? readCodexTurnHistoryTimestamp(turn, timelineItem);
         timeline.push({
@@ -4848,8 +4881,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
+    const imageItems = mcpToolResultImagesToTimeline(parsed.item);
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
     if (timelineItem.type === "assistant_message") {
+      this.pendingAssistantMessageBoundary = true;
+    }
+    for (const imageItem of imageItems) {
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: imageItem });
       this.pendingAssistantMessageBoundary = true;
     }
     if (itemId) {

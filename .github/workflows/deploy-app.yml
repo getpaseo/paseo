@@ -27,7 +27,6 @@ jobs:
         run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build app dependencies
         run: npm run build:app-deps
 

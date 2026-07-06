@@ -58,10 +58,16 @@ function parseWorkspaceSelectionFromRouteParams(params: {
 export function parseActiveWorkspaceSelection(
   input: RouteSelectionInput,
 ): ActiveWorkspaceSelection | null {
-  return (
-    parseHostWorkspaceRouteFromPathname(input.pathname) ??
-    parseWorkspaceSelectionFromRouteParams(input.params)
-  );
+  const routeSelection = parseHostWorkspaceRouteFromPathname(input.pathname);
+  if (routeSelection) {
+    return routeSelection;
+  }
+
+  if (input.pathname !== "/" && input.pathname !== "") {
+    return null;
+  }
+
+  return parseWorkspaceSelectionFromRouteParams(input.params);
 }
 
 export function navigateToWorkspace(

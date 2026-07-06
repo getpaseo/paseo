@@ -426,7 +426,21 @@ export const ru: TranslationResources = {
         enterUrl: "Введите URL",
         openDevTools: "Открыть инструменты разработки браузера",
         cancelSelector: "Отменить выбор элемента",
-        selectElement: "Выберите элемент",
+        annotateElement: "Аннотировать элемент",
+        screenshotElement: "Снимок элемента",
+        screenshotCopied: "Снимок скопирован в буфер обмена",
+        elementCopied: "Элемент скопирован в буфер обмена",
+        screenshotFailed: "Не удалось скопировать снимок",
+      },
+      annotate: {
+        title: "Аннотировать элемент",
+        placeholder: "Сообщение агенту об этом элементе…",
+        submit: "Прикрепить",
+        cancel: "Отмена",
+      },
+      devices: {
+        label: "Размер устройства",
+        responsive: "Адаптивный",
       },
       errors: {
         failedToLoad: "Не удалось загрузить страницу",
@@ -789,6 +803,7 @@ export const ru: TranslationResources = {
     },
     sections: {
       sessions: "История",
+      schedules: "Расписания",
     },
     grouping: {
       title: "Группировать по",
@@ -980,6 +995,9 @@ export const ru: TranslationResources = {
         pending: "Мы сообщим вам, когда обновление будет готово.",
         pendingWithLastChecked:
           "Мы сообщим вам, когда обновление будет готово. Последняя проверка в {{time}}.",
+        pendingWithVersion: "Найдено обновление: {{version}}. Загрузка...",
+        pendingWithVersionAndLastChecked:
+          "Найдено обновление: {{version}}. Загрузка... Последняя проверка в {{time}}.",
         availableWithVersion: "Обновление готово:{{version}}",
         availableWithVersionAndLastChecked:
           "Обновление готово:{{version}}. Последняя проверка в {{time}}.",

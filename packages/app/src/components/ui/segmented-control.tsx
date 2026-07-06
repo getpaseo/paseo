@@ -161,7 +161,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   segmentSm: {
-    paddingVertical: theme.spacing[2],
+    paddingVertical: theme.spacing[1.5],
     paddingHorizontal: theme.spacing[4],
   },
   segmentMd: {

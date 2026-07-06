@@ -42,6 +42,14 @@ export interface BrowserElementAttachment {
   } | null;
   parentChain: string[];
   children: string[];
+  /** Free-text review note the user wrote about this element, if any. */
+  comment?: string;
+  /**
+   * Cropped screenshot of the selected element, sent to the agent as an image
+   * alongside the textual element context. Persisted via the attachment store;
+   * referenced by id so the draft-store GC keeps it alive.
+   */
+  screenshot?: AttachmentMetadata;
   formatted: string;
 }
 

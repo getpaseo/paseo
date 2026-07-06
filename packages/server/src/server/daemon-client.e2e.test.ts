@@ -547,7 +547,9 @@ beforeAll(async () => {
 
   ctx = await createDaemonTestContext({
     dictationFinalTimeoutMs: 5000,
-    ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
+    ...(openaiApiKey
+      ? { openai: { stt: { apiKey: openaiApiKey }, tts: { apiKey: openaiApiKey } } }
+      : {}),
     ...(speechConfig ? { speech: speechConfig } : {}),
   });
 }, 60000);

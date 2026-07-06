@@ -87,7 +87,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
     useSidebarViewStore.setState({
       groupMode: "project",
-      hostFilter: null,
+      hostFilters: [],
     });
 
     act(() => {
@@ -217,7 +217,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
         );
       useSessionStore.getState().setHasHydratedWorkspaces("host-a", true);
       useSessionStore.getState().setHasHydratedWorkspaces("host-b", true);
-      useSidebarViewStore.getState().setHostFilter("host-b");
+      useSidebarViewStore.getState().toggleHostFilter("host-b");
     });
 
     await act(async () => {

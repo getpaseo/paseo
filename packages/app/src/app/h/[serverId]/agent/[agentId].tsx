@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useLocalSearchParams, usePathname, useRouter, type Href } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -17,7 +17,6 @@ export default function HostAgentReadyRoute() {
 
 function HostAgentReadyRouteContent() {
   const router = useRouter();
-  const pathname = usePathname();
   const params = useLocalSearchParams<{
     serverId?: string;
     agentId?: string;
@@ -53,10 +52,9 @@ function HostAgentReadyRouteContent() {
       navigateToAgent({
         serverId,
         agentId,
-        currentPathname: pathname,
       });
     }
-  }, [agentId, pathname, resolvedWorkspaceId, router, serverId]);
+  }, [agentId, resolvedWorkspaceId, router, serverId]);
 
   useEffect(() => {
     if (redirectedRef.current) {
@@ -96,7 +94,6 @@ function HostAgentReadyRouteContent() {
             serverId,
             agentId,
             workspaceId,
-            currentPathname: pathname,
           });
           return;
         }
@@ -114,7 +111,7 @@ function HostAgentReadyRouteContent() {
     return () => {
       cancelled = true;
     };
-  }, [agentId, client, isConnected, pathname, router, serverId]);
+  }, [agentId, client, isConnected, router, serverId]);
 
   return null;
 }

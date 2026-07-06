@@ -426,7 +426,21 @@ export const ptBR: TranslationResources = {
         enterUrl: "Inserir URL",
         openDevTools: "Abrir ferramentas de desenvolvedor do navegador",
         cancelSelector: "Cancelar seletor de elemento",
-        selectElement: "Selecionar elemento",
+        annotateElement: "Anotar elemento",
+        screenshotElement: "Capturar elemento",
+        screenshotCopied: "Captura copiada para a área de transferência",
+        elementCopied: "Elemento copiado para a área de transferência",
+        screenshotFailed: "Não foi possível copiar a captura",
+      },
+      annotate: {
+        title: "Anotar elemento",
+        placeholder: "Mensagem ao agente sobre este elemento…",
+        submit: "Anexar",
+        cancel: "Cancelar",
+      },
+      devices: {
+        label: "Tamanho do dispositivo",
+        responsive: "Responsivo",
       },
       errors: {
         failedToLoad: "Falha ao carregar página",
@@ -788,6 +802,7 @@ export const ptBR: TranslationResources = {
     },
     sections: {
       sessions: "Histórico",
+      schedules: "Agendamentos",
     },
     grouping: {
       title: "Agrupar por",
@@ -979,6 +994,9 @@ export const ptBR: TranslationResources = {
         pending: "Avisaremos quando a atualização estiver pronta.",
         pendingWithLastChecked:
           "Avisaremos quando a atualização estiver pronta. Última verificação às {{time}}.",
+        pendingWithVersion: "Atualização encontrada: {{version}}. Baixando...",
+        pendingWithVersionAndLastChecked:
+          "Atualização encontrada: {{version}}. Baixando... Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
         availableWithVersionAndLastChecked:
           "Atualização pronta: {{version}}. Última verificação às {{time}}.",

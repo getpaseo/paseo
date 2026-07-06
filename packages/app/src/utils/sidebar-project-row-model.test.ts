@@ -66,7 +66,7 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("renders a single-workspace git project as an expandable section with the new worktree action", () => {
+  it("renders a single-workspace git project as an expandable section with the new workspace action", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "git",
@@ -79,13 +79,49 @@ describe("buildSidebarProjectRowModel", () => {
       kind: "project_section",
       chevron: "expand",
       trailingAction: {
-        kind: "new_worktree",
+        kind: "new_workspace",
         target: { serverId: "srv", iconWorkingDir: "/repo" },
       },
     });
   });
 
-  it("targets the project host, not route state, for new worktree actions", () => {
+  it("shows the new workspace action for a non-git project when the host supports workspace multiplicity", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({ projectKind: "directory", workspaces: [] }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map([["srv", true]]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "srv", iconWorkingDir: "/repo" },
+    });
+  });
+
+  it("hides the new workspace action for a non-git project when the host lacks workspace multiplicity", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({ projectKind: "directory", workspaces: [] }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map([["srv", false]]),
+    });
+
+    expect(result.trailingAction).toEqual({ kind: "none" });
+  });
+
+  it("still shows the new workspace action for a git project regardless of multiplicity", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({ projectKind: "git" }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map([["srv", false]]),
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "srv", iconWorkingDir: "/repo" },
+    });
+  });
+
+  it("targets the project host, not route state, for new workspace actions", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         hosts: [
@@ -98,13 +134,34 @@ describe("buildSidebarProjectRowModel", () => {
 
     expect(result).toMatchObject({
       trailingAction: {
-        kind: "new_worktree",
+        kind: "new_workspace",
         target: { serverId: "host-b", iconWorkingDir: "/repo/b" },
       },
     });
   });
 
-  it("renders a multi-workspace git project as an expandable section with a new worktree action", () => {
+  it("targets the first multiplicity-capable host for a non-git project", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        projectKind: "directory",
+        hosts: [
+          { serverId: "host-a", iconWorkingDir: "/repo/a", canCreateWorktree: false },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", canCreateWorktree: false },
+        ],
+      }),
+      collapsed: false,
+      supportsMultiplicityByServerId: new Map([["host-b", true]]),
+    });
+
+    expect(result).toMatchObject({
+      trailingAction: {
+        kind: "new_workspace",
+        target: { serverId: "host-b", iconWorkingDir: "/repo/b" },
+      },
+    });
+  });
+
+  it("renders a multi-workspace git project as an expandable section with a new workspace action", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "git",
@@ -120,7 +177,7 @@ describe("buildSidebarProjectRowModel", () => {
       kind: "project_section",
       chevron: "expand",
       trailingAction: {
-        kind: "new_worktree",
+        kind: "new_workspace",
         target: { serverId: "srv", iconWorkingDir: "/repo" },
       },
     });
@@ -149,7 +206,7 @@ describe("buildSidebarProjectRowModel", () => {
       kind: "project_section",
       chevron: "collapse",
       trailingAction: {
-        kind: "new_worktree",
+        kind: "new_workspace",
         target: { serverId: "srv", iconWorkingDir: "/repo" },
       },
     });

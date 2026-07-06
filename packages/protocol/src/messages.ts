@@ -2,9 +2,9 @@ import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
-import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
-import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
-import { normalizeAgentModelDefinition, TOOL_CALL_ICON_NAMES } from "./agent-types.js";
+import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import { AgentProviderSchema } from "./provider-manifest.js";
+import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -40,7 +40,7 @@ import {
   ScheduleDeleteResponseSchema,
   ScheduleRunOnceResponseSchema,
   ScheduleUpdateResponseSchema,
-} from "@getpaseo/protocol/schedule/rpc-schemas";
+} from "./schedule/rpc-schemas.js";
 import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
@@ -52,7 +52,12 @@ import {
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
-} from "@getpaseo/protocol/loop/rpc-schemas";
+} from "./loop/rpc-schemas.js";
+import {
+  BrowserAutomationExecuteRequestSchema,
+  BrowserAutomationExecuteResponseSchema,
+} from "./browser-automation/rpc-schemas.js";
+import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -68,7 +73,7 @@ import {
   type PaseoMetadataGenerationEntry,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
-} from "@getpaseo/protocol/paseo-config-schema";
+} from "./paseo-config-schema.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -129,6 +134,11 @@ export const TerminalProfileSchema = z
 
 export type TerminalProfile = z.infer<typeof TerminalProfileSchema>;
 
+const MutableBrowserToolsConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+  })
+  .passthrough();
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -136,6 +146,7 @@ export const MutableDaemonConfigSchema = z
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
+    browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
@@ -148,6 +159,7 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+    browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
@@ -235,18 +247,17 @@ export const AgentFeatureSchema = z.discriminatedUnion("type", [
   AgentFeatureSelectSchema,
 ]);
 
-const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z
-  .object({
-    provider: AgentProviderSchema,
-    id: z.string(),
-    label: z.string(),
-    description: z.string().optional(),
-    isDefault: z.boolean().optional(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
-    thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
-    defaultThinkingOptionId: z.string().optional(),
-  })
-  .transform(normalizeAgentModelDefinition);
+const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
+  provider: AgentProviderSchema,
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  contextWindowMaxTokens: z.number().optional(),
+  thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
+  defaultThinkingOptionId: z.string().optional(),
+});
 
 export const ProviderSnapshotEntrySchema = z.object({
   provider: AgentProviderSchema,
@@ -348,20 +359,21 @@ const AgentPermissionActionSchema = z.object({
   intent: z.enum(["implement", "implement_resume", "dismiss"]).optional(),
 });
 
-export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> = z.union([
-  z.object({
-    behavior: z.literal("allow"),
-    selectedActionId: z.string().optional(),
-    updatedInput: z.record(z.string(), z.unknown()).optional(),
-    updatedPermissions: z.array(AgentPermissionUpdateSchema).optional(),
-  }),
-  z.object({
-    behavior: z.literal("deny"),
-    selectedActionId: z.string().optional(),
-    message: z.string().optional(),
-    interrupt: z.boolean().optional(),
-  }),
-]);
+export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
+  z.discriminatedUnion("behavior", [
+    z.object({
+      behavior: z.literal("allow"),
+      selectedActionId: z.string().optional(),
+      updatedInput: z.record(z.string(), z.unknown()).optional(),
+      updatedPermissions: z.array(AgentPermissionUpdateSchema).optional(),
+    }),
+    z.object({
+      behavior: z.literal("deny"),
+      selectedActionId: z.string().optional(),
+      message: z.string().optional(),
+      interrupt: z.boolean().optional(),
+    }),
+  ]);
 
 export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionRequest, unknown> =
   z.object({
@@ -541,13 +553,16 @@ const ToolCallCanceledPayloadSchema = ToolCallBasePayloadSchema.extend({
   error: z.null(),
 });
 
-const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown> = z.union([
-  ToolCallRunningPayloadSchema,
-  ToolCallCompletedPayloadSchema,
-  ToolCallFailedPayloadSchema,
-  ToolCallCanceledPayloadSchema,
-]);
+const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown> =
+  z.discriminatedUnion("status", [
+    ToolCallRunningPayloadSchema,
+    ToolCallCompletedPayloadSchema,
+    ToolCallFailedPayloadSchema,
+    ToolCallCanceledPayloadSchema,
+  ]);
 
+// zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
+// the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
@@ -2029,6 +2044,7 @@ export const CaptureTerminalRequestSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  BrowserAutomationExecuteResponseSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
@@ -3104,7 +3120,9 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
 
 export const ReadProjectConfigResponseMessageSchema = z.object({
   type: z.literal("read_project_config_response"),
-  payload: z.discriminatedUnion("ok", [
+  // zod-aot 0.2.0 miscompiles boolean discriminators as string options
+  // (`"true"`/`"false"`), so keep this sequential until upstream fixes it.
+  payload: z.union([
     z.object({
       requestId: z.string(),
       repoRoot: z.string(),
@@ -3123,7 +3141,9 @@ export const ReadProjectConfigResponseMessageSchema = z.object({
 
 export const WriteProjectConfigResponseMessageSchema = z.object({
   type: z.literal("write_project_config_response"),
-  payload: z.discriminatedUnion("ok", [
+  // zod-aot 0.2.0 miscompiles boolean discriminators as string options
+  // (`"true"`/`"false"`), so keep this sequential until upstream fixes it.
+  payload: z.union([
     z.object({
       requestId: z.string(),
       repoRoot: z.string(),
@@ -4158,6 +4178,7 @@ export const DaemonUpdateProgressMessageSchema = z.object({
 export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMessageSchema>;
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  BrowserAutomationExecuteRequestSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,
@@ -4663,6 +4684,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.reasoningMergeEnum]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
+      [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()
     .optional(),

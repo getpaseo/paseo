@@ -204,6 +204,8 @@ In the mobile app, enter the password in the direct connection setup screen.
 - `PASEO_LOG_FILE_ROTATE_COUNT`, override `log.file.rotate.maxFiles`
 - `PASEO_LOG`, `PASEO_LOG_FORMAT`, legacy log overrides (still supported)
 - `OPENAI_API_KEY`, override OpenAI provider key
+- `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, OpenAI speech-to-text endpoint (dictation + voice mode STT)
+- `OPENAI_TTS_API_KEY`, `OPENAI_TTS_BASE_URL`, OpenAI text-to-speech endpoint (voice mode TTS)
 - `PASEO_VOICE_LLM_PROVIDER`, override voice LLM provider (`claude`, `codex`, `opencode`)
 - `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, override voice provider selection (`local` or `openai`)
 - `PASEO_LOCAL_MODELS_DIR`, control local model directory

@@ -422,7 +422,21 @@ export const ar: TranslationResources = {
         enterUrl: "أدخل URL",
         openDevTools: "افتح أدوات تطوير المتصفح",
         cancelSelector: "إلغاء محدد العنصر",
-        selectElement: "حدد العنصر",
+        annotateElement: "التعليق على العنصر",
+        screenshotElement: "لقطة للعنصر",
+        screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
+        elementCopied: "تم نسخ العنصر إلى الحافظة",
+        screenshotFailed: "تعذّر نسخ لقطة الشاشة",
+      },
+      annotate: {
+        title: "التعليق على العنصر",
+        placeholder: "رسالة إلى الوكيل حول هذا العنصر…",
+        submit: "إرفاق",
+        cancel: "إلغاء",
+      },
+      devices: {
+        label: "حجم الجهاز",
+        responsive: "متجاوب",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
@@ -770,6 +784,7 @@ export const ar: TranslationResources = {
     },
     sections: {
       sessions: "السجل",
+      schedules: "الجداول",
     },
     grouping: {
       title: "التجميع حسب",
@@ -960,6 +975,9 @@ export const ar: TranslationResources = {
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "سنخبرك عندما يصبح التحديث جاهزًا.",
         pendingWithLastChecked: "سنخبرك عندما يصبح التحديث جاهزًا. آخر فحص في {{time}}.",
+        pendingWithVersion: "تم العثور على تحديث: {{version}}. جارٍ التنزيل...",
+        pendingWithVersionAndLastChecked:
+          "تم العثور على تحديث: {{version}}. جارٍ التنزيل... آخر فحص في {{time}}.",
         availableWithVersion: "التحديث جاهز:{{version}}",
         availableWithVersionAndLastChecked: "التحديث جاهز:{{version}}. آخر فحص في {{time}}.",
         available: "تحديث التطبيق جاهز للتثبيت.",

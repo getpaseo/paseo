@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
 import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -177,6 +178,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+  },
+  desktopScrollContainer: {
+    flexShrink: 1,
+    minHeight: 0,
+    position: "relative",
   },
   desktopScroll: {
     flexShrink: 1,
@@ -451,6 +457,11 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   scrollable?: boolean;
   presentation?: "push" | "replace";
+  /**
+   * Render the themed desktop-web scrollbar over the scroll area instead of the
+   * native browser scrollbar. No-op on native and on the mobile bottom sheet.
+   */
+  webScrollbar?: boolean;
 }
 
 export function AdaptiveModalSheet({
@@ -464,11 +475,16 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   scrollable = true,
   presentation,
+  webScrollbar = false,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
+  const desktopScrollRef = useRef<ScrollView>(null);
+  const desktopScrollbar = useWebScrollViewScrollbar(desktopScrollRef, {
+    enabled: webScrollbar && !isMobile,
+  });
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
     () =>
@@ -574,13 +590,22 @@ export function AdaptiveModalSheet({
     <>
       <SheetHeaderView header={header} onClose={onClose} />
       {scrollable ? (
-        <ScrollView
-          style={styles.desktopScroll}
-          contentContainerStyle={styles.desktopContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {children}
-        </ScrollView>
+        <View style={styles.desktopScrollContainer}>
+          <ScrollView
+            ref={desktopScrollRef}
+            style={styles.desktopScroll}
+            contentContainerStyle={styles.desktopContent}
+            keyboardShouldPersistTaps="handled"
+            onLayout={desktopScrollbar.onLayout}
+            onScroll={desktopScrollbar.onScroll}
+            onContentSizeChange={desktopScrollbar.onContentSizeChange}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={!webScrollbar}
+          >
+            {children}
+          </ScrollView>
+          {desktopScrollbar.overlay}
+        </View>
       ) : (
         <View style={styles.desktopStaticContent}>{children}</View>
       )}

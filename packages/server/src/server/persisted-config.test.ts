@@ -46,6 +46,18 @@ describe("PersistedConfigSchema daemon append system prompt config", () => {
   });
 });
 
+describe("PersistedConfigSchema daemon browser tools config", () => {
+  test("accepts optional browser tools opt-in", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        browserTools: { enabled: true },
+      },
+    });
+
+    expect(parsed.daemon?.browserTools?.enabled).toBe(true);
+  });
+});
+
 describe("PersistedConfigSchema daemon relay config", () => {
   test("accepts optional relay TLS setting", () => {
     const parsed = PersistedConfigSchema.parse({
@@ -116,20 +128,26 @@ describe("PersistedConfigSchema worktrees config", () => {
 });
 
 describe("PersistedConfigSchema provider credentials", () => {
-  test("accepts OpenAI voice credentials", () => {
+  test("accepts separate OpenAI STT and TTS credentials", () => {
     const parsed = PersistedConfigSchema.parse({
       providers: {
         openai: {
-          voice: {
-            apiKey: " voice-secret ",
-            baseUrl: " https://voice.example.com/v1 ",
+          stt: {
+            apiKey: " stt-secret ",
+            baseUrl: " https://stt.example.com/v1 ",
+          },
+          tts: {
+            apiKey: " tts-secret ",
+            baseUrl: " https://tts.example.com/v1 ",
           },
         },
       },
     });
 
-    expect(parsed.providers?.openai?.voice?.apiKey).toBe("voice-secret");
-    expect(parsed.providers?.openai?.voice?.baseUrl).toBe("https://voice.example.com/v1");
+    expect(parsed.providers?.openai?.stt?.apiKey).toBe("stt-secret");
+    expect(parsed.providers?.openai?.stt?.baseUrl).toBe("https://stt.example.com/v1");
+    expect(parsed.providers?.openai?.tts?.apiKey).toBe("tts-secret");
+    expect(parsed.providers?.openai?.tts?.baseUrl).toBe("https://tts.example.com/v1");
   });
 });
 
@@ -646,6 +664,38 @@ describe("loadPersistedConfig", () => {
       expect(config.daemon?.listen).toBe("127.0.0.1:6767");
       expect(config.daemon?.hostnames).toEqual(["localhost", ".localhost"]);
       expect(config.daemon?.mcp?.enabled).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("loads a config that still uses the removed providers.openai.voice block", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            providers: {
+              openai: {
+                apiKey: "global-key",
+                voice: { apiKey: "voice-key", baseUrl: "https://voice.example.com/v1" },
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.providers?.openai?.apiKey).toBe("global-key");
+      expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
+      expect(config.providers?.openai?.stt).toBeUndefined();
+      expect(config.providers?.openai?.tts).toBeUndefined();
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

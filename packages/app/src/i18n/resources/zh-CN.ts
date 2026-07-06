@@ -422,7 +422,21 @@ export const zhCN: TranslationResources = {
         enterUrl: "输入 URL",
         openDevTools: "打开浏览器开发者工具",
         cancelSelector: "取消元素选择器",
-        selectElement: "选择元素",
+        annotateElement: "标注元素",
+        screenshotElement: "截图元素",
+        screenshotCopied: "已将截图复制到剪贴板",
+        elementCopied: "已将元素复制到剪贴板",
+        screenshotFailed: "无法复制截图",
+      },
+      annotate: {
+        title: "标注元素",
+        placeholder: "给智能体关于此元素的留言…",
+        submit: "附加",
+        cancel: "取消",
+      },
+      devices: {
+        label: "设备尺寸",
+        responsive: "自适应",
       },
       errors: {
         failedToLoad: "页面加载失败",
@@ -764,6 +778,7 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "历史",
+      schedules: "计划",
     },
     grouping: {
       title: "分组",
@@ -949,6 +964,9 @@ export const zhCN: TranslationResources = {
         upToDateWithLastChecked: "已是最新版本。上次检查时间：{{time}}。",
         pending: "更新准备好后会通知你。",
         pendingWithLastChecked: "更新准备好后会通知你。上次检查时间：{{time}}。",
+        pendingWithVersion: "发现更新：{{version}}。正在下载...",
+        pendingWithVersionAndLastChecked:
+          "发现更新：{{version}}。正在下载... 上次检查时间：{{time}}。",
         availableWithVersion: "更新已就绪：{{version}}",
         availableWithVersionAndLastChecked: "更新已就绪：{{version}}。上次检查时间：{{time}}。",
         available: "有 app 更新可安装。",

@@ -334,6 +334,17 @@ export function createLoggedNdJsonStream(
   return { readable, writable };
 }
 
+// Lets a provider that publishes its slash commands through a vendor-specific
+// ACP extension notification (rather than the standard
+// `available_commands_update` session update) translate that payload into Paseo
+// slash commands, without the generic ACP session/client carrying any vendor
+// knowledge. Return the parsed commands (possibly empty) for a notification this
+// provider owns, or null to ignore notifications it does not handle.
+export type ACPExtensionCommandsParser = (
+  method: string,
+  params: Record<string, unknown>,
+) => AgentSlashCommand[] | null;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
@@ -356,6 +367,7 @@ interface ACPAgentClientOptions {
     thinkingOptionId: string,
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
+  extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -383,6 +395,7 @@ interface ACPAgentSessionOptions {
     thinkingOptionId: string,
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
+  extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -692,6 +705,7 @@ export class ACPAgentClient implements AgentClient {
   ) => Promise<void>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
+  private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -716,6 +730,7 @@ export class ACPAgentClient implements AgentClient {
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
   async createSession(
@@ -743,6 +758,7 @@ export class ACPAgentClient implements AgentClient {
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
+        extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -791,6 +807,7 @@ export class ACPAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1273,6 +1290,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
+  private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private closed = false;
@@ -1309,6 +1327,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentTitle = config.title ?? null;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
   get id(): string | null {
@@ -2082,6 +2101,39 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       },
       "provider.acp.extension_notification",
     );
+
+    const parsedCommands = this.extensionCommandsParser?.(method, params);
+    if (parsedCommands) {
+      this.applyResolvedCommands(parsedCommands, {
+        sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
+      });
+    }
+  }
+
+  // Cache an asynchronously-delivered slash-command batch and unblock any
+  // listCommands() call that is waiting on the initial batch. Used when a
+  // provider supplies an extensionCommandsParser whose result arrives after
+  // session/new (e.g. via a vendor extension notification). The ready gate is
+  // always settled — even for an empty batch — so a provider that legitimately
+  // reports no commands does not leave listCommands() blocked for the full
+  // initial-commands timeout. An optional sessionId scopes the batch to this
+  // session; notifications addressed to a different session are ignored.
+  private applyResolvedCommands(
+    commands: AgentSlashCommand[],
+    options?: { sessionId?: string },
+  ): void {
+    if (
+      options?.sessionId !== undefined &&
+      this.sessionId !== null &&
+      options.sessionId !== this.sessionId
+    ) {
+      return;
+    }
+
+    if (commands.length > 0) {
+      this.cachedCommands = commands;
+    }
+    this.settleCommandsReady();
   }
 
   async readTextFile(params: ReadTextFileRequest): Promise<{ content: string }> {

@@ -63,4 +63,9 @@ export const settingsStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
+  rowError: {
+    color: theme.colors.statusDanger,
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[1],
+  },
 }));

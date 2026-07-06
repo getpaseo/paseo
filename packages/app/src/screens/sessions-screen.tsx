@@ -1,23 +1,18 @@
-import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { Pressable, type PressableStateCallbackType, View, Text } from "react-native";
+import { useMemo, useState, useCallback, useEffect } from "react";
+import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronDown, ChevronLeft, Server } from "lucide-react-native";
+import { ChevronLeft } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { AgentList } from "@/components/agent-list";
-import { HostStatusDotSlot } from "@/components/hosts/host-picker";
-import {
-  ALL_HOSTS_OPTION_ID,
-  getHostPickerLabel,
-  HostPicker,
-} from "@/components/hosts/host-picker";
+import { HostFilter } from "@/components/hosts/host-filter";
+import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { useAgentHistory } from "@/hooks/use-agent-history";
 import { useHosts } from "@/runtime/host-runtime";
-import { type HostProfile } from "@/types/host-connection";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 
 export function SessionsScreen() {
@@ -28,71 +23,6 @@ export function SessionsScreen() {
   }
 
   return <SessionsScreenContent />;
-}
-
-function SessionsHostFilter({
-  hosts,
-  selectedHost,
-  onSelectHost,
-}: {
-  hosts: HostProfile[];
-  selectedHost: string;
-  onSelectHost: (serverId: string) => void;
-}) {
-  const { theme } = useUnistyles();
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const filterAnchorRef = useRef<View>(null);
-
-  const selectedHostLabel = useMemo(
-    () => getHostPickerLabel(hosts, selectedHost, { includeAllHost: true }),
-    [hosts, selectedHost],
-  );
-
-  const handleFilterOpen = useCallback(() => setIsFilterOpen(true), []);
-
-  const filterTriggerStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.filterTrigger,
-      Boolean(hovered) && styles.filterTriggerHovered,
-      pressed && styles.filterTriggerPressed,
-    ],
-    [],
-  );
-
-  return (
-    <HostPicker
-      hosts={hosts}
-      value={selectedHost}
-      onSelect={onSelectHost}
-      open={isFilterOpen}
-      onOpenChange={setIsFilterOpen}
-      anchorRef={filterAnchorRef}
-      includeAllHost
-      searchable={false}
-      title="Filter by host"
-      desktopPlacement="bottom-start"
-    >
-      <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
-        <Pressable
-          onPress={handleFilterOpen}
-          style={filterTriggerStyle}
-          testID="sessions-host-filter-trigger"
-          accessibilityRole="button"
-          accessibilityLabel={`Filter: ${selectedHostLabel}`}
-        >
-          {selectedHost === ALL_HOSTS_OPTION_ID ? (
-            <Server size={14} color={theme.colors.foregroundMuted} />
-          ) : (
-            <HostStatusDotSlot serverId={selectedHost} />
-          )}
-          <Text style={styles.filterTriggerText} numberOfLines={1}>
-            {selectedHostLabel}
-          </Text>
-          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-        </Pressable>
-      </View>
-    </HostPicker>
-  );
 }
 
 function SessionsScreenContent() {
@@ -152,10 +82,11 @@ function SessionsScreenContent() {
       <MenuHeader title={t("sessions.title")} />
       {showHostFilter ? (
         <View style={styles.filterContainer}>
-          <SessionsHostFilter
+          <HostFilter
             hosts={hosts}
             selectedHost={selectedHost}
             onSelectHost={setSelectedHost}
+            triggerTestID="sessions-host-filter-trigger"
           />
         </View>
       ) : null}
@@ -206,32 +137,6 @@ const styles = StyleSheet.create((theme) => ({
       md: theme.spacing[6],
     },
     paddingTop: theme.spacing[4],
-  },
-  filterTriggerWrap: {
-    alignSelf: "flex-start",
-  },
-  filterTrigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1.5],
-    alignSelf: "flex-start",
-    paddingVertical: theme.spacing[1.5],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface1,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  filterTriggerHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  filterTriggerPressed: {
-    backgroundColor: theme.colors.surface3,
-  },
-  filterTriggerText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
   },
   emptyContainer: {
     flex: 1,

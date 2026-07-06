@@ -188,9 +188,9 @@ describe("opencode tool-call mapper", () => {
         toolName: "read",
         callId: "opencode-read-xml",
         status: "completed",
-        input: { filePath: "/Users/moboudra/dev/paseo/docs/release.md" },
+        input: { filePath: "/workspaces/paseo/docs/release.md" },
         output: [
-          "<path>/Users/moboudra/dev/paseo/docs/release.md</path>",
+          "<path>/workspaces/paseo/docs/release.md</path>",
           "<type>file</type>",
           "<content>",
           "1: # Release",
@@ -203,7 +203,7 @@ describe("opencode tool-call mapper", () => {
 
     expect(item.detail).toEqual({
       type: "read",
-      filePath: "/Users/moboudra/dev/paseo/docs/release.md",
+      filePath: "/workspaces/paseo/docs/release.md",
       content: [
         "1: # Release",
         "2:",
@@ -282,8 +282,7 @@ describe("opencode tool-call mapper", () => {
         callId: "opencode-write-success-text",
         status: "completed",
         input: {
-          filePath:
-            "/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/cold-ladybug/dummy.txt",
+          filePath: "/workspaces/paseo/worktrees/cold-ladybug/dummy.txt",
           content: "hello world\n",
         },
         output: "Wrote file successfully.",
@@ -292,8 +291,7 @@ describe("opencode tool-call mapper", () => {
 
     expect(item.detail).toEqual({
       type: "write",
-      filePath:
-        "/Users/moboudra/dev/paseo/.dev/paseo-home/worktrees/1luy0po7/cold-ladybug/dummy.txt",
+      filePath: "/workspaces/paseo/worktrees/cold-ladybug/dummy.txt",
       content: "hello world\n",
     });
   });
@@ -305,9 +303,9 @@ describe("opencode tool-call mapper", () => {
         callId: "opencode-edit-camel",
         status: "completed",
         input: {
-          filePath: "/Users/moboudra/dev/paseo/packages/website/src/data/agent-pages.ts",
-          oldString: 'metaTitle: "Junie agent Mobile and Desktop App, Open Source"',
-          newString: 'metaTitle: "Junie Agent Mobile and Desktop App, Open Source"',
+          filePath: "/workspaces/paseo/packages/website/src/data/agent-pages.ts",
+          oldString: 'metaTitle: "Agent page"',
+          newString: 'metaTitle: "Updated agent page"',
         },
         output: "Edit applied successfully.",
       }),
@@ -315,9 +313,9 @@ describe("opencode tool-call mapper", () => {
 
     expect(item.detail).toEqual({
       type: "edit",
-      filePath: "/Users/moboudra/dev/paseo/packages/website/src/data/agent-pages.ts",
-      oldString: 'metaTitle: "Junie agent Mobile and Desktop App, Open Source"',
-      newString: 'metaTitle: "Junie Agent Mobile and Desktop App, Open Source"',
+      filePath: "/workspaces/paseo/packages/website/src/data/agent-pages.ts",
+      oldString: 'metaTitle: "Agent page"',
+      newString: 'metaTitle: "Updated agent page"',
     });
   });
 

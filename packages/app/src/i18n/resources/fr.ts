@@ -426,7 +426,21 @@ export const fr: TranslationResources = {
         enterUrl: "EntrezURL",
         openDevTools: "Outils de développement du navigateur ouvert",
         cancelSelector: "Annuler le sélecteur d'élément",
-        selectElement: "Sélectionner un élément",
+        annotateElement: "Annoter l'élément",
+        screenshotElement: "Capturer l'élément",
+        screenshotCopied: "Capture d'écran copiée dans le presse-papiers",
+        elementCopied: "Élément copié dans le presse-papiers",
+        screenshotFailed: "Impossible de copier la capture",
+      },
+      annotate: {
+        title: "Annoter l'élément",
+        placeholder: "Message à l'agent concernant cet élément…",
+        submit: "Joindre",
+        cancel: "Annuler",
+      },
+      devices: {
+        label: "Taille de l'appareil",
+        responsive: "Adaptatif",
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
@@ -796,6 +810,7 @@ export const fr: TranslationResources = {
     },
     sections: {
       sessions: "Historique",
+      schedules: "Planifications",
     },
     grouping: {
       title: "Grouper par",
@@ -987,6 +1002,9 @@ export const fr: TranslationResources = {
         pending: "Nous vous informerons lorsque la mise à jour sera prête.",
         pendingWithLastChecked:
           "Nous vous informerons lorsque la mise à jour sera prête. Dernière vérification à {{time}}.",
+        pendingWithVersion: "Mise à jour trouvée : {{version}}. Téléchargement...",
+        pendingWithVersionAndLastChecked:
+          "Mise à jour trouvée : {{version}}. Téléchargement... Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête:{{version}}",
         availableWithVersionAndLastChecked:
           "Mise à jour prête:{{version}}. Dernière vérification à {{time}}.",

@@ -15,7 +15,6 @@ describe("initializeOpenAiSpeechServices", () => {
         voiceTts: { provider: "openai", explicit: true },
       },
       openaiConfig: {
-        apiKey: "sk-test",
         stt: { apiKey: "sk-test" },
         tts: { apiKey: "sk-test" },
       },

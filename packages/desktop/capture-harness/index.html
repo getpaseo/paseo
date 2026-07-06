@@ -1,0 +1,376 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Paseo Browser Capture Harness</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: #202020;
+        overflow: hidden;
+        font-family: Arial, sans-serif;
+      }
+
+      #paseo-browser-resident-webviews {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        opacity: 1;
+        pointer-events: none;
+        display: block;
+        visibility: visible;
+      }
+
+      .capture-harness-webview {
+        display: inline-flex;
+        flex: 0 0 auto;
+        width: 1280px;
+        height: 800px;
+        border: 0;
+        background: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="paseo-browser-resident-webviews" aria-hidden="true"></div>
+
+    <script>
+      const RESIDENT_VIEWPORT_WIDTH = 1280;
+      const RESIDENT_VIEWPORT_HEIGHT = 800;
+      const host = document.getElementById("paseo-browser-resident-webviews");
+      const params = new URLSearchParams(window.location.search);
+      const requestedWebviewCount = params.has("webviewCount")
+        ? Number(params.get("webviewCount"))
+        : 2;
+      const webviewCount = Number.isFinite(requestedWebviewCount)
+        ? Math.max(0, requestedWebviewCount)
+        : 2;
+      const webviews = [];
+      const activeTokens = new Set();
+      let nextTokenId = 0;
+      let permanentParkingState = params.get("permanentParkingState") || "";
+
+      function appendHarnessWebview(sourceUrl) {
+        const index = webviews.length;
+        const webview = document.createElement("webview");
+        webview.id = `target-webview-${index + 1}`;
+        webview.className = "capture-harness-webview";
+        webview.setAttribute("data-paseo-browser-id", `capture-harness-${index + 1}`);
+        webview.setAttribute("partition", `persist:paseo-capture-harness-${index + 1}`);
+        webview.setAttribute("allowpopups", "true");
+        webview.setAttribute("spellcheck", "false");
+        webview.setAttribute("autosize", "on");
+        webview.src = sourceUrl;
+        applyStackedWebviewStyle(webview);
+        host.appendChild(webview);
+        webviews.push(webview);
+        return index;
+      }
+
+      for (let index = 0; index < webviewCount; index += 1) {
+        appendHarnessWebview(params.get("targetUrl") || "bright.html");
+      }
+
+      function applyHostParking() {
+        host.style.position = "fixed";
+        host.style.left = "-20000px";
+        host.style.top = "0";
+        host.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
+        host.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
+        host.style.overflow = "hidden";
+        host.style.opacity = "0";
+        host.style.pointerEvents = "none";
+        host.style.zIndex = "";
+        host.style.clipPath = "";
+        host.style.visibility = "";
+        host.style.transform = "";
+      }
+
+      function applyWebviewBaseStyle(webview) {
+        webview.style.display = "inline-flex";
+        webview.style.flex = "0 0 auto";
+        webview.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
+        webview.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
+        webview.style.border = "0";
+        webview.style.background = "transparent";
+      }
+
+      function applyLegacyVerticalWebviewStyle(webview, index) {
+        applyWebviewBaseStyle(webview);
+        webview.style.position = "";
+        webview.style.left = "";
+        webview.style.top = "";
+        webview.style.marginTop = index === 0 ? "0" : "4px";
+        webview.style.zIndex = "";
+      }
+
+      function applyStackedWebviewStyle(webview, zIndex = "0") {
+        applyWebviewBaseStyle(webview);
+        webview.style.position = "absolute";
+        webview.style.left = "0";
+        webview.style.top = "0";
+        webview.style.marginTop = "0";
+        webview.style.zIndex = zIndex;
+      }
+
+      function applyParking() {
+        permanentParkingState = "";
+        applyHostParking();
+        webviews.forEach((webview) => {
+          applyStackedWebviewStyle(webview);
+        });
+      }
+
+      function applyLegacyVerticalParking() {
+        applyHostParking();
+        webviews.forEach((webview, index) => {
+          applyLegacyVerticalWebviewStyle(webview, index);
+        });
+      }
+
+      function applyCapturePrep() {
+        permanentParkingState = "";
+        host.style.position = "fixed";
+        host.style.left = "0";
+        host.style.top = "0";
+        host.style.width = "1px";
+        host.style.height = "1px";
+        host.style.overflow = "hidden";
+        host.style.opacity = "1";
+        host.style.pointerEvents = "none";
+        host.style.zIndex = "1";
+        host.style.clipPath = "";
+        host.style.visibility = "";
+        host.style.transform = "";
+      }
+
+      function applyHostPermanentBase() {
+        host.style.position = "fixed";
+        host.style.left = "0";
+        host.style.top = "0";
+        host.style.width = "1px";
+        host.style.height = "1px";
+        host.style.overflow = "hidden";
+        host.style.opacity = "1";
+        host.style.pointerEvents = "none";
+        host.style.display = "block";
+        host.style.zIndex = "";
+        host.style.clipPath = "";
+        host.style.visibility = "visible";
+        host.style.transform = "";
+        host.style.transformOrigin = "";
+      }
+
+      function applyPermanentWebviewBase(webview, index) {
+        applyStackedWebviewStyle(webview);
+        webview.style.opacity = "";
+        webview.style.transform = "";
+        webview.style.pointerEvents = "";
+        webview.style.zIndex = "0";
+        webview.style.width = `${RESIDENT_VIEWPORT_WIDTH}px`;
+        webview.style.height = `${RESIDENT_VIEWPORT_HEIGHT}px`;
+        webview.style.left = "0";
+        webview.style.top = "0";
+      }
+
+      function applyPermanentParkingState(stateName) {
+        permanentParkingState = stateName;
+        activeTokens.clear();
+        applyHostPermanentBase();
+        webviews.forEach(applyPermanentWebviewBase);
+
+        if (stateName === "p1-overflow-1x1") {
+          return state();
+        }
+
+        if (stateName === "p2-clip-path-1x1") {
+          host.style.width = "1px";
+          host.style.height = "1px";
+          host.style.overflow = "visible";
+          host.style.clipPath = "inset(1px)";
+          return state();
+        }
+
+        if (stateName === "p3-opacity-0") {
+          host.style.opacity = "0";
+          return state();
+        }
+
+        if (stateName === "p4-transform-scale-0") {
+          host.style.transform = "scale(0)";
+          return state();
+        }
+
+        if (stateName === "p4-transform-scale-0001") {
+          host.style.transform = "scale(0.001)";
+          return state();
+        }
+
+        if (stateName === "p5-webview-0x0") {
+          webviews.forEach((webview) => {
+            webview.style.width = "0";
+            webview.style.height = "0";
+          });
+          return state();
+        }
+
+        if (stateName === "p5-webview-1x1") {
+          webviews.forEach((webview) => {
+            webview.style.width = "1px";
+            webview.style.height = "1px";
+          });
+          return state();
+        }
+
+        if (stateName === "p6-z-index-negative") {
+          host.style.zIndex = "-1";
+          return state();
+        }
+
+        if (stateName === "p7-opacity-001") {
+          host.style.opacity = "0.01";
+          return state();
+        }
+
+        throw new Error(`Unknown permanent parking state: ${stateName}`);
+      }
+
+      function applyTargetStacking(targetIndex) {
+        webviews.forEach((webview, index) => {
+          applyStackedWebviewStyle(webview, index === targetIndex ? "2" : "0");
+        });
+      }
+
+      function waitFrames(count) {
+        return new Promise((resolve) => {
+          function step(remaining) {
+            if (remaining <= 0) {
+              resolve();
+              return;
+            }
+            requestAnimationFrame(() => step(remaining - 1));
+          }
+          step(count);
+        });
+      }
+
+      function state(targetIndex = 0) {
+        const hostRect = host.getBoundingClientRect();
+        const targetWebview = webviews[targetIndex] || webviews[0];
+        const webviewRect = targetWebview?.getBoundingClientRect();
+        return {
+          hostStyle: {
+            left: host.style.left,
+            top: host.style.top,
+            width: host.style.width,
+            height: host.style.height,
+            overflow: host.style.overflow,
+            opacity: host.style.opacity,
+            pointerEvents: host.style.pointerEvents,
+            zIndex: host.style.zIndex,
+            clipPath: host.style.clipPath,
+            transform: host.style.transform,
+          },
+          hostRect: {
+            x: hostRect.x,
+            y: hostRect.y,
+            width: hostRect.width,
+            height: hostRect.height,
+          },
+          webviewRect: {
+            x: webviewRect?.x ?? 0,
+            y: webviewRect?.y ?? 0,
+            width: webviewRect?.width ?? 0,
+            height: webviewRect?.height ?? 0,
+          },
+          webviews: webviews.map((webview) => {
+            const rect = webview.getBoundingClientRect();
+            return {
+              id: webview.id,
+              zIndex: webview.style.zIndex,
+              position: webview.style.position,
+              opacity: webview.style.opacity,
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+            };
+          }),
+        };
+      }
+
+      window.captureHarness = {
+        async waitForFrames(count = 2) {
+          await waitFrames(count);
+          return state();
+        },
+        webContentsIds() {
+          return webviews.map((webview) =>
+            typeof webview.getWebContentsId === "function" ? webview.getWebContentsId() : null,
+          );
+        },
+        addWebview(sourceUrl) {
+          return appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
+        },
+        addPermanentWebview(sourceUrl, stateName) {
+          const index = appendHarnessWebview(sourceUrl || params.get("targetUrl") || "bright.html");
+          applyPermanentParkingState(stateName || permanentParkingState);
+          return index;
+        },
+        async applyPermanentParkingState(stateName) {
+          const nextState = applyPermanentParkingState(stateName);
+          await waitFrames(2);
+          return nextState;
+        },
+        async prepareForPixelCapture(targetIndex = 0) {
+          const token = `capture-${++nextTokenId}`;
+          activeTokens.add(token);
+          applyCapturePrep();
+          applyTargetStacking(targetIndex);
+          await waitFrames(2);
+          webviews[targetIndex].getBoundingClientRect();
+          return { token, state: state(targetIndex) };
+        },
+        async prepareLegacyVerticalPixelCapture(targetIndex = 0) {
+          const token = `legacy-capture-${++nextTokenId}`;
+          activeTokens.add(token);
+          applyLegacyVerticalParking();
+          applyCapturePrep();
+          await waitFrames(2);
+          webviews[targetIndex].getBoundingClientRect();
+          return { token, state: state(targetIndex) };
+        },
+        async restorePixelCapture(token) {
+          activeTokens.delete(token);
+          if (activeTokens.size === 0) {
+            applyParking();
+          }
+          await waitFrames(2);
+          return state();
+        },
+        async restoreLegacyVerticalParking(token) {
+          activeTokens.delete(token);
+          applyLegacyVerticalParking();
+          await waitFrames(2);
+          return state();
+        },
+        async restoreParking() {
+          activeTokens.clear();
+          applyParking();
+          await waitFrames(2);
+          return state();
+        },
+      };
+
+      if (permanentParkingState) {
+        applyPermanentParkingState(permanentParkingState);
+      }
+    </script>
+  </body>
+</html>

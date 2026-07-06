@@ -426,7 +426,21 @@ export const ja: TranslationResources = {
         enterUrl: "URLを入力",
         openDevTools: "ブラウザ開発ツールを開く",
         cancelSelector: "要素セレクターをキャンセル",
-        selectElement: "要素を選択",
+        annotateElement: "要素に注釈を付ける",
+        screenshotElement: "要素のスクリーンショット",
+        screenshotCopied: "スクリーンショットをクリップボードにコピーしました",
+        elementCopied: "要素をクリップボードにコピーしました",
+        screenshotFailed: "スクリーンショットをコピーできませんでした",
+      },
+      annotate: {
+        title: "要素に注釈を付ける",
+        placeholder: "この要素についてエージェントへのメッセージ…",
+        submit: "添付",
+        cancel: "キャンセル",
+      },
+      devices: {
+        label: "デバイスサイズ",
+        responsive: "レスポンシブ",
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
@@ -782,6 +796,7 @@ export const ja: TranslationResources = {
     },
     sections: {
       sessions: "履歴",
+      schedules: "スケジュール",
     },
     grouping: {
       title: "グループ分け",
@@ -972,6 +987,9 @@ export const ja: TranslationResources = {
         upToDateWithLastChecked: "最新の状態です。最終確認: {{time}}。",
         pending: "更新の準備ができたらお知らせします。",
         pendingWithLastChecked: "更新の準備ができたらお知らせします。最終確認: {{time}}。",
+        pendingWithVersion: "更新が見つかりました: {{version}}。ダウンロード中...",
+        pendingWithVersionAndLastChecked:
+          "更新が見つかりました: {{version}}。ダウンロード中... 最終確認: {{time}}。",
         availableWithVersion: "更新の準備ができました: {{version}}",
         availableWithVersionAndLastChecked:
           "更新の準備ができました: {{version}}。最終確認: {{time}}。",

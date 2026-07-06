@@ -2359,6 +2359,126 @@ describe("Codex app-server provider", () => {
     rmSync(source, { force: true });
   });
 
+  test("mcpToolCall image content emits a completed tool call plus assistant markdown image", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    const timelineEvents: Array<Extract<AgentStreamEvent, { type: "timeline" }>> = [];
+    const timelineItemsReceived = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Timed out waiting for MCP image timeline events"));
+      }, 1000);
+      const unsubscribe = session.subscribe((event) => {
+        events.push(event);
+        if (event.type !== "timeline") {
+          return;
+        }
+        timelineEvents.push(event);
+        if (timelineEvents.length === 2) {
+          clearTimeout(timeout);
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+
+    try {
+      const { turnId } = await session.startTurn("capture a browser screenshot");
+      appServer.child.stdout.write(
+        `${JSON.stringify({
+          method: "item/completed",
+          params: {
+            item: {
+              id: "mcp-browser-screenshot",
+              type: "mcpToolCall",
+              status: "completed",
+              server: "paseo",
+              tool: "browser_screenshot",
+              arguments: { browserId: "11111111-1111-4111-8111-111111111111" },
+              result: {
+                content: [
+                  { type: "text", text: "Captured browser screenshot (1x1)." },
+                  { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+                ],
+                structuredContent: {
+                  ok: true,
+                  result: {
+                    command: "screenshot",
+                    browserId: "11111111-1111-4111-8111-111111111111",
+                    mimeType: "image/png",
+                    width: 1,
+                    height: 1,
+                  },
+                },
+              },
+            },
+          },
+        })}\n`,
+      );
+
+      await timelineItemsReceived;
+
+      expect(timelineEvents).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: {
+            type: "tool_call",
+            callId: "mcp-browser-screenshot",
+            name: "paseo.browser_screenshot",
+            status: "completed",
+            error: null,
+            detail: {
+              type: "unknown",
+              input: { browserId: "11111111-1111-4111-8111-111111111111" },
+              output: {
+                content: [
+                  { type: "text", text: "Captured browser screenshot (1x1)." },
+                  { type: "text", text: "[image]" },
+                ],
+                structuredContent: {
+                  ok: true,
+                  result: {
+                    command: "screenshot",
+                    browserId: "11111111-1111-4111-8111-111111111111",
+                    mimeType: "image/png",
+                    width: 1,
+                    height: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: expect.objectContaining({ type: "assistant_message" }),
+        },
+      ]);
+      const imageEvent = timelineEvents[1];
+      if (imageEvent.item.type !== "assistant_message") {
+        throw new Error("Expected assistant image timeline event");
+      }
+      expect(JSON.stringify(events)).not.toContain(ONE_BY_ONE_PNG_BASE64);
+      const source = markdownImageSource(imageEvent.item.text);
+      expect(source).toMatch(/paseo-attachments[\\/].+\.png$/);
+      expect(existsSync(source)).toBe(true);
+      rmSync(source, { force: true });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("ignores incomplete imageGeneration thread items without failing the turn", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

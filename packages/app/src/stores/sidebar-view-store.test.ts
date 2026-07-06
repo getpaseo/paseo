@@ -40,24 +40,44 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       groupMode: "project",
       sortMode: "custom",
-      hostFilter: null,
+      hostFilters: [],
     });
   });
 
-  it("keeps a host filter that still points at an available host", () => {
-    useSidebarViewStore.getState().setHostFilter("host-a");
+  it("toggles multiple hosts into and out of the filter", () => {
+    const store = useSidebarViewStore.getState();
+    store.toggleHostFilter("host-a");
+    store.toggleHostFilter("host-b");
 
-    useSidebarViewStore.getState().reconcileHostFilter(["host-a", "host-b"]);
+    expect(useSidebarViewStore.getState().hostFilters).toEqual(["host-a", "host-b"]);
 
-    expect(useSidebarViewStore.getState().hostFilter).toBe("host-a");
+    store.toggleHostFilter("host-a");
+
+    expect(useSidebarViewStore.getState().hostFilters).toEqual(["host-b"]);
+
+    store.clearHostFilters();
+
+    expect(useSidebarViewStore.getState().hostFilters).toEqual([]);
   });
 
-  it("clears a host filter after that host is removed", () => {
-    useSidebarViewStore.getState().setHostFilter("removed-host");
+  it("keeps host filters that still point at available hosts", () => {
+    const store = useSidebarViewStore.getState();
+    store.toggleHostFilter("host-a");
+    store.toggleHostFilter("host-b");
 
-    useSidebarViewStore.getState().reconcileHostFilter(["host-a"]);
+    store.reconcileHostFilters(["host-a", "host-b", "host-c"]);
 
-    expect(useSidebarViewStore.getState().hostFilter).toBeNull();
+    expect(useSidebarViewStore.getState().hostFilters).toEqual(["host-a", "host-b"]);
+  });
+
+  it("drops a host filter after that host is removed", () => {
+    const store = useSidebarViewStore.getState();
+    store.toggleHostFilter("host-a");
+    store.toggleHostFilter("removed-host");
+
+    store.reconcileHostFilters(["host-a"]);
+
+    expect(useSidebarViewStore.getState().hostFilters).toEqual(["host-a"]);
   });
 
   it("migrates legacy per-host group modes to the new global mode", () => {
@@ -71,7 +91,47 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       sortMode: "custom",
-      hostFilter: null,
+      hostFilters: [],
+    });
+  });
+
+  it("migrates a pre-v2 single host filter to the multi-host list", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "status",
+        hostFilter: "host-a",
+      }),
+    ).toEqual({
+      groupMode: "status",
+      sortMode: "custom",
+      hostFilters: ["host-a"],
+    });
+  });
+
+  it("preserves the persisted sort mode during migration", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "status",
+        sortMode: "activity",
+        hostFilters: ["host-a"],
+      }),
+    ).toEqual({
+      groupMode: "status",
+      sortMode: "activity",
+      hostFilters: ["host-a"],
+    });
+  });
+
+  it("defaults a missing sort mode to custom during migration", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "project",
+        hostFilters: [],
+      }),
+    ).toEqual({
+      groupMode: "project",
+      sortMode: "custom",
+      hostFilters: [],
     });
   });
 
@@ -79,13 +139,12 @@ describe("sidebar view store", () => {
     expect(
       migrateSidebarViewState({
         groupMode: "status",
-        sortMode: "activity",
-        hostFilter: "host-a",
+        hostFilters: ["host-a", "host-b"],
       }),
     ).toEqual({
       groupMode: "status",
-      sortMode: "activity",
-      hostFilter: "host-a",
+      sortMode: "custom",
+      hostFilters: ["host-a", "host-b"],
     });
   });
 
@@ -112,8 +171,8 @@ describe("sidebar view store", () => {
   it("uses the new storage key without reading the legacy key when current state exists", async () => {
     const storage = createMemoryStorage({
       "sidebar-view": JSON.stringify({
-        state: { groupMode: "project", hostFilter: "host-a" },
-        version: 1,
+        state: { groupMode: "project", hostFilters: ["host-a"] },
+        version: 2,
       }),
       "sidebar-group-mode": JSON.stringify({
         state: { groupModeByServerId: { "host-b": "status" } },
@@ -125,8 +184,8 @@ describe("sidebar view store", () => {
 
     expect(value).toBe(
       JSON.stringify({
-        state: { groupMode: "project", hostFilter: "host-a" },
-        version: 1,
+        state: { groupMode: "project", hostFilters: ["host-a"] },
+        version: 2,
       }),
     );
     expect(storage.reads).toEqual(["sidebar-view"]);
