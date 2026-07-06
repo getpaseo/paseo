@@ -25,6 +25,7 @@ interface RecordedLog {
 }
 
 interface RecordedSpawn {
+  argv0: string | undefined;
   shell: string;
   args: string[];
   timeoutMs: number | undefined;
@@ -76,7 +77,7 @@ function spawnResult(fields: SpawnResultFields): SpawnSyncReturns<string> {
   const stderr = fields.stderr ?? "";
   return {
     pid: 0,
-    output: [stdout, stdout, stderr],
+    output: [null, stdout, stderr],
     stdout,
     stderr,
     status: fields.status === undefined ? 0 : fields.status,
@@ -120,6 +121,7 @@ describe("login shell env retry behavior", () => {
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
       const recordedArgs = Array.isArray(args) ? args.map(String) : [];
       calls.push({
+        argv0: options?.argv0,
         shell: String(shell),
         args: recordedArgs,
         timeoutMs: options?.timeout,
@@ -169,6 +171,7 @@ describe("login shell env retry behavior", () => {
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
       const recordedArgs = Array.isArray(args) ? args.map(String) : [];
       calls.push({
+        argv0: options?.argv0,
         shell: String(shell),
         args: recordedArgs,
         timeoutMs: options?.timeout,
@@ -240,6 +243,7 @@ describe("login shell env retry behavior", () => {
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
       const recordedArgs = Array.isArray(args) ? args.map(String) : [];
       calls.push({
+        argv0: options?.argv0,
         shell: String(shell),
         args: recordedArgs,
         timeoutMs: options?.timeout,
@@ -295,6 +299,7 @@ describe("login shell env retry behavior", () => {
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
       const recordedArgs = Array.isArray(args) ? args.map(String) : [];
       calls.push({
+        argv0: options?.argv0,
         shell: String(shell),
         args: recordedArgs,
         timeoutMs: options?.timeout,
@@ -366,6 +371,7 @@ describe("login shell env retry behavior", () => {
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
       const recordedArgs = Array.isArray(args) ? args.map(String) : [];
       calls.push({
+        argv0: options?.argv0,
         shell: String(shell),
         args: recordedArgs,
         timeoutMs: options?.timeout,
@@ -388,6 +394,57 @@ describe("login shell env retry behavior", () => {
     expect(logger.infos[2]?.fields).toMatchObject({
       durationMs: 4,
       timeoutMs: 1234,
+    });
+  });
+
+  it("uses argv0 for the non-interactive tcsh login retry", () => {
+    const env = {
+      ...createEnv(fakeHome),
+      SHELL: "/bin/tcsh",
+    };
+    const logger = new RecordingLoginShellLogger();
+    const clock = createTestClock();
+    const calls: RecordedSpawn[] = [];
+    const nonInteractivePath = "/tcsh/login/bin:/usr/bin:/bin";
+    const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
+      const recordedArgs = Array.isArray(args) ? args.map(String) : [];
+      calls.push({
+        argv0: options?.argv0,
+        shell: String(shell),
+        args: recordedArgs,
+        timeoutMs: options?.timeout,
+      });
+
+      if (calls.length === 1) {
+        clock.advance(8);
+        return spawnResult({ stdout: "no marker\n" });
+      }
+
+      clock.advance(2);
+      return successResult(String(recordedArgs.at(-1)), { ...env, PATH: nonInteractivePath });
+    };
+
+    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+
+    expect(env.PATH).toBe(nonInteractivePath);
+    expect(calls).toHaveLength(2);
+    expect(shellArgsFromRecordedCall(calls[0])).toEqual(["-ic"]);
+    expect(calls[0]?.argv0).toBeUndefined();
+    expect(shellArgsFromRecordedCall(calls[1])).toEqual(["-c"]);
+    expect(calls[1]?.argv0).toBe("-tcsh");
+    expect(calls[1]?.timeoutMs).toBe(29_992);
+    expect(logger.warnings[0]?.fields).toMatchObject({
+      attemptKind: "interactive",
+      shellArgs: ["-ic"],
+      reason: "marker-missing",
+      timeoutMs: 15_000,
+    });
+    expect(logger.infos[1]?.fields).toMatchObject({
+      attemptKind: "non-interactive",
+      argv0: "-tcsh",
+      shellArgs: ["-c"],
+      reason: "success",
+      timeoutMs: 29_992,
     });
   });
 });

@@ -41,6 +41,7 @@ function pathEnv(env: NodeJS.ProcessEnv | Record<string, string>): string | null
 interface ShellEnvErrorDetails {
   reason: string;
   attemptKind?: ShellEnvAttemptKind;
+  argv0?: string;
   shell?: string;
   shellArgs?: string[];
   status?: number | null;
@@ -63,6 +64,7 @@ class ShellEnvError extends Error {
 
 interface ShellEnvAttempt {
   kind: ShellEnvAttemptKind;
+  argv0?: string;
   shellArgs: string[];
 }
 
@@ -119,6 +121,7 @@ function throwIfShellFailed(
       {
         reason: shellFailureReason(result),
         attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
         shellArgs: attempt.shellArgs,
         status: result.status,
@@ -134,6 +137,7 @@ function throwIfShellFailed(
     throw new ShellEnvError("login shell exited non-zero", {
       reason: "non-zero-exit",
       attemptKind: attempt.kind,
+      argv0: attempt.argv0,
       shell,
       shellArgs: attempt.shellArgs,
       status: result.status,
@@ -149,6 +153,7 @@ function throwIfShellFailed(
       {
         reason: "no-stdout",
         attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
         shellArgs: attempt.shellArgs,
         status: result.status,
@@ -211,7 +216,7 @@ function shellEnvCommand(shell: string, mark: string): ShellEnvCommand {
       command: `'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`,
       attempts: [
         { kind: "interactive", shellArgs: ["-ic"] },
-        { kind: "non-interactive", shellArgs: ["-lc"] },
+        { kind: "non-interactive", argv0: `-${name}`, shellArgs: ["-c"] },
       ],
     };
   }
@@ -235,6 +240,7 @@ function shellEnvForAttempt(
   timeoutMs: number,
 ): Record<string, string> {
   const result = deps.spawnSync(shell, [...attempt.shellArgs, command], {
+    argv0: attempt.argv0,
     encoding: "utf8",
     timeout: timeoutMs,
     windowsHide: true,
@@ -252,6 +258,7 @@ function shellEnvForAttempt(
     throw new ShellEnvError("login shell output did not contain environment marker", {
       reason: "marker-missing",
       attemptKind: attempt.kind,
+      argv0: attempt.argv0,
       shell,
       shellArgs: attempt.shellArgs,
       status: result.status,
@@ -270,6 +277,7 @@ function shellEnvForAttempt(
       {
         reason: "json-parse",
         attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
         shellArgs: attempt.shellArgs,
         status: result.status,
@@ -293,6 +301,7 @@ function shellAttemptErrorDetails(
     : {
         reason: "throw",
         attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
         shellArgs: attempt.shellArgs,
       };
@@ -367,6 +376,7 @@ function resolveShellEnv(
     shellArgs: attempts[0]?.shellArgs ?? [],
     attempts: attempts.map((attempt) => ({
       attemptKind: attempt.kind,
+      argv0: attempt.argv0,
       shellArgs: attempt.shellArgs,
     })),
     timeoutMs,
@@ -403,6 +413,7 @@ function resolveShellEnv(
 
       deps.logger.info("[login-shell-env] attempt applied", {
         attemptKind: attempt.kind,
+        argv0: attempt.argv0,
         shell,
         shellArgs: attempt.shellArgs,
         reason: "success",
