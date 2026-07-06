@@ -827,6 +827,69 @@ describe("ScheduleService", () => {
     expect(storedAgent?.workspaceId).toBe(updated.target.config.workspaceId);
   });
 
+  test("new-agent schedule creation validates cwd before minting a workspace", async () => {
+    let ensureCalls = 0;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        return "workspace-created-for-missing-cwd";
+      },
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    await expect(
+      service.create({
+        prompt: "missing cwd",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: { provider: "claude", cwd: join(tempDir, "does-not-exist") },
+        },
+      }),
+    ).rejects.toThrow(ScheduleTargetGoneError);
+    expect(ensureCalls).toBe(0);
+  });
+
+  test("new-agent schedule cwd updates validate cwd before minting a workspace", async () => {
+    let ensureCalls = 0;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        return `workspace-${ensureCalls}`;
+      },
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      prompt: "valid cwd",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+    });
+
+    await expect(
+      service.update({
+        id: created.id,
+        newAgentConfig: { cwd: join(tempDir, "missing-update-cwd") },
+      }),
+    ).rejects.toThrow(ScheduleTargetGoneError);
+    expect(ensureCalls).toBe(1);
+  });
+
   test("concurrent lazy stamping and update mint one workspace and keep the stored record consistent", async () => {
     let releaseFirstStamp: (() => void) | null = null;
     const firstStampStarted = new Promise<void>((resolve) => {
@@ -2291,6 +2354,8 @@ describe("ScheduleService", () => {
     expect(created.runs).toEqual([]);
 
     now = new Date("2026-01-01T00:00:30.000Z");
+    const nextCwd = join(tempDir, "new-path");
+    await mkdir(nextCwd, { recursive: true });
     const updated = await service.update({
       id: created.id,
       prompt: "second prompt",
@@ -2300,7 +2365,7 @@ describe("ScheduleService", () => {
         provider: "codex",
         model: "gpt-5",
         modeId: "full-access",
-        cwd: "/new/path",
+        cwd: nextCwd,
       },
     });
 
@@ -2311,7 +2376,7 @@ describe("ScheduleService", () => {
       type: "new-agent",
       config: {
         provider: "codex",
-        cwd: "/new/path",
+        cwd: nextCwd,
         workspaceId: "workspace-created-for-schedule",
         model: "gpt-5",
         modeId: "full-access",
@@ -2913,6 +2978,8 @@ describe("ScheduleService", () => {
       now: () => now,
     });
 
+    const deletedWorktree = join(tempDir, "deleted-worktree");
+    await mkdir(deletedWorktree, { recursive: true });
     const created = await service.create({
       prompt: "spawn in a deleted dir",
       cadence: { type: "every", everyMs: 60_000 },
@@ -2920,11 +2987,12 @@ describe("ScheduleService", () => {
         type: "new-agent",
         config: {
           provider: "claude",
-          cwd: join(tempDir, "deleted-worktree"),
+          cwd: deletedWorktree,
           approvalPolicy: "never",
         },
       },
     });
+    await rm(deletedWorktree, { recursive: true, force: true });
 
     now = new Date("2026-01-01T00:01:00.000Z");
     await service.tick();
@@ -3141,11 +3209,13 @@ describe("ScheduleService", () => {
     expect(second.id).toBe(first.id);
     expect(await service.list()).toHaveLength(1);
 
+    const subCwd = join(tempDir, "sub");
+    await mkdir(subCwd, { recursive: true });
     const third = await service.createOrReplace({
       name: "nightly",
       prompt: "audit elsewhere",
       cadence: { type: "every", everyMs: 60_000 },
-      target: { type: "new-agent", config: { provider: "claude", cwd: join(tempDir, "sub") } },
+      target: { type: "new-agent", config: { provider: "claude", cwd: subCwd } },
     });
     expect(third.id).not.toBe(first.id);
     expect(await service.list()).toHaveLength(2);

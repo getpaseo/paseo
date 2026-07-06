@@ -444,6 +444,7 @@ describe("LoopService", () => {
   test("loop worker and verifier agents share one registry workspace across iterations", async () => {
     const { workspaceRegistry, ensureWorkspaceForCreate } =
       await createRegistryBackedWorkspaceEnsure(tmpDir);
+    let verifierCount = 0;
     const manager = new AgentManager({
       clients: {
         claude: new ScriptedAgentClient("claude", {
@@ -451,10 +452,7 @@ describe("LoopService", () => {
             if (config.title?.includes("worker")) {
               return "worker finished";
             }
-            const verifierRuns = await storage.list();
-            const verifierCount = verifierRuns.filter((agent) =>
-              agent.title?.includes("verifier"),
-            ).length;
+            verifierCount += 1;
             return verifierCount >= 2
               ? '{"passed":true,"reason":"second verifier passed"}'
               : '{"passed":false,"reason":"try again"}';
@@ -603,10 +601,12 @@ describe("LoopService", () => {
     await expect(storage.get(iteration.workerAgentId!)).resolves.toMatchObject({
       id: iteration.workerAgentId!,
       archivedAt: expect.any(String),
+      internal: true,
     });
     await expect(storage.get(iteration.verifierAgentId!)).resolves.toMatchObject({
       id: iteration.verifierAgentId!,
       archivedAt: expect.any(String),
+      internal: true,
     });
   });
 

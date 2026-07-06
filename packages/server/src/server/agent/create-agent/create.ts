@@ -95,6 +95,7 @@ export interface CreateAgentFromMcpInput {
   promptFailure?: CreateAgentPromptFailureMode;
   background: boolean;
   notifyOnFinish: boolean;
+  internal?: boolean;
   detached?: boolean;
   callerAgentId?: string;
   callerContext?: {
@@ -402,6 +403,7 @@ function buildMcpSessionConfig(params: {
     modeId: params.resolvedMode ?? passthroughConfig?.modeId,
     model: params.resolvedProviderModel.model ?? passthroughConfig?.model,
     thinkingOptionId: params.input.thinking ?? passthroughConfig?.thinkingOptionId,
+    internal: params.input.internal ?? passthroughConfig?.internal,
   };
   if (provisionalTitle) {
     config.title = provisionalTitle;

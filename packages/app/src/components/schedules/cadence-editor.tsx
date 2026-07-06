@@ -83,7 +83,11 @@ export interface CadenceEditorProps {
 export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const mode = value.type;
   const deviceTimeZone = useMemo(getDeviceTimeZone, []);
-  const cronTimeZone = value.type === "cron" ? (value.timezone ?? "UTC") : deviceTimeZone;
+  const rememberedCronTimeZone = useRef(
+    value.type === "cron" ? (value.timezone ?? "UTC") : deviceTimeZone,
+  );
+  const cronTimeZone =
+    value.type === "cron" ? (value.timezone ?? "UTC") : rememberedCronTimeZone.current;
 
   // The numeric/text fields are native-owned (AdaptiveTextInput). We seed them
   // once from the incoming cadence via lazy state initializers and bump
@@ -114,17 +118,22 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
 
   const emitInterval = useCallback(
     (rawValue: number, unit: IntervalUnit) => {
+      if (value.type === "cron") {
+        rememberedCronTimeZone.current = value.timezone ?? "UTC";
+      }
       onChange({ type: "every", everyMs: partsToEveryMs(rawValue, unit) });
     },
-    [onChange],
+    [onChange, value],
   );
 
   const emitCron = useCallback(
     (expression: string) => {
       lastCronExpression.current = expression;
-      onChange(nextCronCadence(value, expression, deviceTimeZone));
+      const next = nextCronCadence(value, expression, rememberedCronTimeZone.current);
+      rememberedCronTimeZone.current = next.timezone ?? "UTC";
+      onChange(next);
     },
-    [onChange, value, deviceTimeZone],
+    [onChange, value],
   );
 
   const handleModeChange = useCallback(

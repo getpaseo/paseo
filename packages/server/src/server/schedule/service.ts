@@ -914,6 +914,7 @@ export class ScheduleService {
     prompt: string,
     scheduleId?: string,
   ): Promise<ScheduleTarget> {
+    await this.assertNewAgentCwdExists(target.config.cwd);
     const key = scheduleId ? `${scheduleId}:${newAgentWorkspaceStampKey(target)}` : null;
     if (key) {
       const existing = this.workspaceStampPromises.get(key);

@@ -656,6 +656,7 @@ export class LoopService {
       promptFailure: "return-error",
       background: true,
       notifyOnFinish: false,
+      internal: true,
     });
     const agent = created.snapshot;
     iteration.workerAgentId = agent.id;
@@ -780,6 +781,7 @@ export class LoopService {
       promptFailure: "return-error",
       background: true,
       notifyOnFinish: false,
+      internal: true,
     });
     const verifierAgent = created.snapshot;
     iteration.verifierAgentId = verifierAgent.id;

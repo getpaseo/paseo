@@ -53,4 +53,21 @@ describe("nextCronCadence", () => {
       timezone: "America/Los_Angeles",
     });
   });
+
+  it("lets callers preserve a remembered cron timezone when toggling back from interval", () => {
+    expect(
+      nextCronCadence(
+        {
+          type: "every",
+          everyMs: 60 * 60_000,
+        },
+        "0 9 * * *",
+        "America/New_York",
+      ),
+    ).toEqual({
+      type: "cron",
+      expression: "0 9 * * *",
+      timezone: "America/New_York",
+    });
+  });
 });
