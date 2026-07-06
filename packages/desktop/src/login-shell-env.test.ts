@@ -130,7 +130,7 @@ describe("login shell env retry behavior", () => {
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: interactivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, platform: "darwin", spawnSync });
 
     expect(env.PATH).toBe(interactivePath);
     expect(calls).toHaveLength(1);
@@ -193,7 +193,7 @@ describe("login shell env retry behavior", () => {
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: nonInteractivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, platform: "darwin", spawnSync });
 
     expect(env.PATH).toBe(nonInteractivePath);
     expect(calls).toHaveLength(2);
@@ -258,7 +258,7 @@ describe("login shell env retry behavior", () => {
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: nonInteractivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, platform: "darwin", spawnSync });
 
     expect(env.PATH).toBe(nonInteractivePath);
     expect(calls).toHaveLength(2);
@@ -318,7 +318,7 @@ describe("login shell env retry behavior", () => {
       });
     };
 
-    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, platform: "darwin", spawnSync });
 
     expect(env.PATH).toBe(basePath);
     expect(calls).toHaveLength(2);
@@ -380,7 +380,7 @@ describe("login shell env retry behavior", () => {
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: configuredPath });
     };
 
-    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, platform: "darwin", spawnSync });
 
     expect(env.PATH).toBe(configuredPath);
     expect(calls).toHaveLength(1);
@@ -424,7 +424,7 @@ describe("login shell env retry behavior", () => {
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: nonInteractivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, platform: "darwin", spawnSync });
 
     expect(env.PATH).toBe(nonInteractivePath);
     expect(calls).toHaveLength(2);
