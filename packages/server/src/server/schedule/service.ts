@@ -8,8 +8,11 @@ import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
-import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
-import type { FirstAgentContext } from "../messages.js";
+import {
+  type BoundCreateAgentCommand,
+  type EnsureWorkspaceForCreate,
+  formatProviderModel,
+} from "../agent/create-agent/create.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
@@ -220,6 +223,7 @@ function buildRunOutput(params: {
 type ScheduleAgentManager = Pick<
   AgentManager,
   | "archiveAgent"
+  | "createAgent"
   | "getAgent"
   | "getRegisteredProviderIds"
   | "hasInFlightRun"
@@ -229,10 +233,6 @@ type ScheduleAgentManager = Pick<
   | "waitForAgentEvent"
 >;
 
-type EnsureWorkspaceForCreate = (
-  cwd: string,
-  firstAgentContext?: FirstAgentContext,
-) => Promise<string>;
 type ScheduleWorkspaceRegistry = Pick<WorkspaceRegistry, "get">;
 
 export interface ScheduleServiceOptions {
@@ -823,7 +823,7 @@ export class ScheduleService {
       }
 
       const agent = await ensureAgentLoaded(schedule.target.agentId, {
-        agentManager: this.agentManager as AgentManager,
+        agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.logger,
       });
@@ -1022,11 +1022,5 @@ function buildScheduleAgentConfig(
 function formatScheduleProviderModel(
   config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
 ): string {
-  if (!config.model) {
-    return config.provider;
-  }
-  if (config.provider.includes("/")) {
-    return config.provider;
-  }
-  return `${config.provider}/${config.model}`;
+  return formatProviderModel(config.provider, config.model);
 }

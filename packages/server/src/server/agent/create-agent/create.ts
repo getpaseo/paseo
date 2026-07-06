@@ -48,16 +48,18 @@ export interface CreateAgentCommandDependencies {
   providerSnapshotManager: ProviderSnapshotManager;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
-  ensureWorkspaceForCreate?: (
-    cwd: string,
-    firstAgentContext?: FirstAgentContext,
-  ) => Promise<string>;
+  ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
 }
+
+export type EnsureWorkspaceForCreate = (
+  cwd: string,
+  firstAgentContext?: FirstAgentContext,
+) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
   kind: "session";
   config: AgentSessionConfig;
-  workspaceId?: string;
+  workspaceId: string;
   worktreeName?: string;
   initialPrompt?: string;
   clientMessageId?: string;
@@ -130,6 +132,13 @@ function requireResolvedWorkspaceId(workspaceId: string | undefined): string {
     throw new Error("createAgentCommand requires a resolved workspaceId");
   }
   return workspaceId;
+}
+
+export function formatProviderModel(provider: string, model: string | null | undefined): string {
+  if (!model || provider.includes("/")) {
+    return provider;
+  }
+  return `${provider}/${model}`;
 }
 
 interface ResolvedCreateAgent {

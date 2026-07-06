@@ -13,8 +13,17 @@ import {
 
 const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 
+type AgentLoaderManager = Pick<
+  AgentManager,
+  | "createAgent"
+  | "getAgent"
+  | "getRegisteredProviderIds"
+  | "hydrateTimelineFromProvider"
+  | "resumeAgentFromPersistence"
+>;
+
 export interface EnsureAgentLoadedDeps {
-  agentManager: AgentManager;
+  agentManager: AgentLoaderManager;
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
   logger: Logger;
