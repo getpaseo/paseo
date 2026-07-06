@@ -28,6 +28,11 @@ export interface DesktopDaemonLogs {
   contents: string;
 }
 
+export interface DesktopAppLogs {
+  logPath: string;
+  contents: string;
+}
+
 export interface DesktopPairingOffer {
   relayEnabled: boolean;
   url: string | null;
@@ -107,6 +112,16 @@ function parseDesktopDaemonLogs(raw: unknown): DesktopDaemonLogs {
   };
 }
 
+function parseDesktopAppLogs(raw: unknown): DesktopAppLogs {
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected desktop app logs response.");
+  }
+  return {
+    logPath: toStringOrNull(raw.logPath) ?? "",
+    contents: typeof raw.contents === "string" ? raw.contents : "",
+  };
+}
+
 function parseDesktopPairingOffer(raw: unknown): DesktopPairingOffer {
   if (!isRecord(raw)) {
     throw new Error("Unexpected desktop daemon pairing response.");
@@ -142,6 +157,10 @@ export async function restartDesktopDaemon(): Promise<DesktopDaemonStatus> {
 
 export async function getDesktopDaemonLogs(): Promise<DesktopDaemonLogs> {
   return parseDesktopDaemonLogs(await invokeDesktopCommand("desktop_daemon_logs"));
+}
+
+export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
+  return parseDesktopAppLogs(await invokeDesktopCommand("desktop_app_logs"));
 }
 
 export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {

@@ -39,6 +39,7 @@ import {
 import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
+import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 const STARTUP_POLL_INTERVAL_MS = 200;
@@ -574,6 +575,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     stop_desktop_daemon: (args) => stopDesktopDaemon(parseDesktopDaemonStopReason(args)),
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
+    desktop_app_logs: () => getDesktopAppLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
     desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),
