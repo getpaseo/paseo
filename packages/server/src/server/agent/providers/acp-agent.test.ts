@@ -562,6 +562,40 @@ describe("ACPAgentSession terminal tools", () => {
     );
   });
 
+  test("preserves cmd semantics for single-string terminal commands on Windows", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    try {
+      const child = createTerminalChildStub();
+      const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+      const session = createSession();
+
+      await session.createTerminal({
+        sessionId: "session-1",
+        command: "echo %TEMP% && echo ok",
+        cwd: "C:\\repo",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "cmd.exe",
+        ["/c", "echo %TEMP% && echo ok"],
+        expect.objectContaining({
+          cwd: "C:\\repo",
+          envOverlay: expect.objectContaining({ BASH_ENV: undefined }),
+          shell: false,
+        }),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
+  });
+
   test("preserves explicit terminal argv", async () => {
     const child = createTerminalChildStub();
     const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);

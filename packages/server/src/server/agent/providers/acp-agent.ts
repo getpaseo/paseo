@@ -194,7 +194,7 @@ function resolveTerminalCommand(
     return { command, args: [] };
   }
 
-  const shell = buildStringCommandShellInvocation({ command });
+  const shell = buildStringCommandShellInvocation({ command, windowsShell: "cmd" });
   return { command: shell.shell, args: shell.args, shell: false };
 }
 

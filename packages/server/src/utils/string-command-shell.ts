@@ -1,6 +1,7 @@
 export interface BuildStringCommandShellInvocationOptions {
   command: string;
   platform?: NodeJS.Platform;
+  windowsShell?: "powershell" | "cmd";
 }
 
 export interface StringCommandShellInvocation {
@@ -26,6 +27,13 @@ export function buildStringCommandShellInvocation(
   // Project-authored command strings use a stable script shell. The caller supplies
   // the environment; shell startup files should not rewrite it behind our back.
   if (platform === "win32") {
+    if (options.windowsShell === "cmd") {
+      return {
+        shell: "cmd.exe",
+        args: ["/c", options.command],
+      };
+    }
+
     return {
       shell: "powershell",
       args: [

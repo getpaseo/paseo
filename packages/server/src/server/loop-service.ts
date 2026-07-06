@@ -270,7 +270,10 @@ async function runVerifyCheck(options: {
 }): Promise<LoopVerifyCheckResult> {
   const startedAt = nowIso();
   try {
-    const shell = buildStringCommandShellInvocation({ command: options.command });
+    const shell = buildStringCommandShellInvocation({
+      command: options.command,
+      windowsShell: "cmd",
+    });
     const result = await execCommand(shell.shell, shell.args, {
       cwd: options.cwd,
       envOverlay: createStringCommandShellEnvOverlay(),

@@ -70,7 +70,7 @@ describe("buildStringCommandShellInvocation", () => {
     },
   );
 
-  it("uses powershell command semantics on windows", () => {
+  it("uses powershell command semantics on windows by default", () => {
     expect(
       buildStringCommandShellInvocation({
         command: "Write-Output 'hello'",
@@ -86,6 +86,19 @@ describe("buildStringCommandShellInvocation", () => {
         "-Command",
         "Write-Output 'hello'",
       ],
+    });
+  });
+
+  it("can preserve cmd command semantics on windows", () => {
+    expect(
+      buildStringCommandShellInvocation({
+        command: "echo %TEMP% && echo ok",
+        platform: "win32",
+        windowsShell: "cmd",
+      }),
+    ).toEqual({
+      shell: "cmd.exe",
+      args: ["/c", "echo %TEMP% && echo ok"],
     });
   });
 });
