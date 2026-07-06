@@ -73,6 +73,8 @@ describe("worktree shell selection", () => {
     });
 
     const worktreePath = mkdtempSync(join(tmpdir(), "worktree-shell-selection-"));
+    const originalBashEnv = process.env.BASH_ENV;
+    process.env.BASH_ENV = "should-not-leak";
     try {
       mkdirSync(join(worktreePath, ".git"), { recursive: true });
       writeFileSync(
@@ -106,7 +108,14 @@ describe("worktree shell selection", () => {
         expect.objectContaining({ cwd: worktreePath }),
         expect.any(Function),
       );
+      const execOptions = execFileMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(execOptions.env?.BASH_ENV).toBeUndefined();
     } finally {
+      if (originalBashEnv === undefined) {
+        delete process.env.BASH_ENV;
+      } else {
+        process.env.BASH_ENV = originalBashEnv;
+      }
       rmSync(worktreePath, { recursive: true, force: true });
     }
   });
@@ -118,6 +127,8 @@ describe("worktree shell selection", () => {
     });
 
     const worktreePath = mkdtempSync(join(tmpdir(), "worktree-shell-selection-"));
+    const originalBashEnv = process.env.BASH_ENV;
+    process.env.BASH_ENV = "should-not-leak";
     try {
       writeFileSync(
         join(worktreePath, "paseo.json"),
@@ -157,7 +168,14 @@ describe("worktree shell selection", () => {
         ],
         expect.objectContaining({ cwd: worktreePath, shell: false }),
       );
+      const spawnOptions = spawnProcessMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(spawnOptions.env?.BASH_ENV).toBeUndefined();
     } finally {
+      if (originalBashEnv === undefined) {
+        delete process.env.BASH_ENV;
+      } else {
+        process.env.BASH_ENV = originalBashEnv;
+      }
       rmSync(worktreePath, { recursive: true, force: true });
     }
   });

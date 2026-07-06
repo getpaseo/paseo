@@ -181,8 +181,9 @@ of commands. Both run sequentially.
 Lifecycle commands run in the worktree through a stable script shell: Bash on
 macOS/Linux, and PowerShell with `-NoProfile` on Windows. They inherit the
 daemon environment plus Paseo's lifecycle variables; login and interactive
-shell startup files are not loaded. Service scripts are separate: they launch in
-a terminal and receive the service environment described below.
+shell startup files are not loaded, and Bash's `BASH_ENV` hook is unset. Service
+scripts are separate: they launch in a terminal and receive the service
+environment described below.
 
 ```json
 {

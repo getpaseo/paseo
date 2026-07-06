@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildStringCommandShellInvocation } from "./string-command-shell.js";
+import {
+  buildStringCommandShellInvocation,
+  createStringCommandShellEnv,
+} from "./string-command-shell.js";
 
 describe("buildStringCommandShellInvocation", () => {
   const tempDirs: string[] = [];
@@ -40,6 +43,8 @@ describe("buildStringCommandShellInvocation", () => {
       writeFileSync(shimPath, "#!/bin/sh\nprintf 'shim:%s\\n' \"$1\"\n");
       chmodSync(shimPath, 0o755);
       writeFileSync(join(home, ".bash_profile"), "export PATH=/usr/bin:/bin\n");
+      const bashEnvPath = join(home, "bash-env");
+      writeFileSync(bashEnvPath, "export PATH=/usr/bin:/bin\n");
 
       const invocation = buildStringCommandShellInvocation({
         command: "command -v paseo-shim >/dev/null && paseo-shim ok",
@@ -48,12 +53,12 @@ describe("buildStringCommandShellInvocation", () => {
         ...process.env,
         HOME: home,
         PATH: `${binDir}${delimiter}${process.env.PATH ?? "/usr/bin:/bin"}`,
+        BASH_ENV: bashEnvPath,
       };
-      delete env.BASH_ENV;
 
       const stdout = execFileSync(invocation.shell, invocation.args, {
         encoding: "utf8",
-        env,
+        env: createStringCommandShellEnv(env),
       });
 
       expect(stdout.trim()).toBe("shim:ok");

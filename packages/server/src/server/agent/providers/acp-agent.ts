@@ -102,7 +102,10 @@ import {
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
-import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
+import {
+  buildStringCommandShellInvocation,
+  createStringCommandShellEnvOverlay,
+} from "../../../utils/string-command-shell.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import {
   type DiagnosticEntry,
@@ -2160,11 +2163,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
     );
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
+    const commandEnvOverlays =
+      terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
     const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: [env],
+        overlays: commandEnvOverlays,
       }),
       shell: terminalCommand.shell,
       stdio: ["ignore", "pipe", "pipe"],

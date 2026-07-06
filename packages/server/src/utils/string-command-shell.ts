@@ -8,6 +8,16 @@ export interface StringCommandShellInvocation {
   args: string[];
 }
 
+export function createStringCommandShellEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized = { ...env };
+  delete sanitized.BASH_ENV;
+  return sanitized;
+}
+
+export function createStringCommandShellEnvOverlay(): Record<string, string | undefined> {
+  return { BASH_ENV: undefined };
+}
+
 export function buildStringCommandShellInvocation(
   options: BuildStringCommandShellInvocationOptions,
 ): StringCommandShellInvocation {

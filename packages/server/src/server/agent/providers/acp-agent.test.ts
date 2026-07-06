@@ -554,7 +554,11 @@ describe("ACPAgentSession terminal tools", () => {
     expect(spawn).toHaveBeenCalledWith(
       shell.shell,
       shell.args,
-      expect.objectContaining({ cwd: "/repo", shell: false }),
+      expect.objectContaining({
+        cwd: "/repo",
+        envOverlay: expect.objectContaining({ BASH_ENV: undefined }),
+        shell: false,
+      }),
     );
   });
 

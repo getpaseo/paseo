@@ -648,6 +648,8 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       writeFileSync(shimPath, "#!/bin/sh\nprintf 'shim:%s\\n' \"$1\"\n");
       chmodSync(shimPath, 0o755);
       writeFileSync(join(home, ".bash_profile"), "export PATH=/usr/bin:/bin\n");
+      const bashEnvPath = join(home, "bash-env");
+      writeFileSync(bashEnvPath, "export PATH=/usr/bin:/bin\n");
       writeFileSync(
         join(repoDir, "paseo.json"),
         JSON.stringify({
@@ -662,7 +664,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const originalBashEnv = process.env.BASH_ENV;
       process.env.HOME = home;
       process.env.PATH = `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`;
-      delete process.env.BASH_ENV;
+      process.env.BASH_ENV = bashEnvPath;
 
       try {
         await runWorktreeSetupCommands({

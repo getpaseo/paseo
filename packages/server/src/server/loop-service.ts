@@ -14,7 +14,10 @@ import type {
   AgentTimelineItem,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
-import { buildStringCommandShellInvocation } from "../utils/string-command-shell.js";
+import {
+  buildStringCommandShellInvocation,
+  createStringCommandShellEnvOverlay,
+} from "../utils/string-command-shell.js";
 import { execCommand } from "../utils/spawn.js";
 import type {
   ProviderSnapshotManager,
@@ -270,6 +273,7 @@ async function runVerifyCheck(options: {
     const shell = buildStringCommandShellInvocation({ command: options.command });
     const result = await execCommand(shell.shell, shell.args, {
       cwd: options.cwd,
+      envOverlay: createStringCommandShellEnvOverlay(),
       maxBuffer: MAX_VERIFY_OUTPUT_BYTES,
       shell: false,
     });
