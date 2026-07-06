@@ -19,6 +19,7 @@ type ShellEnvAttemptKind = "interactive" | "non-interactive";
 interface LoginShellEnvDependencies {
   env?: NodeJS.ProcessEnv;
   logger?: LoginShellEnvLogger;
+  now?: () => number;
   platform?: NodeJS.Platform;
   spawnSync?: typeof defaultSpawnSync;
   userInfo?: typeof defaultUserInfo;
@@ -81,6 +82,20 @@ function timeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
 
   const timeoutMs = Number.parseInt(rawTimeoutMs, 10);
   return Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_RESOLVE_TIMEOUT_MS;
+}
+
+function timeoutMsForAttempt(
+  totalTimeoutMs: number,
+  attemptsStartedAt: number,
+  now: () => number,
+  attempts: ShellEnvAttempt[],
+  index: number,
+): number | null {
+  if (attempts.length === 1) return totalTimeoutMs;
+  if (index === 0) return Math.max(1, Math.floor(totalTimeoutMs / 2));
+
+  const remainingMs = totalTimeoutMs - (now() - attemptsStartedAt);
+  return remainingMs > 0 ? remainingMs : null;
 }
 
 function errorCode(error: unknown): string | null {
@@ -359,13 +374,31 @@ function resolveShellEnv(
   });
 
   let lastError: unknown;
+  const attemptsStartedAt = deps.now();
 
   for (const [index, attempt] of attempts.entries()) {
-    const attemptStartedAt = Date.now();
+    const attemptTimeoutMs = timeoutMsForAttempt(
+      timeoutMs,
+      attemptsStartedAt,
+      deps.now,
+      attempts,
+      index,
+    );
+    if (attemptTimeoutMs === null) break;
+
+    const attemptStartedAt = deps.now();
 
     try {
-      const env = shellEnvForAttempt(deps, shellEnv, shell, command, regex, attempt, timeoutMs);
-      const durationMs = Date.now() - attemptStartedAt;
+      const env = shellEnvForAttempt(
+        deps,
+        shellEnv,
+        shell,
+        command,
+        regex,
+        attempt,
+        attemptTimeoutMs,
+      );
+      const durationMs = deps.now() - attemptStartedAt;
       restoreElectronEnv(env, savedRunAsNode, savedNoAttach);
 
       deps.logger.info("[login-shell-env] attempt applied", {
@@ -374,16 +407,18 @@ function resolveShellEnv(
         shellArgs: attempt.shellArgs,
         reason: "success",
         durationMs,
-        timeoutMs,
+        timeoutMs: attemptTimeoutMs,
       });
 
       return { env, attemptKind: attempt.kind };
     } catch (error) {
       const details = shellAttemptErrorDetails(error, shell, attempt);
-      const durationMs = Date.now() - attemptStartedAt;
-      const willRetry = index < attempts.length - 1;
+      const durationMs = deps.now() - attemptStartedAt;
+      const willRetry =
+        index < attempts.length - 1 &&
+        timeoutMsForAttempt(timeoutMs, attemptsStartedAt, deps.now, attempts, index + 1) !== null;
       lastError = error;
-      logShellAttemptFailure(deps, error, details, durationMs, timeoutMs, willRetry);
+      logShellAttemptFailure(deps, error, details, durationMs, attemptTimeoutMs, willRetry);
     }
   }
 
@@ -402,12 +437,13 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
   const deps: Required<LoginShellEnvDependencies> = {
     env: input.env ?? process.env,
     logger: input.logger ?? defaultLog,
+    now: input.now ?? Date.now,
     platform: input.platform ?? process.platform,
     spawnSync: input.spawnSync ?? defaultSpawnSync,
     userInfo: input.userInfo ?? defaultUserInfo,
   };
   const beforePath = pathEnv(deps.env);
-  const startedAt = Date.now();
+  const startedAt = deps.now();
   const timeoutMs = timeoutMsFromEnv(deps.env);
 
   try {
@@ -415,7 +451,7 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
     Object.assign(deps.env, env);
     deps.logger.info("[login-shell-env] applied", {
       attemptKind,
-      durationMs: Date.now() - startedAt,
+      durationMs: deps.now() - startedAt,
       timeoutMs,
       beforePath,
       afterPath: pathEnv(deps.env),
@@ -430,7 +466,7 @@ export function inheritLoginShellEnv(input: LoginShellEnvDependencies = {}): voi
     const cause = error instanceof Error ? error.cause : undefined;
     deps.logger.warn("[login-shell-env] failed; keeping inherited env", {
       ...details,
-      durationMs: Date.now() - startedAt,
+      durationMs: deps.now() - startedAt,
       timeoutMs,
       error: error instanceof Error ? error.message : String(error),
       errorCode: (cause as NodeJS.ErrnoException | undefined)?.code ?? null,

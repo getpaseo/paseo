@@ -14,6 +14,11 @@ const fakeHome = path.join(os.tmpdir(), "paseo-login-shell-env-fake-home");
 type LoginShellEnvInput = NonNullable<Parameters<typeof inheritLoginShellEnv>[0]>;
 type LoginShellSpawnSync = NonNullable<LoginShellEnvInput["spawnSync"]>;
 
+interface TestClock {
+  advance: (ms: number) => void;
+  now: () => number;
+}
+
 interface RecordedLog {
   message: string;
   fields: Record<string, unknown>;
@@ -53,6 +58,16 @@ function createEnv(home: string): NodeJS.ProcessEnv {
     LOGNAME: "paseo-test",
     SHELL: zsh,
     PATH: basePath,
+  };
+}
+
+function createTestClock(): TestClock {
+  let currentMs = 1_000;
+  return {
+    advance: (ms: number) => {
+      currentMs += ms;
+    },
+    now: () => currentMs,
   };
 }
 
@@ -99,6 +114,7 @@ describe("login shell env retry behavior", () => {
   it("applies the interactive env without retrying", () => {
     const env = createEnv(fakeHome);
     const logger = new RecordingLoginShellLogger();
+    const clock = createTestClock();
     const calls: RecordedSpawn[] = [];
     const interactivePath = "/interactive/bin:/usr/bin:/bin";
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
@@ -108,15 +124,16 @@ describe("login shell env retry behavior", () => {
         args: recordedArgs,
         timeoutMs: options?.timeout,
       });
+      clock.advance(5);
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: interactivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
 
     expect(env.PATH).toBe(interactivePath);
     expect(calls).toHaveLength(1);
     expect(shellArgsFromRecordedCall(calls[0])).toEqual(["-i", "-l", "-c"]);
-    expect(calls[0]?.timeoutMs).toBe(30_000);
+    expect(calls[0]?.timeoutMs).toBe(15_000);
     expect(logger.infos.map((entry) => entry.message)).toEqual([
       "[login-shell-env] start",
       "[login-shell-env] attempt applied",
@@ -126,10 +143,12 @@ describe("login shell env retry behavior", () => {
       attemptKind: "interactive",
       shellArgs: ["-i", "-l", "-c"],
       reason: "success",
-      timeoutMs: 30_000,
+      timeoutMs: 15_000,
     });
     expect(logger.infos[2]?.fields).toMatchObject({
       attemptKind: "interactive",
+      durationMs: 5,
+      timeoutMs: 30_000,
       beforePath: basePath,
       afterPath: interactivePath,
       pathChanged: true,
@@ -140,6 +159,7 @@ describe("login shell env retry behavior", () => {
   it("retries non-interactively after an interactive timeout", () => {
     const env = createEnv(fakeHome);
     const logger = new RecordingLoginShellLogger();
+    const clock = createTestClock();
     const calls: RecordedSpawn[] = [];
     const nonInteractivePath = "/login/bin:/usr/bin:/bin";
     const timeoutError = Object.assign(new Error("spawnSync ETIMEDOUT"), {
@@ -157,6 +177,7 @@ describe("login shell env retry behavior", () => {
       if (calls.length === 1) {
         const marker = markerFromShellCommand(String(recordedArgs.at(-1)));
         timedOutStdout = `${marker}${JSON.stringify({ ...env, PATH: "/timed-out/bin" })}${marker}`;
+        clock.advance(15_000);
         return spawnResult({
           stdout: timedOutStdout,
           status: null,
@@ -165,15 +186,18 @@ describe("login shell env retry behavior", () => {
         });
       }
 
+      clock.advance(3);
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: nonInteractivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
 
     expect(env.PATH).toBe(nonInteractivePath);
     expect(calls).toHaveLength(2);
     expect(shellArgsFromRecordedCall(calls[0])).toEqual(["-i", "-l", "-c"]);
     expect(shellArgsFromRecordedCall(calls[1])).toEqual(["-l", "-c"]);
+    expect(calls[0]?.timeoutMs).toBe(15_000);
+    expect(calls[1]?.timeoutMs).toBe(15_000);
     expect(logger.warnings).toHaveLength(1);
     expect(logger.warnings[0]?.message).toBe("[login-shell-env] attempt failed; retrying");
     expect(logger.warnings[0]?.fields).toMatchObject({
@@ -185,15 +209,20 @@ describe("login shell env retry behavior", () => {
       stdoutLength: timedOutStdout.length,
       markerFound: true,
       errorCode: "ETIMEDOUT",
-      timeoutMs: 30_000,
+      durationMs: 15_000,
+      timeoutMs: 15_000,
     });
     expect(logger.infos[1]?.fields).toMatchObject({
       attemptKind: "non-interactive",
       shellArgs: ["-l", "-c"],
       reason: "success",
+      durationMs: 3,
+      timeoutMs: 15_000,
     });
     expect(logger.infos[2]?.fields).toMatchObject({
       attemptKind: "non-interactive",
+      durationMs: 15_003,
+      timeoutMs: 30_000,
       beforePath: basePath,
       afterPath: nonInteractivePath,
       pathChanged: true,
@@ -204,6 +233,7 @@ describe("login shell env retry behavior", () => {
   it("retries non-interactively when the interactive marker is missing", () => {
     const env = createEnv(fakeHome);
     const logger = new RecordingLoginShellLogger();
+    const clock = createTestClock();
     const calls: RecordedSpawn[] = [];
     const nonInteractivePath = "/profile/bin:/usr/bin:/bin";
     const missingMarkerStdout = "switched shells before command\n";
@@ -216,18 +246,22 @@ describe("login shell env retry behavior", () => {
       });
 
       if (calls.length === 1) {
+        clock.advance(25);
         return spawnResult({ stdout: missingMarkerStdout });
       }
 
+      clock.advance(2);
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: nonInteractivePath });
     };
 
-    inheritLoginShellEnv({ env, logger, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
 
     expect(env.PATH).toBe(nonInteractivePath);
     expect(calls).toHaveLength(2);
     expect(shellArgsFromRecordedCall(calls[0])).toEqual(["-i", "-l", "-c"]);
     expect(shellArgsFromRecordedCall(calls[1])).toEqual(["-l", "-c"]);
+    expect(calls[0]?.timeoutMs).toBe(15_000);
+    expect(calls[1]?.timeoutMs).toBe(29_975);
     expect(logger.warnings).toHaveLength(1);
     expect(logger.warnings[0]?.message).toBe("[login-shell-env] attempt failed; retrying");
     expect(logger.warnings[0]?.fields).toMatchObject({
@@ -238,11 +272,14 @@ describe("login shell env retry behavior", () => {
       signal: null,
       stdoutLength: missingMarkerStdout.length,
       markerFound: false,
-      timeoutMs: 30_000,
+      durationMs: 25,
+      timeoutMs: 15_000,
     });
     expect(logger.infos[1]?.fields).toMatchObject({
       attemptKind: "non-interactive",
       reason: "success",
+      durationMs: 2,
+      timeoutMs: 29_975,
     });
     expectNoRawStdout(logger.warnings[0]?.fields ?? {});
   });
@@ -250,6 +287,7 @@ describe("login shell env retry behavior", () => {
   it("keeps the inherited env after both attempts fail", () => {
     const env = createEnv(fakeHome);
     const logger = new RecordingLoginShellLogger();
+    const clock = createTestClock();
     const calls: RecordedSpawn[] = [];
     const spawnError = Object.assign(new Error("spawnSync ENOENT"), {
       code: "ENOENT",
@@ -263,9 +301,11 @@ describe("login shell env retry behavior", () => {
       });
 
       if (calls.length === 1) {
+        clock.advance(10);
         return spawnResult({ stdout: "no marker\n" });
       }
 
+      clock.advance(5);
       return spawnResult({
         status: null,
         signal: null,
@@ -273,10 +313,12 @@ describe("login shell env retry behavior", () => {
       });
     };
 
-    inheritLoginShellEnv({ env, logger, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
 
     expect(env.PATH).toBe(basePath);
     expect(calls).toHaveLength(2);
+    expect(calls[0]?.timeoutMs).toBe(15_000);
+    expect(calls[1]?.timeoutMs).toBe(29_990);
     expect(logger.infos.map((entry) => entry.message)).toEqual(["[login-shell-env] start"]);
     expect(logger.warnings.map((entry) => entry.message)).toEqual([
       "[login-shell-env] attempt failed; retrying",
@@ -287,18 +329,24 @@ describe("login shell env retry behavior", () => {
       reason: "marker-missing",
       attemptKind: "interactive",
       shellArgs: ["-i", "-l", "-c"],
+      durationMs: 10,
+      timeoutMs: 15_000,
     });
     expect(logger.warnings[1]?.fields).toMatchObject({
       reason: "spawn-error",
       attemptKind: "non-interactive",
       shellArgs: ["-l", "-c"],
+      durationMs: 5,
       errorCode: "ENOENT",
+      timeoutMs: 29_990,
     });
     expect(logger.warnings[2]?.fields).toMatchObject({
       reason: "spawn-error",
       attemptKind: "non-interactive",
       shellArgs: ["-l", "-c"],
       errorCode: "ENOENT",
+      durationMs: 15,
+      timeoutMs: 30_000,
       beforePath: basePath,
       afterPath: basePath,
       pathChanged: false,
@@ -312,6 +360,7 @@ describe("login shell env retry behavior", () => {
       PASEO_SHELL_ENV_TIMEOUT_MS: "1234",
     };
     const logger = new RecordingLoginShellLogger();
+    const clock = createTestClock();
     const calls: RecordedSpawn[] = [];
     const configuredPath = "/configured/bin:/usr/bin:/bin";
     const spawnSync: LoginShellSpawnSync = (shell, args, options) => {
@@ -321,21 +370,23 @@ describe("login shell env retry behavior", () => {
         args: recordedArgs,
         timeoutMs: options?.timeout,
       });
+      clock.advance(4);
       return successResult(String(recordedArgs.at(-1)), { ...env, PATH: configuredPath });
     };
 
-    inheritLoginShellEnv({ env, logger, spawnSync });
+    inheritLoginShellEnv({ env, logger, now: clock.now, spawnSync });
 
     expect(env.PATH).toBe(configuredPath);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.timeoutMs).toBe(1234);
+    expect(calls[0]?.timeoutMs).toBe(617);
     expect(logger.infos[0]?.fields).toMatchObject({
       timeoutMs: 1234,
     });
     expect(logger.infos[1]?.fields).toMatchObject({
-      timeoutMs: 1234,
+      timeoutMs: 617,
     });
     expect(logger.infos[2]?.fields).toMatchObject({
+      durationMs: 4,
       timeoutMs: 1234,
     });
   });
