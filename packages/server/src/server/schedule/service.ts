@@ -78,6 +78,9 @@ function applyNewAgentConfig(
     if (!trimmed) {
       throw new Error("cwd cannot be empty");
     }
+    if (trimmed !== config.cwd) {
+      delete config.workspaceId;
+    }
     config.cwd = trimmed;
   }
   if (patch.model !== undefined) {
@@ -956,9 +959,9 @@ export class ScheduleService {
     };
   }
 
-  private async hasActiveWorkspaceStamp(workspaceId: string): Promise<boolean> {
+  private async hasActiveWorkspaceStamp(workspaceId: string, cwd: string): Promise<boolean> {
     const workspace = await this.workspaceRegistry.get(workspaceId);
-    return Boolean(workspace && !workspace.archivedAt);
+    return Boolean(workspace && !workspace.archivedAt && workspace.cwd === cwd);
   }
 
   private async stampNewAgentWorkspace(
@@ -981,7 +984,10 @@ export class ScheduleService {
         return latest;
       }
       const stampedWorkspaceId = latest.target.config.workspaceId;
-      if (stampedWorkspaceId && (await this.hasActiveWorkspaceStamp(stampedWorkspaceId))) {
+      if (
+        stampedWorkspaceId &&
+        (await this.hasActiveWorkspaceStamp(stampedWorkspaceId, latest.target.config.cwd))
+      ) {
         return latest;
       }
 

@@ -957,6 +957,59 @@ describe("LoopService", () => {
     expect(cancelledAgentIds).toEqual([workerAgentId]);
     expect(finalLoop.logs.some((entry) => entry.text.includes("Stop requested"))).toBe(true);
   });
+
+  test("treats externally canceled worker turns as failures", async () => {
+    let release: (() => void) | null = null;
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const manager = new AgentManager({
+      clients: {
+        claude: new ScriptedAgentClient("claude", {
+          async onRun({ config }) {
+            if (config.title?.includes("worker")) {
+              await blocker;
+              return "finished";
+            }
+            return '{"passed":true,"reason":"should not verify canceled worker"}';
+          },
+        }),
+      },
+      registry: storage,
+      logger,
+    });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Wait until canceled",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyPrompt: "Should not run.",
+      maxIterations: 1,
+    });
+
+    const workerAgentId = await waitForActiveWorkerRun(service, manager, loop.id);
+    await manager.cancelAgentRun(workerAgentId);
+    release?.();
+    await waitForLoopCompletion(service, loop.id);
+
+    const finalLoop = await service.inspectLoop(loop.id);
+    expect(finalLoop.status).toBe("failed");
+    expect(finalLoop.iterations).toHaveLength(1);
+    expect(finalLoop.iterations[0]).toMatchObject({
+      workerAgentId,
+      workerOutcome: "failed",
+      status: "failed",
+    });
+    expect(finalLoop.iterations[0]?.failureReason).toContain("was canceled");
+    expect(finalLoop.iterations[0]?.verifierAgentId).toBeNull();
+  });
 });
 
 async function fsMkdir(target: string): Promise<void> {

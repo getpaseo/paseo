@@ -640,6 +640,62 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.status).toBe("succeeded");
   });
 
+  test("new-agent schedule cwd updates restamp the workspace for the new cwd", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tempDir);
+    const nextCwd = join(tempDir, "next-cwd");
+    await mkdir(nextCwd, { recursive: true });
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate,
+      workspaceRegistry,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "change cwd",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+        },
+      },
+      maxRuns: 1,
+    });
+    const originalWorkspaceId = created.target.config.workspaceId;
+
+    const updated = await service.update({
+      id: created.id,
+      newAgentConfig: { cwd: nextCwd },
+    });
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(updated.target.config.workspaceId).toMatch(/^wks_/);
+    expect(updated.target.config.workspaceId).not.toBe(originalWorkspaceId);
+    expect(inspected.target.config.workspaceId).toBe(updated.target.config.workspaceId);
+    expect(await workspaceRegistry.get(updated.target.config.workspaceId!)).toMatchObject({
+      workspaceId: updated.target.config.workspaceId,
+      cwd: nextCwd,
+      archivedAt: null,
+    });
+    const storedAgent = await agentStorage.get(inspected.runs[0]!.agentId!);
+    expect(storedAgent?.cwd).toBe(nextCwd);
+    expect(storedAgent?.workspaceId).toBe(updated.target.config.workspaceId);
+  });
+
   test("concurrent lazy stamping and update mint one workspace and keep the stored record consistent", async () => {
     let releaseFirstStamp: (() => void) | null = null;
     const firstStampStarted = new Promise<void>((resolve) => {
