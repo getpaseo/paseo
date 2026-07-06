@@ -1280,7 +1280,11 @@ export class Session {
       this.workspaceGitService.peekSnapshot(workspace.cwd)?.git.currentBranch ?? null;
     const checkout = buildWorkspaceCheckout(workspace, project, liveBranch);
     return {
+      // Identity of this checkout's project (the daemon projectId, now the repo-root
+      // path). The client targets it for remove/create and to keep two clones of one
+      // remote distinct; cross-host grouping uses remoteKey instead. See #987.
       projectKey: project.projectId,
+      remoteKey: project.remoteKey,
       projectName: resolveProjectDisplayName(project),
       workspaceName: resolveWorkspaceDisplayName(workspace),
       checkout,
@@ -3753,6 +3757,9 @@ export class Session {
   ): WorkspaceProjectDescriptorPayload {
     return {
       projectId: project.projectId,
+      // Cross-host grouping / GitHub key ("remote:...") or null; distinct from projectId
+      // (identity) so two clones of one remote group across hosts but stay distinct. #987.
+      remoteKey: project.remoteKey,
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
       projectRootPath: project.rootPath,

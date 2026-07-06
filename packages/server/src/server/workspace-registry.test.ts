@@ -99,19 +99,53 @@ describe("workspace registries", () => {
     expect(await projectRegistry.list()).toEqual([]);
   });
 
-  test("PIN: two checkouts of the same git remote collapse into a single project record", async () => {
-    // Reproduces the situation in #987: two directories that share a git remote
-    // both derive the same projectKey/displayName. Because the registry is keyed
-    // by projectId, the second upsert overwrites the first — so the registry can
-    // only ever hold one record per remote, and there is no way to distinguish
-    // the two checkouts in the UI.
+  test("two checkouts of one remote persist as two records when keyed by repo root (#987)", async () => {
+    // #987: two independent clones of one repo used to derive the same
+    // remote-based projectId and collapse into a single record (the second upsert
+    // overwrote the first). Identity is now the repo root path, so the two roots
+    // persist as two distinct projects while sharing the remote key for cross-host
+    // grouping.
     await projectRegistry.initialize();
-
-    const remoteKey = "remote:github.com/acme/repo";
 
     await projectRegistry.upsert(
       createPersistedProjectRecord({
-        projectId: remoteKey,
+        projectId: "/home/me/work/repo",
+        rootPath: "/home/me/work/repo",
+        kind: "git",
+        displayName: "acme/repo",
+        remoteKey: "remote:github.com/acme/repo",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "/home/me/scratch/repo",
+        rootPath: "/home/me/scratch/repo",
+        kind: "git",
+        displayName: "acme/repo",
+        remoteKey: "remote:github.com/acme/repo",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+      }),
+    );
+
+    const all = await projectRegistry.list();
+    expect(all).toHaveLength(2);
+    expect(all.map((project) => project.rootPath).sort()).toEqual([
+      "/home/me/scratch/repo",
+      "/home/me/work/repo",
+    ]);
+    expect(all.every((project) => project.remoteKey === "remote:github.com/acme/repo")).toBe(true);
+  });
+
+  test("project record schema accepts records without remoteKey (legacy on-disk records)", async () => {
+    await projectRegistry.initialize();
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "remote:github.com/acme/repo",
         rootPath: "/home/me/work/repo",
         kind: "git",
         displayName: "acme/repo",
@@ -120,22 +154,8 @@ describe("workspace registries", () => {
       }),
     );
 
-    await projectRegistry.upsert(
-      createPersistedProjectRecord({
-        projectId: remoteKey,
-        rootPath: "/home/me/scratch/repo",
-        kind: "git",
-        displayName: "acme/repo",
-        createdAt: "2026-03-01T00:00:00.000Z",
-        updatedAt: "2026-03-02T00:00:00.000Z",
-      }),
-    );
-
-    const all = await projectRegistry.list();
-    expect(all).toHaveLength(1);
-    expect(all[0]?.displayName).toBe("acme/repo");
-    // Second upsert wins — the first rootPath is lost.
-    expect(all[0]?.rootPath).toBe("/home/me/scratch/repo");
+    const record = await projectRegistry.get("remote:github.com/acme/repo");
+    expect(record?.remoteKey).toBeNull();
   });
 
   test("project record schema accepts records without customName (legacy on-disk records)", async () => {

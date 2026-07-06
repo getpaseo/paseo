@@ -18,6 +18,16 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Cross-host/display grouping key ("remote:github.com/owner/repo"); null for
+  // non-git or no-remote checkouts. Decoupled from projectId (which is the repo
+  // root path) so two independent clones of one remote are distinct projects but
+  // still group across hosts and share a GitHub link. Legacy on-disk records omit
+  // it and parse to null. Added for #987.
+  remoteKey: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -230,6 +240,7 @@ export function createPersistedProjectRecord(input: {
   kind: PersistedProjectKind;
   displayName: string;
   customName?: string | null;
+  remoteKey?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -237,6 +248,7 @@ export function createPersistedProjectRecord(input: {
   return PersistedProjectRecordSchema.parse({
     ...input,
     customName: input.customName ?? null,
+    remoteKey: input.remoteKey ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }

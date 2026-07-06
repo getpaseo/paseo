@@ -416,20 +416,29 @@ Single file containing an array of all loop records. Writes are direct (not atom
 
 Array of project records.
 
-| Field         | Type                        | Description                              |
-| ------------- | --------------------------- | ---------------------------------------- |
-| `projectId`   | `string`                    | Primary key                              |
-| `rootPath`    | `string`                    | Filesystem root of the project           |
-| `kind`        | `"git" \| "non_git"`        |                                          |
-| `displayName` | `string`                    |                                          |
-| `createdAt`   | `string` (ISO 8601)         |                                          |
-| `updatedAt`   | `string` (ISO 8601)         |                                          |
-| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable |
+| Field         | Type                        | Description                                                                                                                                                                        |
+| ------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `projectId`   | `string`                    | Primary key. The repository root path for records created since v0.1.104; legacy records may use a `remote:<host>/<owner>/<repo>` id (still valid, matched by `rootPath`).         |
+| `rootPath`    | `string`                    | Filesystem root of the project                                                                                                                                                     |
+| `kind`        | `"git" \| "non_git"`        |                                                                                                                                                                                    |
+| `displayName` | `string`                    | Derived name (`owner/repo` from the remote, else the directory name)                                                                                                               |
+| `customName`  | `string \| null`            | User-set name override layered over `displayName`; reconciliation never touches it                                                                                                 |
+| `remoteKey`   | `string \| null`            | Remote-derived key (`remote:<host>/<owner>/<repo>`) for the display name and the GitHub link, or null for non-git / no-remote. Distinct from `projectId`. Added in v0.1.104 (#987) |
+| `createdAt`   | `string` (ISO 8601)         |                                                                                                                                                                                    |
+| `updatedAt`   | `string` (ISO 8601)         |                                                                                                                                                                                    |
+| `archivedAt`  | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                                                                                                                           |
 
-Active git projects are unique by normalized `rootPath`. Startup reconciliation repairs older bad
-states by moving workspaces from duplicate path-keyed projects onto the canonical project,
-preferring remote-keyed project IDs such as `remote:github.com/owner/repo`, then archiving the
-emptied duplicate.
+Project **identity is the repository root**: each independent checkout is its own project, so two
+clones of the same remote at different paths are distinct projects (#987). Clients key projects by
+this identity everywhere — there is no remote-based cross-host merging, so the same repo checked out
+on two machines shows as one project per checkout; `remoteKey` carries the remote only for the
+derived display name and the GitHub link. A repo and its git worktrees share the same `rootPath`
+(`mainRepoRoot`) and so group under one project. Active git projects are unique by normalized
+`rootPath`. Startup
+reconciliation repairs older bad states by moving workspaces from duplicate projects that share a
+`rootPath` onto the canonical project (grouping strictly by `rootPath`, never by `remoteKey`, so
+distinct clones stay distinct), preferring remote-keyed project IDs such as
+`remote:github.com/owner/repo`, then archiving the emptied duplicate.
 
 ---
 

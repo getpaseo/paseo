@@ -20,6 +20,11 @@ function deriveWorkspaceKindFromMetadata(metadata: {
   return "local_checkout";
 }
 
+// Picks the survivor when several project records share ONE rootPath (e.g. a legacy
+// remote-keyed record and a newer path-keyed record for the same physical repo).
+// Prefers the legacy "remote:"-prefixed id so agents/workspaces keyed to it don't
+// orphan. This only consolidates same-root duplicates; it never groups distinct
+// clones (those have different roots — see mergeDuplicateProjectsByRoot). See #987.
 function chooseCanonicalProject(projects: PersistedProjectRecord[]): PersistedProjectRecord {
   return [...projects].sort((left, right) => {
     const leftRemote = left.projectId.startsWith("remote:");
@@ -43,7 +48,10 @@ export type ReconciliationChange =
       projectId: string;
       directory: string;
       fields: Partial<
-        Pick<PersistedProjectRecord, "kind" | "displayName" | "rootPath" | "customName">
+        Pick<
+          PersistedProjectRecord,
+          "kind" | "displayName" | "rootPath" | "customName" | "remoteKey"
+        >
       >;
     }
   | {
@@ -205,6 +213,9 @@ export class WorkspaceReconciliationService {
     workspacesByProject: Map<string, PersistedWorkspaceRecord[]>,
     changes: ReconciliationChange[],
   ): Promise<void> {
+    // Group strictly by resolved rootPath, NOT by remoteKey: two independent clones
+    // of the same remote have different roots and must stay distinct projects.
+    // Merging by remoteKey here would re-introduce the #987 collapse via the reconciler.
     const projectsByRoot = new Map<string, PersistedProjectRecord[]>();
     for (const project of activeProjects) {
       if (project.kind !== "git") {
@@ -302,7 +313,7 @@ export class WorkspaceReconciliationService {
     const currentGit = await this.readWorkspaceGitMetadata(project.rootPath, directoryName);
 
     const projectUpdates: Partial<
-      Pick<PersistedProjectRecord, "kind" | "displayName" | "rootPath">
+      Pick<PersistedProjectRecord, "kind" | "displayName" | "rootPath" | "remoteKey">
     > = {};
 
     const mappedKind = currentGit.projectKind === "git" ? "git" : "non_git";
@@ -318,6 +329,12 @@ export class WorkspaceReconciliationService {
       project.displayName !== currentGit.projectDisplayName
     ) {
       projectUpdates.displayName = currentGit.projectDisplayName;
+    }
+
+    // Backfill the cross-host grouping key on records created before it existed.
+    // Only set it from a live remote; never clear an existing key. See #987.
+    if (currentGit.remoteKey && project.remoteKey !== currentGit.remoteKey) {
+      projectUpdates.remoteKey = currentGit.remoteKey;
     }
 
     if (Object.keys(projectUpdates).length > 0) {
@@ -380,6 +397,7 @@ export class WorkspaceReconciliationService {
         projectDisplayName: directoryName,
         workspaceDisplayName: directoryName,
         gitRemote: null,
+        remoteKey: null,
         isWorktree: false,
         projectSlug: "untitled",
         repoRoot: null,

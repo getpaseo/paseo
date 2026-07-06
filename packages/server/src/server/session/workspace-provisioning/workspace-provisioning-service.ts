@@ -95,6 +95,7 @@ export function createWorkspaceProvisioningService(deps: {
         rootPath,
         kind,
         displayName: input.membership.projectName,
+        remoteKey: input.membership.projectRemoteKey,
         createdAt: input.timestamp,
         updatedAt: input.timestamp,
       });
@@ -106,6 +107,9 @@ export function createWorkspaceProvisioningService(deps: {
       kind,
       archivedAt: null,
       updatedAt: input.timestamp,
+      // Backfill the grouping key on legacy records that predate it, but never
+      // overwrite an existing one. See #987.
+      remoteKey: existingProject.remoteKey ?? input.membership.projectRemoteKey,
     };
   }
 

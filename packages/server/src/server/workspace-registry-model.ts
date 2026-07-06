@@ -18,6 +18,10 @@ export interface DirectoryProjectMembership {
   workspaceKind: PersistedWorkspaceKind;
   workspaceDisplayName: string;
   projectKey: string;
+  // Cross-host grouping/display key ("remote:...") or null. Distinct from
+  // projectKey (the repo-root identity) so two clones of one remote are distinct
+  // projects that still group across hosts. See #987.
+  projectRemoteKey: string | null;
   projectName: string;
   projectRootPath: string;
   projectKind: PersistedProjectKind;
@@ -42,7 +46,11 @@ export function deriveWorkspaceDirectoryKey(
   return worktreeRoot ?? resolve(cwd);
 }
 
-function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
+// Cross-host grouping and display key derived from the git remote (e.g.
+// "remote:github.com/owner/repo"). NOT the project identity — two independent
+// clones of one remote share this key but are distinct projects keyed by their
+// root path. Null for non-git / no-remote / unparseable remotes. See #987.
+export function deriveProjectRemoteKey(remoteUrl: string | null): string | null {
   if (!remoteUrl) {
     return null;
   }
@@ -89,22 +97,16 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
   return `remote:${cleanedHost}/${cleanedPath}`;
 }
 
+// Identity key for a project: the repository root. Two independent clones of the
+// same remote have distinct roots (so they become distinct projects); a repo and
+// its git worktrees share mainRepoRoot (so they group under one project). The
+// remote-based grouping/display key now lives in deriveProjectRemoteKey. See #987.
 export function deriveProjectGroupingKey(options: {
   cwd: string;
-  remoteUrl: string | null;
   mainRepoRoot: string | null;
 }): string {
-  const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
-  if (remoteKey) {
-    return remoteKey;
-  }
-
   const mainRepoRoot = options.mainRepoRoot?.trim();
-  if (mainRepoRoot) {
-    return mainRepoRoot;
-  }
-
-  return options.cwd;
+  return mainRepoRoot ? mainRepoRoot : options.cwd;
 }
 
 export function deriveProjectGroupingName(projectKey: string): string {
@@ -248,11 +250,21 @@ export function classifyDirectoryForProjectMembership(input: {
     cwd: normalizedCwd,
   };
 
+  const projectRootPath = deriveProjectRootPath({
+    cwd: normalizedCwd,
+    checkout,
+  });
+  // Project identity is the repository root (the worktree root, or the main repo
+  // root for a linked worktree) — NOT the remote. Two independent clones of one
+  // remote get distinct roots (so they are distinct projects); a repo and its
+  // worktrees share mainRepoRoot (so they group under one project); a subpath of a
+  // repo still resolves to the repo root. The remote key drives cross-host grouping
+  // and display only. See #987.
   const projectKey = deriveProjectGroupingKey({
     cwd: checkout.worktreeRoot ?? normalizedCwd,
-    remoteUrl: checkout.remoteUrl,
     mainRepoRoot: checkout.mainRepoRoot,
   });
+  const projectRemoteKey = deriveProjectRemoteKey(checkout.remoteUrl);
 
   return {
     cwd: normalizedCwd,
@@ -264,11 +276,9 @@ export function classifyDirectoryForProjectMembership(input: {
       checkout,
     }),
     projectKey,
-    projectName: deriveProjectGroupingName(projectKey),
-    projectRootPath: deriveProjectRootPath({
-      cwd: normalizedCwd,
-      checkout,
-    }),
+    projectRemoteKey,
+    projectName: deriveProjectGroupingName(projectRemoteKey ?? projectKey),
+    projectRootPath,
     projectKind: deriveProjectKind(checkout),
   };
 }

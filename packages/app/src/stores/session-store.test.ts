@@ -456,6 +456,7 @@ describe("removeEmptyProject", () => {
     store.setEmptyProjects("test-server", [
       {
         projectId: "project-empty",
+        remoteKey: null,
         projectDisplayName: "Empty",
         projectCustomName: null,
         projectRootPath: "/repo/empty",
@@ -474,6 +475,7 @@ describe("removeEmptyProject", () => {
     store.setEmptyProjects("test-server", [
       {
         projectId: "project-empty",
+        remoteKey: null,
         projectDisplayName: "Empty",
         projectCustomName: null,
         projectRootPath: "/repo/empty",

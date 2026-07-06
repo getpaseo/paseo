@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createNoopWorkspaceGitService } from "../../test-utils/workspace-git-service-stub.js";
 import {
+  createPersistedProjectRecord,
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
 } from "../../workspace-registry.js";
@@ -25,6 +26,9 @@ const ARCHIVED_AT = "2026-01-01T00:00:00.000Z";
 
 let tmpDir: string;
 let gitRoots: Set<string>;
+// Per-root git facts the stub reports; empty by default (existing tests stay no-remote).
+let remoteByRoot: Map<string, string>;
+let mainRepoRootByPath: Map<string, string>;
 let workspaceRegistry: FileBackedWorkspaceRegistry;
 let projectRegistry: FileBackedProjectRegistry;
 let provisioning: WorkspaceProvisioningService;
@@ -46,10 +50,10 @@ function gitService() {
         cwd,
         isGit: worktreeRoot !== null,
         currentBranch: worktreeRoot ? "main" : null,
-        remoteUrl: null,
+        remoteUrl: worktreeRoot ? (remoteByRoot.get(worktreeRoot) ?? null) : null,
         worktreeRoot,
         isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
+        mainRepoRoot: worktreeRoot ? (mainRepoRootByPath.get(worktreeRoot) ?? null) : null,
       };
     },
   });
@@ -58,6 +62,8 @@ function gitService() {
 beforeEach(async () => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), "workspace-provisioning-"));
   gitRoots = new Set();
+  remoteByRoot = new Map();
+  mainRepoRootByPath = new Map();
   workspaceRegistry = new FileBackedWorkspaceRegistry(
     path.join(tmpDir, "projects", "workspaces.json"),
     logger,
@@ -212,5 +218,71 @@ test("findOrCreateProjectForDirectory reuses the active project for the same roo
   const second = await provisioning.findOrCreateProjectForDirectory(path.join(repo, "sub"));
 
   expect(second.projectId).toBe(first.projectId);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("two independent clones of the same remote become two distinct projects (#987)", async () => {
+  const work = path.join(tmpDir, "work", "repo");
+  const scratch = path.join(tmpDir, "scratch", "repo");
+  gitRoots.add(work);
+  gitRoots.add(scratch);
+  remoteByRoot.set(work, "https://github.com/acme/repo.git");
+  remoteByRoot.set(scratch, "https://github.com/acme/repo.git");
+
+  const first = await provisioning.findOrCreateProjectForDirectory(work);
+  const second = await provisioning.findOrCreateProjectForDirectory(scratch);
+
+  // Distinct identities (repo roots), so neither add overwrites the other...
+  expect(first.projectId).not.toBe(second.projectId);
+  expect(first.rootPath).toBe(work);
+  expect(second.rootPath).toBe(scratch);
+  expect(await projectRegistry.list()).toHaveLength(2);
+  // ...but both carry the shared remote key for cross-host grouping.
+  expect(first.remoteKey).toBe("remote:github.com/acme/repo");
+  expect(second.remoteKey).toBe("remote:github.com/acme/repo");
+});
+
+test("a worktree of a clone stays under that clone's project, not a sibling clone", async () => {
+  const work = path.join(tmpDir, "work", "repo");
+  gitRoots.add(work);
+  remoteByRoot.set(work, "https://github.com/acme/repo.git");
+  const root = await provisioning.findOrCreateProjectForDirectory(work);
+
+  // A linked worktree of `work`: its own git root, but mainRepoRoot points back at
+  // the main checkout, so it must group under `work`'s project.
+  const worktree = path.join(tmpDir, "work", "repo-feature");
+  gitRoots.add(worktree);
+  remoteByRoot.set(worktree, "https://github.com/acme/repo.git");
+  mainRepoRootByPath.set(worktree, work);
+
+  const worktreeProject = await provisioning.findOrCreateProjectForDirectory(worktree);
+
+  expect(worktreeProject.projectId).toBe(root.projectId);
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("re-opening a legacy remote-keyed project by its root preserves its id (no migration)", async () => {
+  const work = path.join(tmpDir, "work", "repo");
+  gitRoots.add(work);
+  remoteByRoot.set(work, "https://github.com/acme/repo.git");
+
+  // Seed a pre-#987 record whose id is the remote key at this root.
+  await projectRegistry.upsert(
+    createPersistedProjectRecord({
+      projectId: "remote:github.com/acme/repo",
+      rootPath: work,
+      kind: "git",
+      displayName: "acme/repo",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }),
+  );
+
+  const resolved = await provisioning.findOrCreateProjectForDirectory(work);
+
+  // Matched by rootPath, so its legacy id is preserved (workspaces/agents keyed to
+  // it keep resolving) and the remote key is backfilled in place.
+  expect(resolved.projectId).toBe("remote:github.com/acme/repo");
+  expect(resolved.remoteKey).toBe("remote:github.com/acme/repo");
   expect(await projectRegistry.list()).toHaveLength(1);
 });

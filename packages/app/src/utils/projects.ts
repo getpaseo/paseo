@@ -63,6 +63,9 @@ interface HostGroup {
 
 interface ProjectGroup {
   projectKey: string;
+  // Remote key ("remote:...") or null; internal only (not exposed on ProjectSummary).
+  // Projects are keyed by identity; this is kept solely to derive the GitHub URL. #987.
+  remoteKey: string | null;
   projectName: string;
   projectCustomName: string | null;
   hostsByServerId: Map<string, HostGroup>;
@@ -97,8 +100,11 @@ function buildHostProjectEntries(host: ProjectHost): HostProjectListItem[] {
   });
 }
 
-function deriveGithubUrl(projectKey: string): string | undefined {
-  const match = projectKey.match(GITHUB_PROJECT_KEY_PATTERN);
+function deriveGithubUrl(remoteKey: string | null): string | undefined {
+  if (!remoteKey) {
+    return undefined;
+  }
+  const match = remoteKey.match(GITHUB_PROJECT_KEY_PATTERN);
   if (!match) {
     return undefined;
   }
@@ -162,18 +168,36 @@ function toProjectSummary(draft: ProjectGroup): ProjectSummary {
     totalWorkspaceCount,
     hostCount: hosts.length,
     onlineHostCount,
-    githubUrl: deriveGithubUrl(draft.projectKey),
+    githubUrl: deriveGithubUrl(draft.remoteKey),
   };
+}
+
+// Per-identity lookups for one host: repo root for workspace-less project parents, and
+// the remote key (used only to derive the GitHub link). Projects are keyed by identity
+// (repo path), so two clones of one remote stay distinct. See #987.
+function indexHostProjectMetadata(host: ProjectHost): {
+  emptyRepoRootByProjectId: Map<string, string>;
+  remoteKeyByProjectId: Map<string, string | null>;
+} {
+  const emptyRepoRootByProjectId = new Map<string, string>();
+  const remoteKeyByProjectId = new Map<string, string | null>();
+  for (const emptyProject of host.emptyProjects ?? []) {
+    emptyRepoRootByProjectId.set(emptyProject.projectId, emptyProject.projectRootPath);
+    remoteKeyByProjectId.set(emptyProject.projectId, emptyProject.remoteKey ?? null);
+  }
+  for (const workspace of host.workspaces) {
+    if (!remoteKeyByProjectId.has(workspace.projectId)) {
+      remoteKeyByProjectId.set(workspace.projectId, workspace.project?.remoteKey ?? null);
+    }
+  }
+  return { emptyRepoRootByProjectId, remoteKeyByProjectId };
 }
 
 export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
   const groups = new Map<string, ProjectGroup>();
 
   for (const host of input.hosts) {
-    const emptyRepoRootByProjectKey = new Map<string, string>();
-    for (const emptyProject of host.emptyProjects ?? []) {
-      emptyRepoRootByProjectKey.set(emptyProject.projectId, emptyProject.projectRootPath);
-    }
+    const { emptyRepoRootByProjectId, remoteKeyByProjectId } = indexHostProjectMetadata(host);
 
     const hostProjects = buildHostProjectEntries(host);
     for (const hostProject of hostProjects) {
@@ -182,6 +206,7 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
       if (!group) {
         group = {
           projectKey: hostProject.projectKey,
+          remoteKey: remoteKeyByProjectId.get(hostProject.projectKey) ?? null,
           projectName: customName?.displayName ?? hostProject.projectName,
           projectCustomName: customName?.customName ?? null,
           hostsByServerId: new Map(),
@@ -198,7 +223,7 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
           serverName: host.serverName,
           isOnline: host.isOnline,
           workspaces: [],
-          fallbackRepoRoot: emptyRepoRootByProjectKey.get(hostProject.projectKey) ?? "",
+          fallbackRepoRoot: emptyRepoRootByProjectId.get(hostProject.projectKey) ?? "",
         });
       }
     }

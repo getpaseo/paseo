@@ -2538,6 +2538,11 @@ export const ProjectCheckoutLitePayloadSchema = z.union([
 
 export const ProjectPlacementPayloadSchema = z.object({
   projectKey: z.string(),
+  // COMPAT(projectRemoteKey): added in v0.1.104, drop the optional gate when floor >= v0.1.104.
+  // Cross-host grouping / GitHub key ("remote:...") or null; distinct from projectKey,
+  // which is the per-checkout repo-root identity the client targets for remove/create.
+  // Old daemons omit it; old clients ignore it and group by projectKey. See #987.
+  remoteKey: z.string().nullable().optional(),
   projectName: z.string(),
   workspaceName: z.string().nullable().optional(),
   checkout: ProjectCheckoutLitePayloadSchema,
@@ -2761,6 +2766,11 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
 // workspace is archived.
 export const WorkspaceProjectDescriptorPayloadSchema = z.object({
   projectId: z.string(),
+  // COMPAT(projectRemoteKey): added in v0.1.104, drop the optional gate when floor >= v0.1.104.
+  // Cross-host grouping / GitHub key ("remote:...") or null; distinct from projectId,
+  // which is the per-checkout repo-root identity. Old daemons omit it; old clients ignore
+  // it and fall back to grouping by projectId. See #987.
+  remoteKey: z.string().nullable().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable().optional(),
   projectRootPath: z.string(),

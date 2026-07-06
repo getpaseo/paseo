@@ -247,6 +247,7 @@ async function upsertWorkspaceForWorktree(options: {
       kind: sourceProject.kind,
       displayName: sourceProject.displayName,
       customName: sourceProject.customName,
+      remoteKey: sourceProject.remoteKey,
       createdAt: sourceProject.createdAt ?? now,
       updatedAt: now,
       archivedAt: null,
@@ -335,6 +336,7 @@ async function resolveProjectRecordForMembership(options: {
       rootPath,
       kind: options.membership.projectKind,
       displayName: options.membership.projectName,
+      remoteKey: options.membership.projectRemoteKey,
       createdAt: options.timestamp,
       updatedAt: options.timestamp,
     });
@@ -346,6 +348,9 @@ async function resolveProjectRecordForMembership(options: {
     kind: options.membership.projectKind,
     archivedAt: null,
     updatedAt: options.timestamp,
+    // Backfill the grouping key on legacy records that predate it, but never
+    // overwrite an existing one. See #987.
+    remoteKey: existingProject.remoteKey ?? options.membership.projectRemoteKey,
   };
 }
 
@@ -355,6 +360,7 @@ interface SourceProjectForWorktree {
   kind: "git";
   displayName: string;
   customName: string | null;
+  remoteKey: string | null;
   createdAt: string | null;
 }
 
@@ -363,6 +369,7 @@ function sourceProjectFromRecord(record: {
   rootPath: string;
   displayName: string;
   customName?: string | null;
+  remoteKey?: string | null;
   createdAt?: string | null;
 }): SourceProjectForWorktree {
   return {
@@ -371,6 +378,7 @@ function sourceProjectFromRecord(record: {
     kind: "git",
     displayName: record.displayName,
     customName: record.customName ?? null,
+    remoteKey: record.remoteKey ?? null,
     createdAt: record.createdAt ?? null,
   };
 }
@@ -398,6 +406,7 @@ async function resolveWorkspaceProjectForWorktree(options: {
     displayName:
       sourceProject?.displayName ?? deriveProjectGroupingName(options.sourceWorkspace.projectId),
     customName: sourceProject?.customName ?? null,
+    remoteKey: sourceProject?.remoteKey ?? null,
     createdAt: sourceProject?.createdAt ?? null,
   });
 }
@@ -413,6 +422,7 @@ async function resolveFallbackProjectForWorktree(options: {
     displayName:
       existingFallbackProject?.displayName ?? deriveProjectGroupingName(options.repoRoot),
     customName: existingFallbackProject?.customName ?? null,
+    remoteKey: existingFallbackProject?.remoteKey ?? null,
     createdAt: existingFallbackProject?.createdAt ?? null,
   });
 }

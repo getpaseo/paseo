@@ -176,6 +176,9 @@ export function normalizeWorkspaceDescriptor(
 
 export interface EmptyProjectDescriptor {
   projectId: string;
+  // Cross-host grouping / GitHub key ("remote:...") or null; distinct from projectId
+  // (identity) so two clones of one remote stay distinct but group across hosts. #987.
+  remoteKey: string | null;
   projectDisplayName: string;
   projectCustomName: string | null;
   projectRootPath: string;
@@ -187,6 +190,7 @@ export function normalizeEmptyProjectDescriptor(
 ): EmptyProjectDescriptor {
   return {
     projectId: payload.projectId,
+    remoteKey: payload.remoteKey ?? null,
     projectDisplayName: payload.projectDisplayName,
     projectCustomName: payload.projectCustomName ?? null,
     projectRootPath: payload.projectRootPath,
@@ -234,6 +238,7 @@ function emptyProjectDescriptorFromWorkspace(
 ): EmptyProjectDescriptor {
   return {
     projectId: workspace.projectId,
+    remoteKey: workspace.project?.remoteKey ?? null,
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
     projectRootPath: workspace.projectRootPath,

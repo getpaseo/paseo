@@ -8,6 +8,9 @@ export interface WorkspaceStructureHostPlacement {
 }
 
 export interface WorkspaceStructureProject {
+  // Identity of the checkout (repo-root path, or a legacy remote id). Drives sidebar
+  // grouping/selection and daemon ops (remove/create). Two clones of one remote have
+  // distinct projectKeys, so they render as two projects. See #987.
   projectKey: string;
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];

@@ -3976,7 +3976,6 @@ test("open_project_request reclassifies an archived directory workspace when git
     "orchestrate",
     "desktop-daemon-settings",
   );
-  const remoteProjectId = "remote:github.com/getpaseo/paseo";
   const archivedAt = "2026-04-24T09:48:36.168Z";
   const workspaceId = "ws-desktop-daemon-settings";
 
@@ -4054,10 +4053,13 @@ test("open_project_request reclassifies an archived directory workspace when git
   const response = findByType(emitted, "open_project_response");
 
   expect(response?.payload.error).toBeNull();
-  expect(response?.payload.workspace?.projectId).toBe(remoteProjectId);
+  // A worktree reclassifies under its MAIN repo root (identity), not the remote
+  // key — while still carrying the remote for grouping/display. See #987.
+  expect(response?.payload.workspace?.projectId).toBe(repoRoot);
   expect(response?.payload.workspace?.workspaceKind).toBe("worktree");
-  expect(projects.get(remoteProjectId)?.kind).toBe("git");
-  expect(workspaces.get(workspaceId)?.projectId).toBe(remoteProjectId);
+  expect(projects.get(repoRoot)?.kind).toBe("git");
+  expect(projects.get(repoRoot)?.remoteKey).toBe("remote:github.com/getpaseo/paseo");
+  expect(workspaces.get(workspaceId)?.projectId).toBe(repoRoot);
   expect(workspaces.get(workspaceId)?.kind).toBe("worktree");
   expect(workspaces.get(workspaceId)?.displayName).toBe("feature/desktop-daemon-settings");
 });

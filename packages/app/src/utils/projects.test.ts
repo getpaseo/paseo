@@ -8,10 +8,12 @@ function placement(input: {
   projectName: string;
   cwd: string;
   remoteUrl: string | null;
+  remoteKey?: string | null;
   mainRepoRoot?: string | null;
 }): ProjectPlacementPayload {
   return {
     projectKey: input.projectKey,
+    remoteKey: input.remoteKey ?? null,
     projectName: input.projectName,
     checkout: {
       cwd: input.cwd,
@@ -139,7 +141,6 @@ describe("buildProjects", () => {
     expect(summary?.hostCount).toBe(2);
     expect(summary?.onlineHostCount).toBe(2);
     expect(summary?.totalWorkspaceCount).toBe(5);
-    expect(summary?.githubUrl).toBe("https://github.com/acme/app");
     expect(summary?.hosts).toHaveLength(2);
     const local = summary?.hosts.find((host) => host.serverId === "local");
     const laptop = summary?.hosts.find((host) => host.serverId === "laptop");
@@ -147,6 +148,110 @@ describe("buildProjects", () => {
     expect(laptop?.workspaceCount).toBe(2);
     expect(local?.workspaces.map((entry) => entry.id)).toEqual(["main", "feature-a", "feature-b"]);
     expect(laptop?.workspaces.map((entry) => entry.id)).toEqual(["main", "feature"]);
+  });
+
+  it("shows the same repo on two hosts (different paths) as two projects; unification is by identity", () => {
+    // Identity is the repo path, and different machines have different paths, so the
+    // same repo shows per checkout. The GitHub URL still derives from the shared remoteKey.
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "local-main",
+              repoRoot: "/home/me/app",
+              projectId: "/home/me/app",
+              project: placement({
+                projectKey: "/home/me/app",
+                remoteKey: "remote:github.com/acme/app",
+                projectName: "acme/app",
+                cwd: "/home/me/app",
+                remoteUrl: "https://github.com/acme/app.git",
+              }),
+            }),
+          ],
+        },
+        {
+          serverId: "laptop",
+          serverName: "Laptop",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "laptop-main",
+              repoRoot: "/Users/me/app",
+              projectId: "/Users/me/app",
+              project: placement({
+                projectKey: "/Users/me/app",
+                remoteKey: "remote:github.com/acme/app",
+                projectName: "acme/app",
+                cwd: "/Users/me/app",
+                remoteUrl: "git@github.com:acme/app.git",
+              }),
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects.map((project) => project.projectKey).sort()).toEqual([
+      "/Users/me/app",
+      "/home/me/app",
+    ]);
+    expect(
+      result.projects.every((project) => project.githubUrl === "https://github.com/acme/app"),
+    ).toBe(true);
+  });
+
+  it("shows two clones of one remote on a single host as two distinct projects (#987)", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "work",
+              repoRoot: "/home/me/work/app",
+              projectId: "/home/me/work/app",
+              project: placement({
+                projectKey: "/home/me/work/app",
+                remoteKey: "remote:github.com/acme/app",
+                projectName: "acme/app",
+                cwd: "/home/me/work/app",
+                remoteUrl: "https://github.com/acme/app.git",
+              }),
+            }),
+            workspace({
+              id: "scratch",
+              repoRoot: "/home/me/scratch/app",
+              projectId: "/home/me/scratch/app",
+              project: placement({
+                projectKey: "/home/me/scratch/app",
+                remoteKey: "remote:github.com/acme/app",
+                projectName: "acme/app",
+                cwd: "/home/me/scratch/app",
+                remoteUrl: "https://github.com/acme/app.git",
+              }),
+            }),
+          ],
+        },
+      ],
+    });
+
+    // Two clones of one repo are two distinct projects (keyed by path), each with one
+    // workspace and each carrying the shared repo's GitHub URL.
+    expect(result.projects.map((project) => project.projectKey).sort()).toEqual([
+      "/home/me/scratch/app",
+      "/home/me/work/app",
+    ]);
+    expect(result.projects.every((project) => project.totalWorkspaceCount === 1)).toBe(true);
+    expect(
+      result.projects.every((project) => project.githubUrl === "https://github.com/acme/app"),
+    ).toBe(true);
   });
 
   it("collapses five workspaces on one host into a single host entry whose workspaceCount is five", () => {
@@ -225,7 +330,7 @@ describe("buildProjects", () => {
     expect(legacy?.hosts[0]?.repoRoot).toBe("/repo/legacy");
   });
 
-  it("derives githubUrl only when projectKey matches remote:github.com/{owner}/{repo}", () => {
+  it("derives githubUrl from remoteKey (github remotes only), independent of the identity projectKey", () => {
     const result = buildProjects({
       hosts: [
         {
@@ -237,7 +342,8 @@ describe("buildProjects", () => {
               id: "github",
               repoRoot: "/repo/app",
               project: placement({
-                projectKey: "remote:github.com/acme/app",
+                projectKey: "/repo/app",
+                remoteKey: "remote:github.com/acme/app",
                 projectName: "acme/app",
                 cwd: "/repo/app",
                 remoteUrl: "https://github.com/acme/app.git",
@@ -258,9 +364,7 @@ describe("buildProjects", () => {
       ],
     });
 
-    const github = result.projects.find(
-      (project) => project.projectKey === "remote:github.com/acme/app",
-    );
+    const github = result.projects.find((project) => project.projectKey === "/repo/app");
     const local = result.projects.find((project) => project.projectKey === "/repo/local");
 
     expect(github?.githubUrl).toBe("https://github.com/acme/app");
@@ -526,6 +630,7 @@ describe("buildProjects", () => {
           emptyProjects: [
             {
               projectId: "/repo/fresh",
+              remoteKey: null,
               projectDisplayName: "fresh",
               projectCustomName: null,
               projectRootPath: "/repo/fresh",

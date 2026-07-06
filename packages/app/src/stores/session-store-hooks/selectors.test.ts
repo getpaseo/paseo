@@ -227,6 +227,7 @@ describe("workspace structure composition", () => {
     });
     const emptyProject: EmptyProjectDescriptor = {
       projectId: "project-a",
+      remoteKey: null,
       projectDisplayName: "Project A",
       projectCustomName: null,
       projectRootPath: "/repo/a",
@@ -281,6 +282,7 @@ describe("workspace structure composition", () => {
     useSessionStore.getState().setEmptyProjects(SERVER_ID, [
       {
         projectId: "empty-project",
+        remoteKey: null,
         projectDisplayName: "Empty Project",
         projectCustomName: null,
         projectRootPath: "/repo/empty",

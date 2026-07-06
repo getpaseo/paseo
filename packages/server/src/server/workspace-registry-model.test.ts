@@ -197,11 +197,45 @@ describe("git worktree grouping", () => {
       workspaceDirectoryKey: "/tmp/repo-feature",
       workspaceKind: "worktree",
       workspaceDisplayName: "feature/plain",
-      projectKey: "remote:github.com/acme/repo",
+      // Identity groups the worktree under its main repo root; the remote key is
+      // grouping/display only. See #987.
+      projectKey: "/tmp/repo",
+      projectRemoteKey: "remote:github.com/acme/repo",
       projectName: "acme/repo",
       projectRootPath: "/tmp/repo",
       projectKind: "git",
     });
+  });
+
+  test("two independent clones of one remote get distinct project keys but share a remote key (#987)", () => {
+    const remoteUrl = "https://github.com/acme/repo.git";
+    const classifyClone = (root: string, branch: string) =>
+      classifyDirectoryForProjectMembership({
+        cwd: root,
+        checkout: {
+          cwd: root,
+          isGit: true,
+          currentBranch: branch,
+          remoteUrl,
+          worktreeRoot: root,
+          isPaseoOwnedWorktree: false,
+          // A plain clone (not a linked worktree) reports mainRepoRoot: null.
+          mainRepoRoot: null,
+        },
+      });
+
+    const work = classifyClone("/home/me/work/repo", "main");
+    const scratch = classifyClone("/home/me/scratch/repo", "feature");
+
+    // Identity is the repo root, so the two clones are distinct projects...
+    expect(work.projectKey).toBe("/home/me/work/repo");
+    expect(scratch.projectKey).toBe("/home/me/scratch/repo");
+    expect(work.projectKey).not.toBe(scratch.projectKey);
+    // ...while the remote key (grouping/display) is shared.
+    expect(work.projectRemoteKey).toBe("remote:github.com/acme/repo");
+    expect(scratch.projectRemoteKey).toBe(work.projectRemoteKey);
+    expect(work.projectName).toBe("acme/repo");
+    expect(scratch.projectName).toBe("acme/repo");
   });
 
   test("uses mainRepoRoot as the project root for plain git worktrees", () => {

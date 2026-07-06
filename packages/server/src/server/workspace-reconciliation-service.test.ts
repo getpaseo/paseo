@@ -15,6 +15,7 @@ import type {
   WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
+import { deriveProjectRemoteKey } from "./workspace-registry-model.js";
 
 function createTestRegistries() {
   const projects = new Map<string, PersistedProjectRecord>();
@@ -115,6 +116,7 @@ function createWorkspaceGitServiceStub(
           projectDisplayName: directoryName,
           workspaceDisplayName: directoryName,
           gitRemote: null,
+          remoteKey: null,
           isWorktree: false,
           projectSlug: "untitled",
           repoRoot: null,
@@ -122,13 +124,15 @@ function createWorkspaceGitServiceStub(
           remoteUrl: null,
         };
       }
+      const gitRemote = metadata.gitRemote ?? null;
       return {
-        gitRemote: metadata.gitRemote ?? null,
+        gitRemote,
+        remoteKey: deriveProjectRemoteKey(gitRemote),
         isWorktree: false,
         projectSlug: "repo",
         repoRoot: cwd,
         currentBranch: metadata.workspaceDisplayName,
-        remoteUrl: metadata.gitRemote ?? null,
+        remoteUrl: gitRemote,
         ...metadata,
       };
     }),
@@ -790,5 +794,92 @@ describe("WorkspaceReconciliationService", () => {
     await service.runOnce();
 
     expect(infoRecords).toEqual([]);
+  });
+
+  test("does not merge two clones of one remote that live at different roots (#987)", async () => {
+    const work = createTempGitRepo("reconcile-clone-work-");
+    const scratch = createTempGitRepo("reconcile-clone-scratch-");
+    tempDirs.push(work, scratch);
+    const { projects, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    const remote = "git@github.com:acme/repo.git";
+    for (const root of [work, scratch]) {
+      projects.set(
+        root,
+        createPersistedProjectRecord({
+          projectId: root,
+          rootPath: root,
+          kind: "git",
+          displayName: "acme/repo",
+          remoteKey: "remote:github.com/acme/repo",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+    }
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [work]: {
+          projectKind: "git",
+          projectDisplayName: "acme/repo",
+          workspaceDisplayName: "main",
+          gitRemote: remote,
+        },
+        [scratch]: {
+          projectKind: "git",
+          projectDisplayName: "acme/repo",
+          workspaceDisplayName: "main",
+          gitRemote: remote,
+        },
+      }),
+    });
+
+    const result = await service.runOnce();
+
+    // Grouping is by rootPath, not remoteKey — distinct clones must both survive.
+    expect(result.changesApplied.find((c) => c.kind === "project_archived")).toBeUndefined();
+    expect(projects.get(work)!.archivedAt).toBeFalsy();
+    expect(projects.get(scratch)!.archivedAt).toBeFalsy();
+  });
+
+  test("backfills remoteKey on a legacy project record from the live remote", async () => {
+    const dir = createTempGitRepo("reconcile-remotekey-");
+    tempDirs.push(dir);
+    const { projects, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: dir,
+        kind: "git",
+        displayName: "acme/repo",
+        // Legacy record predating remoteKey.
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      workspaceGitService: createWorkspaceGitServiceStub({
+        [dir]: {
+          projectKind: "git",
+          projectDisplayName: "acme/repo",
+          workspaceDisplayName: "main",
+          gitRemote: "git@github.com:acme/repo.git",
+        },
+      }),
+    });
+
+    await service.runOnce();
+
+    expect(projects.get("p1")!.remoteKey).toBe("remote:github.com/acme/repo");
   });
 });

@@ -1,13 +1,15 @@
 import { basename } from "path";
 import { parseGitHubRemoteUrl } from "../utils/github-remote.js";
 import { slugify } from "../utils/worktree.js";
-import { deriveProjectGroupingKey, deriveProjectGroupingName } from "./workspace-registry-model.js";
+import { deriveProjectGroupingName, deriveProjectRemoteKey } from "./workspace-registry-model.js";
 
 export interface WorkspaceGitMetadata {
   projectKind: "git" | "directory";
   projectDisplayName: string;
   workspaceDisplayName: string;
   gitRemote: string | null;
+  // Cross-host grouping key derived from the remote ("remote:...") or null. See #987.
+  remoteKey: string | null;
   isWorktree: boolean;
   projectSlug: string;
   repoRoot: string | null;
@@ -49,6 +51,7 @@ export function buildWorkspaceGitMetadataFromSnapshot(input: {
       projectDisplayName: input.directoryName,
       workspaceDisplayName: input.directoryName,
       gitRemote: null,
+      remoteKey: null,
       isWorktree: false,
       projectSlug: deriveProjectSlug(input.cwd),
       repoRoot: null,
@@ -59,20 +62,15 @@ export function buildWorkspaceGitMetadataFromSnapshot(input: {
 
   const isWorktree =
     input.mainRepoRoot !== null && input.repoRoot !== null && input.mainRepoRoot !== input.repoRoot;
-  const projectKey = deriveProjectGroupingKey({
-    cwd: input.repoRoot ?? input.cwd,
-    remoteUrl: input.remoteUrl,
-    mainRepoRoot: input.mainRepoRoot,
-  });
-  const projectDisplayName = projectKey.startsWith("remote:")
-    ? deriveProjectGroupingName(projectKey)
-    : input.directoryName;
+  const remoteKey = deriveProjectRemoteKey(input.remoteUrl);
+  const projectDisplayName = remoteKey ? deriveProjectGroupingName(remoteKey) : input.directoryName;
 
   return {
     projectKind: "git",
     projectDisplayName,
     workspaceDisplayName: input.currentBranch ?? input.directoryName,
     gitRemote: input.remoteUrl,
+    remoteKey,
     isWorktree,
     projectSlug: deriveProjectSlug(input.cwd, input.remoteUrl),
     repoRoot: input.repoRoot,
