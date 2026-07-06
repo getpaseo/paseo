@@ -1334,6 +1334,69 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("scheduled new-agent cancellations fail the run", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    manager.runAgent = async () => ({
+      sessionId: "scheduled-canceled-run",
+      finalText: "",
+      timeline: [],
+      canceled: true,
+    });
+    manager.waitForAgentEvent = async () => ({
+      status: "idle",
+      permission: null,
+      lastMessage: null,
+    });
+    manager.archiveAgent = async () => {};
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createAgent: async (input) => {
+        const snapshot = {
+          id: "00000000-0000-0000-0000-000000000325",
+          provider: "claude",
+          cwd: input.cwd ?? tempDir,
+          workspaceId: input.workspaceId,
+          status: "idle",
+          lifecycle: "idle",
+        };
+        return {
+          snapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["snapshot"],
+          liveSnapshot: snapshot as Awaited<
+            ReturnType<ScheduleServiceOptions["createAgent"]>
+          >["liveSnapshot"],
+          background: true,
+          initialPromptStarted: false,
+          initialPromptError: null,
+        };
+      },
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "cancel me",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs[0]).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("was canceled"),
+    });
+  });
+
   test("shows scheduled new-agent prompts as normal user turns", async () => {
     class PromptEchoScheduleSession implements AgentSession {
       readonly provider = "claude";

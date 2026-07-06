@@ -1,4 +1,12 @@
-import { type ReactNode, useCallback, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -110,6 +118,14 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const lastCronExpression = useRef(
     value.type === "cron" ? value.expression : DEFAULT_CRON_EXPRESSION,
   );
+
+  useEffect(() => {
+    if (value.type !== "cron") {
+      return;
+    }
+    rememberedCronTimeZone.current = value.timezone ?? "UTC";
+    lastCronExpression.current = value.expression;
+  }, [value]);
 
   const parsedIntervalValue = useMemo(() => {
     const parsed = Number.parseInt(intervalValueText, 10);

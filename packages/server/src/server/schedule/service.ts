@@ -497,10 +497,12 @@ export class ScheduleService {
         updated = { ...updated, expiresAt: input.expiresAt };
       }
 
-      updated = {
-        ...updated,
-        target: await this.stampNewAgentWorkspace(updated.target, updated.prompt, updated.id),
-      };
+      if (input.newAgentConfig === undefined) {
+        updated = {
+          ...updated,
+          target: await this.stampNewAgentWorkspace(updated.target, updated.prompt, updated.id),
+        };
+      }
       return { ...updated, updatedAt: now.toISOString() };
     });
     return requireSchedule(next, input.id);
@@ -869,6 +871,9 @@ export class ScheduleService {
       const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,
       });
+      if (result.canceled) {
+        throw new Error(`Scheduled agent ${agent.id} was canceled`);
+      }
       if (waitResult.permission) {
         throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
       }
