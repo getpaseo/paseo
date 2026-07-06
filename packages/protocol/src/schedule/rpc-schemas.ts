@@ -7,6 +7,10 @@ import {
   ScheduleTargetSchema,
 } from "./types.js";
 
+const ScheduleCreateNewAgentConfigSchema = ScheduleTargetSchema.options[1].shape.config.omit({
+  workspaceId: true,
+});
+
 const ScheduleCreateTargetSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("self"),
@@ -18,7 +22,7 @@ const ScheduleCreateTargetSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("new-agent"),
-    config: ScheduleTargetSchema.options[1].shape.config,
+    config: ScheduleCreateNewAgentConfigSchema,
   }),
 ]);
 

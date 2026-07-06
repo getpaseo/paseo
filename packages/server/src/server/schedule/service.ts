@@ -292,7 +292,10 @@ export class ScheduleService {
   async create(input: CreateScheduleInput): Promise<StoredSchedule> {
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
-    const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+    const target = await this.stampNewAgentWorkspace(
+      stripNewAgentWorkspaceStamp(input.target),
+      input.prompt,
+    );
     return this.createScheduleRecord(input, {
       name: trimOptionalName(input.name),
       prompt,
@@ -339,13 +342,17 @@ export class ScheduleService {
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
     if (name === null) {
-      const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+      const target = await this.stampNewAgentWorkspace(
+        stripNewAgentWorkspaceStamp(input.target),
+        input.prompt,
+      );
       return this.createScheduleRecord(input, { name, prompt, target });
     }
 
-    return this.store.upsertByNameAndTarget(name, input.target, {
+    const inputTarget = stripNewAgentWorkspaceStamp(input.target);
+    return this.store.upsertByNameAndTarget(name, inputTarget, {
       create: async () => {
-        const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+        const target = await this.stampNewAgentWorkspace(inputTarget, input.prompt);
         return this.buildScheduleRecord(input, { name, prompt, target });
       },
       update: async (current) => {
@@ -353,8 +360,9 @@ export class ScheduleService {
         const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
         const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
         const target = await this.stampNewAgentWorkspace(
-          carryExistingWorkspaceStamp(current.target, input.target),
+          carryExistingWorkspaceStamp(current.target, inputTarget),
           input.prompt,
+          current.id,
         );
         return {
           ...current,
@@ -457,7 +465,7 @@ export class ScheduleService {
         const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
         updated = {
           ...updated,
-          target: await this.stampNewAgentWorkspace(patchedTarget, updated.prompt),
+          target: await this.stampNewAgentWorkspace(patchedTarget, updated.prompt, updated.id),
         };
       }
 
@@ -471,7 +479,7 @@ export class ScheduleService {
 
       updated = {
         ...updated,
-        target: await this.stampNewAgentWorkspace(updated.target, updated.prompt),
+        target: await this.stampNewAgentWorkspace(updated.target, updated.prompt, updated.id),
       };
       return { ...updated, updatedAt: now.toISOString() };
     });
@@ -877,11 +885,14 @@ export class ScheduleService {
   private async createWorkspaceStampedTarget(
     target: Extract<ScheduleTarget, { type: "new-agent" }>,
     prompt: string,
+    scheduleId?: string,
   ): Promise<ScheduleTarget> {
-    const key = newAgentWorkspaceStampKey(target);
-    const existing = this.workspaceStampPromises.get(key);
-    if (existing) {
-      return existing;
+    const key = scheduleId ? `${scheduleId}:${newAgentWorkspaceStampKey(target)}` : null;
+    if (key) {
+      const existing = this.workspaceStampPromises.get(key);
+      if (existing) {
+        return existing;
+      }
     }
 
     const promise = (async () => {
@@ -896,6 +907,9 @@ export class ScheduleService {
         },
       };
     })();
+    if (!key) {
+      return promise;
+    }
     this.workspaceStampPromises.set(key, promise);
     try {
       const stampedTarget = await promise;
@@ -922,11 +936,12 @@ export class ScheduleService {
   private async stampNewAgentWorkspace(
     target: ScheduleTarget,
     prompt: string,
+    scheduleId?: string,
   ): Promise<ScheduleTarget> {
     if (target.type !== "new-agent" || target.config.workspaceId) {
       return target;
     }
-    return this.createWorkspaceStampedTarget(target, prompt);
+    return this.createWorkspaceStampedTarget(target, prompt, scheduleId);
   }
 
   private async ensureScheduleWorkspaceStamped(schedule: StoredSchedule): Promise<StoredSchedule> {
@@ -942,7 +957,11 @@ export class ScheduleService {
     }
 
     await this.assertNewAgentCwdExists(schedule.target.config.cwd);
-    const target = await this.createWorkspaceStampedTarget(schedule.target, schedule.prompt);
+    const target = await this.createWorkspaceStampedTarget(
+      schedule.target,
+      schedule.prompt,
+      schedule.id,
+    );
     const stamped = {
       ...schedule,
       target,
@@ -985,6 +1004,18 @@ function buildScheduleAgentConfig(
     extra: config.extra,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
+  };
+}
+
+function stripNewAgentWorkspaceStamp(target: ScheduleTarget): ScheduleTarget {
+  if (target.type !== "new-agent") {
+    return target;
+  }
+  const config = { ...target.config };
+  delete config.workspaceId;
+  return {
+    ...target,
+    config,
   };
 }
 

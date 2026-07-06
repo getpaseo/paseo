@@ -67,7 +67,7 @@ export interface CadenceEditorProps {
 export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const mode = value.type;
   const deviceTimeZone = useMemo(getDeviceTimeZone, []);
-  const displayedTimeZone = value.type === "cron" ? (value.timezone ?? "UTC") : deviceTimeZone;
+  const cronTimeZone = value.type === "cron" ? (value.timezone ?? "UTC") : deviceTimeZone;
 
   // The numeric/text fields are native-owned (AdaptiveTextInput). We seed them
   // once from the incoming cadence via lazy state initializers and bump
@@ -106,9 +106,9 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const emitCron = useCallback(
     (expression: string) => {
       lastCronExpression.current = expression;
-      onChange({ type: "cron", expression, timezone: deviceTimeZone });
+      onChange({ type: "cron", expression, timezone: cronTimeZone });
     },
-    [onChange, deviceTimeZone],
+    [onChange, cronTimeZone],
   );
 
   const handleModeChange = useCallback(
@@ -166,7 +166,7 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const cronError = trimmedCron ? validateCron(trimmedCron) : null;
   const cronPreview = cronError
     ? null
-    : (describeCron({ type: "cron", expression: trimmedCron, timezone: displayedTimeZone }) ??
+    : (describeCron({ type: "cron", expression: trimmedCron, timezone: cronTimeZone }) ??
       trimmedCron);
 
   let cronFeedback: ReactNode = null;
@@ -237,7 +237,7 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
             style={styles.cronInput}
           />
           {cronFeedback}
-          <Text style={styles.hint}>Times are in {displayedTimeZone}</Text>
+          <Text style={styles.hint}>Times are in {cronTimeZone}</Text>
         </View>
       )}
 
