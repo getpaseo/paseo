@@ -82,6 +82,10 @@ function getCronPreview(expression: string, timezone: string, error: string | nu
   return expression;
 }
 
+function intervalCadenceKey(cadence: Extract<ScheduleCadence, { type: "every" }>): string {
+  return `${cadence.type}:${cadence.everyMs}`;
+}
+
 export interface CadenceEditorProps {
   value: ScheduleCadence;
   onChange: (next: ScheduleCadence) => void;
@@ -94,6 +98,7 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const rememberedCronTimeZone = useRef(
     value.type === "cron" ? (value.timezone ?? "UTC") : deviceTimeZone,
   );
+  const emittedIntervalCadenceKey = useRef<string | null>(null);
   const cronTimeZone =
     value.type === "cron" ? (value.timezone ?? "UTC") : rememberedCronTimeZone.current;
 
@@ -120,12 +125,20 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   );
 
   useEffect(() => {
-    if (value.type !== "cron") {
+    if (value.type === "cron") {
+      emittedIntervalCadenceKey.current = null;
+      rememberedCronTimeZone.current = value.timezone ?? "UTC";
+      lastCronExpression.current = value.expression;
       return;
     }
-    rememberedCronTimeZone.current = value.timezone ?? "UTC";
-    lastCronExpression.current = value.expression;
-  }, [value]);
+    const cadenceKey = intervalCadenceKey(value);
+    if (emittedIntervalCadenceKey.current === cadenceKey) {
+      emittedIntervalCadenceKey.current = null;
+      return;
+    }
+    rememberedCronTimeZone.current = deviceTimeZone;
+    lastCronExpression.current = DEFAULT_CRON_EXPRESSION;
+  }, [deviceTimeZone, value]);
 
   const parsedIntervalValue = useMemo(() => {
     const parsed = Number.parseInt(intervalValueText, 10);
@@ -137,7 +150,9 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
       if (value.type === "cron") {
         rememberedCronTimeZone.current = value.timezone ?? "UTC";
       }
-      onChange({ type: "every", everyMs: partsToEveryMs(rawValue, unit) });
+      const next = { type: "every" as const, everyMs: partsToEveryMs(rawValue, unit) };
+      emittedIntervalCadenceKey.current = intervalCadenceKey(next);
+      onChange(next);
     },
     [onChange, value],
   );

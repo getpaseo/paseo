@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -827,6 +827,57 @@ describe("ScheduleService", () => {
     expect(storedAgent?.workspaceId).toBe(updated.target.config.workspaceId);
   });
 
+  test("new-agent schedule equivalent cwd updates reuse the stamped workspace", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tempDir);
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate,
+      workspaceRegistry,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "same cwd",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+        },
+      },
+      maxRuns: 1,
+    });
+    const originalWorkspaceId = created.target.config.workspaceId;
+
+    const updated = await service.update({
+      id: created.id,
+      newAgentConfig: { cwd: join(tempDir, ".") },
+    });
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(updated.target.config.workspaceId).toBe(originalWorkspaceId);
+    expect(inspected.target.config.workspaceId).toBe(originalWorkspaceId);
+    expect(await workspaceRegistry.list()).toHaveLength(1);
+    expect(await workspaceRegistry.get(originalWorkspaceId!)).toMatchObject({
+      workspaceId: originalWorkspaceId,
+      cwd: tempDir,
+      archivedAt: null,
+    });
+  });
+
   test("new-agent schedule creation validates cwd before minting a workspace", async () => {
     let ensureCalls = 0;
     const service = createScheduleService({
@@ -853,6 +904,37 @@ describe("ScheduleService", () => {
         },
       }),
     ).rejects.toThrow(ScheduleTargetGoneError);
+    expect(ensureCalls).toBe(0);
+  });
+
+  test("new-agent schedule creation rejects non-directory cwd before minting a workspace", async () => {
+    const filePath = join(tempDir, "not-a-directory.txt");
+    await writeFile(filePath, "not a directory");
+    let ensureCalls = 0;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        return "workspace-created-for-file-cwd";
+      },
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    await expect(
+      service.create({
+        prompt: "file cwd",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: { provider: "claude", cwd: filePath },
+        },
+      }),
+    ).rejects.toThrow("is not a directory");
     expect(ensureCalls).toBe(0);
   });
 

@@ -80,7 +80,7 @@ function applyNewAgentConfig(
     if (!trimmed) {
       throw new Error("cwd cannot be empty");
     }
-    if (trimmed !== config.cwd) {
+    if (resolve(trimmed) !== resolve(config.cwd)) {
       delete config.workspaceId;
     }
     config.cwd = trimmed;
@@ -842,7 +842,7 @@ export class ScheduleService {
     if (!stampedConfig) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
-    await this.assertNewAgentCwdExists(stampedConfig.cwd);
+    await this.assertNewAgentCwdDirectory(stampedConfig.cwd);
     const created = await this.createAgent({
       kind: "mcp",
       provider: formatScheduleProviderModel(stampedConfig),
@@ -903,9 +903,12 @@ export class ScheduleService {
     }
   }
 
-  private async assertNewAgentCwdExists(cwd: string): Promise<void> {
+  private async assertNewAgentCwdDirectory(cwd: string): Promise<void> {
     try {
-      await stat(cwd);
+      const stats = await stat(cwd);
+      if (!stats.isDirectory()) {
+        throw new ScheduleTargetGoneError(`Working directory ${cwd} is not a directory`);
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new ScheduleTargetGoneError(`Working directory ${cwd} no longer exists`);
@@ -919,7 +922,7 @@ export class ScheduleService {
     prompt: string,
     scheduleId?: string,
   ): Promise<ScheduleTarget> {
-    await this.assertNewAgentCwdExists(target.config.cwd);
+    await this.assertNewAgentCwdDirectory(target.config.cwd);
     const key = scheduleId ? `${scheduleId}:${newAgentWorkspaceStampKey(target)}` : null;
     if (key) {
       const existing = this.workspaceStampPromises.get(key);
@@ -989,7 +992,7 @@ export class ScheduleService {
       return schedule;
     }
 
-    await this.assertNewAgentCwdExists(schedule.target.config.cwd);
+    await this.assertNewAgentCwdDirectory(schedule.target.config.cwd);
     const target = await this.createWorkspaceStampedTarget(
       schedule.target,
       schedule.prompt,

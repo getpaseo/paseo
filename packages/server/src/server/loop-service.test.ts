@@ -502,6 +502,33 @@ describe("LoopService", () => {
     expect(await workspaceRegistry.list()).toHaveLength(1);
   });
 
+  test("rejects non-directory cwd before minting a loop workspace", async () => {
+    const filePath = path.join(tmpDir, "not-a-directory.txt");
+    writeFileSync(filePath, "not a directory");
+    let ensureCalls = 0;
+    const manager = new AgentManager({ registry: storage, logger });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        return "workspace-created-for-file-cwd";
+      },
+    });
+    await service.initialize();
+
+    await expect(
+      service.runLoop({
+        prompt: "Use a file as cwd",
+        cwd: filePath,
+        verifyChecks: ["true"],
+      }),
+    ).rejects.toThrow("is not a directory");
+    expect(ensureCalls).toBe(0);
+  });
+
   test("model-less loop workers use provider defaults and keep fast worker logs", async () => {
     const workerConfigs: AgentSessionConfig[] = [];
     const manager = new AgentManager({

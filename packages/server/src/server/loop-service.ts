@@ -207,6 +207,21 @@ function ensureNonNegativeInteger(value: number | undefined, field: string): num
   return value;
 }
 
+async function assertLoopCwdDirectory(cwd: string): Promise<void> {
+  let stats;
+  try {
+    stats = await fs.stat(cwd);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Working directory ${cwd} no longer exists`, { cause: error });
+    }
+    throw error;
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`Working directory ${cwd} is not a directory`);
+  }
+}
+
 function buildWorkerTitle(loop: LoopRecord, iterationIndex: number): string {
   const prefix = loop.name ?? loop.id;
   return `${prefix} [loop ${iterationIndex} worker]`;
@@ -399,13 +414,15 @@ export class LoopService {
     if (!verifyPrompt && verifyChecks.length === 0) {
       throw new Error("Loop requires --verify or at least one --verify-check");
     }
+    const cwd = path.resolve(input.cwd);
+    await assertLoopCwdDirectory(cwd);
 
     const createdAt = nowIso();
     const record = LoopRecordSchema.parse({
       id: createLoopId(),
       name: normalizeName(input.name),
       prompt,
-      cwd: path.resolve(input.cwd),
+      cwd,
       provider: input.provider ?? DEFAULT_LOOP_PROVIDER,
       model: normalizePrompt(input.model, "model"),
       modeId: normalizePrompt(input.modeId, "modeId"),
