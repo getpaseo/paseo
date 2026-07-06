@@ -39,7 +39,7 @@ import {
 } from "@/desktop/daemon/desktop-daemon";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
-import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
+import { loadDesktopSettings, useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
@@ -674,6 +674,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
         void restartDaemonFromSettings(host.serverId, `settings_daemon_restart_${host.serverId}`, {
           getIsElectron,
           getDesktopDaemonStatus,
+          getDesktopSettings: loadDesktopSettings,
           restartDesktopDaemon,
           restartServer: (reason) => daemonClient.restartServer(reason),
         }).catch((error) => {
