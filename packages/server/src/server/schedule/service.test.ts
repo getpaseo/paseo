@@ -49,18 +49,22 @@ const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
 
 const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
   async resolveCreateConfig(input) {
-    return { modeId: undefined, featureValues: input.featureValues };
+    return {
+      modeId: input.unattended ? input.requestedMode : "interactive",
+      featureValues: input.featureValues,
+    };
   },
 };
 
 type TestScheduleServiceOptions = Omit<
   ScheduleServiceOptions,
-  "createAgent" | "ensureWorkspaceForCreate"
+  "createAgent" | "ensureWorkspaceForCreate" | "workspaceRegistry"
 > & {
   agentManager: AgentManager;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
   createAgent?: ScheduleServiceOptions["createAgent"];
   ensureWorkspaceForCreate?: ScheduleServiceOptions["ensureWorkspaceForCreate"];
+  workspaceRegistry?: ScheduleServiceOptions["workspaceRegistry"];
 };
 
 function createScheduleService(options: TestScheduleServiceOptions): ScheduleService {
@@ -81,6 +85,23 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
         )),
     ensureWorkspaceForCreate:
       options.ensureWorkspaceForCreate ?? (async () => "workspace-created-for-schedule"),
+    workspaceRegistry: options.workspaceRegistry ?? {
+      async get(workspaceId) {
+        return {
+          workspaceId,
+          projectId: "test-project",
+          cwd: options.paseoHome,
+          kind: "directory",
+          displayName: "test-project",
+          title: null,
+          branch: null,
+          baseBranch: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          archivedAt: null,
+        };
+      },
+    },
   });
 }
 
@@ -367,6 +388,7 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       ensureWorkspaceForCreate,
+      workspaceRegistry,
       now: () => now,
     });
 
@@ -413,6 +435,7 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       ensureWorkspaceForCreate,
+      workspaceRegistry,
       now: () => now,
     });
 
@@ -482,6 +505,7 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       ensureWorkspaceForCreate,
+      workspaceRegistry,
       now: () => now,
     });
 
@@ -495,6 +519,192 @@ describe("ScheduleService", () => {
     });
     const reloaded = await store.get(legacy.id);
     expect(reloaded?.target.config.workspaceId).toBe(inspected.target.config.workspaceId);
+  });
+
+  test("new-agent schedules restamp a missing workspaceId when the cwd still exists", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tempDir);
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const legacy = await store.create({
+      name: null,
+      prompt: "missing workspace stamp",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+          workspaceId: "wks_missing",
+        },
+      },
+      status: "active",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      nextRunAt: now.toISOString(),
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: 1,
+      runs: [],
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate,
+      workspaceRegistry,
+      now: () => now,
+    });
+
+    await service.tick();
+
+    const inspected = await service.inspect(legacy.id);
+    expect(inspected.target.config.workspaceId).toMatch(/^wks_/);
+    expect(inspected.target.config.workspaceId).not.toBe("wks_missing");
+    expect(await workspaceRegistry.get(inspected.target.config.workspaceId!)).toMatchObject({
+      workspaceId: inspected.target.config.workspaceId,
+      cwd: tempDir,
+      archivedAt: null,
+    });
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+  });
+
+  test("new-agent schedules restamp an archived workspaceId when the cwd still exists", async () => {
+    const { workspaceRegistry, ensureWorkspaceForCreate } =
+      await createRegistryBackedWorkspaceEnsure(tempDir);
+    const archivedWorkspaceId = await ensureWorkspaceForCreate(tempDir, {
+      prompt: "archived workspace stamp",
+    });
+    await workspaceRegistry.archive(archivedWorkspaceId, "2026-01-01T00:00:30.000Z");
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const legacy = await store.create({
+      name: null,
+      prompt: "archived workspace stamp",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+          workspaceId: archivedWorkspaceId,
+        },
+      },
+      status: "active",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      nextRunAt: now.toISOString(),
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: 1,
+      runs: [],
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate,
+      workspaceRegistry,
+      now: () => now,
+    });
+
+    await service.tick();
+
+    const inspected = await service.inspect(legacy.id);
+    expect(inspected.target.config.workspaceId).toMatch(/^wks_/);
+    expect(inspected.target.config.workspaceId).not.toBe(archivedWorkspaceId);
+    expect(await workspaceRegistry.get(archivedWorkspaceId)).toMatchObject({
+      archivedAt: "2026-01-01T00:00:30.000Z",
+    });
+    expect(await workspaceRegistry.get(inspected.target.config.workspaceId!)).toMatchObject({
+      workspaceId: inspected.target.config.workspaceId,
+      cwd: tempDir,
+      archivedAt: null,
+    });
+    expect(inspected.runs[0]?.status).toBe("succeeded");
+  });
+
+  test("concurrent lazy stamping and update mint one workspace and keep the stored record consistent", async () => {
+    let releaseFirstStamp: (() => void) | null = null;
+    const firstStampStarted = new Promise<void>((resolve) => {
+      releaseFirstStamp = resolve;
+    });
+    let unblockStamp: (() => void) | null = null;
+    const stampBlocked = new Promise<void>((resolve) => {
+      unblockStamp = resolve;
+    });
+    let ensureCalls = 0;
+    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const legacy = await store.create({
+      name: null,
+      prompt: "race stamp",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+        },
+      },
+      status: "active",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      nextRunAt: now.toISOString(),
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: 1,
+      runs: [],
+    });
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      ensureWorkspaceForCreate: async () => {
+        ensureCalls += 1;
+        releaseFirstStamp?.();
+        await stampBlocked;
+        return `workspace-${ensureCalls}`;
+      },
+      now: () => now,
+    });
+
+    const tickPromise = service.tick();
+    await firstStampStarted;
+    const updatePromise = service.update({ id: legacy.id, prompt: "updated race stamp" });
+    unblockStamp?.();
+    await Promise.all([tickPromise, updatePromise]);
+
+    const inspected = await service.inspect(legacy.id);
+    expect(ensureCalls).toBe(1);
+    expect(inspected.prompt).toBe("updated race stamp");
+    expect(inspected.target.config.workspaceId).toBe("workspace-1");
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.status).toBe("succeeded");
   });
 
   test("shows scheduled new-agent prompts as normal user turns", async () => {
@@ -843,6 +1053,120 @@ describe("ScheduleService", () => {
     expect(storedAgent?.archivedAt).toBeTruthy();
   });
 
+  test("records prompt-start failures as failed and archives the scheduled agent", async () => {
+    class StartFailureScheduleSession implements AgentSession {
+      readonly provider = "claude";
+      readonly capabilities = SCHEDULE_TEST_CAPABILITIES;
+      readonly id = "scheduled-start-failure-session";
+
+      async run(): Promise<AgentRunResult> {
+        return {
+          sessionId: this.id,
+          finalText: "",
+          timeline: [],
+        };
+      }
+
+      async startTurn(): Promise<{ turnId: string }> {
+        throw new Error("start turn exploded");
+      }
+
+      subscribe(): () => void {
+        return () => {};
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+      async getRuntimeInfo() {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: null,
+          modeId: null,
+        };
+      }
+
+      async getAvailableModes(): Promise<AgentMode[]> {
+        return [];
+      }
+
+      async getCurrentMode(): Promise<string | null> {
+        return null;
+      }
+
+      async setMode(): Promise<void> {}
+
+      getPendingPermissions(): AgentPermissionRequest[] {
+        return [];
+      }
+
+      async respondToPermission(): Promise<void> {}
+
+      describePersistence(): AgentPersistenceHandle {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+        };
+      }
+
+      async interrupt(): Promise<void> {}
+
+      async close(): Promise<void> {}
+    }
+
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: {
+        claude: {
+          provider: "claude",
+          capabilities: SCHEDULE_TEST_CAPABILITIES,
+          createSession: async () => new StartFailureScheduleSession(),
+          resumeSession: async () => new StartFailureScheduleSession(),
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+          isAvailable: async () => true,
+        },
+      },
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "this run fails before starting",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    const inspected = await service.inspect(created.id);
+    expect(inspected.runs[0]).toMatchObject({
+      status: "failed",
+      agentId: null,
+      error: expect.stringContaining("start turn exploded"),
+    });
+    const storedAgents = await agentStorage.list();
+    expect(storedAgents).toHaveLength(1);
+    expect(storedAgents[0]).toMatchObject({
+      archivedAt: expect.any(String),
+    });
+  });
+
   test("defaults new-agent modeId to provider's unattended mode", async () => {
     const manager = new AgentManager({
       logger: createTestLogger(),
@@ -858,10 +1182,13 @@ describe("ScheduleService", () => {
         async resolveCreateConfig(input) {
           expect(input).toMatchObject({
             parent: null,
-            unattended: false,
+            unattended: true,
             requestedMode: undefined,
           });
-          return { modeId: "bypassPermissions", featureValues: input.featureValues };
+          return {
+            modeId: input.unattended ? "bypassPermissions" : "interactive",
+            featureValues: input.featureValues,
+          };
         },
       },
       now: () => now,
@@ -925,12 +1252,14 @@ describe("ScheduleService", () => {
         async resolveCreateConfig(input) {
           expect(input).toMatchObject({
             parent: null,
-            unattended: false,
+            unattended: true,
             requestedMode: undefined,
           });
           return {
-            modeId: "build",
-            featureValues: { ...input.featureValues, auto_accept: true },
+            modeId: input.unattended ? "build" : "interactive",
+            featureValues: input.unattended
+              ? { ...input.featureValues, auto_accept: true }
+              : input.featureValues,
           };
         },
       },
@@ -959,6 +1288,107 @@ describe("ScheduleService", () => {
     expect(createdConfigs[0]).toMatchObject({
       modeId: "build",
       featureValues: { auto_accept: true },
+    });
+  });
+
+  test("forwards stored new-agent session config to the launched scheduled agent", async () => {
+    const createdConfigs: AgentSessionConfig[] = [];
+    const clients = createTestAgentClients();
+    const claudeClient = clients.claude;
+    if (!claudeClient) {
+      throw new Error("Expected Claude test client");
+    }
+    clients.claude = {
+      provider: claudeClient.provider,
+      capabilities: claudeClient.capabilities,
+      createSession: async (...args) => {
+        createdConfigs.push(args[0]);
+        return claudeClient.createSession(...args);
+      },
+      resumeSession: (...args) => claudeClient.resumeSession(...args),
+      fetchCatalog: (...args) => claudeClient.fetchCatalog(...args),
+      isAvailable: () => claudeClient.isAvailable(),
+    } satisfies AgentClient;
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients,
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: {
+        async resolveCreateConfig(input) {
+          expect(input).toMatchObject({
+            parent: null,
+            unattended: true,
+            requestedMode: "stored-mode",
+          });
+          return {
+            modeId: input.requestedMode,
+            featureValues: { ...input.featureValues, resolved: true },
+          };
+        },
+      },
+      now: () => now,
+    });
+
+    await service.create({
+      prompt: "Use the stored launch config",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+          title: "Stored launch title",
+          modeId: "stored-mode",
+          thinkingOptionId: "think-hard",
+          approvalPolicy: "never",
+          sandboxMode: "danger-full-access",
+          networkAccess: true,
+          webSearch: true,
+          featureValues: { auto_accept: true },
+          extra: { codex: { profile: "full-access" } },
+          systemPrompt: "Stay concise.",
+          mcpServers: {
+            docs: {
+              command: "node",
+              args: ["docs-server.js"],
+            },
+          },
+        },
+      },
+      maxRuns: 1,
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    expect(createdConfigs).toHaveLength(1);
+    expect(createdConfigs[0]).toMatchObject({
+      provider: "claude",
+      cwd: tempDir,
+      title: "Stored launch title",
+      model: "test-model",
+      modeId: "stored-mode",
+      thinkingOptionId: "think-hard",
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
+      networkAccess: true,
+      webSearch: true,
+      featureValues: { auto_accept: true, resolved: true },
+      extra: { codex: { profile: "full-access" } },
+      systemPrompt: "Stay concise.",
+      mcpServers: {
+        docs: {
+          command: "node",
+          args: ["docs-server.js"],
+        },
+      },
     });
   });
 

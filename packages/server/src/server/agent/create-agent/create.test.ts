@@ -66,6 +66,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
   await createAgentCommand(dependencies, {
     kind: "session",
     config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+    workspaceId: "ws-create-test",
     initialPrompt: "hello from create",
     clientMessageId: "msg-create-1",
     labels: {},
@@ -212,6 +213,7 @@ test("session create keeps the prompt title after the initial prompt settles", a
       {
         kind: "session",
         config: { provider: "codex", cwd: workdir },
+        workspaceId: "ws-title-source",
         initialPrompt: `${title}\n\ninclude tests`,
         labels: {},
         provisionalTitle: title,
@@ -249,6 +251,7 @@ test("session create keeps an explicit title after the initial prompt settles", 
       {
         kind: "session",
         config: { provider: "codex", cwd: workdir, title },
+        workspaceId: "ws-explicit-title-source",
         initialPrompt: "Implement auth retries with backoff",
         labels: {},
         provisionalTitle: title,

@@ -3,12 +3,14 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import type { AgentManager } from "../agent/agent-manager.js";
+import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import type { FirstAgentContext } from "../messages.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -227,6 +229,7 @@ type EnsureWorkspaceForCreate = (
   cwd: string,
   firstAgentContext?: FirstAgentContext,
 ) => Promise<string>;
+type ScheduleWorkspaceRegistry = Pick<WorkspaceRegistry, "get">;
 
 export interface ScheduleServiceOptions {
   paseoHome: string;
@@ -235,6 +238,7 @@ export interface ScheduleServiceOptions {
   agentStorage: AgentStorage;
   createAgent: BoundCreateAgentCommand;
   ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
+  workspaceRegistry: ScheduleWorkspaceRegistry;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -246,12 +250,14 @@ export class ScheduleService {
   private readonly agentStorage: AgentStorage;
   private readonly createAgent: BoundCreateAgentCommand;
   private readonly ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
+  private readonly workspaceRegistry: ScheduleWorkspaceRegistry;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
+  private readonly scheduleMutationPromises = new Map<string, Promise<unknown>>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
@@ -261,6 +267,7 @@ export class ScheduleService {
     this.agentStorage = options.agentStorage;
     this.createAgent = options.createAgent;
     this.ensureWorkspaceForCreate = options.ensureWorkspaceForCreate;
+    this.workspaceRegistry = options.workspaceRegistry;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
@@ -327,28 +334,31 @@ export class ScheduleService {
           scheduleTargetsEqualForCreateOrReplace(schedule.target, input.target),
       );
       if (existing) {
-        const now = this.now();
-        const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
-        const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
-        const target = await this.stampNewAgentWorkspace(
-          carryExistingWorkspaceStamp(existing.target, input.target),
-          input.prompt,
-        );
-        const replaced: StoredSchedule = {
-          ...existing,
-          name,
-          prompt,
-          cadence: input.cadence,
-          target,
-          status: "active",
-          pausedAt: null,
-          nextRunAt: nextRunAt.toISOString(),
-          expiresAt: input.expiresAt ?? null,
-          maxRuns: normalizeMaxRuns(input.maxRuns),
-          updatedAt: now.toISOString(),
-        };
-        await this.store.put(replaced);
-        return replaced;
+        return this.serializeScheduleMutation(existing.id, async () => {
+          const current = await this.inspect(existing.id);
+          const now = this.now();
+          const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
+          const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+          const target = await this.stampNewAgentWorkspace(
+            carryExistingWorkspaceStamp(current.target, input.target),
+            input.prompt,
+          );
+          const replaced: StoredSchedule = {
+            ...current,
+            name,
+            prompt,
+            cadence: input.cadence,
+            target,
+            status: "active",
+            pausedAt: null,
+            nextRunAt: nextRunAt.toISOString(),
+            expiresAt: input.expiresAt ?? null,
+            maxRuns: normalizeMaxRuns(input.maxRuns),
+            updatedAt: now.toISOString(),
+          };
+          await this.store.put(replaced);
+          return replaced;
+        });
       }
     }
     const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
@@ -413,51 +423,53 @@ export class ScheduleService {
   }
 
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
-    const schedule = await this.inspect(input.id);
-    const now = this.now();
-    let updated: StoredSchedule = schedule;
+    return this.serializeScheduleMutation(input.id, async () => {
+      const schedule = await this.inspect(input.id);
+      const now = this.now();
+      let updated: StoredSchedule = schedule;
 
-    if (input.prompt !== undefined) {
-      updated = { ...updated, prompt: normalizePrompt(input.prompt) };
-    }
-
-    if (input.name !== undefined) {
-      updated = { ...updated, name: trimOptionalName(input.name) };
-    }
-
-    if (input.cadence !== undefined) {
-      validateScheduleCadence(input.cadence);
-      const nextRunAt =
-        updated.status === "active" ? computeNextRunAt(input.cadence, now).toISOString() : null;
-      updated = { ...updated, cadence: input.cadence, nextRunAt };
-    }
-
-    if (input.newAgentConfig !== undefined) {
-      if (updated.target.type !== "new-agent") {
-        throw new Error("new-agent config updates are only valid for new-agent target schedules");
+      if (input.prompt !== undefined) {
+        updated = { ...updated, prompt: normalizePrompt(input.prompt) };
       }
-      const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
+
+      if (input.name !== undefined) {
+        updated = { ...updated, name: trimOptionalName(input.name) };
+      }
+
+      if (input.cadence !== undefined) {
+        validateScheduleCadence(input.cadence);
+        const nextRunAt =
+          updated.status === "active" ? computeNextRunAt(input.cadence, now).toISOString() : null;
+        updated = { ...updated, cadence: input.cadence, nextRunAt };
+      }
+
+      if (input.newAgentConfig !== undefined) {
+        if (updated.target.type !== "new-agent") {
+          throw new Error("new-agent config updates are only valid for new-agent target schedules");
+        }
+        const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
+        updated = {
+          ...updated,
+          target: await this.stampNewAgentWorkspace(patchedTarget, updated.prompt),
+        };
+      }
+
+      if (input.maxRuns !== undefined) {
+        updated = { ...updated, maxRuns: normalizeMaxRuns(input.maxRuns) };
+      }
+
+      if (input.expiresAt !== undefined) {
+        updated = { ...updated, expiresAt: input.expiresAt };
+      }
+
       updated = {
         ...updated,
-        target: await this.stampNewAgentWorkspace(patchedTarget, updated.prompt),
+        target: await this.stampNewAgentWorkspace(updated.target, updated.prompt),
       };
-    }
-
-    if (input.maxRuns !== undefined) {
-      updated = { ...updated, maxRuns: normalizeMaxRuns(input.maxRuns) };
-    }
-
-    if (input.expiresAt !== undefined) {
-      updated = { ...updated, expiresAt: input.expiresAt };
-    }
-
-    updated = {
-      ...updated,
-      target: await this.stampNewAgentWorkspace(updated.target, updated.prompt),
-    };
-    updated = { ...updated, updatedAt: now.toISOString() };
-    await this.store.put(updated);
-    return updated;
+      updated = { ...updated, updatedAt: now.toISOString() };
+      await this.store.put(updated);
+      return updated;
+    });
   }
 
   async delete(id: string): Promise<void> {
@@ -737,40 +749,38 @@ export class ScheduleService {
     }
 
     const targetConfig = schedule.target.config;
-    try {
-      await stat(targetConfig.cwd);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new ScheduleTargetGoneError(`Working directory ${targetConfig.cwd} no longer exists`);
-      }
-      throw error;
-    }
+    await this.assertNewAgentCwdExists(targetConfig.cwd);
     const stampedSchedule = await this.ensureScheduleWorkspaceStamped(schedule);
     const stampedConfig =
       stampedSchedule.target.type === "new-agent" ? stampedSchedule.target.config : null;
     if (!stampedConfig) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
-    const agent = (
-      await this.createAgent({
-        kind: "mcp",
-        provider: formatScheduleProviderModel(stampedConfig),
-        cwd: stampedConfig.cwd,
-        workspaceId: stampedConfig.workspaceId,
-        title: stampedConfig.title ?? "",
-        initialPrompt: stampedSchedule.prompt,
-        labels: {
-          "paseo.schedule-id": stampedSchedule.id,
-          "paseo.schedule-run": runId,
-        },
-        mode: stampedConfig.modeId,
-        thinking: stampedConfig.thinkingOptionId,
-        features: stampedConfig.featureValues,
-        background: true,
-        notifyOnFinish: false,
-      })
-    ).snapshot;
+    const created = await this.createAgent({
+      kind: "mcp",
+      provider: formatScheduleProviderModel(stampedConfig),
+      config: buildScheduleAgentConfig(stampedConfig),
+      cwd: stampedConfig.cwd,
+      workspaceId: stampedConfig.workspaceId,
+      title: stampedConfig.title ?? "",
+      initialPrompt: stampedSchedule.prompt,
+      labels: {
+        "paseo.schedule-id": stampedSchedule.id,
+        "paseo.schedule-run": runId,
+      },
+      mode: stampedConfig.modeId,
+      thinking: stampedConfig.thinkingOptionId,
+      features: stampedConfig.featureValues,
+      unattended: true,
+      promptFailure: "return-error",
+      background: true,
+      notifyOnFinish: false,
+    });
+    const agent = created.snapshot;
     try {
+      if (created.initialPromptError) {
+        throw created.initialPromptError;
+      }
       const result = await this.agentManager.waitForAgentEvent(agent.id, { waitForActive: true });
       if (result.permission) {
         throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
@@ -796,13 +806,37 @@ export class ScheduleService {
     }
   }
 
-  private async stampNewAgentWorkspace(
-    target: ScheduleTarget,
+  private async serializeScheduleMutation<T>(
+    scheduleId: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.scheduleMutationPromises.get(scheduleId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(mutation);
+    this.scheduleMutationPromises.set(scheduleId, next);
+    try {
+      return await next;
+    } finally {
+      if (this.scheduleMutationPromises.get(scheduleId) === next) {
+        this.scheduleMutationPromises.delete(scheduleId);
+      }
+    }
+  }
+
+  private async assertNewAgentCwdExists(cwd: string): Promise<void> {
+    try {
+      await stat(cwd);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ScheduleTargetGoneError(`Working directory ${cwd} no longer exists`);
+      }
+      throw error;
+    }
+  }
+
+  private async createWorkspaceStampedTarget(
+    target: Extract<ScheduleTarget, { type: "new-agent" }>,
     prompt: string,
   ): Promise<ScheduleTarget> {
-    if (target.type !== "new-agent" || target.config.workspaceId) {
-      return target;
-    }
     const workspaceId = await this.ensureWorkspaceForCreate(target.config.cwd, { prompt });
     return {
       ...target,
@@ -813,19 +847,67 @@ export class ScheduleService {
     };
   }
 
+  private async hasActiveWorkspaceStamp(workspaceId: string): Promise<boolean> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    return Boolean(workspace && !workspace.archivedAt);
+  }
+
+  private async stampNewAgentWorkspace(
+    target: ScheduleTarget,
+    prompt: string,
+  ): Promise<ScheduleTarget> {
+    if (target.type !== "new-agent" || target.config.workspaceId) {
+      return target;
+    }
+    return this.createWorkspaceStampedTarget(target, prompt);
+  }
+
   private async ensureScheduleWorkspaceStamped(schedule: StoredSchedule): Promise<StoredSchedule> {
-    if (schedule.target.type !== "new-agent" || schedule.target.config.workspaceId) {
+    if (schedule.target.type !== "new-agent") {
       return schedule;
     }
-    const target = await this.stampNewAgentWorkspace(schedule.target, schedule.prompt);
-    const stamped = {
-      ...schedule,
-      target,
-      updatedAt: this.now().toISOString(),
-    };
-    await this.store.put(stamped);
-    return stamped;
+    return this.serializeScheduleMutation(schedule.id, async () => {
+      const latest = (await this.store.get(schedule.id)) ?? schedule;
+      if (latest.target.type !== "new-agent") {
+        return latest;
+      }
+      const stampedWorkspaceId = latest.target.config.workspaceId;
+      if (stampedWorkspaceId && (await this.hasActiveWorkspaceStamp(stampedWorkspaceId))) {
+        return latest;
+      }
+
+      await this.assertNewAgentCwdExists(latest.target.config.cwd);
+      const target = await this.createWorkspaceStampedTarget(latest.target, latest.prompt);
+      const stamped = {
+        ...latest,
+        target,
+        updatedAt: this.now().toISOString(),
+      };
+      await this.store.put(stamped);
+      return stamped;
+    });
   }
+}
+
+function buildScheduleAgentConfig(
+  config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
+): AgentSessionConfig {
+  return {
+    provider: config.provider,
+    cwd: config.cwd,
+    modeId: config.modeId,
+    model: config.model,
+    thinkingOptionId: config.thinkingOptionId,
+    title: config.title,
+    approvalPolicy: config.approvalPolicy,
+    sandboxMode: config.sandboxMode,
+    networkAccess: config.networkAccess,
+    webSearch: config.webSearch,
+    featureValues: config.featureValues,
+    extra: config.extra,
+    systemPrompt: config.systemPrompt,
+    mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
+  };
 }
 
 function formatScheduleProviderModel(

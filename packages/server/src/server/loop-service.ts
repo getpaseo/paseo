@@ -652,19 +652,20 @@ export class LoopService {
     signal: AbortSignal,
     context: LoopExecutionContext,
   ): Promise<boolean> {
-    const agent = (
-      await this.options.createAgent({
-        kind: "mcp",
-        provider: this.formatWorkerProviderModel(loop),
-        cwd: loop.cwd,
-        workspaceId: await context.workspaceId,
-        title: buildWorkerTitle(loop, iteration.index),
-        initialPrompt: loop.prompt,
-        mode: loop.modeId ?? undefined,
-        background: true,
-        notifyOnFinish: false,
-      })
-    ).snapshot;
+    const created = await this.options.createAgent({
+      kind: "mcp",
+      provider: this.formatWorkerProviderModel(loop),
+      cwd: loop.cwd,
+      workspaceId: await context.workspaceId,
+      title: buildWorkerTitle(loop, iteration.index),
+      initialPrompt: loop.prompt,
+      mode: loop.modeId ?? undefined,
+      unattended: true,
+      promptFailure: "return-error",
+      background: true,
+      notifyOnFinish: false,
+    });
+    const agent = created.snapshot;
     iteration.workerAgentId = agent.id;
     loop.activeWorkerAgentId = agent.id;
     loop.updatedAt = nowIso();
@@ -691,6 +692,9 @@ export class LoopService {
     );
 
     try {
+      if (created.initialPromptError) {
+        throw created.initialPromptError;
+      }
       const result = await this.options.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,
         signal,
@@ -778,19 +782,20 @@ export class LoopService {
       schema: LoopVerifyPromptSchema,
       schemaName: "LoopVerifierResult",
     });
-    const verifierAgent = (
-      await this.options.createAgent({
-        kind: "mcp",
-        provider: this.formatVerifierProviderModel(loop),
-        cwd: loop.cwd,
-        workspaceId: await context.workspaceId,
-        title: buildVerifierTitle(loop, iteration.index),
-        initialPrompt: initialVerifierPrompt,
-        mode: loop.verifierModeId ?? loop.modeId ?? undefined,
-        background: true,
-        notifyOnFinish: false,
-      })
-    ).snapshot;
+    const created = await this.options.createAgent({
+      kind: "mcp",
+      provider: this.formatVerifierProviderModel(loop),
+      cwd: loop.cwd,
+      workspaceId: await context.workspaceId,
+      title: buildVerifierTitle(loop, iteration.index),
+      initialPrompt: initialVerifierPrompt,
+      mode: loop.verifierModeId ?? loop.modeId ?? undefined,
+      unattended: true,
+      promptFailure: "return-error",
+      background: true,
+      notifyOnFinish: false,
+    });
+    const verifierAgent = created.snapshot;
     iteration.verifierAgentId = verifierAgent.id;
     loop.activeVerifierAgentId = verifierAgent.id;
     loop.updatedAt = nowIso();
@@ -817,6 +822,9 @@ export class LoopService {
     );
 
     try {
+      if (created.initialPromptError) {
+        throw created.initialPromptError;
+      }
       let waitingForInitialResponse = true;
       const result = await getStructuredAgentResponse({
         caller: async (nextPrompt) => {

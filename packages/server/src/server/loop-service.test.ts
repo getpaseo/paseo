@@ -50,8 +50,11 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
 
 const NO_UNATTENDED_LOOP_POLICY: Pick<ProviderSnapshotManager, "resolveCreateConfig"> = {
   async resolveCreateConfig(input) {
-    expect(input).toMatchObject({ parent: null, unattended: false });
-    return { modeId: input.requestedMode, featureValues: input.featureValues };
+    expect(input).toMatchObject({ parent: null, unattended: true });
+    return {
+      modeId: input.unattended ? input.requestedMode : "interactive",
+      featureValues: input.featureValues,
+    };
   },
 };
 
@@ -559,6 +562,118 @@ describe("LoopService", () => {
     });
   });
 
+  test("worker prompt-start failures fail the loop and archive the worker", async () => {
+    class StartFailureLoopSession implements AgentSession {
+      readonly provider = "claude";
+      readonly capabilities = TEST_CAPABILITIES;
+      readonly id = randomUUID();
+
+      async run(): Promise<AgentRunResult> {
+        return {
+          sessionId: this.id,
+          finalText: "",
+          timeline: [],
+        };
+      }
+
+      async startTurn(): Promise<{ turnId: string }> {
+        throw new Error("worker failed before starting");
+      }
+
+      subscribe(): () => void {
+        return () => {};
+      }
+
+      async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+      async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+          model: null,
+          modeId: null,
+        };
+      }
+
+      async getAvailableModes(): Promise<AgentMode[]> {
+        return [];
+      }
+
+      async getCurrentMode(): Promise<string | null> {
+        return null;
+      }
+
+      async setMode(): Promise<void> {}
+
+      getPendingPermissions(): AgentPermissionRequest[] {
+        return [];
+      }
+
+      async respondToPermission(): Promise<void> {}
+
+      describePersistence(): AgentPersistenceHandle {
+        return {
+          provider: this.provider,
+          sessionId: this.id,
+        };
+      }
+
+      async interrupt(): Promise<void> {}
+
+      async close(): Promise<void> {}
+
+      async listCommands(): Promise<AgentSlashCommand[]> {
+        return [];
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: {
+        claude: {
+          provider: "claude",
+          capabilities: TEST_CAPABILITIES,
+          createSession: async () => new StartFailureLoopSession(),
+          resumeSession: async () => new StartFailureLoopSession(),
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+          isAvailable: async () => true,
+        },
+      },
+      registry: storage,
+      logger,
+    });
+    const service = createLoopService({
+      paseoHome,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await service.initialize();
+
+    const loop = await service.runLoop({
+      prompt: "Fail before starting",
+      cwd: workspaceDir,
+      model: "test-model",
+      verifyChecks: ["true"],
+      archive: true,
+      maxIterations: 1,
+    });
+
+    await waitForLoopCompletion(service, loop.id);
+
+    const finalLoop = await service.inspectLoop(loop.id);
+    expect(finalLoop.status).toBe("failed");
+    expect(finalLoop.iterations[0]).toMatchObject({
+      status: "failed",
+      workerOutcome: "failed",
+      failureReason: expect.stringContaining("worker failed before starting"),
+    });
+    const workerAgentId = finalLoop.iterations[0]?.workerAgentId;
+    expect(workerAgentId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await storage.get(workerAgentId!)).toMatchObject({
+      archivedAt: expect.any(String),
+    });
+  });
+
   test("uses verifier prompt when provided", async () => {
     const manager = new AgentManager({
       clients: {
@@ -636,10 +751,13 @@ describe("LoopService", () => {
         async resolveCreateConfig(input) {
           expect(input).toMatchObject({
             parent: null,
-            unattended: false,
+            unattended: true,
             requestedMode: undefined,
           });
-          return { modeId: "bypassPermissions", featureValues: input.featureValues };
+          return {
+            modeId: input.unattended ? "bypassPermissions" : "interactive",
+            featureValues: input.featureValues,
+          };
         },
       },
     });
@@ -697,12 +815,14 @@ describe("LoopService", () => {
         async resolveCreateConfig(input) {
           expect(input).toMatchObject({
             parent: null,
-            unattended: false,
+            unattended: true,
             requestedMode: undefined,
           });
           return {
-            modeId: "build",
-            featureValues: { ...input.featureValues, auto_accept: true },
+            modeId: input.unattended ? "build" : "interactive",
+            featureValues: input.unattended
+              ? { ...input.featureValues, auto_accept: true }
+              : input.featureValues,
           };
         },
       },
