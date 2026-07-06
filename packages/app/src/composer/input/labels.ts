@@ -48,7 +48,6 @@ export function resolveSendTooltipLabel(input: {
   t: TFunction;
 }): string {
   if (input.submitButtonAccessibilityLabel) return input.submitButtonAccessibilityLabel;
-  return input.defaultActionQueues
-    ? input.t("composer.input.queue")
-    : input.t("composer.input.send");
+  if (input.defaultActionQueues) return input.t("composer.input.queue");
+  return input.t("composer.input.sendWithNewline");
 }

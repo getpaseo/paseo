@@ -79,6 +79,7 @@ export const ar: TranslationResources = {
       sendMessage: "أرسل رسالة",
       queue: "طابور",
       send: "يرسل",
+      sendWithNewline: "إرسال (Shift+Enter أو Alt+Enter لسطر جديد)",
     },
     cancel: {
       cancelingAgent: "وكيل الإلغاء",

@@ -13,6 +13,7 @@ const translations: Record<string, string> = {
   "composer.input.sendMessage": "Send message",
   "composer.input.queue": "Queue",
   "composer.input.send": "Send",
+  "composer.input.sendWithNewline": "Send (Shift+Enter or Alt+Enter for new line)",
   "composer.voice.unmuteVoiceMode": "Unmute Voice mode",
   "composer.voice.muteVoiceMode": "Mute Voice mode",
   "composer.voice.stopDictation": "Stop dictation",
@@ -132,6 +133,6 @@ describe("composer input labels", () => {
         defaultActionQueues: false,
         t,
       }),
-    ).toBe("Send");
+    ).toBe("Send (Shift+Enter or Alt+Enter for new line)");
   });
 });

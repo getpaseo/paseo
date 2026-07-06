@@ -79,6 +79,7 @@ export const ptBR: TranslationResources = {
       sendMessage: "Enviar mensagem",
       queue: "Fila",
       send: "Enviar",
+      sendWithNewline: "Enviar (Shift+Enter ou Alt+Enter para nova linha)",
     },
     cancel: {
       cancelingAgent: "Cancelando agente",

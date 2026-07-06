@@ -57,10 +57,10 @@ import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
-import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerHeightMirror } from "./height-mirror";
+import { handleDesktopKeyPressImpl } from "./keyboard";
 import {
   resolveSendTooltipLabel,
   resolveSubmitAccessibilityLabel,
@@ -162,6 +162,7 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
     metaKey?: boolean;
     ctrlKey?: boolean;
     shiftKey?: boolean;
+    altKey?: boolean;
     // Web-only: present on DOM KeyboardEvent during IME composition (CJK input).
     isComposing?: boolean;
     keyCode?: number;
@@ -445,50 +446,6 @@ function SendButtonContent({
     return <ThemedCornerDownLeft size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
   }
   return <ThemedArrowUp size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
-}
-
-interface DesktopKeyPressContext {
-  onKeyPressCallback: ((event: { key: string; preventDefault: () => void }) => boolean) | undefined;
-  submitOnEnter: boolean;
-  isAgentRunning: boolean;
-  onQueue: ((payload: MessagePayload) => void) | undefined;
-  isSubmitDisabled: boolean;
-  isSubmitLoading: boolean;
-  disabled: boolean;
-  handleAlternateSendAction: () => void;
-  handleDefaultSendAction: () => void;
-}
-
-function handleDesktopKeyPressImpl(
-  event: WebTextInputKeyPressEvent,
-  ctx: DesktopKeyPressContext,
-): void {
-  if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
-
-  if (ctx.onKeyPressCallback) {
-    const handled = ctx.onKeyPressCallback({
-      key: event.nativeEvent.key,
-      preventDefault: () => event.preventDefault(),
-    });
-    if (handled) return;
-  }
-
-  const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
-
-  if (event.nativeEvent.key !== "Enter") return;
-  if (!ctx.submitOnEnter) return;
-  if (shiftKey) return;
-
-  if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
-    if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-    event.preventDefault();
-    ctx.handleAlternateSendAction();
-    return;
-  }
-
-  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-  event.preventDefault();
-  ctx.handleDefaultSendAction();
 }
 
 interface KeyboardActionHandlers {
@@ -1281,6 +1238,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
+    const [selection, setSelection] = useState<{ start: number; end: number }>({
+      start: value.length,
+      end: value.length,
+    });
     const rootRef = useRef<View | null>(null);
     const inputWrapperRef = useRef<View | null>(null);
     const textInputRef = useRef<TextInput | (TextInput & { getNativeRef?: () => unknown }) | null>(
@@ -1327,6 +1288,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     useEffect(() => {
       valueRef.current = value;
+      setSelection((previous) => ({
+        start: Math.min(previous.start, value.length),
+        end: Math.min(previous.end, value.length),
+      }));
     }, [value]);
 
     useEffect(() => {
@@ -1664,6 +1629,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
         const start = event.nativeEvent.selection?.start ?? 0;
         const end = event.nativeEvent.selection?.end ?? start;
+        setSelection({ start, end });
         onSelectionChangeCallback?.({ start, end });
       },
       [onSelectionChangeCallback],
@@ -1682,6 +1648,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isSubmitDisabled,
         isSubmitLoading,
         disabled,
+        value,
+        selection,
+        onChangeText: handleInputChange,
+        onSelectionChange: setSelection,
         handleAlternateSendAction,
         handleDefaultSendAction,
       });
@@ -1840,6 +1810,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
               onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
               onSelectionChange={handleSelectionChange}
+              selection={selection}
               autoFocus={isWeb && autoFocus}
             />
             {inputScrollbar}
