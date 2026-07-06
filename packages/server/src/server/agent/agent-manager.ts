@@ -23,6 +23,7 @@ import {
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
+  type AgentModelDefinition,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
@@ -3676,12 +3677,8 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
-    if (shouldResolveDefaultModel && !normalized.model) {
-      const defaultModelId = await this.resolveDefaultModelId(normalized);
-      if (defaultModelId) {
-        normalized.model = defaultModelId;
-      }
+    if (options.resolveDefaultModel ?? true) {
+      await this.applyDefaultModelAndThinking(normalized);
     }
 
     if (!normalized.modeId) {
@@ -3696,7 +3693,34 @@ export class AgentManager {
     return normalized;
   }
 
-  private async resolveDefaultModelId(config: AgentSessionConfig): Promise<string | undefined> {
+  private async applyDefaultModelAndThinking(normalized: AgentSessionConfig): Promise<void> {
+    if (normalized.model) {
+      return;
+    }
+    const defaultModel = await this.resolveDefaultModel(normalized);
+    if (!defaultModel) {
+      return;
+    }
+    normalized.model = defaultModel.id;
+    // Mirror the create-agent picker: when a model is auto-selected it is paired with
+    // that model's default thinking option. Without this, an agent created with neither
+    // model nor thinking specified would run without the default thinking a provider
+    // marked isDefault (e.g. a model whose default is a higher reasoning effort), since
+    // the default model was filled but its thinking option was left unset.
+    if (normalized.thinkingOptionId) {
+      return;
+    }
+    const defaultThinkingOptionId =
+      defaultModel.defaultThinkingOptionId ??
+      defaultModel.thinkingOptions?.find((option) => option.isDefault)?.id;
+    if (defaultThinkingOptionId) {
+      normalized.thinkingOptionId = defaultThinkingOptionId;
+    }
+  }
+
+  private async resolveDefaultModel(
+    config: AgentSessionConfig,
+  ): Promise<AgentModelDefinition | undefined> {
     const client = this.clients.get(config.provider);
     if (!client) {
       return undefined;
@@ -3707,7 +3731,7 @@ export class AgentManager {
         cwd: config.cwd,
         force: false,
       });
-      return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
+      return catalog.models.find((model) => model.isDefault) ?? catalog.models[0];
     } catch {
       // Provider may not support model listing — leave model undefined.
       return undefined;

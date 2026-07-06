@@ -471,6 +471,72 @@ test("normalizeConfig injects the provider default model when omitted", async ()
   expect(snapshot.config.modeId).toBe("auto");
 });
 
+class DefaultThinkingClient extends TestAgentClient {
+  override async fetchCatalog() {
+    return {
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          isDefault: true,
+          defaultThinkingOptionId: "high",
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High", isDefault: true },
+          ],
+        },
+      ],
+      modes: [],
+    };
+  }
+}
+
+test("normalizeConfig pairs the auto-filled default model with its default thinking option", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new DefaultThinkingClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000102",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  expect(snapshot.config.model).toBe("gpt-5.4");
+  expect(snapshot.config.thinkingOptionId).toBe("high");
+});
+
+test("normalizeConfig keeps an explicit thinking option while auto-filling the default model", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new DefaultThinkingClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000103",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    thinkingOptionId: "low",
+  });
+
+  expect(snapshot.config.model).toBe("gpt-5.4");
+  expect(snapshot.config.thinkingOptionId).toBe("low");
+});
+
 test("createAgent forwards request env into the spawned provider process", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-env-test-"));
   const client = new EnvProbeAgentClient();
