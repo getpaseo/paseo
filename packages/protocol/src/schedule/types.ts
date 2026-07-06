@@ -27,6 +27,7 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
     config: z.object({
       provider: AgentProviderSchema,
       cwd: z.string().trim().min(1),
+      workspaceId: z.string().optional(),
       modeId: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
       thinkingOptionId: z.string().trim().min(1).optional(),

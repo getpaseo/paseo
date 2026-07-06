@@ -2,21 +2,15 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
-import { AgentManager } from "../agent/agent-manager.js";
+import type { AgentManager } from "../agent/agent-manager.js";
 import type { AgentStorage } from "../agent/agent-storage.js";
-import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
-import { resolveCreateAgentTitles } from "../agent/create-agent-title.js";
+import type { FirstAgentContext } from "../messages.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
-import type {
-  ProviderSnapshotManager,
-  ResolvedProviderCreateConfig,
-  ResolveProviderCreateConfigOptions,
-} from "../agent/provider-snapshot-manager.js";
 import type {
   CreateScheduleInput,
   ScheduleExecutionResult,
@@ -153,6 +147,43 @@ function scheduleTargetsEqual(a: ScheduleTarget, b: ScheduleTarget): boolean {
   return false;
 }
 
+function scheduleTargetsEqualForCreateOrReplace(
+  existing: ScheduleTarget,
+  incoming: ScheduleTarget,
+): boolean {
+  if (existing.type !== "new-agent" || incoming.type !== "new-agent") {
+    return scheduleTargetsEqual(existing, incoming);
+  }
+  const incomingConfig =
+    incoming.config.workspaceId || !existing.config.workspaceId
+      ? incoming.config
+      : { ...incoming.config, workspaceId: existing.config.workspaceId };
+  return (
+    JSON.stringify(canonicalize(existing.config)) === JSON.stringify(canonicalize(incomingConfig))
+  );
+}
+
+function carryExistingWorkspaceStamp(
+  existing: ScheduleTarget,
+  incoming: ScheduleTarget,
+): ScheduleTarget {
+  if (
+    existing.type !== "new-agent" ||
+    incoming.type !== "new-agent" ||
+    incoming.config.workspaceId ||
+    !existing.config.workspaceId
+  ) {
+    return incoming;
+  }
+  return {
+    ...incoming,
+    config: {
+      ...incoming.config,
+      workspaceId: existing.config.workspaceId,
+    },
+  };
+}
+
 function completeSchedule(schedule: StoredSchedule, now: Date): StoredSchedule {
   return {
     ...schedule,
@@ -180,15 +211,30 @@ function buildRunOutput(params: {
   return null;
 }
 
-type CreateConfigResolver = Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+type ScheduleAgentManager = Pick<
+  AgentManager,
+  | "archiveAgent"
+  | "getAgent"
+  | "getRegisteredProviderIds"
+  | "hasInFlightRun"
+  | "hydrateTimelineFromProvider"
+  | "resumeAgentFromPersistence"
+  | "runAgent"
+  | "waitForAgentEvent"
+>;
+
+type EnsureWorkspaceForCreate = (
+  cwd: string,
+  firstAgentContext?: FirstAgentContext,
+) => Promise<string>;
 
 export interface ScheduleServiceOptions {
   paseoHome: string;
   logger: Logger;
-  agentManager: AgentManager;
+  agentManager: ScheduleAgentManager;
   agentStorage: AgentStorage;
-  providerSnapshotManager: CreateConfigResolver;
   createAgent: BoundCreateAgentCommand;
+  ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -196,9 +242,10 @@ export interface ScheduleServiceOptions {
 export class ScheduleService {
   private readonly store: ScheduleStore;
   private readonly logger: Logger;
-  private readonly agentManager: AgentManager;
+  private readonly agentManager: ScheduleAgentManager;
   private readonly agentStorage: AgentStorage;
-  private readonly createConfigResolver: CreateConfigResolver;
+  private readonly createAgent: BoundCreateAgentCommand;
+  private readonly ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -212,7 +259,8 @@ export class ScheduleService {
     this.logger = options.logger.child({ module: "schedule-service" });
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
-    this.createConfigResolver = options.providerSnapshotManager;
+    this.createAgent = options.createAgent;
+    this.ensureWorkspaceForCreate = options.ensureWorkspaceForCreate;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
@@ -245,11 +293,12 @@ export class ScheduleService {
     validateScheduleCadence(input.cadence);
     const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
     const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+    const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
     const schedule = await this.store.create({
       name: trimOptionalName(input.name),
       prompt,
       cadence: input.cadence,
-      target: input.target,
+      target,
       status: "active",
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
@@ -268,25 +317,29 @@ export class ScheduleService {
   // existing non-completed schedule in place instead of minting a duplicate.
   async createOrReplace(input: CreateScheduleInput): Promise<StoredSchedule> {
     const name = trimOptionalName(input.name);
+    const prompt = normalizePrompt(input.prompt);
+    validateScheduleCadence(input.cadence);
     if (name !== null) {
       const existing = (await this.store.list()).find(
         (schedule) =>
           schedule.status !== "completed" &&
           trimOptionalName(schedule.name) === name &&
-          scheduleTargetsEqual(schedule.target, input.target),
+          scheduleTargetsEqualForCreateOrReplace(schedule.target, input.target),
       );
       if (existing) {
         const now = this.now();
-        const prompt = normalizePrompt(input.prompt);
-        validateScheduleCadence(input.cadence);
         const runOnCreate = input.runOnCreate ?? input.cadence.type === "every";
         const nextRunAt = runOnCreate ? now : computeNextRunAt(input.cadence, now);
+        const target = await this.stampNewAgentWorkspace(
+          carryExistingWorkspaceStamp(existing.target, input.target),
+          input.prompt,
+        );
         const replaced: StoredSchedule = {
           ...existing,
           name,
           prompt,
           cadence: input.cadence,
-          target: input.target,
+          target,
           status: "active",
           pausedAt: null,
           nextRunAt: nextRunAt.toISOString(),
@@ -298,7 +351,8 @@ export class ScheduleService {
         return replaced;
       }
     }
-    return this.create(input);
+    const target = await this.stampNewAgentWorkspace(input.target, input.prompt);
+    return this.create({ ...input, target });
   }
 
   async list(): Promise<StoredSchedule[]> {
@@ -382,7 +436,11 @@ export class ScheduleService {
       if (updated.target.type !== "new-agent") {
         throw new Error("new-agent config updates are only valid for new-agent target schedules");
       }
-      updated = { ...updated, target: applyNewAgentConfig(updated.target, input.newAgentConfig) };
+      const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
+      updated = {
+        ...updated,
+        target: await this.stampNewAgentWorkspace(patchedTarget, updated.prompt),
+      };
     }
 
     if (input.maxRuns !== undefined) {
@@ -393,6 +451,10 @@ export class ScheduleService {
       updated = { ...updated, expiresAt: input.expiresAt };
     }
 
+    updated = {
+      ...updated,
+      target: await this.stampNewAgentWorkspace(updated.target, updated.prompt),
+    };
     updated = { ...updated, updatedAt: now.toISOString() };
     await this.store.put(updated);
     return updated;
@@ -655,7 +717,7 @@ export class ScheduleService {
       }
 
       const agent = await ensureAgentLoaded(schedule.target.agentId, {
-        agentManager: this.agentManager,
+        agentManager: this.agentManager as AgentManager,
         agentStorage: this.agentStorage,
         logger: this.logger,
       });
@@ -683,50 +745,44 @@ export class ScheduleService {
       }
       throw error;
     }
-    const resolvedUnattendedConfig = targetConfig.modeId
-      ? { modeId: targetConfig.modeId, featureValues: targetConfig.featureValues }
-      : await this.resolveProviderCreateConfig({
-          provider: targetConfig.provider,
-          cwd: targetConfig.cwd,
-          requestedMode: undefined,
-          featureValues: targetConfig.featureValues,
-          parent: null,
-          unattended: true,
-        });
-    const config: AgentSessionConfig = {
-      provider: targetConfig.provider,
-      cwd: targetConfig.cwd,
-      modeId: resolvedUnattendedConfig.modeId,
-      model: targetConfig.model,
-      thinkingOptionId: targetConfig.thinkingOptionId,
-      title: targetConfig.title,
-      approvalPolicy: targetConfig.approvalPolicy,
-      sandboxMode: targetConfig.sandboxMode,
-      networkAccess: targetConfig.networkAccess,
-      webSearch: targetConfig.webSearch,
-      featureValues: resolvedUnattendedConfig.featureValues,
-      extra: targetConfig.extra,
-      systemPrompt: targetConfig.systemPrompt,
-      mcpServers: targetConfig.mcpServers as AgentSessionConfig["mcpServers"],
-    };
-    const { provisionalTitle } = resolveCreateAgentTitles({
-      configTitle: config.title,
-      initialPrompt: schedule.prompt,
-    });
-    const labels = {
-      "paseo.schedule-id": schedule.id,
-      "paseo.schedule-run": runId,
-    };
-    const agent = await this.agentManager.createAgent(config, undefined, {
-      labels,
-      initialPrompt: schedule.prompt,
-      initialTitle: provisionalTitle,
-      // Phase 2 routes scheduled agents through createAgentCommand with a workspace.
-      placement: { kind: "ephemeral" },
-    });
-    let result;
+    const stampedSchedule = await this.ensureScheduleWorkspaceStamped(schedule);
+    const stampedConfig =
+      stampedSchedule.target.type === "new-agent" ? stampedSchedule.target.config : null;
+    if (!stampedConfig) {
+      throw new Error(`Schedule ${schedule.id} target changed during execution`);
+    }
+    const agent = (
+      await this.createAgent({
+        kind: "mcp",
+        provider: formatScheduleProviderModel(stampedConfig),
+        cwd: stampedConfig.cwd,
+        workspaceId: stampedConfig.workspaceId,
+        title: stampedConfig.title ?? "",
+        initialPrompt: stampedSchedule.prompt,
+        labels: {
+          "paseo.schedule-id": stampedSchedule.id,
+          "paseo.schedule-run": runId,
+        },
+        mode: stampedConfig.modeId,
+        thinking: stampedConfig.thinkingOptionId,
+        features: stampedConfig.featureValues,
+        background: true,
+        notifyOnFinish: false,
+      })
+    ).snapshot;
     try {
-      result = await this.agentManager.runAgent(agent.id, schedule.prompt);
+      const result = await this.agentManager.waitForAgentEvent(agent.id, { waitForActive: true });
+      if (result.permission) {
+        throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
+      }
+      if (result.status === "error") {
+        throw new Error(result.lastMessage ?? `Scheduled agent ${agent.id} failed`);
+      }
+      await this.agentManager.archiveAgent(agent.id);
+      return {
+        agentId: agent.id,
+        output: result.lastMessage?.trim() ? result.lastMessage.trim() : null,
+      };
     } catch (error) {
       try {
         await this.agentManager.archiveAgent(agent.id);
@@ -738,22 +794,48 @@ export class ScheduleService {
       }
       throw error;
     }
+  }
 
-    await this.agentManager.archiveAgent(agent.id);
-    const timelineText = curateAgentActivity(result.timeline);
+  private async stampNewAgentWorkspace(
+    target: ScheduleTarget,
+    prompt: string,
+  ): Promise<ScheduleTarget> {
+    if (target.type !== "new-agent" || target.config.workspaceId) {
+      return target;
+    }
+    const workspaceId = await this.ensureWorkspaceForCreate(target.config.cwd, { prompt });
     return {
-      agentId: agent.id,
-      output: buildRunOutput({
-        output: null,
-        timelineText,
-        finalText: result.finalText,
-      }),
+      ...target,
+      config: {
+        ...target.config,
+        workspaceId,
+      },
     };
   }
 
-  private async resolveProviderCreateConfig(
-    input: ResolveProviderCreateConfigOptions,
-  ): Promise<ResolvedProviderCreateConfig> {
-    return this.createConfigResolver.resolveCreateConfig(input);
+  private async ensureScheduleWorkspaceStamped(schedule: StoredSchedule): Promise<StoredSchedule> {
+    if (schedule.target.type !== "new-agent" || schedule.target.config.workspaceId) {
+      return schedule;
+    }
+    const target = await this.stampNewAgentWorkspace(schedule.target, schedule.prompt);
+    const stamped = {
+      ...schedule,
+      target,
+      updatedAt: this.now().toISOString(),
+    };
+    await this.store.put(stamped);
+    return stamped;
   }
+}
+
+function formatScheduleProviderModel(
+  config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
+): string {
+  if (!config.model) {
+    return config.provider;
+  }
+  if (config.provider.includes("/")) {
+    return config.provider;
+  }
+  return `${config.provider}/${config.model}`;
 }

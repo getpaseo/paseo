@@ -22,6 +22,7 @@ import type {
 import type { AgentStorage } from "../agent-storage.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
 import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
 import { resolveRequiredProviderModel } from "../mcp-shared.js";
 import {
@@ -283,12 +284,16 @@ async function resolveMcpCreateAgent(
   });
 
   const trimmedPrompt = input.initialPrompt.trim();
+  const { provisionalTitle } = resolveCreateAgentTitles({
+    configTitle: input.title,
+    initialPrompt: trimmedPrompt,
+  });
   return {
     config: {
       provider,
       cwd: resolvedCwd,
       modeId: resolvedMode,
-      title: input.title.trim(),
+      ...(provisionalTitle ? { title: provisionalTitle } : {}),
       model: resolvedProviderModel.model,
       thinkingOptionId: input.thinking,
       ...(resolvedFeatures ? { featureValues: resolvedFeatures } : {}),

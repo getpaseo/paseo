@@ -993,8 +993,8 @@ export async function createPaseoDaemon(
     logger,
     agentManager,
     agentStorage,
-    providerSnapshotManager,
     createAgent,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
   });
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {
