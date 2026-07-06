@@ -4,6 +4,7 @@ import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { getDeviceTimeZone } from "@/utils/device-timezone";
 import {
   describeCron,
   everyMsToParts,
@@ -20,8 +21,8 @@ interface CronPreset {
   expression: string;
 }
 
-// 5-field expressions evaluated in UTC by the daemon. Each one round-trips
-// through describeCron() so the chip and the live preview agree.
+// 5-field expressions use the cadence timezone. Each one round-trips through
+// describeCron() so the chip and the live preview agree.
 const CRON_PRESETS: CronPreset[] = [
   { label: "Every hour", expression: "0 * * * *" },
   { label: "Daily 9:00", expression: "0 9 * * *" },
@@ -65,6 +66,8 @@ export interface CadenceEditorProps {
 
 export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const mode = value.type;
+  const deviceTimeZone = useMemo(getDeviceTimeZone, []);
+  const displayedTimeZone = value.type === "cron" ? (value.timezone ?? "UTC") : deviceTimeZone;
 
   // The numeric/text fields are native-owned (AdaptiveTextInput). We seed them
   // once from the incoming cadence via lazy state initializers and bump
@@ -103,9 +106,9 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const emitCron = useCallback(
     (expression: string) => {
       lastCronExpression.current = expression;
-      onChange({ type: "cron", expression });
+      onChange({ type: "cron", expression, timezone: deviceTimeZone });
     },
-    [onChange],
+    [onChange, deviceTimeZone],
   );
 
   const handleModeChange = useCallback(
@@ -161,7 +164,10 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
   const intervalPreview = describeInterval(parsedIntervalValue, intervalUnit);
   const trimmedCron = cronText.trim();
   const cronError = trimmedCron ? validateCron(trimmedCron) : null;
-  const cronPreview = cronError ? null : (describeCron(trimmedCron) ?? trimmedCron);
+  const cronPreview = cronError
+    ? null
+    : (describeCron({ type: "cron", expression: trimmedCron, timezone: displayedTimeZone }) ??
+      trimmedCron);
 
   let cronFeedback: ReactNode = null;
   if (cronError) {
@@ -231,7 +237,7 @@ export function CadenceEditor({ value, onChange, error }: CadenceEditorProps) {
             style={styles.cronInput}
           />
           {cronFeedback}
-          <Text style={styles.hint}>Times are in UTC</Text>
+          <Text style={styles.hint}>Times are in {displayedTimeZone}</Text>
         </View>
       )}
 
