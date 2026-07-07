@@ -60,6 +60,15 @@ describe("formatCaughtValue", () => {
     expect(details).toContain('"frame": "bad stack"');
   });
 
+  it("marks recursive Error causes", () => {
+    const error = new Error("self cause");
+    Object.defineProperty(error, "cause", { configurable: true, value: error });
+
+    const details = formatCaughtValue(error);
+
+    expect(details).toContain("Cause:\n[Circular Error]");
+  });
+
   it("renders string thrown values as the string", () => {
     expect(formatCaughtValue("plain failure")).toBe("plain failure");
   });

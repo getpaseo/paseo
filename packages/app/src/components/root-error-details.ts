@@ -1,6 +1,10 @@
 export function formatCaughtValue(value: unknown): string {
+  return formatCaughtValueWithSeenErrors(value, new WeakSet<Error>());
+}
+
+function formatCaughtValueWithSeenErrors(value: unknown, seenErrors: WeakSet<Error>): string {
   if (value instanceof Error) {
-    return formatError(value);
+    return formatError(value, seenErrors);
   }
 
   if (typeof value === "string") {
@@ -15,14 +19,19 @@ export function formatCaughtValue(value: unknown): string {
     return safeString(value);
   }
 
-  return stringifyJson(value) ?? safeString(value);
+  return stringifyJson(value, seenErrors) ?? safeString(value);
 }
 
-function formatError(error: Error): string {
+function formatError(error: Error, seenErrors: WeakSet<Error>): string {
+  if (seenErrors.has(error)) {
+    return "[Circular Error]";
+  }
+
+  seenErrors.add(error);
   const sections: string[] = [];
-  const name = formatErrorTextProperty(Reflect.get(error, "name"));
-  const message = formatErrorTextProperty(Reflect.get(error, "message"));
-  const stack = formatErrorTextProperty(Reflect.get(error, "stack"));
+  const name = formatErrorTextProperty(Reflect.get(error, "name"), seenErrors);
+  const message = formatErrorTextProperty(Reflect.get(error, "message"), seenErrors);
+  const stack = formatErrorTextProperty(Reflect.get(error, "stack"), seenErrors);
 
   if (name) {
     sections.push(`Name: ${name}`);
@@ -36,23 +45,24 @@ function formatError(error: Error): string {
 
   const errorCause = getErrorCause(error);
   if (errorCause.hasCause) {
-    sections.push(`Cause:\n${formatCaughtValue(errorCause.value)}`);
+    sections.push(`Cause:\n${formatCaughtValueWithSeenErrors(errorCause.value, seenErrors)}`);
   }
 
   const aggregateErrors = getAggregateErrors(error);
   if (aggregateErrors.hasErrors) {
-    sections.push(`Errors:\n${formatCaughtValue(aggregateErrors.value)}`);
+    sections.push(`Errors:\n${formatCaughtValueWithSeenErrors(aggregateErrors.value, seenErrors)}`);
   }
 
   const fields = getErrorFields(error);
   if (fields !== null) {
-    sections.push(`Fields:\n${stringifyJson(fields) ?? safeString(fields)}`);
+    sections.push(`Fields:\n${stringifyJson(fields, seenErrors) ?? safeString(fields)}`);
   }
 
+  seenErrors.delete(error);
   return sections.join("\n\n") || safeString(error);
 }
 
-function formatErrorTextProperty(value: unknown): string | null {
+function formatErrorTextProperty(value: unknown, seenErrors: WeakSet<Error>): string | null {
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed || null;
@@ -60,7 +70,7 @@ function formatErrorTextProperty(value: unknown): string | null {
   if (value === undefined) {
     return null;
   }
-  return stringifyJson(value) ?? safeString(value);
+  return stringifyJson(value, seenErrors) ?? safeString(value);
 }
 
 function getErrorCause(error: Error): { hasCause: boolean; value: unknown } {
@@ -95,14 +105,14 @@ function getErrorFields(error: Error): Record<string, unknown> | null {
   return Object.keys(fields).length > 0 ? fields : null;
 }
 
-function stringifyJson(value: unknown): string | null {
+function stringifyJson(value: unknown, seenErrors: WeakSet<Error>): string | null {
   const seen = new WeakSet<object>();
   try {
     const serialized = JSON.stringify(
       value,
       (_key, nestedValue: unknown) => {
         if (nestedValue instanceof Error) {
-          return formatError(nestedValue);
+          return formatError(nestedValue, seenErrors);
         }
         if (typeof nestedValue === "bigint") {
           return String(nestedValue);
