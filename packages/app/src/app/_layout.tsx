@@ -37,6 +37,7 @@ import { LeftSidebar } from "@/components/left-sidebar";
 import { CompactExplorerSidebarHost } from "@/components/compact-explorer-sidebar-host";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
+import { RootErrorBoundary } from "@/components/root-error-boundary";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
@@ -1024,15 +1025,17 @@ function RootProviders({ children }: { children: ReactNode }) {
 
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={flexStyle}>
-      <View style={layoutStyles.surfaceFill}>
-        <RootProviders>
-          <RuntimeProviders>
-            <AppShell />
-          </RuntimeProviders>
-        </RootProviders>
-      </View>
-    </GestureHandlerRootView>
+    <RootErrorBoundary>
+      <GestureHandlerRootView style={flexStyle}>
+        <View style={layoutStyles.surfaceFill}>
+          <RootProviders>
+            <RuntimeProviders>
+              <AppShell />
+            </RuntimeProviders>
+          </RootProviders>
+        </View>
+      </GestureHandlerRootView>
+    </RootErrorBoundary>
   );
 }
 
