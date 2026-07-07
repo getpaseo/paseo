@@ -34,6 +34,17 @@ describe("formatCaughtValue", () => {
     expect(details).not.toContain("Fields:");
   });
 
+  it("preserves null aggregate error values", () => {
+    class ErrorWithNullableErrors extends Error {
+      errors = null;
+    }
+
+    const details = formatCaughtValue(new ErrorWithNullableErrors("nullable errors"));
+
+    expect(details).toContain("Errors:\nnull");
+    expect(details).not.toContain("Fields:");
+  });
+
   it("renders string thrown values as the string", () => {
     expect(formatCaughtValue("plain failure")).toBe("plain failure");
   });

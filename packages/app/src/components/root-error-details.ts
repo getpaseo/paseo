@@ -40,8 +40,8 @@ function formatError(error: Error): string {
   }
 
   const aggregateErrors = getAggregateErrors(error);
-  if (aggregateErrors !== null) {
-    sections.push(`Errors:\n${formatCaughtValue(aggregateErrors)}`);
+  if (aggregateErrors.hasErrors) {
+    sections.push(`Errors:\n${formatCaughtValue(aggregateErrors.value)}`);
   }
 
   const fields = getErrorFields(error);
@@ -59,11 +59,11 @@ function getErrorCause(error: Error): { hasCause: boolean; value: unknown } {
   return { hasCause: true, value: Reflect.get(error, "cause") };
 }
 
-function getAggregateErrors(error: Error): unknown | null {
+function getAggregateErrors(error: Error): { hasErrors: boolean; value: unknown } {
   if (!Reflect.has(error, "errors")) {
-    return null;
+    return { hasErrors: false, value: null };
   }
-  return Reflect.get(error, "errors");
+  return { hasErrors: true, value: Reflect.get(error, "errors") };
 }
 
 function getErrorFields(error: Error): Record<string, unknown> | null {
