@@ -807,6 +807,142 @@ describe("OpenCode adapter context-window normalization", () => {
     expect(lookup.get("anthropic/claude-opus")).toBeUndefined();
   });
 
+  test("buildOpenCodeModelProviderLookup maps modelID to providerID for connected providers", () => {
+    const lookup = __openCodeInternals.buildOpenCodeModelProviderLookup({
+      connected: ["opencode-go", "openai"],
+      all: [
+        {
+          id: "opencode-go",
+          source: "api",
+          models: {
+            "glm-5.2": { limit: { context: 128_000 } },
+          },
+        },
+        {
+          id: "openai",
+          source: "env",
+          models: {
+            "gpt-5": { limit: { context: 400_000 } },
+          },
+        },
+        {
+          id: "anthropic",
+          source: "env",
+          models: {
+            "claude-opus": { limit: { context: 1_000_000 } },
+          },
+        },
+      ],
+    });
+
+    expect(lookup.get("glm-5.2")).toBe("opencode-go");
+    expect(lookup.get("gpt-5")).toBe("openai");
+    expect(lookup.get("claude-opus")).toBeUndefined();
+  });
+
+  test("buildOpenCodeModelProviderLookup includes api-source providers absent from connected", () => {
+    const lookup = __openCodeInternals.buildOpenCodeModelProviderLookup({
+      connected: [],
+      all: [
+        {
+          id: "opencode-go",
+          source: "api",
+          models: {
+            "glm-5.2": {},
+          },
+        },
+      ],
+    });
+
+    expect(lookup.get("glm-5.2")).toBe("opencode-go");
+  });
+
+  test("parseModel resolves provider from server catalog when model lacks prefix", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionPromptAsyncEvents = assistantTurnEvents();
+    openCodeClient.providerListResponse = {
+      data: {
+        connected: [],
+        all: [
+          {
+            id: "opencode-go",
+            name: "OpenCode Go",
+            source: "api",
+            models: {
+              "glm-5.2": { name: "GLM 5.2" },
+            },
+          },
+        ],
+      },
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd,
+      model: "glm-5.2",
+    });
+
+    const iterator = streamSession(session, "Say hello");
+    await collectTurnEvents(iterator);
+
+    expect(openCodeClient.calls.sessionPromptAsync).toEqual([
+      expect.objectContaining({
+        model: { providerID: "opencode-go", modelID: "glm-5.2" },
+      }),
+    ]);
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }, 60_000);
+
+  test("parseModel returns undefined for unknown model without prefix", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionPromptAsyncEvents = assistantTurnEvents();
+    openCodeClient.providerListResponse = {
+      data: {
+        connected: [],
+        all: [
+          {
+            id: "opencode-go",
+            name: "OpenCode Go",
+            source: "api",
+            models: {
+              "glm-5.2": { name: "GLM 5.2" },
+            },
+          },
+        ],
+      },
+    };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd,
+      model: "totally-unknown-model",
+    });
+
+    const iterator = streamSession(session, "Say hello");
+    await collectTurnEvents(iterator);
+
+    expect(openCodeClient.calls.sessionPromptAsync).toEqual([
+      expect.not.objectContaining({ model: expect.anything() }),
+    ]);
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }, 60_000);
+
   test("normalizes step-finish usage into AgentUsage context window fields", () => {
     const usage = { contextWindowMaxTokens: 400_000 };
 
