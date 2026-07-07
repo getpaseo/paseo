@@ -8,6 +8,7 @@ import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
 import {
   __openCodeInternals,
   OpenCodeAgentClient,
+  type OpenCodeEventTranslationState,
   translateOpenCodeEvent,
 } from "./opencode-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
@@ -2163,6 +2164,453 @@ describe("OpenCode persisted sessions", () => {
     ]);
   });
 });
+
+describe("OpenCode eager child session adoption contract", () => {
+  async function createAdoptedChildSession(): Promise<{
+    readonly runtime: TestOpenCodeHarness;
+    readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
+    readonly child: Awaited<ReturnType<OpenCodeAgentClient["resumeSession"]>>;
+    readonly childClient: TestOpenCodeClient;
+  }> {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    const childClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_external" } };
+    runtime.enqueueClient(parentClient);
+    runtime.enqueueClient(childClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      { env: { PASEO_AGENT_ID: "parent-agent" } },
+    );
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_child_external",
+          parentID: "ses_parent_external",
+          title: "Externally driven child",
+        },
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const child = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "ses_child_external",
+        nativeHandle: "ses_child_external",
+        metadata: { cwd: "/workspace/repo" },
+      },
+      undefined,
+      { env: { PASEO_AGENT_ID: "child-agent" } },
+    );
+    return { runtime, parent, child, childClient };
+  }
+
+  test("resumes an adopted child on the parent's registered OpenCode server", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    const childClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_registry" } };
+    runtime.enqueueClient(parentClient);
+    runtime.enqueueClient(childClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      { env: { PASEO_AGENT_ID: "parent-agent" } },
+    );
+    const events: AgentStreamEvent[] = [];
+    parent.subscribe((event) => events.push(event));
+
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_child_registry",
+          parentID: "ses_parent_registry",
+          title: "Live child",
+        },
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const child = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "ses_child_registry",
+        nativeHandle: "ses_child_registry",
+        metadata: { cwd: "/workspace/repo" },
+      },
+      undefined,
+      { env: { PASEO_AGENT_ID: "child-agent" } },
+    );
+    await child.close();
+    await parent.close();
+
+    expect(events).toContainEqual({
+      type: "provider_child_session_detected",
+      provider: "opencode",
+      childSessionId: "ses_child_registry",
+      parentSessionId: "ses_parent_registry",
+      title: "Live child",
+    });
+    expect(runtime.acquisitions).toEqual([
+      { kind: "dedicated", env: { PASEO_AGENT_ID: "parent-agent" }, releaseCount: 1 },
+      { kind: "existing", url: runtime.server.url, releaseCount: 1 },
+    ]);
+    expect(runtime.clientCreations).toEqual([
+      { baseUrl: runtime.server.url, directory: "/workspace/repo" },
+      { baseUrl: runtime.server.url, directory: "/workspace/repo" },
+    ]);
+  });
+
+  test("synthesizes a turn for externally driven adopted child timeline events", async () => {
+    const { child, childClient, parent } = await createAdoptedChildSession();
+    const completed = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
+    child.subscribe((event) => {
+      events.push(event);
+      if (event.type === "turn_completed") {
+        completed.resolve();
+      }
+    });
+
+    for (const event of [
+      ...assistantTurnEvents({ sessionId: "ses_child_external", text: "child says hi" }).slice(
+        0,
+        2,
+      ),
+      {
+        type: "session.status",
+        properties: { sessionID: "ses_child_external", status: { type: "busy" } },
+      },
+      { type: "session.idle", properties: { sessionID: "ses_child_external" } },
+    ]) {
+      childClient.emitEvent(event);
+    }
+
+    await completed.promise;
+    await child.close();
+    await parent.close();
+
+    expect(events.map((event) => event.type)).toEqual([
+      "turn_started",
+      "timeline",
+      "turn_completed",
+    ]);
+    expect(events.map((event) => ("turnId" in event ? event.turnId : undefined))).toEqual([
+      "opencode-turn-0",
+      "opencode-turn-0",
+      "opencode-turn-0",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: { type: "assistant_message", text: "child says hi" },
+      }),
+    );
+  });
+
+  test("synthesizes a turn for externally driven adopted child permissions", async () => {
+    const { child, childClient, parent } = await createAdoptedChildSession();
+    const completed = createTestDeferred<void>();
+    const events: AgentStreamEvent[] = [];
+    child.subscribe((event) => {
+      events.push(event);
+      if (event.type === "turn_completed") {
+        completed.resolve();
+      }
+    });
+
+    childClient.emitEvent({
+      type: "permission.asked",
+      properties: {
+        id: "perm_child_external",
+        sessionID: "ses_child_external",
+        permission: "bash",
+        patterns: ["npm test"],
+        metadata: { command: "npm test", cwd: "/workspace/repo" },
+      },
+    });
+    childClient.emitEvent({
+      type: "session.idle",
+      properties: { sessionID: "ses_child_external" },
+    });
+
+    await completed.promise;
+    await child.close();
+    await parent.close();
+
+    expect(events.map((event) => event.type)).toEqual([
+      "turn_started",
+      "permission_requested",
+      "turn_completed",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_requested",
+        request: expect.objectContaining({ id: "perm_child_external" }),
+        turnId: "opencode-turn-0",
+      }),
+    );
+  });
+
+  test("emits provider_child_session_detected for a child created while the parent has no active turn", async () => {
+    const releaseChildEvent = createTestDeferred<void>();
+    const childConsumed = createTestDeferred<void>();
+    const fakeClient = {
+      global: {
+        event: vi.fn().mockResolvedValue({
+          stream: (async function* () {
+            yield { type: "server.connected", properties: {} };
+            await releaseChildEvent.promise;
+            yield {
+              type: "session.created",
+              properties: {
+                info: {
+                  id: "ses_child_background",
+                  parentID: "ses_parent",
+                  title: "Plugin child",
+                },
+              },
+            };
+            childConsumed.resolve();
+          })(),
+        }),
+      },
+      session: {
+        abort: vi.fn().mockResolvedValue({ error: null }),
+        update: vi.fn().mockResolvedValue({ error: null }),
+      },
+    } as never;
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_parent",
+      createTestLogger(),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    releaseChildEvent.resolve();
+    await childConsumed.promise;
+    await session.close();
+
+    expect(events).toContainEqual({
+      type: "provider_child_session_detected",
+      provider: "opencode",
+      childSessionId: "ses_child_background",
+      parentSessionId: "ses_parent",
+      title: "Plugin child",
+    });
+  });
+
+  test("translates plugin child sessions without a waiting sub_agent tool call", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.updated",
+        properties: {
+          info: {
+            id: "ses_child_plugin",
+            parentID: "ses_parent",
+            title: "Background plugin child",
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "provider_child_session_detected",
+        provider: "opencode",
+        childSessionId: "ses_child_plugin",
+        parentSessionId: "ses_parent",
+        title: "Background plugin child",
+      },
+    ]);
+  });
+
+  test("translates provider deletion of a known child session", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+    state.subAgentCallIdByChildSessionId?.set("ses_child_deleted", "call_task");
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.deleted",
+        properties: { sessionID: "ses_child_deleted" },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(events).toEqual([
+      {
+        type: "provider_session_deleted",
+        provider: "opencode",
+        sessionId: "ses_child_deleted",
+      },
+    ]);
+  });
+
+  test("hydrates existing children breadth-first and emits each detection once after subscribe", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent" } };
+    openCodeClient.sessionChildrenResponses = [
+      {
+        data: [
+          { id: "ses_child_a", parentID: "ses_parent", title: "Child A" },
+          { id: "ses_child_b", parentID: "ses_parent", title: "Child B" },
+        ],
+      },
+      { data: [{ id: "ses_grandchild_a", parentID: "ses_child_a", title: "Grandchild A" }] },
+      { data: [] },
+      { data: [] },
+    ];
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await session.close();
+
+    expect(openCodeClient.calls.sessionChildren).toEqual([
+      { path: { id: "ses_parent" } },
+      { path: { id: "ses_child_a" } },
+      { path: { id: "ses_child_b" } },
+      { path: { id: "ses_grandchild_a" } },
+    ]);
+    expect(events).toEqual([
+      {
+        type: "provider_child_session_detected",
+        provider: "opencode",
+        childSessionId: "ses_child_a",
+        parentSessionId: "ses_parent",
+        title: "Child A",
+      },
+      {
+        type: "provider_child_session_detected",
+        provider: "opencode",
+        childSessionId: "ses_child_b",
+        parentSessionId: "ses_parent",
+        title: "Child B",
+      },
+      {
+        type: "provider_child_session_detected",
+        provider: "opencode",
+        childSessionId: "ses_grandchild_a",
+        parentSessionId: "ses_child_a",
+        title: "Grandchild A",
+      },
+    ]);
+  });
+
+  test("does not fold child tool parts into the parent sub_agent action log", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+    const events: AgentStreamEvent[] = [];
+
+    events.push(
+      ...translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_parent_task",
+              sessionID: "ses_parent",
+              messageID: "msg_parent",
+              type: "tool",
+              tool: "task",
+              callID: "call_task",
+              state: {
+                status: "running",
+                input: { subagent_type: "explore", description: "Inspect repo" },
+              },
+            },
+          },
+        } as OpenCodeEvent,
+        state,
+      ),
+      ...translateOpenCodeEvent(
+        {
+          type: "session.created",
+          properties: { info: { id: "ses_child", parentID: "ses_parent" } },
+        } as OpenCodeEvent,
+        state,
+      ),
+      ...translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_child_tool",
+              sessionID: "ses_child",
+              messageID: "msg_child",
+              type: "tool",
+              tool: "bash",
+              callID: "call_bash",
+              state: { status: "completed", input: { command: "echo child" }, output: "child\n" },
+            },
+          },
+        } as OpenCodeEvent,
+        state,
+      ),
+    );
+
+    const subAgentItems = events.flatMap((event) => {
+      if (event.type !== "timeline" || event.item.type !== "tool_call") {
+        return [];
+      }
+      return event.item.detail.type === "sub_agent" ? [event.item] : [];
+    });
+    const latest = subAgentItems.at(-1);
+    if (!latest || latest.detail.type !== "sub_agent") {
+      throw new Error("expected parent sub_agent timeline item");
+    }
+
+    expect(latest.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Inspect repo",
+      childSessionId: "ses_child",
+      log: "",
+      actions: [],
+    });
+  });
+});
+
+function createOpenCodeTranslationState(sessionId: string): OpenCodeEventTranslationState {
+  return {
+    sessionId,
+    cwd: "/workspace/repo",
+    messageRoles: new Map(),
+    accumulatedUsage: {},
+    streamedPartKeys: new Set(),
+    emittedStructuredMessageIds: new Set(),
+    compactionSummaryMessageIds: new Set(),
+    emittedCompactionPartIds: new Set(),
+    partTypes: new Map(),
+    subAgentsByCallId: new Map(),
+    subAgentCallIdByChildSessionId: new Map(),
+  };
+}
 
 function createTestDeferred<T>(): {
   promise: Promise<T>;

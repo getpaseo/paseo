@@ -426,7 +426,17 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       reason: "finished" | "error" | "permission";
       timestamp: string;
-    };
+    }
+  // Internal-only events (never serialized to clients): provider-native child
+  // sessions detected/deleted, consumed by AgentManager to adopt/archive native subagents.
+  | {
+      type: "provider_child_session_detected";
+      provider: AgentProvider;
+      childSessionId: string;
+      parentSessionId: string;
+      title?: string;
+    }
+  | { type: "provider_session_deleted"; provider: AgentProvider; sessionId: string };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
   return "turnId" in event ? event.turnId : undefined;
