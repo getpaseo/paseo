@@ -45,6 +45,21 @@ describe("formatCaughtValue", () => {
     expect(details).not.toContain("Fields:");
   });
 
+  it("does not throw for malformed Error text fields", () => {
+    const error = new Error("fallback");
+    Object.defineProperties(error, {
+      name: { configurable: true, value: null },
+      message: { configurable: true, value: 42 },
+      stack: { configurable: true, value: { frame: "bad stack" } },
+    });
+
+    const details = formatCaughtValue(error);
+
+    expect(details).toContain("Name: null");
+    expect(details).toContain("Message: 42");
+    expect(details).toContain('"frame": "bad stack"');
+  });
+
   it("renders string thrown values as the string", () => {
     expect(formatCaughtValue("plain failure")).toBe("plain failure");
   });

@@ -8,21 +8,21 @@ export function formatCaughtValue(value: unknown): string {
   }
 
   if (value === null || value === undefined) {
-    return String(value);
+    return safeString(value);
   }
 
   if (typeof value !== "object" && typeof value !== "function") {
-    return String(value);
+    return safeString(value);
   }
 
-  return stringifyJson(value) ?? String(value);
+  return stringifyJson(value) ?? safeString(value);
 }
 
 function formatError(error: Error): string {
   const sections: string[] = [];
-  const name = error.name.trim();
-  const message = error.message.trim();
-  const stack = error.stack?.trim();
+  const name = formatErrorTextProperty(Reflect.get(error, "name"));
+  const message = formatErrorTextProperty(Reflect.get(error, "message"));
+  const stack = formatErrorTextProperty(Reflect.get(error, "stack"));
 
   if (name) {
     sections.push(`Name: ${name}`);
@@ -46,10 +46,21 @@ function formatError(error: Error): string {
 
   const fields = getErrorFields(error);
   if (fields !== null) {
-    sections.push(`Fields:\n${stringifyJson(fields) ?? String(fields)}`);
+    sections.push(`Fields:\n${stringifyJson(fields) ?? safeString(fields)}`);
   }
 
-  return sections.join("\n\n") || String(error);
+  return sections.join("\n\n") || safeString(error);
+}
+
+function formatErrorTextProperty(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (value === undefined) {
+    return null;
+  }
+  return stringifyJson(value) ?? safeString(value);
 }
 
 function getErrorCause(error: Error): { hasCause: boolean; value: unknown } {
@@ -109,5 +120,13 @@ function stringifyJson(value: unknown): string | null {
     return typeof serialized === "string" ? serialized : null;
   } catch {
     return null;
+  }
+}
+
+function safeString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return "[Unserializable value]";
   }
 }
