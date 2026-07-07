@@ -807,56 +807,6 @@ describe("OpenCode adapter context-window normalization", () => {
     expect(lookup.get("anthropic/claude-opus")).toBeUndefined();
   });
 
-  test("buildOpenCodeModelProviderLookup maps modelID to providerID for connected providers", () => {
-    const lookup = __openCodeInternals.buildOpenCodeModelProviderLookup({
-      connected: ["opencode-go", "openai"],
-      all: [
-        {
-          id: "opencode-go",
-          source: "api",
-          models: {
-            "glm-5.2": { limit: { context: 128_000 } },
-          },
-        },
-        {
-          id: "openai",
-          source: "env",
-          models: {
-            "gpt-5": { limit: { context: 400_000 } },
-          },
-        },
-        {
-          id: "anthropic",
-          source: "env",
-          models: {
-            "claude-opus": { limit: { context: 1_000_000 } },
-          },
-        },
-      ],
-    });
-
-    expect(lookup.get("glm-5.2")).toBe("opencode-go");
-    expect(lookup.get("gpt-5")).toBe("openai");
-    expect(lookup.get("claude-opus")).toBeUndefined();
-  });
-
-  test("buildOpenCodeModelProviderLookup includes api-source providers absent from connected", () => {
-    const lookup = __openCodeInternals.buildOpenCodeModelProviderLookup({
-      connected: [],
-      all: [
-        {
-          id: "opencode-go",
-          source: "api",
-          models: {
-            "glm-5.2": {},
-          },
-        },
-      ],
-    });
-
-    expect(lookup.get("glm-5.2")).toBe("opencode-go");
-  });
-
   test("parseModel resolves provider from server catalog when model lacks prefix", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();

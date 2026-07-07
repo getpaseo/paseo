@@ -1323,7 +1323,7 @@ export class OpenCodeAgentClient implements AgentClient {
         throw new Error("OpenCode session creation returned no data");
       }
 
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      await this.populateModelMetadataCache(client, openCodeConfig.cwd);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1368,7 +1368,7 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
-      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+      await this.populateModelMetadataCache(client, openCodeConfig.cwd);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1585,7 +1585,6 @@ export class OpenCodeAgentClient implements AgentClient {
 
     const models: AgentModelDefinition[] = [];
     this.modelContextWindows.clear();
-    this.modelProviderByModelId.clear();
     for (const provider of providers.all) {
       if (!isAccessible(provider)) {
         continue;
@@ -1600,11 +1599,14 @@ export class OpenCodeAgentClient implements AgentClient {
             contextWindowMaxTokens,
           );
         }
-        if (!this.modelProviderByModelId.has(modelId)) {
-          this.modelProviderByModelId.set(modelId, provider.id);
-        }
         models.push(definition);
       }
+    }
+
+    const providerLookup = buildOpenCodeModelProviderLookup(providers);
+    this.modelProviderByModelId.clear();
+    for (const [modelId, providerId] of providerLookup.entries()) {
+      this.modelProviderByModelId.set(modelId, providerId);
     }
 
     return models;
@@ -1636,10 +1638,7 @@ export class OpenCodeAgentClient implements AgentClient {
     return normalizeOpenCodeConfig({ ...config, provider: "opencode" });
   }
 
-  private async populateModelContextWindowCache(
-    client: OpencodeClient,
-    cwd: string,
-  ): Promise<void> {
+  private async populateModelMetadataCache(client: OpencodeClient, cwd: string): Promise<void> {
     const response = await openCodeMetadataLimit(() => client.provider.list({ directory: cwd }));
     if (response.error || !response.data) {
       return;
@@ -3701,6 +3700,10 @@ class OpenCodeAgentSession implements AgentSession {
     if (resolvedProviderId) {
       return { providerID: resolvedProviderId, modelID: model };
     }
+    this.logger.warn(
+      { model },
+      "OpenCode model has no provider prefix and is not in the server catalog; omitting model so the server can use its default",
+    );
     return undefined;
   }
 
