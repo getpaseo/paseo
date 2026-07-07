@@ -192,6 +192,32 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("maps dynamicToolCall items into canonical tool calls", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "dynamicToolCall",
+      id: "call-dynamic-1",
+      status: "completed",
+      namespace: null,
+      tool: "create_agent",
+      arguments: { title: "Smoke", initialPrompt: "hello" },
+      contentItems: [{ type: "inputText", text: "created child-agent" }],
+      success: true,
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-dynamic-1",
+      name: "create_agent",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: { title: "Smoke", initialPrompt: "hello" },
+        output: { content: [{ type: "text", text: "created child-agent" }] },
+      },
+    });
+  });
+
   it("maps collabAgentToolCall into canonical sub-agent detail", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",

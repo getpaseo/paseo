@@ -22,6 +22,8 @@ Claude first-party model metadata lives in `packages/server/src/server/agent/pro
 
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
 
+Codex app-server can report an injected MCP server as ready while not exposing those MCP tools to the model tool surface on some model/provider paths. Do not depend on internal Paseo tools through Codex MCP injection. The Codex provider registers `launchContext.paseoTools` as native app-server dynamic tools via top-level `thread/start.dynamicTools` and answers app-server `item/tool/call` requests. Codex 0.142.5 persists dynamic tool specs for threads created with `dynamicTools`; passing `dynamicTools` to `thread/resume` is accepted but does not retrofit a thread that was originally created without them.
+
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
 Paseo's per-agent and daemon-wide system prompts are passed to Pi with `--append-system-prompt`, so Pi keeps its default coding prompt while receiving Paseo's additional instructions.

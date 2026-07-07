@@ -83,6 +83,7 @@ import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "./provider-image-output.js";
+import type { PaseoToolCatalog, PaseoToolDefinition, PaseoToolResult } from "../tools/types.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import {
   formatProviderDiagnostic,
@@ -128,6 +129,7 @@ const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
   "commandExecution",
   "fileChange",
   "mcpToolCall",
+  "dynamicToolCall",
   "webSearch",
   "collabAgentToolCall",
 ]);
@@ -187,6 +189,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsSessionListing: true,
   supportsDynamicModes: false,
   supportsMcpServers: true,
+  supportsNativePaseoTools: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
   supportsRewindConversation: true,
@@ -771,6 +774,25 @@ interface CodexMcpServerConfig {
   tool_timeout_sec?: number;
 }
 
+interface CodexDynamicToolFunctionSpec {
+  type: "function";
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  deferLoading?: boolean;
+}
+
+interface CodexDynamicToolCallOutputContentItem {
+  type: "inputText" | "inputImage";
+  text?: string;
+  imageUrl?: string;
+}
+
+interface CodexDynamicToolCallResponse {
+  contentItems: CodexDynamicToolCallOutputContentItem[];
+  success: boolean;
+}
+
 function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
   switch (config.type) {
     case "stdio":
@@ -794,6 +816,135 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
       throw new Error(`Unsupported MCP config type: ${String(_exhaustive.type)}`);
     }
   }
+}
+
+function isZodSchema(value: unknown): value is z.ZodType {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { safeParseAsync?: unknown }).safeParseAsync === "function"
+  );
+}
+
+function toCodexDynamicToolZodSchema(tool: PaseoToolDefinition): z.ZodType {
+  if (!tool.inputSchema) {
+    return z.object({});
+  }
+  if (isZodSchema(tool.inputSchema)) {
+    return tool.inputSchema;
+  }
+  return z.object(tool.inputSchema);
+}
+
+function toCodexDynamicToolInputSchema(tool: PaseoToolDefinition, logger: Logger): unknown {
+  const schema = toCodexDynamicToolZodSchema(tool);
+  try {
+    const jsonSchema = z.toJSONSchema(schema, {
+      target: "draft-07",
+      unrepresentable: "any",
+      io: "input",
+      reused: "inline",
+      cycles: "throw",
+    });
+    if (!isRecord(jsonSchema)) {
+      return jsonSchema;
+    }
+    const { $schema: _schema, ...rest } = jsonSchema;
+    return rest;
+  } catch (error) {
+    logger.warn(
+      { err: error, toolName: tool.name },
+      "Failed to convert Paseo tool input schema for Codex dynamic tools",
+    );
+    return {
+      type: "object",
+      additionalProperties: true,
+    };
+  }
+}
+
+function toCodexDynamicToolSpec(
+  tool: PaseoToolDefinition,
+  logger: Logger,
+): CodexDynamicToolFunctionSpec | null {
+  const name = tool.name.trim();
+  if (!name) {
+    return null;
+  }
+  return {
+    type: "function",
+    name,
+    description: tool.description || name,
+    inputSchema: toCodexDynamicToolInputSchema(tool, logger),
+  };
+}
+
+function toCodexDynamicTools(
+  catalog: PaseoToolCatalog | null,
+  logger: Logger,
+): CodexDynamicToolFunctionSpec[] {
+  if (!catalog) {
+    return [];
+  }
+  return Array.from(catalog.tools.values())
+    .map((tool) => toCodexDynamicToolSpec(tool, logger))
+    .filter((tool): tool is CodexDynamicToolFunctionSpec => tool !== null);
+}
+
+function stringifyUnknownForToolResult(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toCodexDynamicToolContentItem(block: {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+  [key: string]: unknown;
+}): CodexDynamicToolCallOutputContentItem {
+  if (block.type === "text" && typeof block.text === "string") {
+    return { type: "inputText", text: block.text };
+  }
+  if (
+    block.type === "image" &&
+    typeof block.data === "string" &&
+    typeof block.mimeType === "string"
+  ) {
+    return { type: "inputImage", imageUrl: `data:${block.mimeType};base64,${block.data}` };
+  }
+  return { type: "inputText", text: stringifyUnknownForToolResult(block) };
+}
+
+function toCodexDynamicToolResponse(result: PaseoToolResult): CodexDynamicToolCallResponse {
+  const contentItems = result.content.map((block) => toCodexDynamicToolContentItem(block));
+  if (result.structuredContent !== undefined) {
+    contentItems.push({
+      type: "inputText",
+      text: stringifyUnknownForToolResult(result.structuredContent),
+    });
+  }
+  if (contentItems.length === 0) {
+    contentItems.push({ type: "inputText", text: "" });
+  }
+  return {
+    contentItems,
+    success: result.isError !== true,
+  };
+}
+
+function toCodexDynamicToolErrorResponse(error: unknown): CodexDynamicToolCallResponse {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    contentItems: [{ type: "inputText", text: message }],
+    success: false,
+  };
 }
 
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1201,6 +1352,8 @@ function normalizeCodexThreadItemType(rawType: string | undefined): string | und
       return "fileChange";
     case "McpToolCall":
       return "mcpToolCall";
+    case "DynamicToolCall":
+      return "dynamicToolCall";
     case "WebSearch":
       return "webSearch";
     case "CollabAgentToolCall":
@@ -2011,6 +2164,17 @@ const ItemCommandExecutionTerminalInteractionNotificationSchema = z
     itemId: z.string().optional(),
     processId: z.union([z.string(), z.number()]).optional(),
     stdin: z.string().optional(),
+  })
+  .passthrough();
+
+const DynamicToolCallRequestParamsSchema = z
+  .object({
+    threadId: z.string(),
+    turnId: z.string(),
+    callId: z.string(),
+    namespace: z.string().nullable().optional(),
+    tool: z.string(),
+    arguments: z.unknown(),
   })
   .passthrough();
 
@@ -2946,6 +3110,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly goalsEnabled: boolean = false,
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
+    private readonly paseoTools: PaseoToolCatalog | null = null,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3229,6 +3394,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.client.setRequestHandler("item/tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
     );
+    this.client.setRequestHandler("item/tool/call", (params) =>
+      this.handleDynamicToolCallRequest(params),
+    );
     // Keep the legacy method name for older Codex builds.
     this.client.setRequestHandler("tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
@@ -3279,6 +3447,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (codexConfig) {
         params.config = codexConfig;
       }
+      this.applyCodexDynamicTools(params);
       await this.client.request("thread/resume", params);
     } catch (error) {
       const threadId = this.currentThreadId;
@@ -4159,6 +4328,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       ...(this.ephemeral ? { ephemeral: true } : {}),
     };
     applyApprovalsReviewerParam(params, preset);
+    this.applyCodexDynamicTools(params);
     const rawResponse = await this.client.request("thread/start", params);
     const response = toObjectRecord(rawResponse);
     const threadRecord = toObjectRecord(response?.thread);
@@ -4197,6 +4367,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }
     return Object.keys(innerConfig).length > 0 ? innerConfig : null;
+  }
+
+  private applyCodexDynamicTools(params: Record<string, unknown>): void {
+    const dynamicTools = toCodexDynamicTools(this.paseoTools, this.logger);
+    if (dynamicTools.length > 0) {
+      params.dynamicTools = dynamicTools;
+    }
   }
 
   private async buildUserInput(prompt: CodexPromptInput): Promise<CodexAppServerUserInput[]> {
@@ -5312,6 +5489,36 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     });
   }
+
+  private async handleDynamicToolCallRequest(
+    params: unknown,
+  ): Promise<CodexDynamicToolCallResponse> {
+    const parsed = DynamicToolCallRequestParamsSchema.parse(params);
+    if (!this.paseoTools) {
+      return toCodexDynamicToolErrorResponse("Paseo tools are not available in this Codex session");
+    }
+    if (parsed.namespace) {
+      return toCodexDynamicToolErrorResponse(
+        `Unsupported Codex dynamic tool namespace: ${parsed.namespace}`,
+      );
+    }
+    try {
+      const result = await this.paseoTools.executeTool(parsed.tool, parsed.arguments);
+      return toCodexDynamicToolResponse(result);
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          toolName: parsed.tool,
+          callId: parsed.callId,
+          threadId: parsed.threadId,
+          turnId: parsed.turnId,
+        },
+        "Codex dynamic Paseo tool call failed",
+      );
+      return toCodexDynamicToolErrorResponse(error);
+    }
+  }
 }
 
 export class CodexAppServerAgentClient implements AgentClient {
@@ -5442,6 +5649,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      launchContext?.paseoTools ?? null,
     );
     await session.connect();
     return session;
@@ -5472,6 +5680,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      launchContext?.paseoTools ?? null,
     );
     await session.connect();
     return session;

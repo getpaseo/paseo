@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 import type {
   AgentLaunchContext,
@@ -15,6 +16,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
+import type { PaseoToolCatalog } from "../tools/types.js";
 import {
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
@@ -78,6 +80,33 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     modeId: "auto",
     model: "gpt-5.4",
     ...overrides,
+  };
+}
+
+function createPaseoToolCatalogForTest(handler: PaseoToolCatalog["executeTool"]): PaseoToolCatalog {
+  const tools = new Map([
+    [
+      "create_agent",
+      {
+        name: "create_agent",
+        title: "Create agent",
+        description: "Create an agent.",
+        inputSchema: {
+          title: z.string(),
+          initialPrompt: z.string(),
+        },
+        handler: async () => ({
+          content: [{ type: "text", text: "unused" }],
+        }),
+      },
+    ],
+  ]);
+  return {
+    tools,
+    getTool(name) {
+      return tools.get(name);
+    },
+    executeTool: handler,
   };
 }
 
@@ -473,6 +502,106 @@ describe("Codex app-server provider", () => {
     const startCall = requests.find((req) => req.method === "thread/start");
     expect(startCall).toBeDefined();
     expect((startCall!.params as Record<string, unknown>).ephemeral).toBeUndefined();
+  });
+
+  test("registers native Paseo tools as Codex dynamic tools on thread/start", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const fakeClient: CodexClientLike = {
+      async request(method: string, params?: unknown) {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "dynamic-tools-thread" } };
+        }
+        return null;
+      },
+    };
+    const paseoTools = createPaseoToolCatalogForTest(async () => ({
+      content: [{ type: "text", text: "created" }],
+    }));
+    const session = new CodexAppServerAgentSession(
+      createConfig({ thinkingOptionId: "medium" }),
+      null,
+      createTestLogger(),
+      () => {
+        throw new Error("Test session cannot spawn Codex app-server");
+      },
+      {},
+      false,
+      false,
+      false,
+      "agent-1",
+      paseoTools,
+    );
+    castInternals<{ client: CodexClientLike }>(session).client = fakeClient;
+
+    await castInternals<{ ensureThread: () => Promise<void> }>(session).ensureThread();
+
+    const startCall = requests.find((req) => req.method === "thread/start");
+    expect(startCall?.params).toMatchObject({
+      dynamicTools: [
+        {
+          type: "function",
+          name: "create_agent",
+          description: "Create an agent.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              initialPrompt: { type: "string" },
+            },
+            required: ["title", "initialPrompt"],
+          },
+        },
+      ],
+    });
+  });
+
+  test("executes native Paseo tools for Codex item/tool/call requests", async () => {
+    const executeTool = vi.fn(async () => ({
+      content: [{ type: "text", text: "hello from paseo" }],
+      structuredContent: { agentId: "child-agent" },
+    }));
+    const paseoTools = createPaseoToolCatalogForTest(executeTool);
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+      {},
+      false,
+      false,
+      false,
+      "agent-1",
+      paseoTools,
+    );
+
+    await session.connect();
+    appServer.requestDynamicTool({
+      callId: "call-create-agent",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tool: "create_agent",
+      arguments: { title: "Smoke", initialPrompt: "hello" },
+    });
+
+    await expect(appServer.waitForDynamicToolResult("call-create-agent")).resolves.toEqual({
+      contentItems: [
+        { type: "inputText", text: "hello from paseo" },
+        { type: "inputText", text: '{\n  "agentId": "child-agent"\n}' },
+      ],
+      success: true,
+    });
+    expect(executeTool).toHaveBeenCalledWith("create_agent", {
+      title: "Smoke",
+      initialPrompt: "hello",
+    });
+    appServer.assertNoErrors();
+    await session.close();
   });
 
   test("disposes an unresponsive app-server child with SIGKILL", async () => {

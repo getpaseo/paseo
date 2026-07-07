@@ -169,6 +169,27 @@ const CodexMcpToolCallItemSchema = z
   })
   .passthrough();
 
+const CodexDynamicToolCallContentItemSchema = z
+  .object({
+    type: z.enum(["inputText", "inputImage"]),
+    text: z.string().optional(),
+    imageUrl: z.string().optional(),
+  })
+  .passthrough();
+
+const CodexDynamicToolCallItemSchema = z
+  .object({
+    type: z.literal("dynamicToolCall"),
+    id: z.string().min(1),
+    status: z.string().optional(),
+    namespace: z.string().nullable().optional(),
+    tool: z.string().min(1),
+    arguments: z.unknown().optional(),
+    contentItems: z.array(CodexDynamicToolCallContentItemSchema).nullable().optional(),
+    success: z.boolean().nullable().optional(),
+  })
+  .passthrough();
+
 const CodexWebSearchItemSchema = z
   .object({
     type: z.literal("webSearch"),
@@ -197,6 +218,7 @@ const CodexToolThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
   CodexMcpToolCallItemSchema,
+  CodexDynamicToolCallItemSchema,
   CodexWebSearchItemSchema,
 ]);
 
@@ -204,6 +226,7 @@ const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
   CodexMcpToolCallItemSchema,
+  CodexDynamicToolCallItemSchema,
   CodexWebSearchItemSchema,
   CodexCollabAgentToolCallItemSchema,
 ]);
@@ -606,6 +629,15 @@ function buildMcpToolName(server: string | undefined, tool: string): string {
   return trimmedTool;
 }
 
+function buildDynamicToolName(namespace: string | null | undefined, tool: string): string {
+  const trimmedTool = tool.trim();
+  if (!trimmedTool) {
+    return "tool";
+  }
+  const trimmedNamespace = typeof namespace === "string" ? namespace.trim() : "";
+  return trimmedNamespace ? `${trimmedNamespace}.${trimmedTool}` : trimmedTool;
+}
+
 function readMcpImageContent(block: unknown): CodexMcpToolResultImage | null {
   if (!isRecord(block)) {
     return null;
@@ -924,6 +956,50 @@ function mapMcpToolCallItem(
   };
 }
 
+function dynamicToolContentItemToOutput(
+  item: z.infer<typeof CodexDynamicToolCallContentItemSchema>,
+): Record<string, unknown> {
+  if (item.type === "inputText") {
+    return {
+      type: "text",
+      text: item.text ?? "",
+    };
+  }
+  return {
+    type: "image_url",
+    imageUrl: item.imageUrl ?? "",
+  };
+}
+
+function mapDynamicToolCallItem(
+  item: z.infer<typeof CodexDynamicToolCallItemSchema>,
+  options?: CodexMapperOptions,
+): CodexNormalizedToolCallEnvelope | null {
+  const tool = item.tool.trim();
+  if (!tool) {
+    return null;
+  }
+  const name = buildDynamicToolName(item.namespace, tool);
+  const input = item.arguments ?? null;
+  const contentItems = item.contentItems ?? null;
+  const output = contentItems
+    ? { content: contentItems.map((contentItem) => dynamicToolContentItemToOutput(contentItem)) }
+    : null;
+  const error = item.success === false ? { message: "Tool call failed" } : null;
+  const status =
+    item.success === false ? "failed" : normalizeToolCallStatus(item.status, error, output);
+
+  return {
+    callId: item.id,
+    name,
+    input,
+    output,
+    status,
+    error,
+    cwd: options?.cwd ?? null,
+  };
+}
+
 function mapWebSearchItem(
   item: z.infer<typeof CodexWebSearchItemSchema>,
 ): CodexNormalizedToolCallEnvelope {
@@ -988,6 +1064,8 @@ function mapThreadItemToNormalizedEnvelope(
       return mapFileChangeItem(item, options);
     case "mcpToolCall":
       return mapMcpToolCallItem(item, options);
+    case "dynamicToolCall":
+      return mapDynamicToolCallItem(item, options);
     case "webSearch":
       return mapWebSearchItem(item);
     default: {

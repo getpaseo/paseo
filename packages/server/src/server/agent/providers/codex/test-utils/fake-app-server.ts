@@ -19,6 +19,15 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   completeTurn(params?: { threadId?: string }): void;
+  requestDynamicTool(params: {
+    callId: string;
+    threadId: string;
+    turnId: string;
+    tool: string;
+    arguments?: unknown;
+    namespace?: string | null;
+  }): void;
+  waitForDynamicToolResult(callId: string): Promise<unknown>;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -106,6 +115,7 @@ export function createFakeCodexAppServer(
   const messages: JsonObject[] = [];
   const errors: Error[] = [];
   const approvalRequestIds = new Map<string, number>();
+  const dynamicToolRequestIds = new Map<string, number>();
   const waiters = new Set<{
     predicate: (message: JsonObject) => boolean;
     resolve: (message: JsonObject) => void;
@@ -222,6 +232,36 @@ export function createFakeCodexAppServer(
           params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
         })}\n`,
       );
+    },
+    requestDynamicTool(params) {
+      const requestId = 0;
+      dynamicToolRequestIds.set(params.callId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          id: requestId,
+          method: "item/tool/call",
+          params: {
+            threadId: params.threadId,
+            turnId: params.turnId,
+            callId: params.callId,
+            namespace: params.namespace ?? null,
+            tool: params.tool,
+            arguments: params.arguments ?? {},
+          },
+        })}\n`,
+      );
+    },
+    async waitForDynamicToolResult(callId) {
+      const requestId = dynamicToolRequestIds.get(callId);
+      if (requestId === undefined) {
+        throw new Error(`No pending fake Codex app-server dynamic tool call for ${callId}`);
+      }
+      const message = await waitForMessage(
+        (candidate) =>
+          candidate.id === requestId && !("method" in candidate) && "result" in candidate,
+        "dynamic tool response",
+      );
+      return message.result;
     },
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;
