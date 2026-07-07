@@ -34,6 +34,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   ImportProviderSessionInput,
+  ImportProviderSessionContext,
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
@@ -314,7 +315,7 @@ class EnvProbeAgentClient extends TestAgentClient {
 }
 
 class TestAgentSession implements AgentSession {
-  readonly provider = "codex" as const;
+  readonly provider: AgentProvider;
   readonly capabilities = TEST_CAPABILITIES;
   readonly id = randomUUID();
   private runtimeModel: string | null = null;
@@ -322,7 +323,9 @@ class TestAgentSession implements AgentSession {
   private turnIdCounter = 0;
   private interrupted = false;
 
-  constructor(private readonly config: AgentSessionConfig) {}
+  constructor(private readonly config: AgentSessionConfig) {
+    this.provider = config.provider;
+  }
 
   async run(): Promise<AgentRunResult> {
     return {
@@ -446,6 +449,82 @@ class HeldRuntimeInfoClient extends TestAgentClient {
     }
     return this.session;
   }
+}
+
+class OpenCodeAdoptionClient extends TestAgentClient {
+  override readonly provider = "opencode" as const;
+  readonly importInputs: ImportProviderSessionInput[] = [];
+  readonly importedSessionsByHandle = new Map<string, TestAgentSession>();
+  readonly createdSessions: TestAgentSession[] = [];
+  importGate: Deferred<void> | null = null;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    const session = new TestAgentSession(config);
+    this.createdSessions.push(session);
+    return session;
+  }
+
+  override async fetchCatalog() {
+    return {
+      models: [
+        {
+          provider: "opencode",
+          id: "big-pickle",
+          label: "Big Pickle",
+          isDefault: true,
+        },
+      ],
+      modes: [],
+    };
+  }
+
+  async importSession(input: ImportProviderSessionInput, _context: ImportProviderSessionContext) {
+    this.importInputs.push(input);
+    const gate = this.importGate;
+    if (gate) {
+      await gate.promise;
+    }
+    const session = new TestAgentSession({ provider: "opencode", cwd: input.cwd });
+    this.importedSessionsByHandle.set(input.providerHandleId, session);
+    return {
+      session,
+      config: { provider: "opencode" as const, cwd: input.cwd, title: input.providerHandleId },
+      persistence: {
+        provider: "opencode" as const,
+        sessionId: input.providerHandleId,
+        nativeHandle: input.providerHandleId,
+        metadata: { cwd: input.cwd },
+      },
+      timeline: [],
+    };
+  }
+}
+
+function opencodeChildDetectedEvent(input: {
+  childSessionId: string;
+  parentSessionId: string;
+  title?: string;
+}): AgentStreamEvent {
+  return {
+    type: "provider_child_session_detected",
+    provider: "opencode",
+    childSessionId: input.childSessionId,
+    parentSessionId: input.parentSessionId,
+    ...(input.title ? { title: input.title } : {}),
+  } as AgentStreamEvent;
+}
+
+function opencodeProviderDeletedEvent(sessionId: string): AgentStreamEvent {
+  return { type: "provider_session_deleted", provider: "opencode", sessionId } as AgentStreamEvent;
+}
+
+function createIdFactory(ids: string[]): () => string {
+  let index = 0;
+  return () => ids[index++] ?? randomUUID();
+}
+
+function streamEventType(event: { readonly type: string }): string {
+  return event.type;
 }
 
 class StreamingAssistantSession implements AgentSession {
@@ -2354,6 +2433,208 @@ test("importProviderSession imports the selected session without listing and pub
     },
   });
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
+});
+
+test("OpenCode child detection adopts a native child agent with parent label and workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-adopt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeAdoptionClient();
+  const events: AgentManagerEvent[] = [];
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: createIdFactory([
+      "00000000-0000-4000-8000-00000000ad01",
+      "00000000-0000-4000-8000-00000000ad02",
+    ]),
+  });
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  const parent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+    workspaceId: "workspace-parent",
+  });
+
+  client.createdSessions[0]?.pushEvent(
+    opencodeChildDetectedEvent({
+      childSessionId: "ses_child_native",
+      parentSessionId: parent.persistence?.sessionId ?? "",
+      title: "Native child",
+    }),
+  );
+  await manager.flush();
+
+  expect(client.importInputs).toEqual([{ providerHandleId: "ses_child_native", cwd: workdir }]);
+  const child = manager.getAgent("00000000-0000-4000-8000-00000000ad02");
+  expect(child).toMatchObject({
+    provider: "opencode",
+    cwd: workdir,
+    workspaceId: "workspace-parent",
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    persistence: { sessionId: "ses_child_native", nativeHandle: "ses_child_native" },
+  });
+  expect(
+    events.filter(
+      (event) =>
+        event.type === "agent_stream" &&
+        streamEventType(event.event) === "provider_child_session_detected",
+    ),
+  ).toEqual([]);
+});
+
+test("OpenCode child adoption dedupes concurrent duplicate detections", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-dedupe-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeAdoptionClient();
+  client.importGate = deferred<void>();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: createIdFactory([
+      "00000000-0000-4000-8000-00000000ad11",
+      "00000000-0000-4000-8000-00000000ad12",
+      "00000000-0000-4000-8000-00000000ad13",
+    ]),
+  });
+  const parent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+    workspaceId: "workspace-parent",
+  });
+  const event = opencodeChildDetectedEvent({
+    childSessionId: "ses_child_race",
+    parentSessionId: parent.persistence?.sessionId ?? "",
+  });
+
+  client.createdSessions[0]?.pushEvent(event);
+  client.createdSessions[0]?.pushEvent(event);
+  await Promise.resolve();
+  client.importGate.resolve();
+  await manager.flush();
+
+  expect(client.importInputs).toEqual([{ providerHandleId: "ses_child_race", cwd: workdir }]);
+  expect(manager.getAgent("00000000-0000-4000-8000-00000000ad12")).toMatchObject({
+    persistence: { sessionId: "ses_child_race" },
+  });
+  expect(manager.getAgent("00000000-0000-4000-8000-00000000ad13")).toBeNull();
+});
+
+test("OpenCode re-detection skips archived children while adopting new descendants", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-archived-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeAdoptionClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: createIdFactory([
+      "00000000-0000-4000-8000-00000000ad21",
+      "00000000-0000-4000-8000-00000000ad22",
+      "00000000-0000-4000-8000-00000000ad23",
+    ]),
+  });
+  const parent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+    workspaceId: "workspace-parent",
+  });
+  const archivedChild = await manager.importProviderSession({
+    provider: "opencode",
+    providerHandleId: "ses_child_archived",
+    cwd: workdir,
+    workspaceId: "workspace-parent",
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+  });
+  await manager.archiveAgent(archivedChild.id);
+  client.importInputs.length = 0;
+
+  client.createdSessions[0]?.pushEvent(
+    opencodeChildDetectedEvent({
+      childSessionId: "ses_child_archived",
+      parentSessionId: parent.persistence?.sessionId ?? "",
+    }),
+  );
+  client.createdSessions[0]?.pushEvent(
+    opencodeChildDetectedEvent({
+      childSessionId: "ses_child_new",
+      parentSessionId: parent.persistence?.sessionId ?? "",
+    }),
+  );
+  await manager.flush();
+
+  expect(client.importInputs).toEqual([{ providerHandleId: "ses_child_new", cwd: workdir }]);
+  expect(manager.getAgent(archivedChild.id)).toBeNull();
+  expect(manager.getAgent("00000000-0000-4000-8000-00000000ad23")).toMatchObject({
+    persistence: { sessionId: "ses_child_new" },
+  });
+});
+
+test("OpenCode provider deletion archives the matching adopted child agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-delete-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeAdoptionClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: createIdFactory([
+      "00000000-0000-4000-8000-00000000ad31",
+      "00000000-0000-4000-8000-00000000ad32",
+    ]),
+  });
+  const parent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+    workspaceId: "workspace-parent",
+  });
+  const child = await manager.importProviderSession({
+    provider: "opencode",
+    providerHandleId: "ses_child_deleted",
+    cwd: workdir,
+    workspaceId: "workspace-parent",
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+  });
+
+  client.createdSessions[0]?.pushEvent(opencodeProviderDeletedEvent("ses_child_deleted"));
+  await manager.flush();
+
+  expect(manager.getAgent(child.id)).toBeNull();
+  expectArchivedAgentRecord(await storage.get(child.id), "idle");
+});
+
+test("OpenCode adopted child sessions stream timeline as normal live agents", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-live-child-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeAdoptionClient();
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    idFactory: createIdFactory([
+      "00000000-0000-4000-8000-00000000ad41",
+      "00000000-0000-4000-8000-00000000ad42",
+    ]),
+  });
+  const parent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+    workspaceId: "workspace-parent",
+  });
+
+  client.createdSessions[0]?.pushEvent(
+    opencodeChildDetectedEvent({
+      childSessionId: "ses_child_live",
+      parentSessionId: parent.persistence?.sessionId ?? "",
+    }),
+  );
+  await manager.flush();
+  const childSession = client.importedSessionsByHandle.get("ses_child_live");
+  if (!childSession) {
+    throw new Error("expected adopted child session");
+  }
+
+  childSession.pushEvent({
+    type: "timeline",
+    provider: "opencode",
+    item: { type: "assistant_message", text: "child streamed while running" },
+  });
+  await manager.flush();
+
+  expect(manager.getTimeline("00000000-0000-4000-8000-00000000ad42")).toEqual([
+    { type: "assistant_message", text: "child streamed while running" },
+  ]);
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {

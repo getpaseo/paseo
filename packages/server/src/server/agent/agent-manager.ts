@@ -271,6 +271,18 @@ interface StreamEventFlags {
   shouldNotifyWaiters: boolean;
 }
 
+type InternalProviderStreamEvent = Extract<
+  AgentStreamEvent,
+  { type: "provider_child_session_detected" | "provider_session_deleted" }
+>;
+
+type ProviderChildSessionDetectedEvent = Extract<
+  AgentStreamEvent,
+  { type: "provider_child_session_detected" }
+>;
+
+type ProviderSessionDeletedEvent = Extract<AgentStreamEvent, { type: "provider_session_deleted" }>;
+
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
 }
@@ -528,6 +540,25 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
   return null;
 }
 
+function providerSessionKey(provider: AgentProvider, sessionId: string): string {
+  return `${provider}\0${sessionId}`;
+}
+
+function persistenceMatchesSession(
+  persistence: AgentPersistenceHandle | null | undefined,
+  sessionId: string,
+): boolean {
+  return persistence?.sessionId === sessionId || persistence?.nativeHandle === sessionId;
+}
+
+function isInternalProviderStreamEvent(
+  event: AgentStreamEvent,
+): event is InternalProviderStreamEvent {
+  return (
+    event.type === "provider_child_session_detected" || event.type === "provider_session_deleted"
+  );
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -543,6 +574,7 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly inFlightProviderChildAdoptions = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -1038,8 +1070,9 @@ export class AgentManager {
     provider: AgentProvider;
     providerHandleId: string;
     cwd: string;
-    workspaceId: string;
+    workspaceId: string | undefined;
     labels?: Record<string, string>;
+    initialTitle?: string | null;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
@@ -1048,8 +1081,9 @@ export class AgentManager {
     provider: AgentProvider;
     providerHandleId: string;
     cwd: string;
-    workspaceId: string;
+    workspaceId: string | undefined;
     labels?: Record<string, string>;
+    initialTitle?: string | null;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
@@ -1082,7 +1116,8 @@ export class AgentManager {
         stripInternalPaseoMcpServer(imported.config),
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
-      const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+      const initialTitle =
+        input.initialTitle ?? resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
       return this.registerSession(imported.session, importedConfig, resolvedAgentId, {
@@ -3060,6 +3095,12 @@ export class AgentManager {
     const eventTurnId = getAgentStreamEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
+    if (isInternalProviderStreamEvent(event)) {
+      if (!options?.fromHistory) {
+        await this.handleInternalProviderStreamEvent(agent, event);
+      }
+      return false;
+    }
     if (
       eventTurnId &&
       isTurnTerminalEvent(event) &&
@@ -3103,6 +3144,115 @@ export class AgentManager {
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private async handleInternalProviderStreamEvent(
+    agent: ActiveManagedAgent,
+    event: InternalProviderStreamEvent,
+  ): Promise<void> {
+    switch (event.type) {
+      case "provider_child_session_detected":
+        await this.adoptProviderChildSession(agent, event);
+        return;
+      case "provider_session_deleted":
+        await this.archiveDeletedProviderSession(event);
+        return;
+    }
+  }
+
+  private async adoptProviderChildSession(
+    parent: ActiveManagedAgent,
+    event: ProviderChildSessionDetectedEvent,
+  ): Promise<void> {
+    if (event.provider !== parent.provider) {
+      return;
+    }
+    if (!persistenceMatchesSession(parent.persistence, event.parentSessionId)) {
+      return;
+    }
+
+    const key = providerSessionKey(event.provider, event.childSessionId);
+    if (this.inFlightProviderChildAdoptions.has(key)) {
+      await this.inFlightProviderChildAdoptions.get(key);
+      return;
+    }
+
+    const adoption = this.adoptProviderChildSessionOnce(parent, event);
+    this.inFlightProviderChildAdoptions.set(key, adoption);
+    try {
+      await adoption;
+    } finally {
+      this.inFlightProviderChildAdoptions.delete(key);
+    }
+  }
+
+  private async adoptProviderChildSessionOnce(
+    parent: ActiveManagedAgent,
+    event: ProviderChildSessionDetectedEvent,
+  ): Promise<void> {
+    if (await this.hasProviderSessionBinding(event.provider, event.childSessionId)) {
+      return;
+    }
+
+    await this.importProviderSession({
+      provider: event.provider,
+      providerHandleId: event.childSessionId,
+      cwd: parent.cwd,
+      workspaceId: parent.workspaceId,
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      initialTitle: event.title ?? `OpenCode child ${event.childSessionId}`,
+    });
+  }
+
+  private async hasProviderSessionBinding(
+    provider: AgentProvider,
+    sessionId: string,
+  ): Promise<boolean> {
+    for (const agent of this.agents.values()) {
+      if (agent.provider === provider && persistenceMatchesSession(agent.persistence, sessionId)) {
+        return true;
+      }
+    }
+
+    if (!this.registry) {
+      return false;
+    }
+    const records = await this.registry.list();
+    return records.some(
+      (record) =>
+        record.provider === provider && persistenceMatchesSession(record.persistence, sessionId),
+    );
+  }
+
+  private async archiveDeletedProviderSession(event: ProviderSessionDeletedEvent): Promise<void> {
+    const matchingAgent = Array.from(this.agents.values()).find(
+      (agent) =>
+        agent.provider === event.provider &&
+        agent.labels[PARENT_AGENT_ID_LABEL] !== undefined &&
+        persistenceMatchesSession(agent.persistence, event.sessionId),
+    );
+    if (!matchingAgent) {
+      return;
+    }
+    await this.archiveProviderDeletedAgent(matchingAgent);
+  }
+
+  private async archiveProviderDeletedAgent(agent: ActiveManagedAgent): Promise<void> {
+    if (!this.registry) {
+      throw new Error("Agent storage is not configured");
+    }
+    await this.registry.applySnapshot(agent, { internal: agent.internal });
+    const stored = await this.registry.get(agent.id);
+    if (!stored) {
+      throw new Error(`Agent ${agent.id} not found in storage after snapshot`);
+    }
+
+    await this.markRecordArchived(stored);
+    const closedAgent = this.prepareAgentForClosure(agent, "provider session deleted");
+    await agent.session.close();
+    this.timelineStore.delete(agent.id);
+    this.emitClosedAgent(closedAgent, { persist: false });
+    await this.cascadeArchiveChildren(agent.id);
   }
 
   private traceHandleStreamEventStart(
@@ -3720,6 +3870,7 @@ export class AgentManager {
         : [...this.backgroundTasks];
       await Promise.allSettled(pending);
     }
+    this.agentStreamCoalescer.flushAll();
   }
 
   private broadcastAgentAttention(
