@@ -3200,7 +3200,7 @@ export class AgentManager {
       cwd: parent.cwd,
       workspaceId: parent.workspaceId,
       labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
-      initialTitle: event.title ?? `OpenCode child ${event.childSessionId}`,
+      initialTitle: event.title ?? null,
     });
   }
 

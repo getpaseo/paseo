@@ -2229,7 +2229,8 @@ function appendOpenCodeSessionDeleted(
   events: AgentStreamEvent[],
 ): void {
   const sessionId = event.properties.sessionID;
-  if (!isOpenCodeSessionTrackedByParent(sessionId, state)) {
+  // Deleting the parent's own session is handled by normal session teardown, not child adoption.
+  if (sessionId === state.sessionId || !isOpenCodeSessionTrackedByParent(sessionId, state)) {
     return;
   }
   state.knownChildSessionIds?.delete(sessionId);

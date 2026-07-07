@@ -2366,44 +2366,36 @@ describe("OpenCode eager child session adoption contract", () => {
   });
 
   test("emits provider_child_session_detected for a child created while the parent has no active turn", async () => {
-    const releaseChildEvent = createTestDeferred<void>();
-    const childConsumed = createTestDeferred<void>();
-    const fakeClient = {
-      global: {
-        event: vi.fn().mockResolvedValue({
-          stream: (async function* () {
-            yield { type: "server.connected", properties: {} };
-            await releaseChildEvent.promise;
-            yield {
-              type: "session.created",
-              properties: {
-                info: {
-                  id: "ses_child_background",
-                  parentID: "ses_parent",
-                  title: "Plugin child",
-                },
-              },
-            };
-            childConsumed.resolve();
-          })(),
-        }),
-      },
-      session: {
-        abort: vi.fn().mockResolvedValue({ error: null }),
-        update: vi.fn().mockResolvedValue({ error: null }),
-      },
-    } as never;
-    const session = new __openCodeInternals.OpenCodeAgentSession(
-      { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
-      "ses_parent",
-      createTestLogger(),
-    );
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionCreateResponse = { data: { id: "ses_parent" } };
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/workspace/repo" });
+    const detected = createTestDeferred<void>();
     const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "provider_child_session_detected") {
+        detected.resolve();
+      }
+    });
 
-    releaseChildEvent.resolve();
-    await childConsumed.promise;
+    openCodeClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_child_background",
+          parentID: "ses_parent",
+          title: "Plugin child",
+        },
+      },
+    });
+
+    await detected.promise;
     await session.close();
 
     expect(events).toContainEqual({
@@ -2462,6 +2454,20 @@ describe("OpenCode eager child session adoption contract", () => {
         sessionId: "ses_child_deleted",
       },
     ]);
+  });
+
+  test("ignores provider deletion of the parent's own session", () => {
+    const state = createOpenCodeTranslationState("ses_parent");
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "session.deleted",
+        properties: { sessionID: "ses_parent" },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(events).toEqual([]);
   });
 
   test("hydrates existing children breadth-first and emits each detection once after subscribe", async () => {
