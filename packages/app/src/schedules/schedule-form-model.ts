@@ -86,6 +86,7 @@ export interface ScheduleFormState {
   prompt: string;
   maxRuns: string;
   cadence: ScheduleCadence;
+  submitCadence: ScheduleCadence;
   hosts: ScheduleFormHost[];
   projectOptions: ScheduleFormProjectOption[];
   selectedServerId: string | null;
@@ -432,6 +433,16 @@ function formatInitialMaxRuns(schedule: ScheduleFormSnapshot["schedule"]): strin
   return String(schedule.maxRuns);
 }
 
+function resolveInitialSubmitCadence(
+  snapshot: ScheduleFormSnapshot,
+  initialCadence: ScheduleCadence,
+): ScheduleCadence {
+  if (snapshot.mode === "edit" && snapshot.schedule) {
+    return snapshot.schedule.cadence;
+  }
+  return initialCadence;
+}
+
 function resolveInitialIsolation(input: {
   config: ReturnType<typeof newAgentConfig>;
   preferences: FormPreferences | undefined;
@@ -605,6 +616,10 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     selectedServerId,
     workingDir,
   });
+  const initialCadence = normalizeScheduleFormCadence(
+    snapshot.schedule?.cadence ?? DEFAULT_CADENCE,
+    snapshot.defaults.timezone ?? DEFAULT_TIMEZONE,
+  );
   const initialModel = config?.model ?? "";
   const initialMode = config?.modeId ?? "";
   const initialThinking = config?.thinkingOptionId ?? "";
@@ -614,10 +629,8 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     name: snapshot.schedule?.name ?? "",
     prompt: snapshot.schedule?.prompt ?? "",
     maxRuns: formatInitialMaxRuns(snapshot.schedule),
-    cadence: normalizeScheduleFormCadence(
-      snapshot.schedule?.cadence ?? DEFAULT_CADENCE,
-      snapshot.defaults.timezone ?? DEFAULT_TIMEZONE,
-    ),
+    cadence: initialCadence,
+    submitCadence: resolveInitialSubmitCadence(snapshot, initialCadence),
     hosts: [...snapshot.hosts],
     projectOptions: buildProjectOptions(snapshot.defaults.projectTargets, selectedServerId),
     selectedServerId,
@@ -927,14 +940,23 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       if (!target) {
         return;
       }
+      const providerScopeChanged =
+        state.selectedServerId !== target.serverId || state.workingDir !== target.cwd;
+      if (!providerScopeChanged && state.selectedProjectOptionId === target.optionId) {
+        return;
+      }
       userModified = { ...userModified, serverId: true, workingDir: true };
-      publish({
+      const nextState = {
         ...state,
         selectedServerId: target.serverId,
         workingDir: target.cwd,
         projectDisplay: display,
         selectedProjectOptionId: target.optionId,
-      });
+      };
+      publish(providerScopeChanged ? clearProviderSelection(nextState) : nextState);
+      if (!providerScopeChanged) {
+        return;
+      }
       requestProviderSnapshot(target.serverId, target.cwd);
     },
     setModel(provider, modelId) {
@@ -986,7 +1008,8 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       publish({ ...state, maxRuns: value });
     },
     setCadence(value) {
-      publish({ ...state, cadence: normalizeScheduleFormCadence(value, timezone) });
+      const cadence = normalizeScheduleFormCadence(value, timezone);
+      publish({ ...state, cadence, submitCadence: cadence });
     },
     setIsolation(value) {
       userModified = { ...userModified, isolation: true };

@@ -217,7 +217,7 @@ export interface ScheduleServiceOptions {
   createPaseoWorktreeWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
-  archiveWorkspace: (workspaceId: string) => Promise<void>;
+  archiveWorkspace: (workspaceId: string, repoRoot: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -234,7 +234,7 @@ export class ScheduleService {
   private readonly createPaseoWorktreeWorkspace: (
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
-  private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
+  private readonly archiveWorkspace: (workspaceId: string, repoRoot: string) => Promise<void>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -844,9 +844,9 @@ export class ScheduleService {
         }),
       };
     } finally {
-      if (workspace && (config.archiveOnFinish ?? true)) {
+      if (workspace && (agentId === null || (config.archiveOnFinish ?? true))) {
         try {
-          await this.archiveWorkspace(workspace.workspaceId);
+          await this.archiveWorkspace(workspace.workspaceId, config.cwd);
         } catch (error) {
           this.logger.warn(
             {

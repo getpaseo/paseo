@@ -82,6 +82,11 @@ interface PushRouterInput {
   serverId: string;
 }
 
+interface ActiveServerDataSubscriptions {
+  checkoutDiff: Map<string, CheckoutDiffRoute>;
+  workspaceTerminals: Map<string, WorkspaceTerminalsRoute>;
+}
+
 interface ReconnectRepairPolicy {
   domain: string;
   invalidate(input: { queryClient: QueryClient; serverId: string }): void;
@@ -117,6 +122,7 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     },
   },
 ];
+const reconnectSubscriptionRepairsByServerId = new Map<string, Set<() => void>>();
 
 export function checkoutDiffPushRoute(input: {
   enabled: boolean;
@@ -161,6 +167,10 @@ export function invalidateServerDataQueriesAfterReconnect(input: {
   for (const policy of RECONNECT_REPAIR_POLICIES) {
     policy.invalidate(input);
   }
+  for (const repairSubscriptions of reconnectSubscriptionRepairsByServerId.get(input.serverId) ??
+    []) {
+    repairSubscriptions();
+  }
 }
 
 export function applyProvidersSnapshotUpdate(input: {
@@ -188,7 +198,12 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
   const activeTerminalSubscriptions = new Map<string, WorkspaceTerminalsRoute>();
   let disposed = false;
 
-  function reconcileSubscriptions(): void {
+  function reconcileSubscriptions(
+    fallbackActive: ActiveServerDataSubscriptions = {
+      checkoutDiff: activeCheckoutDiffSubscriptions,
+      workspaceTerminals: activeTerminalSubscriptions,
+    },
+  ): void {
     if (disposed) {
       return;
     }
@@ -196,7 +211,10 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     const desiredCheckoutDiffSubscriptions = new Map<string, CheckoutDiffRoute>();
     const desiredTerminalSubscriptions = new Map<string, WorkspaceTerminalsRoute>();
     for (const query of input.queryClient.getQueryCache().getAll()) {
-      const route = getActiveServerDataRoute(query, input.serverId);
+      const route = getActiveServerDataRoute(query, input.serverId, {
+        checkoutDiff: fallbackActive.checkoutDiff,
+        workspaceTerminals: fallbackActive.workspaceTerminals,
+      });
       if (!route) {
         continue;
       }
@@ -220,8 +238,23 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     });
   }
 
+  function resetSubscriptionsAfterReconnect(): void {
+    const fallbackActive = {
+      checkoutDiff: new Map(activeCheckoutDiffSubscriptions),
+      workspaceTerminals: new Map(activeTerminalSubscriptions),
+    };
+    activeCheckoutDiffSubscriptions.clear();
+    activeTerminalSubscriptions.clear();
+    reconcileSubscriptions(fallbackActive);
+  }
+
   const unsubscribeQueryCache = input.queryClient.getQueryCache().subscribe((event) => {
-    if (!shouldReconcileSubscriptionsForCacheEvent(event, input.serverId)) {
+    if (
+      !shouldReconcileSubscriptionsForCacheEvent(event, input.serverId, {
+        checkoutDiff: activeCheckoutDiffSubscriptions,
+        workspaceTerminals: activeTerminalSubscriptions,
+      })
+    ) {
       return;
     }
     reconcileSubscriptions();
@@ -237,12 +270,18 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     applyDaemonConfigStatus({ queryClient: input.queryClient, serverId: input.serverId, message });
   });
   const unsubscribeCheckoutDiffUpdate = input.client.on("checkout_diff_update", (message) => {
-    applyCheckoutDiffUpdate({ queryClient: input.queryClient, serverId: input.serverId, message });
+    applyCheckoutDiffUpdate({
+      activeCheckoutDiffSubscriptions,
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
   });
   const unsubscribeCheckoutDiffResponse = input.client.on(
     "subscribe_checkout_diff_response",
     (message) => {
       applyCheckoutDiffSubscribeResponse({
+        activeCheckoutDiffSubscriptions,
         queryClient: input.queryClient,
         serverId: input.serverId,
         message,
@@ -250,13 +289,29 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     },
   );
   const unsubscribeTerminalsChanged = input.client.on("terminals_changed", (message) => {
-    applyTerminalsChanged({ queryClient: input.queryClient, serverId: input.serverId, message });
+    applyTerminalsChanged({
+      activeCheckoutDiffSubscriptions,
+      activeTerminalSubscriptions,
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
   });
+  let reconnectSubscriptionRepairs = reconnectSubscriptionRepairsByServerId.get(input.serverId);
+  if (!reconnectSubscriptionRepairs) {
+    reconnectSubscriptionRepairs = new Set();
+    reconnectSubscriptionRepairsByServerId.set(input.serverId, reconnectSubscriptionRepairs);
+  }
+  reconnectSubscriptionRepairs.add(resetSubscriptionsAfterReconnect);
 
   reconcileSubscriptions();
 
   return () => {
     disposed = true;
+    reconnectSubscriptionRepairs.delete(resetSubscriptionsAfterReconnect);
+    if (reconnectSubscriptionRepairs.size === 0) {
+      reconnectSubscriptionRepairsByServerId.delete(input.serverId);
+    }
     unsubscribeQueryCache();
     unsubscribeProviders();
     unsubscribeDaemonConfig();
@@ -351,11 +406,13 @@ function applyDaemonConfigStatus(input: {
 }
 
 function applyCheckoutDiffUpdate(input: {
+  activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
   queryClient: QueryClient;
   serverId: string;
   message: CheckoutDiffUpdateMessage;
 }): void {
   setCheckoutDiffPayload({
+    activeCheckoutDiffSubscriptions: input.activeCheckoutDiffSubscriptions,
     queryClient: input.queryClient,
     serverId: input.serverId,
     subscriptionId: input.message.payload.subscriptionId,
@@ -369,11 +426,13 @@ function applyCheckoutDiffUpdate(input: {
 }
 
 function applyCheckoutDiffSubscribeResponse(input: {
+  activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
   queryClient: QueryClient;
   serverId: string;
   message: SubscribeCheckoutDiffResponseMessage;
 }): void {
   setCheckoutDiffPayload({
+    activeCheckoutDiffSubscriptions: input.activeCheckoutDiffSubscriptions,
     queryClient: input.queryClient,
     serverId: input.serverId,
     subscriptionId: input.message.payload.subscriptionId,
@@ -387,13 +446,20 @@ function applyCheckoutDiffSubscribeResponse(input: {
 }
 
 function setCheckoutDiffPayload(input: {
+  activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
   queryClient: QueryClient;
   serverId: string;
   subscriptionId: string;
   payload: CheckoutDiffCachePayload;
 }): void {
   for (const query of input.queryClient.getQueryCache().getAll()) {
-    const route = getServerDataRoute(query);
+    const route =
+      getServerDataRoute(query) ??
+      getActiveCheckoutDiffRouteForQueryKey({
+        active: input.activeCheckoutDiffSubscriptions,
+        queryKey: query.queryKey,
+        serverId: input.serverId,
+      });
     if (
       !route ||
       route.domain !== "checkoutDiff" ||
@@ -407,12 +473,17 @@ function setCheckoutDiffPayload(input: {
 }
 
 function applyTerminalsChanged(input: {
+  activeCheckoutDiffSubscriptions: Map<string, CheckoutDiffRoute>;
+  activeTerminalSubscriptions: Map<string, WorkspaceTerminalsRoute>;
   queryClient: QueryClient;
   serverId: string;
   message: TerminalsChangedMessage;
 }): void {
   for (const query of input.queryClient.getQueryCache().getAll()) {
-    const route = getActiveServerDataRoute(query, input.serverId);
+    const route = getActiveServerDataRoute(query, input.serverId, {
+      checkoutDiff: input.activeCheckoutDiffSubscriptions,
+      workspaceTerminals: input.activeTerminalSubscriptions,
+    });
     if (
       !route ||
       route.domain !== "workspaceTerminals" ||
@@ -433,26 +504,98 @@ function applyTerminalsChanged(input: {
   }
 }
 
-function getActiveServerDataRoute(query: Query, serverId: string): ServerDataRoute | null {
+function getActiveServerDataRoute(
+  query: Query,
+  serverId: string,
+  active: ActiveServerDataSubscriptions,
+): ServerDataRoute | null {
   if (query.getObserversCount() === 0) {
     return null;
   }
   const route = getServerDataRoute(query);
-  if (!route || !route.enabled || route.serverId !== serverId) {
+  if (route) {
+    return route.enabled && route.serverId === serverId ? route : null;
+  }
+  return getActiveRouteForQueryKey({
+    active,
+    queryKey: query.queryKey,
+    serverId,
+  });
+}
+
+function getActiveRouteForQueryKey(input: {
+  active: ActiveServerDataSubscriptions;
+  queryKey: QueryKey;
+  serverId: string;
+}): ServerDataRoute | null {
+  return (
+    getActiveTerminalRouteForQueryKey({
+      active: input.active.workspaceTerminals,
+      queryKey: input.queryKey,
+      serverId: input.serverId,
+    }) ??
+    getActiveCheckoutDiffRouteForQueryKey({
+      active: input.active.checkoutDiff,
+      queryKey: input.queryKey,
+      serverId: input.serverId,
+    })
+  );
+}
+
+function getActiveTerminalRouteForQueryKey(input: {
+  active: Map<string, WorkspaceTerminalsRoute>;
+  queryKey: QueryKey;
+  serverId: string;
+}): WorkspaceTerminalsRoute | null {
+  if (!isQueryForServer(input.queryKey, "terminals", input.serverId)) {
     return null;
   }
-  return route;
+  const cwd = input.queryKey[2];
+  const workspaceId = input.queryKey[3];
+  if (
+    typeof cwd !== "string" ||
+    (workspaceId !== undefined && workspaceId !== null && typeof workspaceId !== "string")
+  ) {
+    return null;
+  }
+  return input.active.get(`${cwd}\u0000${workspaceId ?? ""}`) ?? null;
+}
+
+function getActiveCheckoutDiffRouteForQueryKey(input: {
+  active: Map<string, CheckoutDiffRoute>;
+  queryKey: QueryKey;
+  serverId: string;
+}): CheckoutDiffRoute | null {
+  if (!isQueryForServer(input.queryKey, "checkoutDiff", input.serverId)) {
+    return null;
+  }
+  for (const route of input.active.values()) {
+    if (isCheckoutDiffQueryKeyForRoute(input.queryKey, route)) {
+      return route;
+    }
+  }
+  return null;
 }
 
 function shouldReconcileSubscriptionsForCacheEvent(
   event: QueryCacheNotifyEvent,
   serverId: string,
+  active: ActiveServerDataSubscriptions,
 ): boolean {
   if (!canEventChangeDesiredSubscriptions(event.type)) {
     return false;
   }
   const route = getServerDataRoute(event.query);
-  return route?.serverId === serverId;
+  if (route?.serverId === serverId) {
+    return true;
+  }
+  return (
+    getActiveRouteForQueryKey({
+      active,
+      queryKey: event.query.queryKey,
+      serverId,
+    }) !== null
+  );
 }
 
 function canEventChangeDesiredSubscriptions(type: QueryCacheNotifyEvent["type"]): boolean {
@@ -549,6 +692,17 @@ function areCheckoutDiffRoutesEqual(
     left.compare.mode === right.compare.mode &&
     left.compare.baseRef === right.compare.baseRef &&
     left.compare.ignoreWhitespace === right.compare.ignoreWhitespace
+  );
+}
+
+function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffRoute): boolean {
+  return (
+    queryKey[0] === "checkoutDiff" &&
+    queryKey[1] === route.serverId &&
+    queryKey[2] === route.cwd &&
+    queryKey[3] === route.compare.mode &&
+    queryKey[4] === (route.compare.baseRef ?? "") &&
+    queryKey[5] === (route.compare.ignoreWhitespace === true)
   );
 }
 

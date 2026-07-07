@@ -381,6 +381,91 @@ describe("schedule form model", () => {
     });
   });
 
+  it("preserves an edited schedule's interval cadence until the cadence changes", () => {
+    const originalCadence = { type: "every" as const, everyMs: 90 * 60_000 };
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a",
+        model: "model-a",
+        cadence: originalCadence,
+      }),
+      defaults: {
+        serverId: null,
+        projectTargets: PROJECT_TARGETS,
+        preferences: {},
+        timezone: "Europe/Madrid",
+      },
+    });
+
+    expect(form.getState().cadence).toEqual({
+      type: "cron",
+      expression: "*/59 * * * *",
+      timezone: "Europe/Madrid",
+    });
+
+    form.setName("Renamed without touching cadence");
+
+    expect(form.getState().submitCadence).toEqual(originalCadence);
+
+    form.setCadence({
+      type: "cron",
+      expression: "0 9 * * *",
+      timezone: "Europe/Madrid",
+    });
+
+    expect(form.getState().submitCadence).toEqual({
+      type: "cron",
+      expression: "0 9 * * *",
+      timezone: "Europe/Madrid",
+    });
+  });
+
+  it("clears provider selection while resolving a different project", () => {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.setPrompt("Run on a selected project.");
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot(HOST_A_MODELS));
+    form.setModel("mock", "model-a");
+
+    expect(form.getState()).toMatchObject({
+      selectedServerId: "host-a",
+      workingDir: "/repo/a",
+      selectedProvider: "mock",
+      selectedModel: "model-a",
+      canSubmit: true,
+    });
+
+    form.setProject(buildProjectOptionId("host-b", "project-b"), { label: "Project B" });
+
+    expect(form.getState()).toMatchObject({
+      selectedServerId: "host-b",
+      workingDir: "/repo/b",
+      selectedProvider: null,
+      selectedModel: "",
+      modelSelectorProviders: [],
+      canSubmit: false,
+      providerResolutionByServerId: { "host-a": "complete", "host-b": "pending" },
+      providerSnapshotRequest: { serverId: "host-b", cwd: "/repo/b" },
+    });
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      selectedServerId: "host-b",
+      selectedProvider: null,
+      selectedModel: "",
+      providerResolutionByServerId: { "host-a": "complete", "host-b": "complete" },
+      providerSnapshotRequest: null,
+      modelSelectorProviders: [expect.objectContaining({ id: "mock", label: "Mock" })],
+    });
+  });
+
   it("applies new project targets without resetting selected values", () => {
     const projectA = PROJECT_TARGETS[0];
     const form = open({

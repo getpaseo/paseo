@@ -175,10 +175,14 @@ export function ScheduleFormSheet(props: ScheduleFormSheetProps): ReactElement |
   );
   const [sheetVisible, setSheetVisible] = useState(props.visible);
   const livePropsRef = useRef(props);
+  const closeRequestedRef = useRef(false);
   livePropsRef.current = props;
 
   useEffect(() => {
     if (props.visible) {
+      if (closeRequestedRef.current) {
+        return;
+      }
       setRenderedProps(props);
       setSheetVisible(true);
       return;
@@ -189,11 +193,13 @@ export function ScheduleFormSheet(props: ScheduleFormSheetProps): ReactElement |
   }, [props, renderedProps]);
 
   const requestClose = useCallback(() => {
+    closeRequestedRef.current = true;
     setSheetVisible(false);
   }, []);
 
   const handleDismiss = useCallback(() => {
     const dismissedProps = livePropsRef.current;
+    closeRequestedRef.current = false;
     setRenderedProps(null);
     setSheetVisible(false);
     if (dismissedProps.visible) {
@@ -307,11 +313,11 @@ function OpenScheduleFormSheet({
       id: schedule.id,
       name: state.name.trim() || null,
       prompt: state.prompt.trim(),
-      cadence: state.cadence,
+      cadence: state.submitCadence,
       maxRuns: parseMaxRuns(state.maxRuns),
     });
     return true;
-  }, [schedule, state.cadence, state.maxRuns, state.name, state.prompt, updateSchedule]);
+  }, [schedule, state.maxRuns, state.name, state.prompt, state.submitCadence, updateSchedule]);
 
   const submitNewAgent = useCallback(async (): Promise<boolean> => {
     const provider = state.selectedProvider;
@@ -327,7 +333,7 @@ function OpenScheduleFormSheet({
         id: schedule.id,
         name: state.name.trim() || null,
         prompt: state.prompt.trim(),
-        cadence: state.cadence,
+        cadence: state.submitCadence,
         newAgentConfig: {
           provider,
           model: state.selectedModel || null,
@@ -345,7 +351,7 @@ function OpenScheduleFormSheet({
     await createSchedule({
       prompt: state.prompt.trim(),
       name: state.name.trim() || undefined,
-      cadence: state.cadence,
+      cadence: state.submitCadence,
       target: {
         type: "new-agent",
         config: {

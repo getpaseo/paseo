@@ -13,6 +13,8 @@ import { expectSettled, expectStableHeight } from "./helpers/settled";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 import { buildSchedulesRoute } from "../src/utils/host-routes";
 
+const MOBILE_SHEET_VIEWPORT = { width: 390, height: 844 };
+
 interface ScheduleListItem {
   id: string;
   name: string | null;
@@ -102,6 +104,36 @@ async function expectScheduleKnobs(input: {
   );
 }
 
+async function openNewScheduleSheet(page: Page): Promise<void> {
+  await page.getByTestId("schedules-empty-new").click();
+  const formSheet = page.getByTestId("schedule-form-sheet");
+  await expect(formSheet).toBeVisible({ timeout: 10_000 });
+  await expectStableHeight(formSheet);
+}
+
+function bottomSheetBackdrop(page: Page) {
+  return page.getByRole("button", { name: "Bottom sheet backdrop" }).first();
+}
+
+async function dismissScheduleSheetWithBackdrop(page: Page): Promise<void> {
+  const backdrop = bottomSheetBackdrop(page);
+  await expect(backdrop).toBeVisible({ timeout: 10_000 });
+  await expect(async () => {
+    const box = await backdrop.boundingBox();
+    if (box) {
+      await page.mouse.click(box.x + box.width / 2, box.y + 24);
+    }
+    await expect(backdrop).not.toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+async function expectScheduleSheetClosedAndStable(page: Page): Promise<void> {
+  const formSheet = page.getByTestId("schedule-form-sheet");
+  await expect(formSheet).toHaveCount(0, { timeout: 30_000 });
+  await page.waitForTimeout(500);
+  await expect(formSheet).toHaveCount(0, { timeout: 1_000 });
+}
+
 async function findScheduleIdByName(workspace: SeededWorkspace, name: string): Promise<string> {
   const client = workspace.client as unknown as ScheduleSeedClient;
   const list = await client.scheduleList();
@@ -120,6 +152,26 @@ test.describe("Schedules project target", () => {
       await cleanup();
     }
     cleanupTasks.length = 0;
+  });
+
+  test("dismisses the new schedule sheet without reopening", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "schedule-sheet-dismiss-", git: false });
+    cleanupTasks.push(() => workspace.cleanup());
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await page.goto(buildSchedulesRoute());
+    await page.setViewportSize(MOBILE_SHEET_VIEWPORT);
+    await expect(page.getByTestId("schedules-empty-new")).toBeVisible({ timeout: 30_000 });
+
+    await openNewScheduleSheet(page);
+    await dismissScheduleSheetWithBackdrop(page);
+    await expectScheduleSheetClosedAndStable(page);
+    await expect(page.getByTestId("schedules-empty-new")).toBeVisible({ timeout: 30_000 });
+
+    await openNewScheduleSheet(page);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expectScheduleSheetClosedAndStable(page);
   });
 
   test("creates a schedule from a project picker instead of a raw CWD selector", async ({

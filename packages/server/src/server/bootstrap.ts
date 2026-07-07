@@ -1025,7 +1025,7 @@ export async function createPaseoDaemon(
     await emitWorkspaceUpdatesExternal([result.workspace.workspaceId]);
     return result;
   };
-  const archiveScheduleWorkspaceExternal = async (workspaceId: string) => {
+  const archiveScheduleWorkspaceExternal = async (workspaceId: string, repoRoot: string) => {
     await archiveByScope(
       {
         paseoHome: config.paseoHome,
@@ -1052,7 +1052,7 @@ export async function createPaseoDaemon(
       },
       {
         scope: { kind: "workspace", workspaceId },
-        repoRoot: null,
+        repoRoot,
         paseoWorktreesBaseRoot: config.worktreesRoot,
         requestId: "schedule-run-finish",
       },

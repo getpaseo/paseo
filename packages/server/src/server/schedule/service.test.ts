@@ -660,7 +660,7 @@ describe("ScheduleService", () => {
     );
   });
 
-  test("archives the run workspace when scheduled agent creation fails", async () => {
+  test("archives the run workspace when scheduled agent creation fails before archive opt-out can preserve an agent", async () => {
     const {
       workspaceRegistry,
       createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
@@ -698,6 +698,7 @@ describe("ScheduleService", () => {
           provider: "claude",
           model: "test-model",
           cwd: tempDir,
+          archiveOnFinish: false,
           isolation: "local",
         },
       },

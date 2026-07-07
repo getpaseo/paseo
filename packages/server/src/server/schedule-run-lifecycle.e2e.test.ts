@@ -310,6 +310,11 @@ test("worktree isolation creates a run worktree and archiveOnFinish removes it",
   expect(agent.cwd).not.toBe(repoDir);
   await waitForWorkspaceRemove(events.workspaceUpdates, agent.workspaceId!);
   await expect.poll(() => existsSync(agent.cwd), { timeout: 10_000, interval: 100 }).toBe(false);
+  const worktreeList = execFileSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: repoDir,
+    encoding: "utf8",
+  });
+  expect(worktreeList).not.toContain(agent.cwd);
 
   events.stop();
 });
