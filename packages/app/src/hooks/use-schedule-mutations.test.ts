@@ -1,9 +1,12 @@
+import { QueryClient } from "@tanstack/react-query";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { describe, expect, it } from "vitest";
 import type {
   AggregatedSchedule,
   FetchAggregatedSchedulesResult,
+  FetchAggregatedSchedulesState,
 } from "@/schedules/aggregated-schedules";
+import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { updateAggregatedSchedulesData } from "./use-schedule-mutations";
 
 function schedule(overrides: Partial<AggregatedSchedule> = {}): AggregatedSchedule {
@@ -29,6 +32,12 @@ function pauseSchedules(schedules: AggregatedSchedule[]): AggregatedSchedule[] {
   return schedules.map((entry) => ({ ...entry, status: "paused" }));
 }
 
+function pauseAggregatedSchedules(
+  current: FetchAggregatedSchedulesState | undefined,
+): FetchAggregatedSchedulesState | undefined {
+  return updateAggregatedSchedulesData(current, pauseSchedules);
+}
+
 describe("schedule mutation cache updates", () => {
   it("updates the canonical loaded data field", () => {
     const current: FetchAggregatedSchedulesResult = {
@@ -50,5 +59,33 @@ describe("schedule mutation cache updates", () => {
     const result = updateAggregatedSchedulesData(undefined, () => [schedule()]);
 
     expect(result).toBeUndefined();
+  });
+
+  it("leaves connecting cache entries untouched while updating loaded entries", () => {
+    const queryClient = new QueryClient();
+    const connectingKey = [...schedulesQueryBaseKey, "connecting"];
+    const loadedKey = [...schedulesQueryBaseKey, "loaded"];
+    const connecting = { status: "connecting" } as const;
+    const loaded: FetchAggregatedSchedulesResult = {
+      status: "loaded",
+      data: [schedule()],
+      hostErrors: [],
+    };
+    queryClient.setQueryData(connectingKey, connecting);
+    queryClient.setQueryData(loadedKey, loaded);
+
+    expect(() => {
+      queryClient.setQueriesData<FetchAggregatedSchedulesState>(
+        { queryKey: schedulesQueryBaseKey },
+        pauseAggregatedSchedules,
+      );
+    }).not.toThrow();
+
+    expect(queryClient.getQueryData(connectingKey)).toEqual(connecting);
+    expect(queryClient.getQueryData(loadedKey)).toEqual({
+      status: "loaded",
+      data: [schedule({ status: "paused" })],
+      hostErrors: [],
+    });
   });
 });

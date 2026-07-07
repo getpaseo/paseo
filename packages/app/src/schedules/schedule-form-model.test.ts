@@ -316,7 +316,40 @@ describe("schedule form model", () => {
 
     expect(unsupportedHost.getState().disclosure).toMatchObject({
       showIsolationField: false,
-      showArchiveOnFinishField: true,
+      showArchiveOnFinishField: false,
+    });
+    expect(
+      Object.prototype.hasOwnProperty.call(unsupportedHost.getState(), "submitIsolation"),
+    ).toBe(true);
+    expect(
+      Object.prototype.hasOwnProperty.call(unsupportedHost.getState(), "submitArchiveOnFinish"),
+    ).toBe(true);
+    expect(
+      (unsupportedHost.getState() as unknown as { submitIsolation?: string }).submitIsolation,
+    ).toBeUndefined();
+    expect(
+      (unsupportedHost.getState() as unknown as { submitArchiveOnFinish?: boolean })
+        .submitArchiveOnFinish,
+    ).toBeUndefined();
+  });
+
+  it("shows modes for providers without selectable models", () => {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+
+    form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
+    form.applyProviderSnapshot("host-a", providerSnapshot([]));
+    form.setModel("mock", "");
+
+    expect(form.getState()).toMatchObject({
+      selectedProvider: "mock",
+      selectedModel: "",
+      disclosure: {
+        showModeField: true,
+        showThinkingField: false,
+      },
     });
   });
 

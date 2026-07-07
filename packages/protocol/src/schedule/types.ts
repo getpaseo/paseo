@@ -59,6 +59,7 @@ export const ScheduleRunSchema = z.object({
   endedAt: z.string().nullable(),
   status: z.enum(["running", "succeeded", "failed"]),
   agentId: z.guid().nullable(),
+  workspaceId: z.string().nullable().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
 });

@@ -106,6 +106,8 @@ export interface ScheduleFormState {
   archiveOnFinish: boolean;
   isolation: "local" | "worktree";
   effectiveIsolation: "local" | "worktree";
+  submitArchiveOnFinish: boolean | undefined;
+  submitIsolation: "local" | "worktree" | undefined;
   canUseWorktreeIsolation: boolean;
   providerResolutionByServerId: Record<string, ProviderResolutionStatus>;
   providerSnapshotRequest: ScheduleProviderSnapshotRequest | null;
@@ -480,6 +482,16 @@ function resolveCanUseWorktreeIsolation(input: {
   return Boolean(target?.isGit && host?.supportsWorkspaceMultiplicity);
 }
 
+function selectedHostSupportsWorkspaceMultiplicity(input: {
+  hosts: readonly ScheduleFormHost[];
+  selectedServerId: string | null;
+}): boolean {
+  return (
+    input.hosts.find((entry) => entry.serverId === input.selectedServerId)
+      ?.supportsWorkspaceMultiplicity === true
+  );
+}
+
 function resolveEffectiveIsolation(input: {
   isolation: "local" | "worktree";
   canUseWorktreeIsolation: boolean;
@@ -514,6 +526,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   }
 
   const hasProject = state.workingDir.trim().length > 0;
+  const hasSelectedProvider = Boolean(state.selectedProvider);
   const hasSelectedModel = Boolean(state.selectedProvider && state.selectedModel.trim());
   const showProjectField = state.mode === "edit" || Boolean(state.selectedServerId);
   const showModelField = hasProject;
@@ -522,9 +535,14 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
     showModelField,
     showThinkingField:
       showModelField && hasSelectedModel && state.availableThinkingOptions.length > 0,
-    showModeField: showModelField && hasSelectedModel,
+    showModeField: showModelField && hasSelectedProvider && state.modeOptions.length > 0,
     showIsolationField: hasProject && state.canUseWorktreeIsolation,
-    showArchiveOnFinishField: hasProject,
+    showArchiveOnFinishField:
+      hasProject &&
+      selectedHostSupportsWorkspaceMultiplicity({
+        hosts: state.hosts,
+        selectedServerId: state.selectedServerId,
+      }),
   };
 }
 
@@ -567,6 +585,16 @@ function updateDerivedState(input: {
     hosts: input.hosts,
     targets: input.targets,
   });
+  const canSubmitWorkspaceLifecycleOptions = selectedHostSupportsWorkspaceMultiplicity({
+    hosts: input.hosts,
+    selectedServerId: input.state.selectedServerId,
+  });
+  const effectiveIsolation = resolveEffectiveIsolation({
+    isolation: input.state.isolation,
+    canUseWorktreeIsolation,
+    selectedServerId: input.state.selectedServerId,
+    providerResolutionByServerId: input.state.providerResolutionByServerId,
+  });
   const projectTarget = resolveProjectTarget({
     targets: input.targets,
     serverId: input.state.selectedServerId,
@@ -590,12 +618,11 @@ function updateDerivedState(input: {
     modeOptions,
     availableThinkingOptions,
     canUseWorktreeIsolation,
-    effectiveIsolation: resolveEffectiveIsolation({
-      isolation: input.state.isolation,
-      canUseWorktreeIsolation,
-      selectedServerId: input.state.selectedServerId,
-      providerResolutionByServerId: input.state.providerResolutionByServerId,
-    }),
+    effectiveIsolation,
+    submitArchiveOnFinish: canSubmitWorkspaceLifecycleOptions
+      ? input.state.archiveOnFinish
+      : undefined,
+    submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
   };
   const disclosure = resolveDisclosure(nextState);
   return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
@@ -654,6 +681,8 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     archiveOnFinish: config?.archiveOnFinish ?? true,
     isolation: resolveInitialIsolation({ config, preferences: snapshot.defaults.preferences }),
     effectiveIsolation: "local",
+    submitArchiveOnFinish: undefined,
+    submitIsolation: undefined,
     canUseWorktreeIsolation: false,
     providerResolutionByServerId: buildInitialProviderResolution(providerSnapshotRequest),
     providerSnapshotRequest,

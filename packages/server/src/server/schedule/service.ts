@@ -126,6 +126,13 @@ function countCompletedRuns(schedule: StoredSchedule): number {
   return schedule.runs.filter((run) => run.status !== "running").length;
 }
 
+function shouldArchiveScheduleRunWorkspace(input: {
+  agentId: string | null;
+  archiveOnFinish?: boolean;
+}): boolean {
+  return input.agentId === null || (input.archiveOnFinish ?? true);
+}
+
 function shouldCompleteSchedule(schedule: StoredSchedule, now: Date): boolean {
   if (schedule.expiresAt && new Date(schedule.expiresAt).getTime() <= now.getTime()) {
     return true;
@@ -570,6 +577,12 @@ export class ScheduleService {
   }
 
   private async recoverInterruptedSchedule(scheduleId: string, now: Date): Promise<void> {
+    const interruptedWorkspaces: Array<{
+      workspaceId: string;
+      repoRoot: string;
+      agentId: string | null;
+      runId: string;
+    }> = [];
     await this.store.update(scheduleId, (current) => {
       let updated = { ...current };
       let dirty = false;
@@ -577,8 +590,24 @@ export class ScheduleService {
       const runningIndex = updated.runs.findIndex((run) => run.status === "running");
       if (runningIndex !== -1) {
         const runs = [...updated.runs];
+        const runningRun = runs[runningIndex];
+        if (
+          updated.target.type === "new-agent" &&
+          runningRun.workspaceId &&
+          shouldArchiveScheduleRunWorkspace({
+            agentId: runningRun.agentId,
+            archiveOnFinish: updated.target.config.archiveOnFinish,
+          })
+        ) {
+          interruptedWorkspaces.push({
+            workspaceId: runningRun.workspaceId,
+            repoRoot: updated.target.config.cwd,
+            agentId: runningRun.agentId,
+            runId: runningRun.id,
+          });
+        }
         runs[runningIndex] = {
-          ...runs[runningIndex],
+          ...runningRun,
           status: "failed",
           endedAt: now.toISOString(),
           error: "Daemon restarted before the scheduled run completed",
@@ -605,6 +634,24 @@ export class ScheduleService {
       }
       return current;
     });
+    const interruptedWorkspace = interruptedWorkspaces[0];
+    if (!interruptedWorkspace) {
+      return;
+    }
+    try {
+      await this.archiveWorkspace(interruptedWorkspace.workspaceId, interruptedWorkspace.repoRoot);
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          agentId: interruptedWorkspace.agentId,
+          workspaceId: interruptedWorkspace.workspaceId,
+          scheduleId,
+          runId: interruptedWorkspace.runId,
+        },
+        "Failed to archive interrupted scheduled workspace after daemon restart",
+      );
+    }
   }
 
   // Orphaned agent-target schedules (agent deleted while the daemon was down, or
@@ -707,7 +754,7 @@ export class ScheduleService {
               ...run,
               status: params.status,
               endedAt: now.toISOString(),
-              agentId: params.agentId,
+              agentId: params.agentId ?? run.agentId,
               output: params.output,
               error: params.error,
             }
@@ -750,6 +797,28 @@ export class ScheduleService {
 
       return updated;
     });
+    requireSchedule(updatedSchedule, params.scheduleId);
+  }
+
+  private async recordRunWorkspace(params: {
+    scheduleId: string;
+    runId: string;
+    workspaceId: string;
+    agentId: string | null;
+  }): Promise<void> {
+    const updatedSchedule = await this.store.update(params.scheduleId, (schedule) => ({
+      ...schedule,
+      updatedAt: this.now().toISOString(),
+      runs: schedule.runs.map((run) =>
+        run.id === params.runId && run.status === "running"
+          ? {
+              ...run,
+              workspaceId: params.workspaceId,
+              agentId: params.agentId,
+            }
+          : run,
+      ),
+    }));
     requireSchedule(updatedSchedule, params.scheduleId);
   }
 
@@ -796,6 +865,12 @@ export class ScheduleService {
     let agentId: string | null = null;
     try {
       workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+      await this.recordRunWorkspace({
+        scheduleId: schedule.id,
+        runId,
+        workspaceId: workspace.workspaceId,
+        agentId: null,
+      });
       const runConfig = { ...config, cwd: workspace.cwd };
       const created = await this.createAgent({
         kind: "mcp",
@@ -818,6 +893,12 @@ export class ScheduleService {
       });
       const agent = created.snapshot;
       agentId = agent.id;
+      await this.recordRunWorkspace({
+        scheduleId: schedule.id,
+        runId,
+        workspaceId: workspace.workspaceId,
+        agentId,
+      });
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
@@ -844,7 +925,10 @@ export class ScheduleService {
         }),
       };
     } finally {
-      if (workspace && (agentId === null || (config.archiveOnFinish ?? true))) {
+      if (
+        workspace &&
+        shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
+      ) {
         try {
           await this.archiveWorkspace(workspace.workspaceId, config.cwd);
         } catch (error) {

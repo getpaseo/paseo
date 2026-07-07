@@ -340,8 +340,10 @@ function OpenScheduleFormSheet({
           modeId: state.selectedMode || null,
           thinkingOptionId: state.selectedThinkingOptionId || null,
           cwd,
-          archiveOnFinish: state.archiveOnFinish,
-          isolation: state.effectiveIsolation,
+          ...(state.submitArchiveOnFinish !== undefined
+            ? { archiveOnFinish: state.submitArchiveOnFinish }
+            : {}),
+          ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
         },
         maxRuns,
       });
@@ -360,8 +362,10 @@ function OpenScheduleFormSheet({
           model: state.selectedModel || undefined,
           modeId: state.selectedMode || undefined,
           thinkingOptionId: state.selectedThinkingOptionId || undefined,
-          archiveOnFinish: state.archiveOnFinish,
-          isolation: state.effectiveIsolation,
+          ...(state.submitArchiveOnFinish !== undefined
+            ? { archiveOnFinish: state.submitArchiveOnFinish }
+            : {}),
+          ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
           title: state.name.trim() || undefined,
         },
       },
