@@ -1086,6 +1086,12 @@ export const fr: TranslationResources = {
       },
     },
   },
+  rootError: {
+    kicker: "Une erreur s'est produite",
+    title: "Paseo a rencontré un problème.",
+    body: "Réessayez pour recharger l'application. Si cela continue, joignez les détails ci-dessous au signalement.",
+    details: "Détails",
+  },
   startup: {
     errorTitle: "Quelque chose s'est mal passé",
     errorDescription:

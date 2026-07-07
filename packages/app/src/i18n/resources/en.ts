@@ -1055,6 +1055,12 @@ export const en = {
       },
     },
   },
+  rootError: {
+    kicker: "Something went wrong",
+    title: "Paseo ran into a problem.",
+    body: "Try again to reload the app. If this keeps happening, include the details below when you report it.",
+    details: "Details",
+  },
   startup: {
     errorTitle: "Something went wrong",
     errorDescription:

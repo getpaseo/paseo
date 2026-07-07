@@ -1062,6 +1062,12 @@ export const ja: TranslationResources = {
       },
     },
   },
+  rootError: {
+    kicker: "問題が発生しました",
+    title: "Paseo で問題が発生しました。",
+    body: "アプリを再読み込みするにはもう一度お試しください。繰り返し発生する場合は、以下の詳細を添えて報告してください。",
+    details: "詳細",
+  },
   startup: {
     errorTitle: "問題が発生しました",
     errorDescription:

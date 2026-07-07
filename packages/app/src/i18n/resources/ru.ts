@@ -1074,6 +1074,12 @@ export const ru: TranslationResources = {
       },
     },
   },
+  rootError: {
+    kicker: "Что-то пошло не так",
+    title: "В Paseo возникла проблема.",
+    body: "Попробуйте снова перезагрузить приложение. Если это повторяется, приложите приведенные ниже подробности к отчету.",
+    details: "Подробности",
+  },
   startup: {
     errorTitle: "Что- то пошло не так",
     errorDescription:
