@@ -1,0 +1,54 @@
+import { describe, expect, it } from "vitest";
+import { formatCaughtValue } from "./root-error-details";
+
+describe("formatCaughtValue", () => {
+  it("preserves details for Error values", () => {
+    class RouteRenderError extends Error {
+      code = "E_ROUTE_RENDER";
+      cause = "workspace route";
+
+      constructor() {
+        super("route render exploded");
+        this.name = "RouteRenderError";
+        this.stack = "RouteRenderError: route render exploded\n    at WorkspaceRoute";
+      }
+    }
+
+    const details = formatCaughtValue(new RouteRenderError());
+
+    expect(details).toContain("Name: RouteRenderError");
+    expect(details).toContain("Message: route render exploded");
+    expect(details).toContain("Stack:");
+    expect(details).toContain("RouteRenderError: route render exploded");
+    expect(details).toContain("Cause:");
+    expect(details).toContain("workspace route");
+    expect(details).toContain("E_ROUTE_RENDER");
+  });
+
+  it("does not duplicate aggregate errors as custom fields", () => {
+    const error = new AggregateError([new Error("first failure")], "multiple failures");
+    const details = formatCaughtValue(error);
+
+    expect(details).toContain("Errors:");
+    expect(details).toContain("first failure");
+    expect(details).not.toContain("Fields:");
+  });
+
+  it("renders string thrown values as the string", () => {
+    expect(formatCaughtValue("plain failure")).toBe("plain failure");
+  });
+
+  it("renders numeric thrown values without extra category text", () => {
+    const details = formatCaughtValue(42);
+
+    expect(details).toBe("42");
+    expect(details).not.toContain("non-Error");
+  });
+
+  it("renders circular objects as JSON with circular markers", () => {
+    const value: { label: string; self?: unknown } = { label: "loop" };
+    value.self = value;
+
+    expect(formatCaughtValue(value)).toBe('{\n  "label": "loop",\n  "self": "[Circular]"\n}');
+  });
+});
