@@ -7,3 +7,4 @@ _.path = [
 
 [tools]
 java = "17"
+"npm:cross-env" = "latest"
