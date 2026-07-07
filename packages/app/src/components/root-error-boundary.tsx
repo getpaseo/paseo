@@ -39,7 +39,7 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
 
   render() {
     const { error, resetKey } = this.state;
-    if (error) {
+    if (error !== null) {
       return <RootErrorFallback error={error} onRetry={this.retry} />;
     }
 

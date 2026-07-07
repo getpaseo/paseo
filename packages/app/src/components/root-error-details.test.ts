@@ -38,6 +38,10 @@ describe("formatCaughtValue", () => {
     expect(formatCaughtValue("plain failure")).toBe("plain failure");
   });
 
+  it("preserves empty string thrown values", () => {
+    expect(formatCaughtValue("")).toBe("");
+  });
+
   it("renders numeric thrown values without extra category text", () => {
     const details = formatCaughtValue(42);
 
