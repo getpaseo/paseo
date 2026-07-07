@@ -218,6 +218,34 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("maps dynamicToolCall data URI images into canonical image content", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "dynamicToolCall",
+      id: "call-dynamic-image",
+      status: "completed",
+      namespace: null,
+      tool: "browser_screenshot",
+      arguments: { browserId: "11111111-1111-4111-8111-111111111111" },
+      contentItems: [{ type: "inputImage", imageUrl: "data:image/png;base64,iVBORw0KGgo=" }],
+      success: true,
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-dynamic-image",
+      name: "browser_screenshot",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: { browserId: "11111111-1111-4111-8111-111111111111" },
+        output: {
+          content: [{ type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }],
+        },
+      },
+    });
+  });
+
   it("maps collabAgentToolCall into canonical sub-agent detail", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",

@@ -234,10 +234,12 @@ export function createFakeCodexAppServer(
       );
     },
     requestDynamicTool(params) {
-      const requestId = 0;
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
       dynamicToolRequestIds.set(params.callId, requestId);
       child.stdout.write(
         `${JSON.stringify({
+          jsonrpc: "2.0",
           id: requestId,
           method: "item/tool/call",
           params: {

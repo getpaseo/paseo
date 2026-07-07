@@ -604,6 +604,62 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("matches consecutive native Paseo tool results by Codex call id", async () => {
+    const executeTool = vi
+      .fn<PaseoToolCatalog["executeTool"]>()
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "first result" }],
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "second result" }],
+      });
+    const paseoTools = createPaseoToolCatalogForTest(executeTool);
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+      {},
+      false,
+      false,
+      false,
+      "agent-1",
+      paseoTools,
+    );
+
+    await session.connect();
+    appServer.requestDynamicTool({
+      callId: "call-first",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tool: "create_agent",
+      arguments: { title: "First", initialPrompt: "hello" },
+    });
+    appServer.requestDynamicTool({
+      callId: "call-second",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tool: "create_agent",
+      arguments: { title: "Second", initialPrompt: "hello again" },
+    });
+
+    await expect(appServer.waitForDynamicToolResult("call-first")).resolves.toEqual({
+      contentItems: [{ type: "inputText", text: "first result" }],
+      success: true,
+    });
+    await expect(appServer.waitForDynamicToolResult("call-second")).resolves.toEqual({
+      contentItems: [{ type: "inputText", text: "second result" }],
+      success: true,
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("disposes an unresponsive app-server child with SIGKILL", async () => {
     vi.useFakeTimers();
     const child = new EventEmitter() as ChildProcessWithoutNullStreams;

@@ -965,9 +965,18 @@ function dynamicToolContentItemToOutput(
       text: item.text ?? "",
     };
   }
+  const dataUri = item.imageUrl ?? "";
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUri);
+  if (match) {
+    return {
+      type: "image",
+      mimeType: match[1],
+      data: match[2],
+    };
+  }
   return {
     type: "image_url",
-    imageUrl: item.imageUrl ?? "",
+    imageUrl: dataUri,
   };
 }
 
