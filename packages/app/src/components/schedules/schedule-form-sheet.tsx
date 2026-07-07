@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactElement,
@@ -173,37 +174,32 @@ export function ScheduleFormSheet(props: ScheduleFormSheetProps): ReactElement |
     props.visible ? props : null,
   );
   const [sheetVisible, setSheetVisible] = useState(props.visible);
-  const [notifyCloseOnDismiss, setNotifyCloseOnDismiss] = useState(false);
+  const livePropsRef = useRef(props);
+  livePropsRef.current = props;
 
   useEffect(() => {
     if (props.visible) {
-      if (notifyCloseOnDismiss) {
-        return;
-      }
       setRenderedProps(props);
       setSheetVisible(true);
-      setNotifyCloseOnDismiss(false);
       return;
     }
     if (renderedProps) {
       setSheetVisible(false);
     }
-  }, [notifyCloseOnDismiss, props, renderedProps]);
+  }, [props, renderedProps]);
 
   const requestClose = useCallback(() => {
-    setNotifyCloseOnDismiss(true);
     setSheetVisible(false);
   }, []);
 
   const handleDismiss = useCallback(() => {
-    const onClose = renderedProps?.onClose;
+    const dismissedProps = livePropsRef.current;
     setRenderedProps(null);
     setSheetVisible(false);
-    setNotifyCloseOnDismiss(false);
-    if (notifyCloseOnDismiss) {
-      onClose?.();
+    if (dismissedProps.visible) {
+      dismissedProps.onClose();
     }
-  }, [notifyCloseOnDismiss, renderedProps]);
+  }, []);
 
   if (!renderedProps) {
     return null;

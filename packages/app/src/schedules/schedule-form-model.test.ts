@@ -4,6 +4,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
+import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
 import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
 import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
@@ -39,6 +40,8 @@ const HOST_B_MODELS: AgentModelDefinition[] = [
     ],
   },
 ];
+
+const ALL_MODELS = [...HOST_A_MODELS, ...HOST_B_MODELS];
 
 function target(input: {
   serverId: string;
@@ -136,6 +139,10 @@ function open(snapshot: Omit<ScheduleFormSnapshot, "hosts">) {
 
 function openWithHosts(snapshot: ScheduleFormSnapshot) {
   return openScheduleForm(snapshot);
+}
+
+function applyPreferences(form: ReturnType<typeof open>, preferences: FormPreferences) {
+  form.applyPreferences(preferences);
 }
 
 describe("schedule form model", () => {
@@ -313,6 +320,42 @@ describe("schedule form model", () => {
     });
   });
 
+  it("preserves stored worktree isolation until host resolution proves it unavailable", () => {
+    const nonGitTarget = target({
+      serverId: "host-b",
+      projectKey: "plain-project",
+      projectName: "Plain Project",
+      cwd: "/repo/b",
+      isGit: false,
+    });
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+      }),
+      defaults: { serverId: null, projectTargets: [nonGitTarget], preferences: {} },
+    });
+
+    expect(form.getState()).toMatchObject({
+      isolation: "worktree",
+      effectiveIsolation: "worktree",
+      canUseWorktreeIsolation: false,
+      providerResolutionByServerId: { "host-b": "pending" },
+    });
+
+    form.applyProviderSnapshot("host-b", providerSnapshot(HOST_B_MODELS));
+
+    expect(form.getState()).toMatchObject({
+      isolation: "worktree",
+      effectiveIsolation: "local",
+      canUseWorktreeIsolation: false,
+      providerResolutionByServerId: { "host-b": "complete" },
+    });
+  });
+
   it("normalizes interval cadences to cron cadences when opening the form", () => {
     const form = open({
       mode: "edit",
@@ -379,6 +422,73 @@ describe("schedule form model", () => {
           testID: "schedule-project-option-project-c",
         },
       ],
+    });
+  });
+
+  it("hydrates late create preferences without overwriting user changes or edited schedules", () => {
+    const savedPreferences: FormPreferences = {
+      provider: "mock",
+      providerPreferences: {
+        mock: {
+          model: "model-b",
+          mode: "load-test",
+          thinkingByModel: { "model-b": "high" },
+        },
+      },
+      isolation: "worktree",
+    };
+
+    const create = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    create.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
+
+    applyPreferences(create, savedPreferences);
+
+    expect(create.getState()).toMatchObject({
+      selectedProvider: "mock",
+      selectedModel: "model-b",
+      selectedMode: "load-test",
+      selectedThinkingOptionId: "high",
+      isolation: "worktree",
+    });
+
+    const userEdited = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    userEdited.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
+    userEdited.setModel("mock", "model-a");
+    userEdited.setIsolation("local");
+
+    applyPreferences(userEdited, savedPreferences);
+
+    expect(userEdited.getState()).toMatchObject({
+      selectedProvider: "mock",
+      selectedModel: "model-a",
+      isolation: "local",
+    });
+
+    const edit = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a",
+        model: "model-a",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    edit.applyProviderSnapshot("host-a", providerSnapshot(ALL_MODELS));
+
+    applyPreferences(edit, { ...savedPreferences, isolation: "local" });
+
+    expect(edit.getState()).toMatchObject({
+      selectedProvider: "mock",
+      selectedModel: "model-a",
+      selectedMode: "load-test",
+      isolation: "worktree",
     });
   });
 });

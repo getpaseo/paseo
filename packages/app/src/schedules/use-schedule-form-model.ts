@@ -13,7 +13,8 @@ export function useScheduleFormModel(snapshot: ScheduleFormSnapshot) {
   useEffect(() => {
     model.applyHosts(snapshot.hosts);
     model.applyProjectTargets(snapshot.defaults.projectTargets);
-  }, [model, snapshot.hosts, snapshot.defaults.projectTargets]);
+    model.applyPreferences(snapshot.defaults.preferences);
+  }, [model, snapshot.hosts, snapshot.defaults.preferences, snapshot.defaults.projectTargets]);
 
   return model;
 }

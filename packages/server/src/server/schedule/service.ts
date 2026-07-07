@@ -792,29 +792,32 @@ export class ScheduleService {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
     await this.assertNewAgentCwdDirectory(config.cwd);
-    const workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
-    const runConfig = { ...config, cwd: workspace.cwd };
-    const created = await this.createAgent({
-      kind: "mcp",
-      provider: formatScheduleProviderModel(runConfig),
-      config: buildScheduleAgentConfig(runConfig),
-      cwd: workspace.cwd,
-      workspaceId: workspace.workspaceId,
-      title: resolveScheduleAgentTitle(config, schedule.prompt),
-      labels: {
-        "paseo.schedule-id": schedule.id,
-        "paseo.schedule-run": runId,
-      },
-      mode: config.modeId,
-      thinking: config.thinkingOptionId,
-      features: config.featureValues,
-      unattended: true,
-      promptFailure: "return-error",
-      background: true,
-      notifyOnFinish: false,
-    });
-    const agent = created.snapshot;
+    let workspace: PersistedWorkspaceRecord | null = null;
+    let agentId: string | null = null;
     try {
+      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+      const runConfig = { ...config, cwd: workspace.cwd };
+      const created = await this.createAgent({
+        kind: "mcp",
+        provider: formatScheduleProviderModel(runConfig),
+        config: buildScheduleAgentConfig(runConfig),
+        cwd: workspace.cwd,
+        workspaceId: workspace.workspaceId,
+        title: resolveScheduleAgentTitle(config, schedule.prompt),
+        labels: {
+          "paseo.schedule-id": schedule.id,
+          "paseo.schedule-run": runId,
+        },
+        mode: config.modeId,
+        thinking: config.thinkingOptionId,
+        features: config.featureValues,
+        unattended: true,
+        promptFailure: "return-error",
+        background: true,
+        notifyOnFinish: false,
+      });
+      const agent = created.snapshot;
+      agentId = agent.id;
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
@@ -841,14 +844,14 @@ export class ScheduleService {
         }),
       };
     } finally {
-      if (config.archiveOnFinish ?? true) {
+      if (workspace && (config.archiveOnFinish ?? true)) {
         try {
           await this.archiveWorkspace(workspace.workspaceId);
         } catch (error) {
           this.logger.warn(
             {
               err: error,
-              agentId: agent.id,
+              agentId,
               workspaceId: workspace.workspaceId,
               scheduleId: schedule.id,
               runId,

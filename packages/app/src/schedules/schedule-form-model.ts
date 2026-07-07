@@ -119,6 +119,7 @@ export interface ScheduleFormModel {
   close: () => void;
   applyHosts: (hosts: readonly ScheduleFormHost[]) => void;
   applyProjectTargets: (targets: readonly ScheduleProjectTarget[]) => void;
+  applyPreferences: (preferences: FormPreferences | undefined) => void;
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
   setHost: (serverId: string | null) => void;
   setProject: (optionId: string, display: ScheduleFormDisplay) => void;
@@ -435,7 +436,10 @@ function resolveInitialIsolation(input: {
   config: ReturnType<typeof newAgentConfig>;
   preferences: FormPreferences | undefined;
 }): "local" | "worktree" {
-  return input.config?.isolation ?? input.preferences?.isolation ?? "local";
+  if (input.config) {
+    return input.config.isolation ?? "local";
+  }
+  return input.preferences?.isolation ?? "local";
 }
 
 function resolveSelectedProjectOptionId(target: ScheduleProjectTarget | null): string {
@@ -468,8 +472,22 @@ function resolveCanUseWorktreeIsolation(input: {
 function resolveEffectiveIsolation(input: {
   isolation: "local" | "worktree";
   canUseWorktreeIsolation: boolean;
+  selectedServerId: string | null;
+  providerResolutionByServerId: Record<string, ProviderResolutionStatus>;
 }): "local" | "worktree" {
-  return input.isolation === "worktree" && input.canUseWorktreeIsolation ? "worktree" : "local";
+  if (input.isolation !== "worktree") {
+    return "local";
+  }
+  if (input.canUseWorktreeIsolation) {
+    return "worktree";
+  }
+  if (
+    !input.selectedServerId ||
+    input.providerResolutionByServerId[input.selectedServerId] !== "complete"
+  ) {
+    return "worktree";
+  }
+  return "local";
 }
 
 function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
@@ -564,6 +582,8 @@ function updateDerivedState(input: {
     effectiveIsolation: resolveEffectiveIsolation({
       isolation: input.state.isolation,
       canUseWorktreeIsolation,
+      selectedServerId: input.state.selectedServerId,
+      providerResolutionByServerId: input.state.providerResolutionByServerId,
     }),
   };
   const disclosure = resolveDisclosure(nextState);
@@ -691,6 +711,13 @@ function resolveSnapshotSelection(input: {
   return applyResolvedFormState(input.state, resolved);
 }
 
+function preferencesForSnapshotResolution(
+  snapshot: ScheduleFormSnapshot,
+  preferences: FormPreferences | null,
+): FormPreferences | null {
+  return snapshot.mode === "edit" ? null : preferences;
+}
+
 function pickModeForProvider(input: {
   entries: readonly ProviderSnapshotEntry[];
   provider: AgentProvider;
@@ -726,8 +753,9 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
   let closed = false;
   let hosts = snapshot.hosts;
   let projectTargets = snapshot.defaults.projectTargets;
+  let preferences = snapshot.defaults.preferences ?? null;
   let providerEntries: ProviderSnapshotEntry[] = [];
-  let userModified = { ...INITIAL_USER_MODIFIED };
+  let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
   let state = buildInitialState(snapshot);
 
@@ -783,6 +811,28 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     };
   }
 
+  function resolvePreferences(nextState: ScheduleFormState): ScheduleFormState {
+    let resolved = nextState;
+    if (
+      snapshot.mode === "create" &&
+      !userModified.isolation &&
+      preferences?.isolation !== undefined
+    ) {
+      resolved = { ...resolved, isolation: preferences.isolation };
+    }
+    if (providerEntries.length === 0 || resolved.targetKind !== "new-agent") {
+      return resolved;
+    }
+    return resolveSnapshotSelection({
+      state: resolved,
+      snapshot,
+      initialValues,
+      preferences: preferencesForSnapshotResolution(snapshot, preferences),
+      providerEntries,
+      userModified,
+    });
+  }
+
   return {
     getState: () => state,
     subscribe(listener) {
@@ -812,6 +862,14 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       projectTargets = nextTargets;
       publish(state);
     },
+    applyPreferences(nextPreferences) {
+      const normalizedPreferences = nextPreferences ?? null;
+      if (closed || preferences === normalizedPreferences) {
+        return;
+      }
+      preferences = normalizedPreferences;
+      publish(resolvePreferences(state));
+    },
     applyProviderSnapshot(serverId, providerSnapshot) {
       if (closed || state.selectedServerId !== serverId) {
         return;
@@ -823,7 +881,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
             state,
             snapshot,
             initialValues,
-            preferences: snapshot.defaults.preferences ?? null,
+            preferences: preferencesForSnapshotResolution(snapshot, preferences),
             providerEntries,
             userModified,
           })
@@ -931,6 +989,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       publish({ ...state, cadence: normalizeScheduleFormCadence(value, timezone) });
     },
     setIsolation(value) {
+      userModified = { ...userModified, isolation: true };
       publish({ ...state, isolation: value });
     },
     setArchiveOnFinish(value) {

@@ -33,6 +33,7 @@ import {
   type ScheduleBucket,
   type ScheduleTargetAgent,
 } from "@/schedules/schedule-derivation";
+import { resolveSchedulesScreenBodyState } from "./schedules-screen-state";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
@@ -220,7 +221,9 @@ function SchedulesScreenBody({
   onCreate: () => void;
   onEdit: (schedule: AggregatedSchedule) => void;
 }): ReactElement {
-  if (loadState.status === "connecting" || loadState.status === "loading") {
+  const bodyState = resolveSchedulesScreenBodyState({ loadState, showLoadError });
+
+  if (bodyState.kind === "loading") {
     return (
       <View style={styles.centered}>
         <LoadingSpinner size="large" color={styles.spinner.color} />
@@ -228,7 +231,7 @@ function SchedulesScreenBody({
     );
   }
 
-  if (showLoadError) {
+  if (bodyState.kind === "load-error") {
     return (
       <View style={styles.centered}>
         <Text style={styles.message}>Unable to load schedules</Text>
@@ -239,7 +242,7 @@ function SchedulesScreenBody({
     );
   }
 
-  if (loadState.data.length === 0) {
+  if (bodyState.kind === "empty") {
     return (
       <View style={styles.centered}>
         {hostErrors.length > 0 ? <ScheduleHostErrorsBanner errors={hostErrors} /> : null}

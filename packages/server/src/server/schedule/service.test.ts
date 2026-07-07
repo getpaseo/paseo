@@ -660,6 +660,62 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("archives the run workspace when scheduled agent creation fails", async () => {
+    const {
+      workspaceRegistry,
+      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      createArchiveWorkspace,
+    } = await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const createError = new Error("provider misconfigured");
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createLocalCheckoutWorkspace: createScheduleLocalWorkspace,
+      archiveWorkspace: createArchiveWorkspace({
+        agentManager: manager,
+        agentStorage,
+      }),
+      createAgent: async () => {
+        throw createError;
+      },
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "fail before agent exists",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          model: "test-model",
+          cwd: tempDir,
+          isolation: "local",
+        },
+      },
+      runOnCreate: false,
+    });
+
+    await expect(
+      (service as unknown as ScheduleServiceInternals).executeSchedule(created, "run-create-fails"),
+    ).rejects.toThrow("provider misconfigured");
+
+    expect(await workspaceRegistry.list()).toEqual([
+      expect.objectContaining({
+        cwd: tempDir,
+        archivedAt: expect.any(String),
+      }),
+    ]);
+  });
+
   test("new-agent cwd existence is checked at run time, not when editing the schedule", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
