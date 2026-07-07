@@ -1,8 +1,9 @@
 import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "./server-manager.js";
 
 export interface TestOpenCodeServerAcquisition {
-  kind: "current" | "new" | "dedicated";
+  kind: "current" | "new" | "dedicated" | "existing";
   env?: Record<string, string>;
+  url?: string;
   released: boolean;
 }
 
@@ -28,14 +29,20 @@ export class TestOpenCodeServerManager implements OpenCodeServerManagerLike {
     return this.recordAcquisition({ kind: "dedicated", env });
   }
 
+  acquireExisting(url: string): OpenCodeServerAcquisition | null {
+    return url === this.server.url ? this.recordAcquisition({ kind: "existing", url }) : null;
+  }
+
   private recordAcquisition(input: {
     kind: TestOpenCodeServerAcquisition["kind"];
     env?: Record<string, string>;
+    url?: string;
   }): OpenCodeServerAcquisition {
     const acquisition: TestOpenCodeServerAcquisition = {
       kind: input.kind,
       released: false,
       ...(input.env ? { env: input.env } : {}),
+      ...(input.url ? { url: input.url } : {}),
     };
     this.acquisitions.push(acquisition);
     return {

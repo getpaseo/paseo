@@ -431,7 +431,18 @@ export type AgentStreamEvent =
       type: "provider_subagent";
       provider: AgentProvider;
       event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
-    };
+    }
+  // Internal-only events (never serialized to clients): provider-native child
+  // sessions detected/deleted. OpenCode temporarily uses these while its
+  // discovery path is migrated to provider_subagent events.
+  | {
+      type: "provider_child_session_detected";
+      provider: AgentProvider;
+      childSessionId: string;
+      parentSessionId: string;
+      title?: string;
+    }
+  | { type: "provider_session_deleted"; provider: AgentProvider; sessionId: string };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
   return "turnId" in event ? event.turnId : undefined;

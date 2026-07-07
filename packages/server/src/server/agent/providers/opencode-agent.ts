@@ -65,7 +65,6 @@ import {
 } from "../provider-launch-config.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
-import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OpenCodeServerManager,
@@ -104,8 +103,34 @@ const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
+const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
+const OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT = 500;
 const OPENCODE_PERMISSION_ACTION_ALLOW_ONCE = "allow_once";
 const OPENCODE_PERMISSION_ACTION_ALLOW_ALWAYS = "allow_always";
+
+// OpenCode child sessions run on the server process that spawned them. Adoption
+// resumes must attach to that same helper server to receive live global events.
+const openCodeChildSessionServerUrls = new Map<string, string>();
+
+function registerOpenCodeChildSessionServerUrl(sessionId: string, serverUrl: string): void {
+  openCodeChildSessionServerUrls.delete(sessionId);
+  openCodeChildSessionServerUrls.set(sessionId, serverUrl);
+  if (openCodeChildSessionServerUrls.size <= OPENCODE_CHILD_SESSION_SERVER_REGISTRY_LIMIT) {
+    return;
+  }
+  const oldestSessionId = openCodeChildSessionServerUrls.keys().next().value;
+  if (typeof oldestSessionId === "string") {
+    openCodeChildSessionServerUrls.delete(oldestSessionId);
+  }
+}
+
+function unregisterOpenCodeChildSessionServerUrl(sessionId: string): void {
+  openCodeChildSessionServerUrls.delete(sessionId);
+}
+
+function getOpenCodeChildSessionServerUrl(sessionId: string): string | undefined {
+  return openCodeChildSessionServerUrls.get(sessionId);
+}
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -1299,6 +1324,7 @@ export class OpenCodeAgentClient implements AgentClient {
         acquisition.release,
         options?.persistSession,
         launchContext?.agentId,
+        url,
       );
     } catch (error) {
       acquisition.release();
@@ -1324,7 +1350,15 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const acquisition = await this.serverManager.acquireCurrent();
+    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
+    const registeredAcquisition = registeredServerUrl
+      ? this.serverManager.acquireExisting(registeredServerUrl)
+      : null;
+    const acquisition =
+      registeredAcquisition ??
+      (launchContext?.env
+        ? await this.serverManager.acquireDedicated(launchContext.env)
+        : await this.serverManager.acquireCurrent());
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -1343,6 +1377,8 @@ export class OpenCodeAgentClient implements AgentClient {
         acquisition.release,
         undefined,
         launchContext?.agentId,
+        url,
+        registeredAcquisition !== null,
       );
     } catch (error) {
       acquisition.release();
@@ -1629,7 +1665,7 @@ export interface OpenCodeEventTranslationState {
   partTypes: Map<string, string>;
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
   subAgentCallIdByChildSessionId?: Map<string, string>;
-  pendingChildToolPartsBySessionId?: Map<string, OpenCodeToolPartEventPart[]>;
+  knownChildSessionIds?: Set<string>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 }
@@ -1661,23 +1697,16 @@ type OpenCodeToolPartEventPart = Extract<
   { type: "tool" }
 >;
 
-interface OpenCodeSubAgentActionEntry {
-  index: number;
-  key: string;
-  toolName: string;
-  summary?: string;
+interface OpenCodeChildSessionInfo {
+  id: string;
+  parentSessionId: string;
+  title?: string;
 }
 
 interface OpenCodeSubAgentActivityState {
   toolCall: ToolCallTimelineItem;
-  actions: OpenCodeSubAgentActionEntry[];
-  actionIndexByKey: Map<string, number>;
-  nextActionIndex: number;
   childSessionId?: string;
 }
-
-const MAX_OPENCODE_SUB_AGENT_ACTIONS = 200;
-const MAX_OPENCODE_PENDING_CHILD_TOOL_PARTS = 200;
 
 function stringifyStructuredAssistantMessage(value: unknown): string | null {
   if (value === undefined) {
@@ -1933,6 +1962,9 @@ export function translateOpenCodeEvent(
     case "session.updated":
       appendOpenCodeSessionCreatedOrUpdated(event, state, events);
       break;
+    case "session.deleted":
+      appendOpenCodeSessionDeleted(event, state, events);
+      break;
     case "message.updated":
       appendOpenCodeMessageUpdated(event, state, events);
       break;
@@ -1996,16 +2028,18 @@ function resetOpenCodeTurnTrackingState(state: OpenCodeEventTranslationState): v
 function getOpenCodeSubAgentMaps(state: OpenCodeEventTranslationState): {
   byCallId: Map<string, OpenCodeSubAgentActivityState>;
   callIdByChildSessionId: Map<string, string>;
-  pendingChildToolPartsBySessionId: Map<string, OpenCodeToolPartEventPart[]>;
 } {
   state.subAgentsByCallId ??= new Map();
   state.subAgentCallIdByChildSessionId ??= new Map();
-  state.pendingChildToolPartsBySessionId ??= new Map();
   return {
     byCallId: state.subAgentsByCallId,
     callIdByChildSessionId: state.subAgentCallIdByChildSessionId,
-    pendingChildToolPartsBySessionId: state.pendingChildToolPartsBySessionId,
   };
+}
+
+function getOpenCodeKnownChildSessionIds(state: OpenCodeEventTranslationState): Set<string> {
+  state.knownChildSessionIds ??= new Set();
+  return state.knownChildSessionIds;
 }
 
 function isOpenCodeSessionTrackedByParent(
@@ -2013,8 +2047,38 @@ function isOpenCodeSessionTrackedByParent(
   state: OpenCodeEventTranslationState,
 ): boolean {
   return (
-    sessionId === state.sessionId || state.subAgentCallIdByChildSessionId?.has(sessionId) === true
+    sessionId === state.sessionId ||
+    state.knownChildSessionIds?.has(sessionId) === true ||
+    state.subAgentCallIdByChildSessionId?.has(sessionId) === true
   );
+}
+
+function appendOpenCodeChildSessionDetected(
+  child: OpenCodeChildSessionInfo,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): boolean {
+  if (
+    child.id === state.sessionId ||
+    !isOpenCodeSessionTrackedByParent(child.parentSessionId, state)
+  ) {
+    return false;
+  }
+
+  const knownChildSessionIds = getOpenCodeKnownChildSessionIds(state);
+  if (knownChildSessionIds.has(child.id)) {
+    return false;
+  }
+
+  knownChildSessionIds.add(child.id);
+  events.push({
+    type: "provider_child_session_detected",
+    provider: "opencode",
+    childSessionId: child.id,
+    parentSessionId: child.parentSessionId,
+    ...(child.title ? { title: child.title } : {}),
+  });
+  return true;
 }
 
 function getOpenCodeSubAgentState(
@@ -2031,9 +2095,6 @@ function getOpenCodeSubAgentState(
 
   const created: OpenCodeSubAgentActivityState = {
     toolCall,
-    actions: [],
-    actionIndexByKey: new Map(),
-    nextActionIndex: 1,
   };
   maps.byCallId.set(callId, created);
   return created;
@@ -2049,19 +2110,6 @@ function linkOpenCodeSubAgentChildSession(
   maps.callIdByChildSessionId.set(childSessionId, activity.toolCall.callId);
 }
 
-function buildOpenCodeSubAgentLog(
-  detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
-  activity: OpenCodeSubAgentActivityState,
-): string {
-  const actionLog = activity.actions
-    .map((action) =>
-      action.summary ? `[${action.toolName}] ${action.summary}` : `[${action.toolName}]`,
-    )
-    .join("\n");
-  const parts = [actionLog, detail.log].filter((part) => part.trim().length > 0);
-  return parts.join("\n\n");
-}
-
 function buildOpenCodeSubAgentTimelineItem(
   activity: OpenCodeSubAgentActivityState,
 ): ToolCallTimelineItem {
@@ -2075,7 +2123,6 @@ function buildOpenCodeSubAgentTimelineItem(
     detail: {
       ...toolCall.detail,
       ...(childSessionId ? { childSessionId } : {}),
-      log: buildOpenCodeSubAgentLog(toolCall.detail, activity),
     },
   };
 }
@@ -2094,42 +2141,6 @@ function registerOpenCodeSubAgentToolCall(
   return buildOpenCodeSubAgentTimelineItem(activity);
 }
 
-function bufferOpenCodeSubAgentChildToolPart(
-  part: OpenCodeToolPartEventPart,
-  state: OpenCodeEventTranslationState,
-): void {
-  const maps = getOpenCodeSubAgentMaps(state);
-  if (maps.byCallId.size === 0) {
-    return;
-  }
-  const totalPending = [...maps.pendingChildToolPartsBySessionId.values()].reduce(
-    (total, parts) => total + parts.length,
-    0,
-  );
-  if (totalPending >= MAX_OPENCODE_PENDING_CHILD_TOOL_PARTS) {
-    return;
-  }
-  const pending = maps.pendingChildToolPartsBySessionId.get(part.sessionID) ?? [];
-  pending.push(part);
-  maps.pendingChildToolPartsBySessionId.set(part.sessionID, pending);
-}
-
-function flushOpenCodeSubAgentChildToolParts(
-  childSessionId: string,
-  state: OpenCodeEventTranslationState,
-  events: AgentStreamEvent[],
-): void {
-  const maps = getOpenCodeSubAgentMaps(state);
-  const pending = maps.pendingChildToolPartsBySessionId.get(childSessionId);
-  if (!pending || pending.length === 0) {
-    return;
-  }
-  maps.pendingChildToolPartsBySessionId.delete(childSessionId);
-  for (const part of pending) {
-    appendOpenCodeSubAgentChildToolPart(part, state, events);
-  }
-}
-
 function findOnlyOpenCodeSubAgentWaitingForChild(
   state: OpenCodeEventTranslationState,
 ): OpenCodeSubAgentActivityState | null {
@@ -2143,60 +2154,6 @@ function findOnlyOpenCodeSubAgentWaitingForChild(
   return candidates.length === 1 ? (candidates[0] ?? null) : null;
 }
 
-function summarizeOpenCodeSubAgentAction(
-  item: ToolCallTimelineItem,
-  cwd: string | undefined,
-): string | undefined {
-  const display = buildToolCallDisplayModel({
-    name: item.name,
-    status: item.status,
-    error: item.error,
-    metadata: item.metadata,
-    detail: item.detail,
-    cwd,
-  });
-  return display.summary ?? display.errorText;
-}
-
-function appendOpenCodeSubAgentAction(
-  activity: OpenCodeSubAgentActivityState,
-  item: ToolCallTimelineItem,
-  cwd: string | undefined,
-): boolean {
-  const key = item.callId || `${item.name}:${activity.actions.length}`;
-  const existingIndex = activity.actionIndexByKey.get(key);
-  const summary = summarizeOpenCodeSubAgentAction(item, cwd);
-
-  if (existingIndex !== undefined) {
-    const action = activity.actions[existingIndex];
-    if (!action) {
-      return false;
-    }
-    const changed = action.toolName !== item.name || action.summary !== summary;
-    action.toolName = item.name;
-    if (summary) {
-      action.summary = summary;
-    } else {
-      delete action.summary;
-    }
-    return changed;
-  }
-
-  if (activity.actions.length >= MAX_OPENCODE_SUB_AGENT_ACTIONS) {
-    return false;
-  }
-
-  activity.actionIndexByKey.set(key, activity.actions.length);
-  activity.actions.push({
-    index: activity.nextActionIndex,
-    key,
-    toolName: item.name,
-    ...(summary ? { summary } : {}),
-  });
-  activity.nextActionIndex += 1;
-  return true;
-}
-
 function appendOpenCodeToolCallTimelineItem(
   item: ToolCallTimelineItem,
   state: OpenCodeEventTranslationState,
@@ -2208,9 +2165,6 @@ function appendOpenCodeToolCallTimelineItem(
     provider: "opencode",
     item: timelineItem,
   });
-  if (timelineItem.detail.type === "sub_agent" && timelineItem.detail.childSessionId) {
-    flushOpenCodeSubAgentChildToolParts(timelineItem.detail.childSessionId, state, events);
-  }
 }
 
 function appendOpenCodeSubAgentChildSessionLinked(
@@ -2223,36 +2177,6 @@ function appendOpenCodeSubAgentChildSessionLinked(
     return;
   }
   linkOpenCodeSubAgentChildSession(activity, childSessionId, state);
-  events.push({
-    type: "timeline",
-    provider: "opencode",
-    item: buildOpenCodeSubAgentTimelineItem(activity),
-  });
-  flushOpenCodeSubAgentChildToolParts(childSessionId, state, events);
-}
-
-function appendOpenCodeSubAgentChildToolPart(
-  part: OpenCodeToolPartEventPart,
-  state: OpenCodeEventTranslationState,
-  events: AgentStreamEvent[],
-): void {
-  const maps = getOpenCodeSubAgentMaps(state);
-  const parentCallId = maps.callIdByChildSessionId.get(part.sessionID);
-  if (!parentCallId) {
-    bufferOpenCodeSubAgentChildToolPart(part, state);
-    return;
-  }
-  const activity = maps.byCallId.get(parentCallId);
-  if (!activity) {
-    return;
-  }
-  const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
-  if (!parsedToolPart.success || !parsedToolPart.data) {
-    return;
-  }
-  if (!appendOpenCodeSubAgentAction(activity, parsedToolPart.data, state.cwd)) {
-    return;
-  }
   events.push({
     type: "timeline",
     provider: "opencode",
@@ -2281,9 +2205,40 @@ function appendOpenCodeSessionCreatedOrUpdated(
   }
 
   const parentSessionId = readNonEmptyString(info?.parentID) ?? readNonEmptyString(info?.parentId);
+  if (parentSessionId) {
+    appendOpenCodeChildSessionDetected(
+      {
+        id: event.properties.info.id,
+        parentSessionId,
+        ...(readNonEmptyString(info?.title)
+          ? { title: readNonEmptyString(info?.title) ?? undefined }
+          : {}),
+      },
+      state,
+      events,
+    );
+  }
   if (parentSessionId === state.sessionId) {
     appendOpenCodeSubAgentChildSessionLinked(event.properties.info.id, state, events);
   }
+}
+
+function appendOpenCodeSessionDeleted(
+  event: Extract<OpenCodeEvent, { type: "session.deleted" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const sessionId = event.properties.sessionID;
+  if (!isOpenCodeSessionTrackedByParent(sessionId, state)) {
+    return;
+  }
+  state.knownChildSessionIds?.delete(sessionId);
+  state.subAgentCallIdByChildSessionId?.delete(sessionId);
+  events.push({
+    type: "provider_session_deleted",
+    provider: "opencode",
+    sessionId,
+  });
 }
 
 function appendOpenCodeMessageUpdated(
@@ -2360,9 +2315,6 @@ function appendOpenCodeMessagePartUpdated(
     return;
   }
   if (part.sessionID !== state.sessionId) {
-    if (part.type === "tool") {
-      appendOpenCodeSubAgentChildToolPart(part, state, events);
-    }
     return;
   }
   const messageRole = state.messageRoles.get(part.messageID);
@@ -2746,6 +2698,74 @@ function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boole
   );
 }
 
+function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
+  return (
+    event.type === "provider_child_session_detected" || event.type === "provider_session_deleted"
+  );
+}
+
+function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo | null {
+  const record = readOpenCodeRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = readNonEmptyString(record.id);
+  const parentSessionId =
+    readNonEmptyString(record.parentID) ?? readNonEmptyString(record.parentId);
+  if (!id || !parentSessionId) {
+    return null;
+  }
+  const title = readNonEmptyString(record.title);
+  return {
+    id,
+    parentSessionId,
+    ...(title ? { title } : {}),
+  };
+}
+
+function readOpenCodeChildSessionInfosFromResponse(
+  response: unknown,
+): OpenCodeChildSessionInfo[] | null {
+  const record = readOpenCodeRecord(response);
+  if (!record || record.error) {
+    return null;
+  }
+  const data = record.data;
+  if (!Array.isArray(data)) {
+    return null;
+  }
+  return data.flatMap((item) => {
+    const child = readOpenCodeChildSessionInfo(item);
+    return child ? [child] : [];
+  });
+}
+
+async function listOpenCodeChildSessions(
+  client: OpencodeClient,
+  sessionId: string,
+  directory: string,
+): Promise<OpenCodeChildSessionInfo[]> {
+  try {
+    const pathResponse: unknown = await Reflect.apply(client.session.children, client.session, [
+      { path: { id: sessionId } },
+    ]);
+    const pathChildren = readOpenCodeChildSessionInfosFromResponse(pathResponse);
+    if (pathChildren) {
+      return pathChildren;
+    }
+  } catch (error) {
+    if (!(error instanceof Error)) {
+      throw error;
+    }
+  }
+
+  const sessionIdResponse = await client.session.children({
+    sessionID: sessionId,
+    directory,
+  });
+  return readOpenCodeChildSessionInfosFromResponse(sessionIdResponse) ?? [];
+}
+
 class OpenCodeAgentSession implements AgentSession {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
@@ -2781,10 +2801,12 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
+  private activeForegroundTurnSource: "paseo" | "external" | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
   private subAgentCallIdByChildSessionId = new Map<string, string>();
-  private pendingChildToolPartsBySessionId = new Map<string, OpenCodeToolPartEventPart[]>();
+  private knownChildSessionIds = new Set<string>();
+  private childHydrationPromise: Promise<void> | null = null;
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
   private eventStreamAbortController: AbortController | null = null;
@@ -2803,6 +2825,8 @@ class OpenCodeAgentSession implements AgentSession {
     releaseServer?: () => void,
     persistSession = true,
     private readonly agentId?: string,
+    private readonly serverUrl?: string,
+    private readonly externallyDriven = false,
   ) {
     this.config = config;
     this.client = client;
@@ -2864,7 +2888,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
-    const turnId = this.activeForegroundTurnId;
+    let turnId = this.activeForegroundTurnId;
     const turnAbortController = this.abortController;
     turnAbortController?.abort();
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until
@@ -2943,14 +2967,21 @@ class OpenCodeAgentSession implements AgentSession {
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     if (this.activeForegroundTurnId) {
-      throw new Error("A foreground turn is already active");
+      if (this.activeForegroundTurnSource === "external") {
+        // A direct Paseo prompt owns the foreground; close the adopted child run first.
+        this.finishForegroundTurn(
+          { type: "turn_completed", provider: "opencode", usage: undefined },
+          this.activeForegroundTurnId,
+        );
+      } else {
+        throw new Error("A foreground turn is already active");
+      }
     }
     await this.awaitPendingAbortBeforeStartingTurn();
 
     this.runningToolCalls.clear();
     this.subAgentsByCallId.clear();
     this.subAgentCallIdByChildSessionId.clear();
-    this.pendingChildToolPartsBySessionId.clear();
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
@@ -2976,6 +3007,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
+    this.activeForegroundTurnSource = "paseo";
     this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
@@ -3141,9 +3173,68 @@ class OpenCodeAgentSession implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    this.startChildSessionHydration();
     return () => {
       this.subscribers.delete(callback);
     };
+  }
+
+  private startChildSessionHydration(): void {
+    if (this.childHydrationPromise) {
+      return;
+    }
+    const hydration = this.hydrateChildSessions().finally(() => {
+      if (this.childHydrationPromise === hydration) {
+        this.childHydrationPromise = null;
+      }
+    });
+    this.childHydrationPromise = hydration;
+    void hydration.catch((error) => {
+      this.logger.warn(
+        { err: error, sessionId: this.sessionId },
+        "OpenCode child hydration failed",
+      );
+    });
+  }
+
+  private async hydrateChildSessions(): Promise<void> {
+    const queue = [this.sessionId];
+    const visited = new Set<string>();
+    while (queue.length > 0 && visited.size < OPENCODE_CHILD_SESSION_HYDRATION_LIMIT) {
+      const parentSessionId = queue.shift();
+      if (!parentSessionId || visited.has(parentSessionId)) {
+        continue;
+      }
+      visited.add(parentSessionId);
+      const children = await listOpenCodeChildSessions(
+        this.client,
+        parentSessionId,
+        this.config.cwd,
+      );
+      for (const child of children) {
+        const events: AgentStreamEvent[] = [];
+        appendOpenCodeChildSessionDetected(child, this.createTranslationState(), events);
+        for (const event of events) {
+          this.recordProviderInternalEvent(event);
+          this.notifySubscribers(event, null);
+        }
+        if (visited.size + queue.length < OPENCODE_CHILD_SESSION_HYDRATION_LIMIT) {
+          queue.push(child.id);
+        }
+      }
+    }
+  }
+
+  private recordProviderInternalEvent(event: AgentStreamEvent): void {
+    if (event.type === "provider_child_session_detected") {
+      if (this.serverUrl) {
+        registerOpenCodeChildSessionServerUrl(event.childSessionId, this.serverUrl);
+      }
+      return;
+    }
+    if (event.type === "provider_session_deleted") {
+      unregisterOpenCodeChildSessionServerUrl(event.sessionId);
+    }
   }
 
   private startEventStream(): void {
@@ -3264,7 +3355,7 @@ class OpenCodeAgentSession implements AgentSession {
     eventCount: number;
   }): Promise<void> {
     const { rawEvent, eventCount } = params;
-    const turnId = this.activeForegroundTurnId;
+    let turnId = this.activeForegroundTurnId;
     const event = unwrapOpenCodeGlobalEvent(rawEvent);
     this.traceOpenCode("provider.opencode.raw_event", {
       turnId: turnId ?? undefined,
@@ -3277,6 +3368,18 @@ class OpenCodeAgentSession implements AgentSession {
     });
     if (!event) {
       return;
+    }
+    const translated = await this.translateEvent(event);
+    const foregroundEvents: AgentStreamEvent[] = [];
+    for (const translatedEvent of translated) {
+      if (isOpenCodeProviderInternalEvent(translatedEvent)) {
+        this.notifySubscribers(translatedEvent, null);
+      } else {
+        foregroundEvents.push(translatedEvent);
+      }
+    }
+    if (!turnId && this.shouldStartExternalDrivenTurn(event, foregroundEvents)) {
+      turnId = this.startExternalDrivenTurn();
     }
     if (!turnId) {
       this.traceOpenCode("provider.opencode.event.skip", {
@@ -3298,16 +3401,15 @@ class OpenCodeAgentSession implements AgentSession {
         return;
       }
     }
-    const translated = await this.translateEvent(event);
     this.traceOpenCode("provider.opencode.parsed_event", {
       turnId,
       n: eventCount,
-      count: translated.length,
-      types: translated.map((t) => t.type),
-      events: translated,
+      count: foregroundEvents.length,
+      types: foregroundEvents.map((t) => t.type),
+      events: foregroundEvents,
     });
 
-    for (const e of translated) {
+    for (const e of foregroundEvents) {
       if (this.activeForegroundTurnId !== turnId) {
         this.traceOpenCode("provider.opencode.parsed_event.skip_active", { turnId, type: e.type });
         return;
@@ -3326,6 +3428,39 @@ class OpenCodeAgentSession implements AgentSession {
       }
       this.notifySubscribers(e, turnId);
     }
+  }
+
+  private shouldStartExternalDrivenTurn(
+    event: OpenCodeEvent,
+    foregroundEvents: readonly AgentStreamEvent[],
+  ): boolean {
+    if (!this.externallyDriven) {
+      return false;
+    }
+    if (this.activeForegroundTurnId) {
+      return false;
+    }
+    if (foregroundEvents.some((foregroundEvent) => !toTerminalTurnEvent(foregroundEvent))) {
+      return true;
+    }
+    return (
+      event.type === "session.status" &&
+      event.properties.sessionID === this.sessionId &&
+      event.properties.status.type === "busy"
+    );
+  }
+
+  private startExternalDrivenTurn(): string {
+    const turnId = this.createTurnId();
+    this.activeForegroundTurnId = turnId;
+    this.activeForegroundTurnSource = "external";
+    this.runningToolCalls.clear();
+    this.subAgentsByCallId.clear();
+    this.subAgentCallIdByChildSessionId.clear();
+    this.pendingUserMessageText = null;
+    this.abortController = null;
+    this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
+    return turnId;
   }
 
   private finishForegroundTurn(
@@ -3349,6 +3484,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
     this.pendingUserMessageText = null;
     this.activeForegroundTurnId = null;
+    this.activeForegroundTurnSource = null;
     this.abortController = null;
     this.notifySubscribers(event, turnId);
   }
@@ -3389,11 +3525,11 @@ class OpenCodeAgentSession implements AgentSession {
     this.runningToolCalls.clear();
   }
 
-  private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string): void {
+  private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string | null): void {
     if (this.closed) {
       return;
     }
-    const turnId = turnIdOverride ?? this.activeForegroundTurnId;
+    const turnId = turnIdOverride === null ? null : (turnIdOverride ?? this.activeForegroundTurnId);
     const tagged = turnId ? { ...event, turnId } : event;
     this.traceOpenCode("provider.opencode.event_emit", {
       turnId: getAgentStreamEventTurnId(tagged),
@@ -3569,6 +3705,12 @@ class OpenCodeAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     try {
+      await this.childHydrationPromise?.catch((error) => {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId },
+          "OpenCode child hydration failed",
+        );
+      });
       // Flip closed before clearing subscribers so any event the SDK delivers
       // after the abort (between here and subscribers.clear) is swallowed by
       // notifySubscribers instead of bubbling through provider-runner as an
@@ -3736,8 +3878,8 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
-    const translated = translateOpenCodeEvent(event, {
+  private createTranslationState(): OpenCodeEventTranslationState {
+    return {
       sessionId: this.sessionId,
       cwd: this.config.cwd,
       messageRoles: this.messageRoles,
@@ -3753,7 +3895,7 @@ class OpenCodeAgentSession implements AgentSession {
       partTypes: this.partTypes,
       subAgentsByCallId: this.subAgentsByCallId,
       subAgentCallIdByChildSessionId: this.subAgentCallIdByChildSessionId,
-      pendingChildToolPartsBySessionId: this.pendingChildToolPartsBySessionId,
+      knownChildSessionIds: this.knownChildSessionIds,
       modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
       onAssistantModelContextWindowResolved: (contextWindowMaxTokens) => {
         this.accumulatedUsage.contextWindowMaxTokens = contextWindowMaxTokens;
@@ -3761,7 +3903,11 @@ class OpenCodeAgentSession implements AgentSession {
           this.selectedModelContextWindowMaxTokens = contextWindowMaxTokens;
         }
       },
-    });
+    };
+  }
+
+  private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
+    const translated = translateOpenCodeEvent(event, this.createTranslationState());
 
     const events: AgentStreamEvent[] = [];
     if (typeof this.accumulatedUsage.totalCostUsd === "number") {
@@ -3772,6 +3918,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     for (const translatedEvent of translated) {
+      this.recordProviderInternalEvent(translatedEvent);
       if (translatedEvent.type === "permission_requested") {
         const autoApproved = await this.tryAutoApproveToolPermission(translatedEvent.request);
         if (autoApproved) {
