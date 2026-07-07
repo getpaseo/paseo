@@ -10,10 +10,12 @@ const { theme } = vi.hoisted(() => ({
     spacing: { 0: 0, 3: 12, 4: 16, 6: 24 },
     fontSize: { xs: 12, sm: 14, base: 16 },
     borderRadius: { md: 6, lg: 8, xl: 12 },
+    borderWidth: { 1: 1 },
     colors: {
       surface3: "#333",
       accent: "#0a84ff",
       accentForeground: "#fff",
+      borderAccent: "#555",
       palette: { white: "#fff" },
     },
   },
