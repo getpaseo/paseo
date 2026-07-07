@@ -21,6 +21,8 @@ Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Age
 
 `relationship: { kind: "subagent" }` stamps the created agent with `paseo.parent-agent-id`, pointing back at the creating agent. The client surfaces that as `agent.parentAgentId`. This requires an agent-scoped MCP session.
 
+OpenCode can also create provider-native child sessions from its own task tool or plugins. The OpenCode adapter eagerly adopts those child sessions as Paseo subagents with the same parent label. Adopted children attach to the parent's OpenCode helper server so live events, tool activity, and permission requests keep streaming from the server that spawned them. When OpenCode reports the provider session deleted, Paseo archives the adopted subagent. Parent inline `sub_agent` tool rows stay as lightweight pointers; the child action log lives on the adopted child agent, not inside the parent row.
+
 `relationship: { kind: "detached" }` creates a sibling/root agent (e.g. handoffs, fire-and-forget delegations). The daemon may still use the creating agent for cwd/config inheritance, but it does not write `paseo.parent-agent-id`.
 
 - **Subagents** — exist as part of the creating agent's work, appear in that agent's subagent track, and are archived with it.
