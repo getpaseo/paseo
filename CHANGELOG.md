@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.104-beta.3 - 2026-07-04
+## 0.1.104-beta.4 - 2026-07-06
 
 ### Added
 
@@ -14,6 +14,7 @@
 
 ### Improved
 
+- Large provider and model refreshes load faster in the app ([#1895](https://github.com/getpaseo/paseo/pull/1895))
 - Workspaces created by agents now get readable generated names ([#1887](https://github.com/getpaseo/paseo/pull/1887))
 - Browser tabs opened by agents stay in the background until you switch to them ([#1875](https://github.com/getpaseo/paseo/pull/1875))
 - Clearer cards when an agent asks a question ([#1643](https://github.com/getpaseo/paseo/pull/1643) by [@cleiter](https://github.com/cleiter))

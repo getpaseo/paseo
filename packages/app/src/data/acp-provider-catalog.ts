@@ -341,7 +341,7 @@ const CATALOG_DATA = [
     description: "ByteDance's official TRAE coding agent with native ACP support",
     version: "manual",
     iconId: "traecli",
-    installLink: "https://docs.trae.cn/cli",
+    installLink: "https://docs.trae.cn/cli_get-started-with-trae-cli",
     command: ["traecli", "acp", "serve"],
   },
   {

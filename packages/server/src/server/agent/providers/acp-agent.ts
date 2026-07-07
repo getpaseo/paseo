@@ -102,7 +102,11 @@ import {
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
-import { platformShell, spawnProcess } from "../../../utils/spawn.js";
+import {
+  buildStringCommandShellInvocation,
+  createStringCommandShellEnvOverlay,
+} from "../../../utils/string-command-shell.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
@@ -181,7 +185,7 @@ function toACPRequestError(error: unknown): Error {
 function resolveTerminalCommand(
   command: string,
   args?: string[],
-): { command: string; args: string[] } {
+): { command: string; args: string[]; shell?: boolean } {
   if (args && args.length > 0) {
     return { command, args };
   }
@@ -190,8 +194,8 @@ function resolveTerminalCommand(
     return { command, args: [] };
   }
 
-  const shell = platformShell();
-  return { command: shell.command, args: [...shell.flag, command] };
+  const shell = buildStringCommandShellInvocation({ command, windowsShell: "cmd" });
+  return { command: shell.shell, args: shell.args, shell: false };
 }
 
 function formatDurationMs(startedAt: number): string {
@@ -2159,12 +2163,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
     );
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
+    const commandEnvOverlays =
+      terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
     const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: [env],
+        overlays: commandEnvOverlays,
       }),
+      shell: terminalCommand.shell,
       stdio: ["ignore", "pipe", "pipe"],
     });
 

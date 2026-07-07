@@ -178,6 +178,15 @@ defaults. The default rotation is `10m` x `3` files everywhere.
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
 of commands. Both run sequentially.
 
+Lifecycle commands run in the worktree through a stable script shell: `bash`
+resolved from `PATH` on macOS/Linux, and PowerShell with `-NoProfile` on
+Windows. They inherit the daemon environment plus Paseo's lifecycle variables;
+login and interactive shell startup files are not loaded, and Bash's `BASH_ENV`
+hook is unset. Daemon-run loop verify checks and ACP single-string terminal
+commands use the same non-login Bash behavior on macOS/Linux, but preserve their
+existing `cmd.exe /c` string semantics on Windows. Service scripts are separate:
+they launch in a terminal and receive the service environment described below.
+
 ```json
 {
   "worktree": {

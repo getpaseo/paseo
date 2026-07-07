@@ -46,6 +46,7 @@ import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
 
@@ -540,7 +541,10 @@ describe("ACPAgentSession terminal tools", () => {
     const child = createTerminalChildStub();
     const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
     const session = createSession();
-    const shell = spawnUtils.platformShell();
+    const shell = buildStringCommandShellInvocation({
+      command: "git -C /repo status --short",
+      windowsShell: "cmd",
+    });
 
     await session.createTerminal({
       sessionId: "session-1",
@@ -549,10 +553,48 @@ describe("ACPAgentSession terminal tools", () => {
     });
 
     expect(spawn).toHaveBeenCalledWith(
-      shell.command,
-      [...shell.flag, "git -C /repo status --short"],
-      expect.objectContaining({ cwd: "/repo" }),
+      shell.shell,
+      shell.args,
+      expect.objectContaining({
+        cwd: "/repo",
+        envOverlay: expect.objectContaining({ BASH_ENV: undefined }),
+        shell: false,
+      }),
     );
+  });
+
+  test("preserves cmd semantics for single-string terminal commands on Windows", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    try {
+      const child = createTerminalChildStub();
+      const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+      const session = createSession();
+
+      await session.createTerminal({
+        sessionId: "session-1",
+        command: "echo %TEMP% && echo ok",
+        cwd: "C:\\repo",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "cmd.exe",
+        ["/c", "echo %TEMP% && echo ok"],
+        expect.objectContaining({
+          cwd: "C:\\repo",
+          envOverlay: expect.objectContaining({ BASH_ENV: undefined }),
+          shell: false,
+        }),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   test("preserves explicit terminal argv", async () => {
