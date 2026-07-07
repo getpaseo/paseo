@@ -69,6 +69,22 @@ describe("formatCaughtValue", () => {
     expect(details).toContain("Cause:\n[Circular Error]");
   });
 
+  it("returns fallback details when Error properties throw", () => {
+    const error = new Error("fallback");
+    Object.defineProperty(error, "message", {
+      configurable: true,
+      get() {
+        throw new Error("bad message getter");
+      },
+    });
+
+    const details = formatCaughtValue(error);
+
+    expect(details).toContain("[Unserializable value]");
+    expect(details).toContain("Details unavailable:");
+    expect(details).toContain("Error: bad message getter");
+  });
+
   it("renders string thrown values as the string", () => {
     expect(formatCaughtValue("plain failure")).toBe("plain failure");
   });

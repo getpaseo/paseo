@@ -1,5 +1,9 @@
 export function formatCaughtValue(value: unknown): string {
-  return formatCaughtValueWithSeenErrors(value, new WeakSet<Error>());
+  try {
+    return formatCaughtValueWithSeenErrors(value, new WeakSet<Error>());
+  } catch (formattingError) {
+    return formatFormattingFailure(value, formattingError);
+  }
 }
 
 function formatCaughtValueWithSeenErrors(value: unknown, seenErrors: WeakSet<Error>): string {
@@ -139,4 +143,13 @@ function safeString(value: unknown): string {
   } catch {
     return "[Unserializable value]";
   }
+}
+
+function formatFormattingFailure(value: unknown, formattingError: unknown): string {
+  const valueText = safeString(value);
+  const formattingErrorText = safeString(formattingError);
+  if (formattingErrorText === "[Unserializable value]") {
+    return valueText;
+  }
+  return `${valueText}\n\nDetails unavailable:\n${formattingErrorText}`;
 }
