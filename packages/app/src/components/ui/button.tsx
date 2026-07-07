@@ -16,10 +16,16 @@ import type {
   TextStyle,
   ViewStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import {
+  buttonIconSize,
+  createControlGeometry,
+  type ButtonControlSize,
+} from "@/components/ui/control-geometry";
+import type { Theme } from "@/styles/theme";
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
-type ButtonSize = "xs" | "sm" | "md" | "lg";
+type ButtonSize = ButtonControlSize;
 
 type LeftIcon =
   | ReactElement
@@ -27,85 +33,130 @@ type LeftIcon =
   | ((color: string) => ReactElement)
   | null;
 
-const ICON_SIZE: Record<ButtonSize, number> = { xs: 12, sm: 14, md: 16, lg: 20 };
+interface ButtonIconProps {
+  loading: boolean;
+  leftIcon?: LeftIcon;
+  iconSize: number;
+  iconColor: string;
+}
 
-const styles = StyleSheet.create((theme) => ({
-  base: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: "transparent",
-  },
-  md: {
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[4],
-  },
-  xs: {
-    minHeight: 28,
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-  },
-  sm: {
-    paddingVertical: theme.spacing[1.5],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-  },
-  lg: {
-    paddingVertical: theme.spacing[4],
-    paddingHorizontal: theme.spacing[6],
-    borderRadius: theme.borderRadius.xl,
-  },
-  default: {
-    backgroundColor: theme.colors.accent,
-    borderColor: theme.colors.accent,
-  },
-  secondary: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.surface3,
-  },
-  outline: {
-    backgroundColor: "transparent",
-    borderColor: theme.colors.borderAccent,
-  },
-  ghost: {
-    backgroundColor: "transparent",
-    borderColor: "transparent",
-  },
-  destructive: {
-    backgroundColor: theme.colors.destructive,
-    borderColor: theme.colors.destructive,
-  },
-  pressed: {
-    opacity: 0.85,
-  },
-  disabled: {
-    opacity: theme.opacity[50],
-  },
-  text: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
-  },
-  textXs: {
-    fontSize: theme.fontSize.xs,
-  },
-  textDefault: {
-    color: theme.colors.accentForeground,
-  },
-  textDestructive: {
-    color: theme.colors.destructiveForeground,
-  },
-  textGhost: {
-    color: theme.colors.foregroundMuted,
-  },
-  textGhostHovered: {
-    color: theme.colors.foreground,
-  },
-}));
+function ButtonIcon({ loading, leftIcon, iconSize, iconColor }: ButtonIconProps) {
+  if (loading) {
+    return (
+      <View>
+        <ActivityIndicator size="small" color={iconColor} />
+      </View>
+    );
+  }
+
+  if (!leftIcon) return null;
+
+  if (typeof leftIcon === "object" && "type" in leftIcon) {
+    return <View>{leftIcon}</View>;
+  }
+
+  if (
+    typeof leftIcon === "function" &&
+    !leftIcon.prototype?.isReactComponent &&
+    leftIcon.length > 0
+  ) {
+    return <View>{(leftIcon as (color: string) => ReactElement)(iconColor)}</View>;
+  }
+
+  const Icon = leftIcon as ComponentType<{ color: string; size: number }>;
+  return (
+    <View>
+      <Icon color={iconColor} size={iconSize} />
+    </View>
+  );
+}
+
+const ThemedButtonIcon = withUnistyles(ButtonIcon);
+
+const foregroundIconMapping = (theme: Theme) => ({ iconColor: theme.colors.foreground });
+const foregroundMutedIconMapping = (theme: Theme) => ({
+  iconColor: theme.colors.foregroundMuted,
+});
+const accentForegroundIconMapping = (theme: Theme) => ({
+  iconColor: theme.colors.accentForeground,
+});
+const destructiveForegroundIconMapping = (theme: Theme) => ({
+  iconColor: theme.colors.destructiveForeground,
+});
+
+const styles = StyleSheet.create((theme) => {
+  const geometry = createControlGeometry(theme);
+
+  return {
+    base: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: theme.spacing[2],
+      borderRadius: theme.borderRadius.lg,
+      borderWidth: 1,
+      borderColor: "transparent",
+    },
+    md: {
+      ...geometry.buttonMd,
+    },
+    xs: {
+      ...geometry.buttonXs,
+    },
+    sm: {
+      ...geometry.buttonSm,
+    },
+    lg: {
+      ...geometry.buttonLg,
+    },
+    default: {
+      backgroundColor: theme.colors.accent,
+      borderColor: theme.colors.accent,
+    },
+    secondary: {
+      backgroundColor: theme.colors.surface3,
+      borderColor: theme.colors.surface3,
+    },
+    outline: {
+      backgroundColor: "transparent",
+      borderColor: theme.colors.borderAccent,
+    },
+    ghost: {
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+    },
+    destructive: {
+      backgroundColor: theme.colors.destructive,
+      borderColor: theme.colors.destructive,
+    },
+    pressed: {
+      opacity: 0.85,
+    },
+    disabled: {
+      opacity: theme.opacity[50],
+    },
+    text: {
+      color: theme.colors.foreground,
+      ...geometry.buttonText,
+      fontWeight: theme.fontWeight.normal,
+    },
+    textXs: {
+      ...geometry.buttonTextXs,
+    },
+    textDefault: {
+      color: theme.colors.accentForeground,
+    },
+    textDestructive: {
+      color: theme.colors.destructiveForeground,
+    },
+    textGhost: {
+      color: theme.colors.foregroundMuted,
+    },
+    textGhostHovered: {
+      color: theme.colors.foreground,
+    },
+  };
+});
 
 export function Button({
   children,
@@ -118,6 +169,7 @@ export function Button({
   disabled,
   loading = false,
   accessibilityRole,
+  accessibilityState: accessibilityStateProp,
   ...props
 }: PropsWithChildren<
   Omit<PressableProps, "style"> & {
@@ -131,7 +183,6 @@ export function Button({
   }
 >) {
   const [hovered, setHovered] = useState(false);
-  const { theme } = useUnistyles();
   const isDisabled = disabled || loading;
 
   let variantStyle: ViewStyle;
@@ -188,55 +239,21 @@ export function Button({
   );
 
   const accessibilityState = useMemo(
-    () => ({ disabled: isDisabled, busy: loading }),
-    [isDisabled, loading],
+    () => ({ ...accessibilityStateProp, disabled: isDisabled, busy: loading }),
+    [accessibilityStateProp, isDisabled, loading],
   );
 
-  function resolveIconColor(): string {
+  function resolveIconMapping() {
     if (variant === "default") {
-      return theme.colors.accentForeground;
+      return accentForegroundIconMapping;
+    }
+    if (variant === "destructive") {
+      return destructiveForegroundIconMapping;
     }
     if (variant === "ghost") {
-      return isGhostHovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+      return isGhostHovered ? foregroundIconMapping : foregroundMutedIconMapping;
     }
-    return theme.colors.foreground;
-  }
-
-  function renderIcon() {
-    if (loading) {
-      return (
-        <View>
-          <ActivityIndicator size="small" color={resolveIconColor()} />
-        </View>
-      );
-    }
-
-    if (!leftIcon) return null;
-
-    // Pre-rendered element — pass through
-    if (typeof leftIcon === "object" && "type" in leftIcon) {
-      return <View>{leftIcon}</View>;
-    }
-
-    const color = resolveIconColor();
-    const iconSize = ICON_SIZE[size];
-
-    // Render function
-    if (
-      typeof leftIcon === "function" &&
-      !leftIcon.prototype?.isReactComponent &&
-      leftIcon.length > 0
-    ) {
-      return <View>{(leftIcon as (color: string) => ReactElement)(color)}</View>;
-    }
-
-    // Component type
-    const Icon = leftIcon as ComponentType<{ color: string; size: number }>;
-    return (
-      <View>
-        <Icon color={color} size={iconSize} />
-      </View>
-    );
+    return foregroundIconMapping;
   }
 
   return (
@@ -249,7 +266,12 @@ export function Button({
       onHoverOut={handleHoverOut}
       style={pressableStyle}
     >
-      {renderIcon()}
+      <ThemedButtonIcon
+        loading={loading}
+        leftIcon={leftIcon}
+        iconSize={buttonIconSize[size]}
+        uniProps={resolveIconMapping()}
+      />
       {children != null ? <Text style={resolvedTextStyle}>{children}</Text> : null}
       {trailing}
     </Pressable>

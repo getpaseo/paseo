@@ -85,6 +85,7 @@ describe("interval formatting", () => {
 
 describe("describeCron", () => {
   it("humanizes common fixed-time cron shapes", () => {
+    expect(describeCron({ type: "cron", expression: "* * * * *" })).toBe("Every minute");
     expect(describeCron({ type: "cron", expression: "0 * * * *" })).toBe("Every hour");
     expect(describeCron({ type: "cron", expression: "15 * * * *" })).toBe("Every hour at :15");
     expect(describeCron({ type: "cron", expression: "0 9 * * *" })).toBe("Daily at 09:00 UTC");

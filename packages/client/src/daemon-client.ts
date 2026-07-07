@@ -681,6 +681,8 @@ export interface CreateScheduleOptions {
           modeId?: string;
           model?: string;
           thinkingOptionId?: string;
+          archiveOnFinish?: boolean;
+          isolation?: "local" | "worktree";
           title?: string | null;
           approvalPolicy?: string;
           sandboxMode?: string;
@@ -704,6 +706,9 @@ export interface UpdateScheduleNewAgentConfig {
   provider?: string;
   model?: string | null;
   modeId?: string | null;
+  thinkingOptionId?: string | null;
+  archiveOnFinish?: boolean;
+  isolation?: "local" | "worktree";
   cwd?: string;
 }
 export interface UpdateScheduleOptions {

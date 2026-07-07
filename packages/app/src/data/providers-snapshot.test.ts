@@ -5,7 +5,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
   providersSnapshotRequestOptions,
-} from "./providers-snapshot-query";
+} from "@/data/providers-snapshot";
 
 describe("providers snapshot query scope", () => {
   it("normalizes blank cwd values to the home scope", () => {

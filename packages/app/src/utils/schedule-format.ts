@@ -106,6 +106,10 @@ export function describeCron(cadence: CronCadence): string | null {
   const isWildcardMonth = month === "*";
   const isWildcardDom = dayOfMonth === "*";
 
+  if (minute === "*" && hour === "*" && isWildcardMonth && isWildcardDom && dayOfWeek === "*") {
+    return "Every minute";
+  }
+
   if (!isLiteralMinute || !isWildcardMonth || !isWildcardDom) {
     return null;
   }
@@ -123,21 +127,23 @@ export function describeCron(cadence: CronCadence): string | null {
   }
   const time = `${pad2(Number.parseInt(hour, 10))}:${pad2(minuteNum)}`;
   const timezone = cadence.timezone ?? "UTC";
+  const dayLabel = describeCronDay(dayOfWeek);
+  return dayLabel ? `${dayLabel} at ${time} ${timezone}` : null;
+}
 
+function describeCronDay(dayOfWeek: string): string | null {
   if (dayOfWeek === "*") {
-    return `Daily at ${time} ${timezone}`;
+    return "Daily";
   }
   if (dayOfWeek === "1-5") {
-    return `Weekdays at ${time} ${timezone}`;
+    return "Weekdays";
   }
   if (dayOfWeek === "0,6" || dayOfWeek === "6,0") {
-    return `Weekends at ${time} ${timezone}`;
+    return "Weekends";
   }
   if (/^\d$/.test(dayOfWeek)) {
     const day = DAY_NAMES[Number.parseInt(dayOfWeek, 10)];
-    if (day) {
-      return `${day}s at ${time} ${timezone}`;
-    }
+    return day ? `${day}s` : null;
   }
   return null;
 }

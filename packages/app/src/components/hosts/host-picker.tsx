@@ -162,7 +162,7 @@ export interface HostPickerProps {
   onOpenHostSettings?: (serverId: string) => void;
   searchable?: boolean;
   title?: string;
-  desktopPlacement?: "top-start" | "bottom-start";
+  desktopPlacement?: ComboboxProps["desktopPlacement"];
   desktopMinWidth?: number;
   addHostTestID?: string;
   hostOptionTestID?: (serverId: string) => string;
@@ -183,7 +183,7 @@ export function HostPicker({
   onOpenHostSettings,
   searchable,
   title,
-  desktopPlacement = "top-start",
+  desktopPlacement = "bottom-start",
   desktopMinWidth,
   addHostTestID,
   hostOptionTestID,

@@ -8,9 +8,10 @@ import {
 } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
-import { Plus } from "lucide-react-native";
+import { CalendarClock, Plus } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { MenuHeader } from "@/components/headers/menu-header";
+import { ExternalLink } from "@/components/ui/external-link";
 import { HostFilter } from "@/components/hosts/host-filter";
 import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { ScheduleFormSheet } from "@/components/schedules/schedule-form-sheet";
@@ -22,6 +23,7 @@ import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
 import {
   useSchedules,
+  type AggregateLoadState,
   type AggregatedSchedule,
   type ScheduleHostError,
 } from "@/hooks/use-schedules";
@@ -47,6 +49,8 @@ const STATUS_FILTER_OPTIONS: { value: ScheduleBucket; label: string; testID: str
   { value: "ended", label: "Ended", testID: "schedules-filter-ended" },
 ];
 
+const EMPTY_SCHEDULES: AggregatedSchedule[] = [];
+
 export function SchedulesScreen(): ReactElement {
   const isFocused = useIsFocused();
 
@@ -58,7 +62,8 @@ export function SchedulesScreen(): ReactElement {
 }
 
 function SchedulesScreenContent(): ReactElement {
-  const { schedules, hostErrors, isInitialLoad, isError, refetch } = useSchedules();
+  const { loadState, hostErrors, isError, refetch } = useSchedules();
+  const schedules = loadState.status === "loaded" ? loadState.data : EMPTY_SCHEDULES;
   const { agents } = useAggregatedAgents({ includeArchived: true });
   const { projects } = useProjects();
   const hosts = useHosts();
@@ -154,7 +159,7 @@ function SchedulesScreenContent(): ReactElement {
       }));
   }, [resolvedRows, selectedHost, statusFilter, hosts.length]);
 
-  const showLoadError = isError && schedules.length === 0;
+  const showLoadError = isError && loadState.status !== "loaded";
   const showHostFilter = hosts.length > 1;
 
   return (
@@ -162,9 +167,8 @@ function SchedulesScreenContent(): ReactElement {
       <MenuHeader title="Schedules" />
       <SchedulesScreenBody
         rows={visibleRows}
+        loadState={loadState}
         hostErrors={hostErrors}
-        hasSchedules={schedules.length > 0}
-        isInitialLoad={isInitialLoad}
         showLoadError={showLoadError}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
@@ -189,9 +193,8 @@ function SchedulesScreenContent(): ReactElement {
 
 function SchedulesScreenBody({
   rows,
+  loadState,
   hostErrors,
-  hasSchedules,
-  isInitialLoad,
   showLoadError,
   statusFilter,
   onStatusFilterChange,
@@ -204,9 +207,8 @@ function SchedulesScreenBody({
   onEdit,
 }: {
   rows: ScheduleRowView[];
+  loadState: AggregateLoadState<AggregatedSchedule>;
   hostErrors: ScheduleHostError[];
-  hasSchedules: boolean;
-  isInitialLoad: boolean;
   showLoadError: boolean;
   statusFilter: ScheduleBucket;
   onStatusFilterChange: (value: ScheduleBucket) => void;
@@ -218,7 +220,7 @@ function SchedulesScreenBody({
   onCreate: () => void;
   onEdit: (schedule: AggregatedSchedule) => void;
 }): ReactElement {
-  if (isInitialLoad) {
+  if (loadState.status === "connecting" || loadState.status === "loading") {
     return (
       <View style={styles.centered}>
         <LoadingSpinner size="large" color={styles.spinner.color} />
@@ -237,19 +239,27 @@ function SchedulesScreenBody({
     );
   }
 
-  if (!hasSchedules) {
+  if (loadState.data.length === 0) {
     return (
-      <View style={styles.centered} testID="schedules-empty">
+      <View style={styles.centered}>
         {hostErrors.length > 0 ? <ScheduleHostErrorsBanner errors={hostErrors} /> : null}
-        <Text style={styles.message}>No schedules yet</Text>
-        <Button variant="ghost" leftIcon={Plus} onPress={onCreate} testID="schedules-empty-new">
-          Create a schedule
-        </Button>
+        <SchedulesEmptyState onCreate={onCreate} testID="schedules-empty" />
       </View>
     );
   }
 
-  const emptyFilterText = statusFilter === "ended" ? "No ended schedules" : "No active schedules";
+  let schedulesContent: ReactElement;
+  if (rows.length > 0) {
+    schedulesContent = <SchedulesTable rows={rows} onEditSchedule={onEdit} />;
+  } else if (statusFilter === "ended") {
+    schedulesContent = <SchedulesEndedEmptyState />;
+  } else {
+    schedulesContent = (
+      <View style={styles.filterEmpty}>
+        <SchedulesEmptyState onCreate={onCreate} testID="schedules-empty" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.body}>
@@ -271,7 +281,13 @@ function SchedulesScreenBody({
             testID="schedules-status-filter"
           />
         </View>
-        <Button leftIcon={Plus} onPress={onCreate} size="sm" testID="schedules-new">
+        <Button
+          variant="outline"
+          leftIcon={Plus}
+          onPress={onCreate}
+          size="sm"
+          testID="schedules-new"
+        >
           New schedule
         </Button>
       </View>
@@ -283,14 +299,41 @@ function SchedulesScreenBody({
         testID="schedules-list"
       >
         {hostErrors.length > 0 ? <ScheduleHostErrorsBanner errors={hostErrors} /> : null}
-        {rows.length > 0 ? (
-          <SchedulesTable rows={rows} onEditSchedule={onEdit} />
-        ) : (
-          <View style={styles.filterEmpty}>
-            <Text style={styles.filterEmptyText}>{emptyFilterText}</Text>
-          </View>
-        )}
+        {schedulesContent}
       </ScrollView>
+    </View>
+  );
+}
+
+function SchedulesEmptyState({
+  onCreate,
+  testID,
+}: {
+  onCreate: () => void;
+  testID?: string;
+}): ReactElement {
+  return (
+    <View style={styles.emptyState} testID={testID}>
+      <CalendarClock size={styles.emptyIcon.width} color={styles.emptyIcon.color} />
+      <View style={styles.emptyTextStack}>
+        <Text style={styles.emptyTitle}>No active schedules</Text>
+        <Text style={styles.emptyDescription}>Schedules run agents on a cadence.</Text>
+        <ExternalLink href="https://paseo.sh/docs/schedules" label="See docs" />
+      </View>
+      <Button variant="outline" leftIcon={Plus} onPress={onCreate} testID="schedules-empty-new">
+        New schedule
+      </Button>
+    </View>
+  );
+}
+
+function SchedulesEndedEmptyState(): ReactElement {
+  return (
+    <View style={styles.filterEmpty}>
+      <View style={styles.endedEmptyState}>
+        <CalendarClock size={styles.emptyIcon.width} color={styles.emptyIcon.color} />
+        <Text style={styles.emptyTitle}>No ended schedules</Text>
+      </View>
     </View>
   );
 }
@@ -345,6 +388,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   scrollContent: {
+    flexGrow: 1,
     gap: theme.spacing[3],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[6],
@@ -364,13 +408,36 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   filterEmpty: {
+    flexGrow: 1,
     paddingHorizontal: { xs: theme.spacing[3], md: theme.spacing[6] },
     paddingVertical: theme.spacing[6],
     alignItems: "center",
+    justifyContent: "center",
   },
-  filterEmptyText: {
+  emptyState: {
+    alignItems: "center",
+    gap: theme.spacing[4],
+    maxWidth: 420,
+    width: "100%",
+  },
+  endedEmptyState: {
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  emptyTextStack: {
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  emptyTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    textAlign: "center",
+  },
+  emptyDescription: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    textAlign: "center",
   },
   message: {
     color: theme.colors.foregroundMuted,
@@ -381,5 +448,9 @@ const styles = StyleSheet.create((theme) => ({
   // useUnistyles (banned in new code).
   spinner: {
     color: theme.colors.foregroundMuted,
+  },
+  emptyIcon: {
+    color: theme.colors.foregroundMuted,
+    width: theme.iconSize.lg,
   },
 }));

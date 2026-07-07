@@ -12,11 +12,11 @@ import type {
   UpdateScheduleOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { schedulesQueryBaseKey } from "@/hooks/use-schedules";
 import type {
   AggregatedSchedule,
   FetchAggregatedSchedulesResult,
 } from "@/schedules/aggregated-schedules";
+import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { useSessionStore } from "@/stores/session-store";
 
 export type CreateScheduleInput = Omit<CreateScheduleOptions, "requestId">;
@@ -39,6 +39,16 @@ export interface UseScheduleMutationsResult {
 
 interface ScheduleListSnapshot {
   previous: Array<[QueryKey, FetchAggregatedSchedulesResult | undefined]>;
+}
+
+export function updateAggregatedSchedulesData(
+  current: FetchAggregatedSchedulesResult | undefined,
+  updateSchedules: (schedules: AggregatedSchedule[]) => AggregatedSchedule[],
+): FetchAggregatedSchedulesResult | undefined {
+  if (!current) {
+    return current;
+  }
+  return { ...current, data: updateSchedules(current.data) };
 }
 
 function requireClient(serverId: string, unavailableMessage: string): DaemonClient {
@@ -69,12 +79,7 @@ function updateSchedulesData(
 ): void {
   queryClient.setQueriesData<FetchAggregatedSchedulesResult>(
     { queryKey: schedulesQueryBaseKey },
-    (current) => {
-      if (!current) {
-        return current;
-      }
-      return { ...current, schedules: updateSchedules(current.schedules) };
-    },
+    (current) => updateAggregatedSchedulesData(current, updateSchedules),
   );
 }
 

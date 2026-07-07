@@ -58,10 +58,9 @@ function targetIdentity(target: ScheduleTarget): unknown {
     };
   }
 
-  const { workspaceId: _workspaceId, ...config } = target.config;
   return {
     type: target.type,
-    config,
+    config: target.config,
   };
 }
 
