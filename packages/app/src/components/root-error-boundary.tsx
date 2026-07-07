@@ -1,20 +1,8 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Localization from "expo-localization";
-import React, {
-  Component,
-  Fragment,
-  useEffect,
-  useState,
-  type ErrorInfo,
-  type ReactNode,
-} from "react";
+import React, { Component, Fragment, type ErrorInfo, type ReactNode } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { PressableStateCallbackType, StyleProp, ViewStyle } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { isWeb } from "@/constants/platform";
-import { APP_SETTINGS_KEY, DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
-import { i18n } from "@/i18n/i18next";
-import { parseAppLanguage, resolveSupportedLocale } from "@/i18n/locales";
 import { formatCaughtValue } from "./root-error-details";
 
 interface RootErrorBoundaryProps {
@@ -66,7 +54,7 @@ interface RootErrorFallbackProps {
 }
 
 function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
-  const copy = useRootErrorCopy();
+  const { t } = useTranslation();
 
   return (
     <ScrollView
@@ -75,11 +63,11 @@ function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
       testID="root-error-boundary"
     >
       <View style={styles.content}>
-        <Text style={styles.kicker}>{copy.kicker}</Text>
-        <Text style={styles.title}>{copy.title}</Text>
-        <Text style={styles.body}>{copy.body}</Text>
+        <Text style={styles.kicker}>{t("rootError.kicker")}</Text>
+        <Text style={styles.title}>{t("rootError.title")}</Text>
+        <Text style={styles.body}>{t("rootError.body")}</Text>
         <View style={styles.messageBox}>
-          <Text style={styles.messageLabel}>{copy.details}</Text>
+          <Text style={styles.messageLabel}>{t("rootError.details")}</Text>
           <Text style={styles.message}>{error}</Text>
         </View>
         <Pressable
@@ -88,68 +76,11 @@ function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
           style={retryButtonStyle}
           testID="root-error-boundary-retry"
         >
-          <Text style={styles.retryButtonText}>{copy.retry}</Text>
+          <Text style={styles.retryButtonText}>{t("common.actions.retry")}</Text>
         </Pressable>
       </View>
     </ScrollView>
   );
-}
-
-function useRootErrorCopy() {
-  const [, setLanguageVersion] = useState(i18n.language);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void loadRootErrorLocale()
-      .then((locale) => {
-        if (i18n.language === locale) {
-          return;
-        }
-        return i18n.changeLanguage(locale);
-      })
-      .catch((error) => {
-        console.error("[RootErrorBoundary] Failed to localize recovery screen", error);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLanguageVersion(i18n.language);
-        }
-      });
-
-    const handleLanguageChanged = () => {
-      setLanguageVersion(i18n.language);
-    };
-    i18n.on("languageChanged", handleLanguageChanged);
-
-    return () => {
-      cancelled = true;
-      i18n.off("languageChanged", handleLanguageChanged);
-    };
-  }, []);
-
-  return {
-    kicker: i18n.t("rootError.kicker"),
-    title: i18n.t("rootError.title"),
-    body: i18n.t("rootError.body"),
-    details: i18n.t("rootError.details"),
-    retry: i18n.t("common.actions.retry"),
-  };
-}
-
-async function loadRootErrorLocale() {
-  const stored = await AsyncStorage.getItem(APP_SETTINGS_KEY);
-  const parsed = stored ? (JSON.parse(stored) as { language?: unknown }) : {};
-  const language = parseAppLanguage(parsed.language) ?? DEFAULT_CLIENT_SETTINGS.language;
-  return resolveSupportedLocale(language, getSystemLocales());
-}
-
-function getSystemLocales(): string[] {
-  if (isWeb && typeof navigator !== "undefined" && navigator.languages.length > 0) {
-    return [...navigator.languages];
-  }
-
-  return Localization.getLocales().map((locale) => locale.languageTag);
 }
 
 function retryButtonStyle({ pressed }: PressableStateCallbackType): StyleProp<ViewStyle> {

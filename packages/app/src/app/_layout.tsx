@@ -999,43 +999,49 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
   );
 }
 
-// PortalProvider must stay inside normal app-wide context providers here.
+// PortalProvider must stay inside normal app-wide context providers.
 // `@gorhom/portal` renders portaled children at the host's location in the
 // tree, so any context a portaled sheet might consume (QueryClient, theme,
-// auth, settings, …) must wrap PortalProvider — not be wrapped by it.
+// auth, settings, ...) must wrap PortalProvider, not be wrapped by it.
 // BottomSheetModalProvider is the exception: Gorhom modals consume portal
 // context and need one shared provider for sibling sheets to stack.
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <QueryProvider>
-      <I18nProvider>
-        <SafeAreaProvider>
-          <KeyboardProvider>
-            <KeyboardShiftProvider>
-              <PortalProvider>
-                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
-              </PortalProvider>
-            </KeyboardShiftProvider>
-          </KeyboardProvider>
-        </SafeAreaProvider>
-      </I18nProvider>
-    </QueryProvider>
+    <SafeAreaProvider>
+      <KeyboardProvider>
+        <KeyboardShiftProvider>
+          <PortalProvider>
+            <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+          </PortalProvider>
+        </KeyboardShiftProvider>
+      </KeyboardProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function RootAppTree() {
+  return (
+    <GestureHandlerRootView style={flexStyle}>
+      <View style={layoutStyles.surfaceFill}>
+        <RootProviders>
+          <RuntimeProviders>
+            <AppShell />
+          </RuntimeProviders>
+        </RootProviders>
+      </View>
+    </GestureHandlerRootView>
   );
 }
 
 export default function RootLayout() {
   return (
-    <RootErrorBoundary>
-      <GestureHandlerRootView style={flexStyle}>
-        <View style={layoutStyles.surfaceFill}>
-          <RootProviders>
-            <RuntimeProviders>
-              <AppShell />
-            </RuntimeProviders>
-          </RootProviders>
-        </View>
-      </GestureHandlerRootView>
-    </RootErrorBoundary>
+    <QueryProvider>
+      <I18nProvider>
+        <RootErrorBoundary>
+          <RootAppTree />
+        </RootErrorBoundary>
+      </I18nProvider>
+    </QueryProvider>
   );
 }
 
