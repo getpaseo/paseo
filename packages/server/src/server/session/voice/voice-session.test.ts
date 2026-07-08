@@ -79,7 +79,7 @@ function createFakeHost(): FakeVoiceHost {
   };
 }
 
-function createStreamingVoiceSession() {
+function createVoiceSession() {
   const detector = new FakeVoiceTurnDetectionSession();
   const sttSession = new FakeVoiceSttSession();
   const stt: SpeechToTextProvider = {
@@ -99,11 +99,6 @@ function createStreamingVoiceSession() {
     tts: null,
     stt,
     voice: { turnDetection },
-    paseoHome: "/tmp/paseo-home",
-    daemonRuntimeConfig: {
-      listen: "/tmp/paseo.sock",
-      relay: null,
-    },
   });
   return { voiceSession, detector, sttSession, host };
 }
@@ -142,7 +137,7 @@ describe("VoiceSession streaming transcription", () => {
   });
 
   test("delivers the streaming final transcript to the agent exactly once", async () => {
-    const { voiceSession, detector, sttSession, host } = createStreamingVoiceSession();
+    const { voiceSession, detector, sttSession, host } = createVoiceSession();
 
     await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
     detector.emit("speech_started");
@@ -181,7 +176,7 @@ describe("VoiceSession streaming transcription", () => {
   test("emits an empty transcript on finalization timeout without submitting to the agent", async () => {
     vi.useFakeTimers();
     try {
-      const { voiceSession, detector, sttSession, host } = createStreamingVoiceSession();
+      const { voiceSession, detector, sttSession, host } = createVoiceSession();
 
       await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
       detector.emit("speech_started");
@@ -208,7 +203,7 @@ describe("VoiceSession streaming transcription", () => {
   });
 
   test("filters a low-confidence streaming final without submitting to the agent", async () => {
-    const { voiceSession, detector, sttSession, host } = createStreamingVoiceSession();
+    const { voiceSession, detector, sttSession, host } = createVoiceSession();
 
     await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
     detector.emit("speech_started");
