@@ -371,6 +371,7 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   await expect(sidebar.getByRole("button", { name: "General", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "Diagnostics", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("button", { name: "Daemon", exact: true })).toHaveCount(0);
 
   // Host group rows are now flat top-level sections (no drill-in).
   await expect(sidebar.getByTestId("settings-host-section-connections")).toBeVisible();

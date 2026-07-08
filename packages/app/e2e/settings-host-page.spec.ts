@@ -64,7 +64,7 @@ test.describe("Settings host page", () => {
     await openSettingsHost(page, serverId);
 
     await openHostSection(page, serverId, "host");
-    await expectSettingsHeader(page, "Host");
+    await expectSettingsHeader(page, "Overview");
     await expectHostLabelDisplayed(page);
     await expectHostActionCards(page, serverId);
   });
