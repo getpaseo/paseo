@@ -22,6 +22,7 @@ describe("buildDiffFlatItems", () => {
   it("emits a body and a sticky index for each expanded file", () => {
     const { items, stickyHeaderIndices } = buildDiffFlatItems({
       files: [createFile("a.ts"), createFile("b.ts")],
+      viewMode: "tree",
       collapsedFolders: new Set(),
       expandedPaths: new Set(["a.ts"]),
     });
@@ -32,9 +33,23 @@ describe("buildDiffFlatItems", () => {
     expect(items[0].type).toBe("header");
   });
 
+  it("emits the old flat list without folder rows or indentation", () => {
+    const { items, stickyHeaderIndices } = buildDiffFlatItems({
+      files,
+      viewMode: "flat",
+      collapsedFolders: new Set(),
+      expandedPaths: new Set(["src/app/a.ts"]),
+    });
+
+    expect(summarize(items)).toEqual(["a.ts", "body:a.ts", "b.ts"]);
+    expect(stickyHeaderIndices).toEqual([0]);
+    expect(items.every((item) => item.type !== "folder")).toBe(true);
+  });
+
   it("groups files under compressed folder rows, all expanded by default", () => {
     const { items } = buildDiffFlatItems({
       files,
+      viewMode: "tree",
       collapsedFolders: new Set(),
       expandedPaths: new Set(),
     });
@@ -45,6 +60,7 @@ describe("buildDiffFlatItems", () => {
   it("collapsing a folder hides its descendants but keeps the row", () => {
     const { items } = buildDiffFlatItems({
       files,
+      viewMode: "tree",
       collapsedFolders: new Set(["src/app/nested"]),
       expandedPaths: new Set(),
     });
@@ -54,6 +70,7 @@ describe("buildDiffFlatItems", () => {
   it("collapsing an ancestor hides everything below it", () => {
     const { items } = buildDiffFlatItems({
       files,
+      viewMode: "tree",
       collapsedFolders: new Set(["src/app"]),
       expandedPaths: new Set(),
     });
@@ -65,6 +82,7 @@ describe("buildDiffFlatItems", () => {
     // header at index 3, with the body right after.
     const { items, stickyHeaderIndices } = buildDiffFlatItems({
       files,
+      viewMode: "tree",
       collapsedFolders: new Set(),
       expandedPaths: new Set(["src/app/a.ts"]),
     });
@@ -84,6 +102,7 @@ describe("buildDiffFlatItems", () => {
   it("maps tree file rows back to their original files array index", () => {
     const { items } = buildDiffFlatItems({
       files,
+      viewMode: "tree",
       collapsedFolders: new Set(),
       expandedPaths: new Set(),
     });
@@ -96,6 +115,7 @@ describe("buildDiffFlatItems", () => {
 describe("sumHeightsBefore", () => {
   const items = buildDiffFlatItems({
     files: [createFile("src/a.ts"), createFile("src/b.ts")],
+    viewMode: "tree",
     collapsedFolders: new Set(),
     expandedPaths: new Set(),
   }).items; // [folder, a.ts, b.ts]

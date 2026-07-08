@@ -28,6 +28,7 @@ describe("loadChangesPreferencesFromStorage", () => {
 
     expect(result).toEqual({
       layout: "unified",
+      viewMode: "flat",
       wrapLines: true,
       hideWhitespace: false,
     });
@@ -37,6 +38,7 @@ describe("loadChangesPreferencesFromStorage", () => {
   it("loads persisted layout and whitespace preferences without rewriting storage", async () => {
     const persisted = JSON.stringify({
       layout: "split",
+      viewMode: "tree",
       hideWhitespace: true,
       wrapLines: false,
     });
@@ -48,6 +50,7 @@ describe("loadChangesPreferencesFromStorage", () => {
 
     expect(result).toEqual({
       layout: "split",
+      viewMode: "tree",
       hideWhitespace: true,
       wrapLines: false,
     });
@@ -64,11 +67,16 @@ describe("saveChangesPreferences", () => {
 
     await saveChangesPreferences({
       queryClient,
-      updates: { layout: "split", hideWhitespace: true },
+      updates: { layout: "split", viewMode: "tree", hideWhitespace: true },
       storage,
     });
 
-    const expected = { ...DEFAULT_CHANGES_PREFERENCES, layout: "split", hideWhitespace: true };
+    const expected = {
+      ...DEFAULT_CHANGES_PREFERENCES,
+      layout: "split",
+      viewMode: "tree",
+      hideWhitespace: true,
+    };
     expect(queryClient.getQueryData(CHANGES_PREFERENCES_QUERY_KEY)).toEqual(expected);
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(expected));
   });

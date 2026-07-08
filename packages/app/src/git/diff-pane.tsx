@@ -39,6 +39,7 @@ import {
   FolderTree,
   GitCommitHorizontal,
   GitMerge,
+  List,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Pilcrow,
@@ -1219,7 +1220,6 @@ type PressableStyleFn = (
   state: PressableStateCallbackType & { hovered?: boolean; open?: boolean },
 ) => StyleProp<ViewStyle>;
 
-const foregroundIconColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
@@ -1230,6 +1230,7 @@ const ThemedWrapText = withUnistyles(WrapText);
 const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
 const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
 const ThemedFolderTree = withUnistyles(FolderTree);
+const ThemedList = withUnistyles(List);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
 const ThemedDownload = withUnistyles(Download);
 const ThemedUpload = withUnistyles(Upload);
@@ -1240,101 +1241,82 @@ const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
-interface DiffLayoutToggleGroupProps {
+interface DiffLayoutToggleProps {
   layout: "unified" | "split";
-  unifiedToggleStyle: PressableStyleFn;
-  splitToggleStyle: PressableStyleFn;
-  onUnified: () => void;
-  onSplit: () => void;
-}
-
-function DiffLayoutToggleGroup({
-  layout,
-  unifiedToggleStyle,
-  splitToggleStyle,
-  onUnified,
-  onSplit,
-}: DiffLayoutToggleGroupProps) {
-  const { t } = useTranslation();
-  const unifiedLabel = t("workspace.git.diff.unified");
-  const splitLabel = t("workspace.git.diff.split");
-  return (
-    <View style={styles.toggleButtonGroup}>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={unifiedLabel}
-            testID="changes-layout-unified"
-            onPress={onUnified}
-            style={unifiedToggleStyle}
-          >
-            <ThemedAlignJustify
-              size={14}
-              uniProps={
-                layout === "unified" ? foregroundIconColorMapping : foregroundMutedIconColorMapping
-              }
-            />
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>{unifiedLabel}</Text>
-        </TooltipContent>
-      </Tooltip>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={splitLabel}
-            testID="changes-layout-split"
-            onPress={onSplit}
-            style={splitToggleStyle}
-          >
-            <ThemedColumns2
-              size={14}
-              uniProps={
-                layout === "split" ? foregroundIconColorMapping : foregroundMutedIconColorMapping
-              }
-            />
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>{splitLabel}</Text>
-        </TooltipContent>
-      </Tooltip>
-    </View>
-  );
-}
-
-interface DiffWhitespaceToggleProps {
-  hideWhitespace: boolean;
   isMobile: boolean;
   toggleStyle: PressableStyleFn;
   onToggle: () => void;
 }
 
-function DiffWhitespaceToggle({
-  hideWhitespace,
-  isMobile,
-  toggleStyle,
-  onToggle,
-}: DiffWhitespaceToggleProps) {
+function DiffLayoutToggle({ layout, isMobile, toggleStyle, onToggle }: DiffLayoutToggleProps) {
   const { t } = useTranslation();
-  const label = t("workspace.git.diff.hideWhitespace");
+  const label =
+    layout === "unified"
+      ? t("workspace.git.diff.switchToSplit")
+      : t("workspace.git.diff.switchToUnified");
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={label}
-          testID="changes-toggle-whitespace"
+          testID="changes-toggle-layout"
+          onPress={onToggle}
+          style={toggleStyle}
+        >
+          {layout === "unified" ? (
+            <ThemedColumns2 size={isMobile ? 18 : 14} uniProps={foregroundMutedIconColorMapping} />
+          ) : (
+            <ThemedAlignJustify
+              size={isMobile ? 18 : 14}
+              uniProps={foregroundMutedIconColorMapping}
+            />
+          )}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        <Text style={styles.tooltipText}>{label}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface DiffViewModeToggleProps {
+  viewMode: "flat" | "tree";
+  isMobile: boolean;
+  toggleStyle: PressableStyleFn;
+  onToggle: () => void;
+}
+
+function DiffViewModeToggle({
+  viewMode,
+  isMobile,
+  toggleStyle,
+  onToggle,
+}: DiffViewModeToggleProps) {
+  const { t } = useTranslation();
+  const label =
+    viewMode === "flat"
+      ? t("workspace.git.diff.showTreeView")
+      : t("workspace.git.diff.showFlatView");
+  return (
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          testID="changes-toggle-view-mode"
           style={toggleStyle}
           onPress={onToggle}
         >
-          <ThemedPilcrow
-            size={isMobile ? 18 : 14}
-            uniProps={hideWhitespace ? foregroundIconColorMapping : foregroundMutedIconColorMapping}
-          />
+          {viewMode === "flat" ? (
+            <ThemedFolderTree
+              size={isMobile ? 18 : 14}
+              uniProps={foregroundMutedIconColorMapping}
+            />
+          ) : (
+            <ThemedList size={isMobile ? 18 : 14} uniProps={foregroundMutedIconColorMapping} />
+          )}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="bottom">
@@ -1345,82 +1327,24 @@ function DiffWhitespaceToggle({
 }
 
 interface DiffFilesToolbarProps {
-  wrapLines: boolean;
-  // Controls file-DIFF bodies only (not folders). Named explicitly so the
-  // folder control below stays unambiguous (Codex item 4).
   allFileDiffsExpanded: boolean;
-  showFolderControl: boolean;
-  allFoldersCollapsed: boolean;
   isMobile: boolean;
-  wrapLinesToggleStyle: PressableStyleFn;
   expandAllToggleStyle: PressableStyleFn;
-  folderToggleStyle: PressableStyleFn;
-  onToggleWrapLines: () => void;
   onToggleExpandAll: () => void;
-  onToggleCollapseAllFolders: () => void;
 }
 
 function DiffFilesToolbar({
-  wrapLines,
   allFileDiffsExpanded,
-  showFolderControl,
-  allFoldersCollapsed,
   isMobile,
-  wrapLinesToggleStyle,
   expandAllToggleStyle,
-  folderToggleStyle,
-  onToggleWrapLines,
   onToggleExpandAll,
-  onToggleCollapseAllFolders,
 }: DiffFilesToolbarProps) {
   const { t } = useTranslation();
-  const wrapLinesLabel = wrapLines
-    ? t("workspace.git.diff.scrollLongLines")
-    : t("workspace.git.diff.wrapLongLines");
   const expandAllLabel = allFileDiffsExpanded
     ? t("workspace.git.diff.collapseAll")
     : t("workspace.git.diff.expandAll");
-  const folderLabel = allFoldersCollapsed
-    ? t("workspace.git.diff.expandAllFolders")
-    : t("workspace.git.diff.collapseAllFolders");
   return (
     <View style={styles.diffStatusButtons}>
-      {showFolderControl ? (
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={folderLabel}
-              testID="changes-toggle-folders"
-              style={folderToggleStyle}
-              onPress={onToggleCollapseAllFolders}
-            >
-              <ThemedFolderTree
-                size={isMobile ? 18 : 14}
-                uniProps={
-                  allFoldersCollapsed ? foregroundIconColorMapping : foregroundMutedIconColorMapping
-                }
-              />
-            </Pressable>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <Text style={styles.tooltipText}>{folderLabel}</Text>
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <Pressable style={wrapLinesToggleStyle} onPress={onToggleWrapLines}>
-            <ThemedWrapText
-              size={isMobile ? 18 : 14}
-              uniProps={wrapLines ? foregroundIconColorMapping : foregroundMutedIconColorMapping}
-            />
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          <Text style={styles.tooltipText}>{wrapLinesLabel}</Text>
-        </TooltipContent>
-      </Tooltip>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <Pressable
@@ -1450,49 +1374,110 @@ function DiffFilesToolbar({
   );
 }
 
-interface DiffRefreshButtonProps {
+interface DiffOptionsMenuProps {
+  hideWhitespace: boolean;
+  isMobile: boolean;
   isRefreshing: boolean;
-  toggleStyle: PressableStyleFn;
-  onPress: () => void;
+  overflowToggleStyle: PressableStyleFn;
+  refreshSupported: boolean;
+  wrapLines: boolean;
+  onRefresh: () => void;
+  onToggleHideWhitespace: () => void;
+  onToggleWrapLines: () => void;
+}
+
+function DiffOptionsMenu({
+  hideWhitespace,
+  isMobile,
+  isRefreshing,
+  overflowToggleStyle,
+  refreshSupported,
+  wrapLines,
+  onRefresh,
+  onToggleHideWhitespace,
+  onToggleWrapLines,
+}: DiffOptionsMenuProps) {
+  const { t } = useTranslation();
+  const whitespaceLabel = t("workspace.git.diff.hideWhitespace");
+  const wrapLinesLabel = wrapLines
+    ? t("workspace.git.diff.scrollLongLines")
+    : t("workspace.git.diff.wrapLongLines");
+  const optionsLabel = t("workspace.git.diff.options");
+  const whitespaceIcon = useMemo(
+    () => <ThemedPilcrow size={14} uniProps={foregroundMutedIconColorMapping} />,
+    [],
+  );
+  const wrapIcon = useMemo(
+    () => <ThemedWrapText size={14} uniProps={foregroundMutedIconColorMapping} />,
+    [],
+  );
+  const refreshIcon = useMemo(
+    () =>
+      isRefreshing ? (
+        <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedIconColorMapping} />
+      ) : (
+        <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedIconColorMapping} />
+      ),
+    [isRefreshing],
+  );
+
+  return (
+    <DropdownMenu>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger
+            accessibilityRole="button"
+            accessibilityLabel={optionsLabel}
+            testID="changes-options-menu"
+            style={overflowToggleStyle}
+          >
+            <ThemedChevronDown
+              size={isMobile ? 18 : 14}
+              uniProps={foregroundMutedIconColorMapping}
+            />
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <Text style={styles.tooltipText}>{optionsLabel}</Text>
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" width={240} testID="changes-options-menu-content">
+        <DropdownMenuItem
+          leading={whitespaceIcon}
+          selected={hideWhitespace}
+          testID="changes-toggle-whitespace"
+          onSelect={onToggleHideWhitespace}
+        >
+          {whitespaceLabel}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          leading={wrapIcon}
+          selected={wrapLines}
+          testID="changes-toggle-wrap-lines"
+          onSelect={onToggleWrapLines}
+        >
+          {wrapLinesLabel}
+        </DropdownMenuItem>
+        {refreshSupported ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              leading={refreshIcon}
+              disabled={isRefreshing}
+              testID="changes-refresh"
+              onSelect={onRefresh}
+            >
+              {isRefreshing ? t("workspace.git.diff.refreshing") : t("workspace.git.diff.refresh")}
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-
-function DiffRefreshButton({ isRefreshing, toggleStyle, onPress }: DiffRefreshButtonProps) {
-  const { t } = useTranslation();
-  const refreshLabel = t("workspace.git.diff.refresh");
-  return (
-    <Tooltip delayDuration={300}>
-      <TooltipTrigger asChild>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            isRefreshing ? t("workspace.git.diff.refreshing") : t("workspace.git.diff.refreshState")
-          }
-          testID="changes-refresh"
-          style={toggleStyle}
-          onPress={onPress}
-          disabled={isRefreshing}
-        >
-          <View style={styles.refreshIcon}>
-            {isRefreshing ? (
-              <ThemedLoadingSpinner
-                size={ICON_SIZE.sm}
-                uniProps={foregroundMutedIconColorMapping}
-              />
-            ) : (
-              <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedIconColorMapping} />
-            )}
-          </View>
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>{refreshLabel}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 type DiffFlatItemLayoutGetter = NonNullable<FlatListProps<DiffFlatItem>["getItemLayout"]>;
 
@@ -1756,30 +1741,22 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const { preferences: changesPreferences, updatePreferences: updateChangesPreferences } =
     useChangesPreferences();
   const wrapLines = changesPreferences.wrapLines;
+  const viewMode = changesPreferences.viewMode;
   const effectiveLayout = canUseSplitLayout ? changesPreferences.layout : "unified";
 
   const handleToggleWrapLines = useCallback(() => {
     void updateChangesPreferences({ wrapLines: !wrapLines });
   }, [updateChangesPreferences, wrapLines]);
 
-  const handleLayoutChange = useCallback(
-    (nextLayout: "unified" | "split") => {
-      void updateChangesPreferences({ layout: nextLayout });
-    },
-    [updateChangesPreferences],
-  );
-
   const handleToggleHideWhitespace = useCallback(() => {
     void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
   }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
 
-  const handleLayoutUnified = useCallback(() => {
-    handleLayoutChange("unified");
-  }, [handleLayoutChange]);
-
-  const handleLayoutSplit = useCallback(() => {
-    handleLayoutChange("split");
-  }, [handleLayoutChange]);
+  const handleToggleLayout = useCallback(() => {
+    void updateChangesPreferences({
+      layout: changesPreferences.layout === "unified" ? "split" : "unified",
+    });
+  }, [changesPreferences.layout, updateChangesPreferences]);
 
   const codeFontSize = appSettings.codeFontSize;
   const diffBodyLineHeight = Math.round(codeFontSize * 1.5);
@@ -1796,39 +1773,19 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   }, [appSettings.monoFontFamily, codeFontSize, diffBodyLineHeight]);
   const diffModeTriggerStyle = useMemo(() => buildDiffModeTriggerStyle(), []);
 
-  const unifiedToggleStyle = useMemo(
-    () =>
-      buildToggleButtonStyle(changesPreferences.layout === "unified", [
-        styles.toggleButton,
-        styles.toggleButtonGroupStart,
-      ]),
-    [changesPreferences.layout],
+  const layoutToggleStyle = useMemo(
+    () => buildToggleButtonStyle(false, styles.expandAllButton),
+    [],
   );
 
-  const splitToggleStyle = useMemo(
-    () =>
-      buildToggleButtonStyle(changesPreferences.layout === "split", [
-        styles.toggleButton,
-        styles.toggleButtonGroupEnd,
-      ]),
-    [changesPreferences.layout],
-  );
-
-  const hideWhitespaceToggleStyle = useMemo(
-    () => buildToggleButtonStyle(changesPreferences.hideWhitespace, styles.expandAllButton),
-    [changesPreferences.hideWhitespace],
-  );
-
-  const wrapLinesToggleStyle = useMemo(
-    () => buildToggleButtonStyle(wrapLines, styles.expandAllButton),
-    [wrapLines],
+  const viewModeToggleStyle = useMemo(
+    () => buildToggleButtonStyle(viewMode === "tree", styles.expandAllButton),
+    [viewMode],
   );
 
   const expandAllToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
-  const folderToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
-
-  const refreshToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
+  const overflowToggleStyle = useMemo(() => buildExpandAllButtonStyle(), []);
 
   const toast = useToast();
   const refreshSupported = useSessionStore(
@@ -1994,6 +1951,13 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     () => new Set((collapsedFoldersArray ?? []).filter((path) => allFolderPathSet.has(path))),
     [collapsedFoldersArray, allFolderPathSet],
   );
+  const handleToggleViewMode = useCallback(() => {
+    const nextViewMode = viewMode === "flat" ? "tree" : "flat";
+    if (nextViewMode === "tree" && workspaceStateKey) {
+      setDiffCollapsedFoldersForWorkspace(workspaceStateKey, []);
+    }
+    void updateChangesPreferences({ viewMode: nextViewMode });
+  }, [setDiffCollapsedFoldersForWorkspace, updateChangesPreferences, viewMode, workspaceStateKey]);
   const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useWebScrollViewScrollbar(diffListRef, {
     enabled: showDesktopWebScrollbar,
@@ -2012,12 +1976,13 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
   const { flatItems, stickyHeaderIndices } = useMemo(() => {
     const { items, stickyHeaderIndices: stickyIndices } = buildDiffFlatItems({
       files,
+      viewMode,
       tree: compressedTree,
       collapsedFolders,
       expandedPaths,
     });
     return { flatItems: items, stickyHeaderIndices: stickyIndices };
-  }, [compressedTree, collapsedFolders, expandedPaths, files]);
+  }, [compressedTree, collapsedFolders, expandedPaths, files, viewMode]);
 
   const getBodyHeightKey = useCallback(
     (file: ParsedDiffFile): string => {
@@ -2248,25 +2213,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     }
   }, [allFileDiffsExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
 
-  // Membership, not count: collapsedFolders is already filtered to present folders, so
-  // "all collapsed" means every present folder path is in it.
-  const allFoldersCollapsed =
-    allFolderPaths.length > 0 && allFolderPaths.every((path) => collapsedFolders.has(path));
-
-  const handleToggleCollapseAllFolders = useCallback(() => {
-    if (!workspaceStateKey) {
-      return;
-    }
-    // Anchor to the top before collapsing everything so the viewport isn't stranded.
-    if (!allFoldersCollapsed) {
-      diffListRef.current?.scrollToOffset({ offset: 0, animated: false });
-    }
-    setDiffCollapsedFoldersForWorkspace(
-      workspaceStateKey,
-      allFoldersCollapsed ? [] : allFolderPaths,
-    );
-  }, [allFolderPaths, allFoldersCollapsed, setDiffCollapsedFoldersForWorkspace, workspaceStateKey]);
-
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
       if (item.type === "folder") {
@@ -2290,7 +2236,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
             file={item.file}
             isExpanded={item.isExpanded}
             depth={item.depth}
-            showDir={false}
+            showDir={viewMode === "flat"}
             onToggle={handleToggleExpanded}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
@@ -2320,6 +2266,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       handleToggleExpanded,
       handleToggleFolder,
       reviewActions,
+      viewMode,
       wrapLines,
     ],
   );
@@ -2347,6 +2294,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       effectiveLayout,
       diffBodyTypographyKey,
       heightVersion,
+      viewMode,
       wrapLines,
       reviewActions,
     }),
@@ -2356,6 +2304,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
       effectiveLayout,
       diffBodyTypographyKey,
       heightVersion,
+      viewMode,
       wrapLines,
       reviewActions,
     ],
@@ -2485,42 +2434,40 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
             </DropdownMenu>
             <View style={styles.diffStatusButtons}>
               {canUseSplitLayout ? (
-                <DiffLayoutToggleGroup
+                <DiffLayoutToggle
                   layout={changesPreferences.layout}
-                  unifiedToggleStyle={unifiedToggleStyle}
-                  splitToggleStyle={splitToggleStyle}
-                  onUnified={handleLayoutUnified}
-                  onSplit={handleLayoutSplit}
+                  isMobile={isMobile}
+                  toggleStyle={layoutToggleStyle}
+                  onToggle={handleToggleLayout}
                 />
               ) : null}
-              <DiffWhitespaceToggle
-                hideWhitespace={changesPreferences.hideWhitespace}
-                isMobile={isMobile}
-                toggleStyle={hideWhitespaceToggleStyle}
-                onToggle={handleToggleHideWhitespace}
-              />
+              {files.length > 0 ? (
+                <DiffViewModeToggle
+                  viewMode={viewMode}
+                  isMobile={isMobile}
+                  toggleStyle={viewModeToggleStyle}
+                  onToggle={handleToggleViewMode}
+                />
+              ) : null}
               {files.length > 0 ? (
                 <DiffFilesToolbar
-                  wrapLines={wrapLines}
                   allFileDiffsExpanded={allFileDiffsExpanded}
-                  showFolderControl={allFolderPaths.length > 0}
-                  allFoldersCollapsed={allFoldersCollapsed}
                   isMobile={isMobile}
-                  wrapLinesToggleStyle={wrapLinesToggleStyle}
                   expandAllToggleStyle={expandAllToggleStyle}
-                  folderToggleStyle={folderToggleStyle}
-                  onToggleWrapLines={handleToggleWrapLines}
                   onToggleExpandAll={handleToggleExpandAll}
-                  onToggleCollapseAllFolders={handleToggleCollapseAllFolders}
                 />
               ) : null}
-              {refreshSupported ? (
-                <DiffRefreshButton
-                  isRefreshing={isRefreshing}
-                  toggleStyle={refreshToggleStyle}
-                  onPress={handleRefresh}
-                />
-              ) : null}
+              <DiffOptionsMenu
+                hideWhitespace={changesPreferences.hideWhitespace}
+                isMobile={isMobile}
+                isRefreshing={isRefreshing}
+                overflowToggleStyle={overflowToggleStyle}
+                refreshSupported={refreshSupported}
+                wrapLines={wrapLines}
+                onRefresh={handleRefresh}
+                onToggleHideWhitespace={handleToggleHideWhitespace}
+                onToggleWrapLines={handleToggleWrapLines}
+              />
             </View>
           </View>
         </View>
@@ -2602,45 +2549,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     flexWrap: "wrap",
   },
-  toggleButtonGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  toggleButton: {
-    alignItems: "center",
-    justifyContent: "center",
-    minWidth: {
-      xs: 32,
-      sm: 32,
-      md: 24,
-    },
-    height: {
-      xs: 32,
-      sm: 32,
-      md: 24,
-    },
-    paddingHorizontal: {
-      xs: theme.spacing[2],
-      sm: theme.spacing[2],
-      md: theme.spacing[1],
-    },
-  },
-  toggleButtonGroupStart: {
-    borderTopLeftRadius: theme.borderRadius.base,
-    borderBottomLeftRadius: theme.borderRadius.base,
-  },
-  toggleButtonGroupEnd: {
-    borderTopRightRadius: theme.borderRadius.base,
-    borderBottomRightRadius: theme.borderRadius.base,
-  },
   toggleButtonSelected: {
     backgroundColor: theme.colors.surface2,
-  },
-  refreshIcon: {
-    width: ICON_SIZE.md,
-    height: ICON_SIZE.md,
-    alignItems: "center",
-    justifyContent: "center",
   },
   expandAllButton: {
     flexDirection: "row",

@@ -30,6 +30,7 @@ export interface DiffFlatItemsResult {
 
 export interface BuildDiffFlatItemsInput {
   files: ParsedDiffFile[];
+  viewMode: "flat" | "tree";
   /** Full uncompressed directory paths that are collapsed (empty = all expanded). */
   collapsedFolders: ReadonlySet<string>;
   /** File paths whose diff body is expanded. */
@@ -52,6 +53,7 @@ export interface BuildDiffFlatItemsInput {
  */
 export function buildDiffFlatItems({
   files,
+  viewMode,
   collapsedFolders,
   expandedPaths,
   tree,
@@ -67,6 +69,13 @@ export function buildDiffFlatItems({
       items.push({ type: "body", file, fileIndex, depth });
     }
   };
+
+  if (viewMode === "flat") {
+    for (const [fileIndex, file] of files.entries()) {
+      pushFile(file, fileIndex, 0);
+    }
+    return { items, stickyHeaderIndices };
+  }
 
   const indexByPath = new Map(files.map((file, index) => [file.path, index]));
   const compressedTree = tree ?? compressSingleChildChains(buildDiffTree(files));
