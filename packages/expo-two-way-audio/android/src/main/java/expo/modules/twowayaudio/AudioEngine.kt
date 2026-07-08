@@ -83,7 +83,9 @@ class AudioEngine (context: Context) {
     private fun initializeAudio(context:Context) {
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        requestAudioFocus()
+        if (!requestAudioFocus()) {
+            handleAudioFocusBlocked()
+        }
 
         // Route audio to external device if connected, otherwise route to speaker
         updateAudioRouting()
@@ -193,7 +195,6 @@ class AudioEngine (context: Context) {
                         }
                         AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                             Log.d("AudioEngine", "Audio focus duck requested")
-                            handleAudioFocusBlocked()
                         }
                     }
                 }
