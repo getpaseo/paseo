@@ -238,6 +238,7 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
   await expect(page.getByTestId("changes-toggle-whitespace")).toContainText("Show whitespace");
   await page.keyboard.press("Escape");
 
+  await scrollToLowerUnwrappedDiffRows(page);
   await page.getByTestId("changes-toggle-view-mode").click();
   await expect(page.getByTestId("diff-folder-src")).toBeVisible();
   await expect(page.getByTestId("diff-file-0")).toBeVisible();

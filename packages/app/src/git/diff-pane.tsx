@@ -1241,6 +1241,13 @@ const ThemedRefreshCcw = withUnistyles(RefreshCcw);
 const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
+const DIFF_OPTIONS_WHITESPACE_ICON = (
+  <ThemedPilcrow size={14} uniProps={foregroundMutedIconColorMapping} />
+);
+const DIFF_OPTIONS_WRAP_ICON = (
+  <ThemedWrapText size={14} uniProps={foregroundMutedIconColorMapping} />
+);
+
 interface DiffLayoutToggleProps {
   layout: "unified" | "split";
   isMobile: boolean;
@@ -1405,14 +1412,6 @@ function DiffOptionsMenu({
     ? t("workspace.git.diff.scrollLongLines")
     : t("workspace.git.diff.wrapLongLines");
   const optionsLabel = t("workspace.git.diff.options");
-  const whitespaceIcon = useMemo(
-    () => <ThemedPilcrow size={14} uniProps={foregroundMutedIconColorMapping} />,
-    [],
-  );
-  const wrapIcon = useMemo(
-    () => <ThemedWrapText size={14} uniProps={foregroundMutedIconColorMapping} />,
-    [],
-  );
   const refreshIcon = useMemo(
     () =>
       isRefreshing ? (
@@ -1445,7 +1444,7 @@ function DiffOptionsMenu({
       </Tooltip>
       <DropdownMenuContent align="end" width={240} testID="changes-options-menu-content">
         <DropdownMenuItem
-          leading={whitespaceIcon}
+          leading={DIFF_OPTIONS_WHITESPACE_ICON}
           selected={hideWhitespace}
           testID="changes-toggle-whitespace"
           onSelect={onToggleHideWhitespace}
@@ -1453,7 +1452,7 @@ function DiffOptionsMenu({
           {whitespaceLabel}
         </DropdownMenuItem>
         <DropdownMenuItem
-          leading={wrapIcon}
+          leading={DIFF_OPTIONS_WRAP_ICON}
           selected={wrapLines}
           testID="changes-toggle-wrap-lines"
           onSelect={onToggleWrapLines}
@@ -1953,14 +1952,17 @@ export function GitDiffPane({ serverId, workspaceId, cwd, enabled }: GitDiffPane
     () => new Set((collapsedFoldersArray ?? []).filter((path) => allFolderPathSet.has(path))),
     [collapsedFoldersArray, allFolderPathSet],
   );
+  const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const handleToggleViewMode = useCallback(() => {
     const nextViewMode = viewMode === "flat" ? "tree" : "flat";
-    if (nextViewMode === "tree" && workspaceStateKey) {
-      setDiffCollapsedFoldersForWorkspace(workspaceStateKey, []);
+    if (nextViewMode === "tree") {
+      diffListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      if (workspaceStateKey) {
+        setDiffCollapsedFoldersForWorkspace(workspaceStateKey, []);
+      }
     }
     void updateChangesPreferences({ viewMode: nextViewMode });
   }, [setDiffCollapsedFoldersForWorkspace, updateChangesPreferences, viewMode, workspaceStateKey]);
-  const diffListRef = useRef<FlatList<DiffFlatItem>>(null);
   const scrollbar = useWebScrollViewScrollbar(diffListRef, {
     enabled: showDesktopWebScrollbar,
   });
