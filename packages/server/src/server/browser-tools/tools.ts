@@ -35,38 +35,6 @@ const WORKSPACE_CONTEXT_MESSAGE =
 const URL_WHITESPACE_PATTERN = /\s/;
 const NON_HTTP_EXPLICIT_SCHEME_PATTERN = /^(?!https?:\/\/)[a-z][a-z0-9+.-]*:\/\//i;
 
-const BrowserToolOutputSchema = {
-  ok: z.boolean(),
-  result: z.unknown().optional(),
-  error: z
-    .object({
-      code: z.string(),
-      message: z.string(),
-      retryable: z.boolean(),
-    })
-    .optional(),
-  dialogs: z
-    .array(
-      z.object({
-        type: z.enum(["alert", "confirm", "prompt", "beforeunload"]),
-        message: z.string(),
-        defaultValue: z.string().optional(),
-        action: z.enum(["accepted", "dismissed"]),
-        promptText: z.string().optional(),
-        timestamp: z.number(),
-      }),
-    )
-    .optional(),
-  context: z
-    .object({
-      agentId: z.string().optional(),
-      cwd: z.string().optional(),
-      workspaceId: z.string().optional(),
-      browserId: z.string().optional(),
-    })
-    .optional(),
-};
-
 const BrowserHttpUrlInputSchema = z
   .string()
   .trim()
@@ -103,7 +71,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       description:
         "List open Paseo browser tabs for this agent's workspace across connected browser automation hosts. Use returned browserId values with tab-scoped tools.",
       inputSchema: {},
-      outputSchema: BrowserToolOutputSchema,
     },
     async () => {
       const context = resolveBrowserToolContext(options);
@@ -133,7 +100,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       inputSchema: {
         url: BrowserHttpUrlInputSchema.optional(),
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ url }) => {
       const context = resolveBrowserToolContext(options);
@@ -163,7 +129,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       inputSchema: {
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -196,7 +161,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         doubleClick: z.boolean().optional(),
         modifiers: z.array(BrowserClickModifierInputSchema).optional(),
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ ref, browserId, button, doubleClick, modifiers }) => {
       const context = resolveBrowserToolContext(options);
@@ -231,7 +195,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         value: z.string(),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ ref, value, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -260,7 +223,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       description:
         "Wait until a Paseo browser tab contains text or reaches a URL fragment. Use browserId from browser_new_tab or browser_list_tabs; waits up to 5s by default on the browser host.",
       inputSchema: BrowserWaitInputSchema,
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ text, url, timeoutMs, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -295,7 +257,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         ref: BrowserRefInputSchema.optional(),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ text, ref, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -328,7 +289,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         ref: BrowserRefInputSchema.optional(),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ key, ref, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -357,7 +317,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       description:
         "Navigate a Paseo browser tab to a URL. Use browserId from browser_new_tab or browser_list_tabs; pass an http(s) URL or a scheme-less host URL, which is treated as http.",
       inputSchema: { url: BrowserHttpUrlInputSchema, browserId: BrowserAutomationBrowserIdSchema },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ url, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -407,7 +366,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         title: toolConfig.title,
         description: toolConfig.description,
         inputSchema: { browserId: BrowserAutomationBrowserIdSchema },
-        outputSchema: BrowserToolOutputSchema,
       },
       async ({ browserId }) => {
         const context = resolveBrowserToolContext(options);
@@ -438,7 +396,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         browserId: BrowserAutomationBrowserIdSchema,
         fullPage: z.boolean().default(false),
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ browserId, fullPage }) => {
       const context = resolveBrowserToolContext(options);
@@ -470,7 +427,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         filePaths: z.array(z.string().min(1)).min(1),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ ref, filePaths, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -507,7 +463,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         title: toolConfig.title,
         description: toolConfig.description,
         inputSchema: { ref: BrowserRefInputSchema, browserId: BrowserAutomationBrowserIdSchema },
-        outputSchema: BrowserToolOutputSchema,
       },
       async ({ ref, browserId }) => {
         const context = resolveBrowserToolContext(options);
@@ -540,7 +495,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         value: z.string(),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ ref, value, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -573,7 +527,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         targetRef: BrowserRefInputSchema,
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ sourceRef, targetRef, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -605,7 +558,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         maxEntries: z.number().int().positive().max(200).optional(),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ maxEntries, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -637,7 +589,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         ref: BrowserRefInputSchema.optional(),
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ function: functionSource, ref, browserId }) => {
       const context = resolveBrowserToolContext(options);
@@ -671,7 +622,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         deltaX: z.number(),
         deltaY: z.number(),
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ browserId, ref, deltaX, deltaY }) => {
       const context = resolveBrowserToolContext(options);
@@ -705,7 +655,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         width: z.number().int().positive(),
         height: z.number().int().positive(),
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ browserId, width, height }) => {
       const context = resolveBrowserToolContext(options);
@@ -736,7 +685,6 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       inputSchema: {
         browserId: BrowserAutomationBrowserIdSchema,
       },
-      outputSchema: BrowserToolOutputSchema,
     },
     async ({ browserId }) => {
       const context = resolveBrowserToolContext(options);

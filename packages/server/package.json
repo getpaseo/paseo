@@ -44,6 +44,7 @@
     "start": "node dist/scripts/supervisor-entrypoint.js",
     "typecheck": "tsgo -p tsconfig.server.typecheck.json --noEmit",
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
+    "measure:agent-tools": "tsx scripts/measure-agent-tools-context.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",
     "speech:download": "tsx scripts/download-speech-models.ts",
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",

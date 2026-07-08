@@ -173,6 +173,19 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### Agent Tool Catalog Measurement
+
+Measure the MCP `tools/list` payload that Paseo injects into agents with:
+
+```bash
+npm run measure:agent-tools --workspace=@getpaseo/server
+```
+
+The command reports compact JSON bytes, estimated tokens, field totals, largest
+tools, and the browser-tools delta. It defaults to the agent-scoped catalog; use
+`-- --scope=top-level` for the unaffiliated `/mcp/agents` shape and `-- --json`
+for machine-readable output.
+
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array

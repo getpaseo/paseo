@@ -6,12 +6,10 @@ import { realpathSync, rmSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
-import Ajv from "ajv";
 import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
-import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -83,7 +81,6 @@ interface LooseContentBlock {
 
 interface RegisteredMcpTool {
   inputSchema: LooseInputSchema;
-  outputSchema?: unknown;
   callback?: (
     input: unknown,
     extra?: unknown,
@@ -136,22 +133,18 @@ async function invokeToolWithParsedInput(
   return tool.handler(parsed.data);
 }
 
-function expectOutputSchemaAccepts(tool: RegisteredMcpTool, data: unknown): void {
-  expect(tool.outputSchema).toBeDefined();
-  const jsonSchema = z.toJSONSchema(tool.outputSchema as z.ZodType, {
-    target: "draft-07",
-    unrepresentable: "any",
-    io: "input",
-  });
-  const ajv = new Ajv({ allErrors: true, strict: false });
-  const validate = ajv.compile(jsonSchema);
-  expect(validate(data), JSON.stringify(validate.errors, null, 2)).toBe(true);
-}
-
 function agentsOf(response: {
   structuredContent: LooseStructuredContent;
 }): Array<Record<string, unknown>> {
   return z.array(z.record(z.string(), z.unknown())).parse(response.structuredContent.agents);
+}
+
+function expectSingleTextContent(response: { content?: LooseContentBlock[] }): string {
+  const content = response.content ?? [];
+  expect(content).toHaveLength(1);
+  const block = content[0];
+  expect(block?.type).toBe("text");
+  return z.string().min(1).parse(block?.text);
 }
 
 async function waitForWorkspaceTitle(
@@ -753,7 +746,7 @@ function createPaseoWorktreeForMcpTest(options: {
 describe("browser MCP tools", () => {
   const logger = createTestLogger();
 
-  it("calls registered tools through the MCP SDK with listed output schemas", async () => {
+  it("omits output schemas from tools/list and keeps tool call content model-visible", async () => {
     const agentManager = new BoundaryAgentManagerFake();
     const agentStorage = new BoundaryAgentStorageFake();
     const broker = new FakeBrowserToolsBroker({
@@ -802,17 +795,15 @@ describe("browser MCP tools", () => {
       expect(listAgentsResult.structuredContent).toEqual({
         agents: [],
       });
+      expectSingleTextContent(browserResult);
+      expect(expectSingleTextContent(listAgentsResult)).toContain('"agents": []');
 
       const listedTools = await client.listTools();
-      const toolsByName = new Map(listedTools.tools.map((tool) => [tool.name, tool]));
-      const catalog = createPaseoToolCatalog(serverOptions);
-
-      for (const tool of catalog.tools.values()) {
-        if (tool.outputSchema !== undefined) {
-          expect(toolsByName.get(tool.name)?.outputSchema, `${tool.name} outputSchema`).toEqual(
-            expect.objectContaining({ type: "object" }),
-          );
-        }
+      expect(listedTools.tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(["browser_list_tabs", "list_agents"]),
+      );
+      for (const tool of listedTools.tools) {
+        expect(tool, `${tool.name} outputSchema`).not.toHaveProperty("outputSchema");
       }
     } finally {
       await client.close();
@@ -1308,7 +1299,7 @@ describe("create_agent MCP tool", () => {
     );
   });
 
-  it("advertises create_agent output schema that accepts full provider modes", async () => {
+  it("returns create_agent structured content with full provider modes", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
       id: "mode-agent",
@@ -1344,7 +1335,24 @@ describe("create_agent MCP tool", () => {
       background: true,
     });
 
-    expectOutputSchemaAccepts(tool, response.structuredContent);
+    expect(response.structuredContent).toEqual(
+      expect.objectContaining({
+        agentId: "mode-agent",
+        type: "codex",
+        status: "idle",
+        cwd: REPO_CWD,
+        currentModeId: "build",
+        availableModes: [
+          {
+            id: "build",
+            label: "Build",
+            description: null,
+            icon: "hammer",
+            colorTier: "dangerous",
+          },
+        ],
+      }),
+    );
   });
 
   it("requires provider as provider/model and rejects the old model field", async () => {
@@ -2904,7 +2912,7 @@ describe("create_agent MCP tool", () => {
     });
 
     expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the created agent finishes, errors, or needs permission. Do not call wait_for_agent or poll for status; continue with other work until the notification arrives.",
+      "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
   });
 
@@ -3364,7 +3372,7 @@ describe("send_agent_prompt MCP tool", () => {
     expect(spies.agentManager.subscribe).toHaveBeenCalledTimes(1);
     expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
     expect(response.structuredContent.guidance).toBe(
-      "You will get notified when the prompted agent finishes, errors, or needs permission. Do not call wait_for_agent or poll for status; continue with other work until the notification arrives.",
+      "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
   });
 
@@ -3816,7 +3824,7 @@ describe("create_schedule MCP tool", () => {
     );
   });
 
-  it("advertises create_schedule output schema that accepts inherited feature values", async () => {
+  it("returns create_schedule structured content with inherited feature values", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
@@ -3854,7 +3862,6 @@ describe("create_schedule MCP tool", () => {
       type: "new-agent",
       config: { featureValues: { auto_accept: true } },
     });
-    expectOutputSchemaAccepts(tool, response.structuredContent);
   });
 
   it("passes timezone through cron create_schedule input", async () => {
@@ -4872,7 +4879,6 @@ describe("agent snapshot MCP serialization", () => {
         `get_agent_status response failed AgentSnapshotPayloadSchema: ${JSON.stringify(parsed.error.issues, null, 2)}`,
       );
     }
-    expectOutputSchemaAccepts(tool, response.structuredContent);
     expect(response.structuredContent.status).toBe("idle");
     expect(snapshot).toEqual(
       expect.objectContaining({
@@ -5200,7 +5206,7 @@ describe("agent snapshot MCP serialization", () => {
     ]);
   });
 
-  it("emits list_agents payloads that satisfy the declared output schema", async () => {
+  it("emits list_agents payloads that satisfy the agent list schema", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
     spies.agentManager.listAgents.mockReturnValue([createManagedAgent()]);
@@ -5231,7 +5237,7 @@ describe("agent snapshot MCP serialization", () => {
     }
   });
 
-  it("emits list_pending_permissions payloads that satisfy the declared output schema", async () => {
+  it("emits list_pending_permissions payloads that satisfy the permission schema", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.listAgents.mockReturnValue([
       createManagedAgent({
@@ -5288,7 +5294,6 @@ describe("agent snapshot MCP serialization", () => {
         },
       },
     ]);
-    expectOutputSchemaAccepts(tool, response.structuredContent);
   });
 
   it("loads archived agents before reading get_agent_activity", async () => {
