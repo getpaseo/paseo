@@ -90,6 +90,7 @@ interface SplitContainerProps {
   closingTabIds: Set<string>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onCopyTabPath: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -371,6 +372,7 @@ export function SplitContainer({
   closingTabIds,
   onNavigateTab,
   onCloseTab,
+  onCopyTabPath,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -588,6 +590,7 @@ export function SplitContainer({
           closingTabIds={closingTabIds}
           onNavigateTab={onNavigateTab}
           onCloseTab={onCloseTab}
+          onCopyTabPath={onCopyTabPath}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
@@ -731,6 +734,7 @@ function SplitNodeView({
   closingTabIds,
   onNavigateTab,
   onCloseTab,
+  onCopyTabPath,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -784,6 +788,7 @@ function SplitNodeView({
         closingTabIds={closingTabIds}
         onNavigateTab={onNavigateTab}
         onCloseTab={onCloseTab}
+        onCopyTabPath={onCopyTabPath}
         onCopyResumeCommand={onCopyResumeCommand}
         onCopyAgentId={onCopyAgentId}
         onCopyFilePath={onCopyFilePath}
@@ -830,6 +835,7 @@ function SplitNodeView({
               closingTabIds={closingTabIds}
               onNavigateTab={onNavigateTab}
               onCloseTab={onCloseTab}
+              onCopyTabPath={onCopyTabPath}
               onCopyResumeCommand={onCopyResumeCommand}
               onCopyAgentId={onCopyAgentId}
               onCopyFilePath={onCopyFilePath}
@@ -882,6 +888,7 @@ function SplitPaneView({
   closingTabIds,
   onNavigateTab,
   onCloseTab,
+  onCopyTabPath,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -1024,6 +1031,7 @@ function SplitPaneView({
             setHoveredCloseTabKey={setHoveredCloseTabKey}
             onNavigateTab={onNavigateTab}
             onCloseTab={onCloseTab}
+            onCopyTabPath={onCopyTabPath}
             onCopyResumeCommand={onCopyResumeCommand}
             onCopyAgentId={onCopyAgentId}
             onCopyFilePath={onCopyFilePath}

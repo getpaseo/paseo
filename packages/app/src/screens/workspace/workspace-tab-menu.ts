@@ -8,6 +8,7 @@ export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 export interface WorkspaceTabMenuLabels {
   copyResumeCommand: string;
   copyAgentId: string;
+  copyPath: string;
   copyFilePath: string;
   rename: string;
   closeAbove: string;
@@ -23,6 +24,7 @@ export interface WorkspaceTabMenuLabels {
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
+  copyPath: i18n.t("workspace.tabs.menu.copyPath"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
@@ -66,6 +68,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   index: number;
   tabCount: number;
   menuTestIDBase: string;
+  onCopyTabPath: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -82,6 +85,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
+  onCopyTabPath: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -150,6 +154,7 @@ export function buildWorkspaceTabMenuEntries(
     index,
     tabCount,
     menuTestIDBase,
+    onCopyTabPath,
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyFilePath,
@@ -165,6 +170,24 @@ export function buildWorkspaceTabMenuEntries(
   const isLastTab = index === tabCount - 1;
   const isOnlyTab = tabCount <= 1;
   const entries: WorkspaceTabMenuEntry[] = [];
+
+  const supportsCopyPath =
+    tab.target.kind === "agent" ||
+    tab.target.kind === "terminal" ||
+    tab.target.kind === "file" ||
+    (tab.target.kind === "draft" && Boolean(tab.target.setup?.cwd));
+  if (supportsCopyPath) {
+    entries.push({
+      kind: "item",
+      key: "copy-path",
+      label: labels.copyPath,
+      icon: "copy",
+      testID: `${menuTestIDBase}-copy-path`,
+      onSelect: () => {
+        void onCopyTabPath(tab);
+      },
+    });
+  }
 
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
@@ -219,6 +242,11 @@ export function buildWorkspaceTabMenuEntries(
     entries.push({
       kind: "separator",
       key: "rename-separator",
+    });
+  } else if (supportsCopyPath) {
+    entries.push({
+      kind: "separator",
+      key: "copy-path-separator",
     });
   }
 
@@ -295,6 +323,7 @@ export function buildWorkspaceDesktopTabActions(
       index: input.index,
       tabCount: input.tabCount,
       menuTestIDBase: contextMenuTestId,
+      onCopyTabPath: input.onCopyTabPath,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onCopyFilePath: input.onCopyFilePath,

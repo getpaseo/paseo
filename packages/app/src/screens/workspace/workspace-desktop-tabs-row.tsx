@@ -417,6 +417,7 @@ interface WorkspaceDesktopTabsRowProps {
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
+  onCopyTabPath: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -737,6 +738,7 @@ export function WorkspaceDesktopTabsRow({
   setHoveredCloseTabKey,
   onNavigateTab,
   onCloseTab,
+  onCopyTabPath,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -811,6 +813,7 @@ export function WorkspaceDesktopTabsRow({
     () => ({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
+      copyPath: t("workspace.tabs.menu.copyPath"),
       copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
@@ -907,6 +910,7 @@ export function WorkspaceDesktopTabsRow({
           tabCount={tabs.length}
           normalizedServerId={normalizedServerId}
           normalizedWorkspaceId={normalizedWorkspaceId}
+          onCopyTabPath={onCopyTabPath}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyFilePath={onCopyFilePath}
@@ -942,6 +946,7 @@ export function WorkspaceDesktopTabsRow({
       onCopyAgentId,
       onCopyFilePath,
       onCopyResumeCommand,
+      onCopyTabPath,
       onNavigateTab,
       onReloadAgent,
       onRenameTab,
@@ -1034,6 +1039,7 @@ function ResolvedDesktopTabChip({
   tabCount,
   normalizedServerId,
   normalizedWorkspaceId,
+  onCopyTabPath,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyFilePath,
@@ -1060,6 +1066,7 @@ function ResolvedDesktopTabChip({
   tabCount: number;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  onCopyTabPath: (tab: WorkspaceTabDescriptor) => Promise<void> | void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
@@ -1086,6 +1093,7 @@ function ResolvedDesktopTabChip({
         tab: item.tab,
         index,
         tabCount,
+        onCopyTabPath,
         onCopyResumeCommand,
         onCopyAgentId,
         onCopyFilePath,
@@ -1107,6 +1115,7 @@ function ResolvedDesktopTabChip({
       onCopyAgentId,
       onCopyFilePath,
       onCopyResumeCommand,
+      onCopyTabPath,
       labels,
       onReloadAgent,
       onRenameTab,
