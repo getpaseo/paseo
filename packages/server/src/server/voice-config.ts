@@ -1,26 +1,18 @@
 const VOICE_PROMPT_BLOCK_START = "<paseo_voice_mode>";
 const VOICE_PROMPT_BLOCK_END = "</paseo_voice_mode>";
 export const PASEO_MCP_SERVER_NAME = "paseo";
-
-function resolveVoiceSpeakToolName(voiceToolMcpServerName?: string): string {
-  return voiceToolMcpServerName ? `${voiceToolMcpServerName}.speak` : "speak";
-}
-
-function buildEnabledVoiceAgentSystemInstruction(voiceToolMcpServerName?: string): string {
-  const speakToolName = resolveVoiceSpeakToolName(voiceToolMcpServerName);
-  return [
-    "Paseo voice mode is now on.",
-    "You are the Paseo voice assistant.",
-    "The user cannot see your chat messages or tool calls.",
-    `Always use the ${speakToolName} tool for all user-facing communication.`,
-    `Before calling any non-speech tool, first call ${speakToolName} with a short acknowledgement of what you heard and what you will do next.`,
-    `For long-running work, use ${speakToolName} to provide progress updates before and during execution.`,
-    "Treat the user input as transcribed speech.",
-    "If the user intent is clear, proceed without extra confirmation.",
-    `If the transcription seems incomplete, cut off, ambiguous, or may contain a non-obvious mistake or misspelling, ask a clarifying question via ${speakToolName} before taking action.`,
-    "Use concise plain language suitable for speech output.",
-  ].join(" ");
-}
+const VOICE_AGENT_SYSTEM_INSTRUCTION = [
+  "Paseo voice mode is now on.",
+  "You are the Paseo voice assistant.",
+  "The user cannot see your chat messages or tool calls.",
+  "Always use the speak tool for all user-facing communication.",
+  "Before calling any non-speech tool, first call speak with a short acknowledgement of what you heard and what you will do next.",
+  "For long-running work, use speak to provide progress updates before and during execution.",
+  "Treat the user input as transcribed speech.",
+  "If the user intent is clear, proceed without extra confirmation.",
+  "If the transcription seems incomplete, cut off, ambiguous, or may contain a non-obvious mistake or misspelling, ask a clarifying question via speak before taking action.",
+  "Use concise plain language suitable for speech output.",
+].join(" ");
 
 const VOICE_AGENT_DISABLED_INSTRUCTION = [
   "Paseo voice mode is now off.",
@@ -47,14 +39,10 @@ export function stripVoiceModeSystemPrompt(existing?: string): string | undefine
   return stripped.length > 0 ? stripped : undefined;
 }
 
-export function buildVoiceModeSystemPrompt(
-  existing: string | undefined,
-  enabled: boolean,
-  options?: { voiceToolMcpServerName?: string },
-): string {
+export function buildVoiceModeSystemPrompt(existing: string | undefined, enabled: boolean): string {
   const basePrompt = stripVoiceModeSystemPrompt(existing);
   const voiceInstruction = enabled
-    ? buildEnabledVoiceAgentSystemInstruction(options?.voiceToolMcpServerName)
+    ? VOICE_AGENT_SYSTEM_INSTRUCTION
     : VOICE_AGENT_DISABLED_INSTRUCTION;
   const voiceBlock = [VOICE_PROMPT_BLOCK_START, voiceInstruction, VOICE_PROMPT_BLOCK_END].join(
     "\n",
@@ -65,10 +53,6 @@ export function buildVoiceModeSystemPrompt(
     .join("\n\n");
 }
 
-export function wrapSpokenInput(
-  text: string,
-  options?: { voiceToolMcpServerName?: string },
-): string {
-  const speakToolName = resolveVoiceSpeakToolName(options?.voiceToolMcpServerName);
-  return `<spoken-input>\n${text}\n</spoken-input>\n<instruction>This message was spoken by the user. Respond using the ${speakToolName} tool only, not normal messages, because the user may not be looking at the chat.</instruction>`;
+export function wrapSpokenInput(text: string): string {
+  return `<spoken-input>\n${text}\n</spoken-input>\n<instruction>This message was spoken by the user. Respond using the speak tool only, not normal messages, because the user may not be looking at the chat.</instruction>`;
 }

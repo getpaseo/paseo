@@ -517,10 +517,7 @@ export class VoiceSession {
   ): Partial<AgentSessionConfig> {
     const codexVoiceOverrides = this.buildCodexVoiceModeOverrides(existingConfig);
     return {
-      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true, {
-        voiceToolMcpServerName:
-          codexVoiceOverrides?.voiceToolMcpServerName ?? baseConfig.voiceToolMcpServerName,
-      }),
+      systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true),
       ...codexVoiceOverrides,
     };
   }

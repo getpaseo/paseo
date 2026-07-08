@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildVoiceModeSystemPrompt,
-  PASEO_MCP_SERVER_NAME,
   stripVoiceModeSystemPrompt,
   wrapSpokenInput,
 } from "./voice-config.js";
@@ -16,15 +15,6 @@ describe("voice mode prompt instructions", () => {
     expect(prompt).toContain("Paseo voice mode is now on.");
     expect(prompt).toContain("Always use the speak tool for all user-facing communication.");
     expect(prompt).toContain("</paseo_voice_mode>");
-  });
-
-  test("builds enabled voice instructions for the generic paseo MCP server", () => {
-    const prompt = buildVoiceModeSystemPrompt("Base system prompt", true, {
-      voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
-    });
-
-    expect(prompt).toContain(`Always use the ${PASEO_MCP_SERVER_NAME}.speak tool`);
-    expect(prompt).toContain(`first call ${PASEO_MCP_SERVER_NAME}.speak`);
   });
 
   test("builds disabled voice instructions and supersedes previous voice block", () => {
@@ -64,13 +54,5 @@ describe("voice mode prompt instructions", () => {
 describe("spoken-input wrapping", () => {
   test("defaults to the generic speak tool", () => {
     expect(wrapSpokenInput("hello")).toContain("Respond using the speak tool only");
-  });
-
-  test("mentions the generic paseo MCP tool when configured", () => {
-    expect(
-      wrapSpokenInput("hello", {
-        voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
-      }),
-    ).toContain(`Respond using the ${PASEO_MCP_SERVER_NAME}.speak tool only`);
   });
 });

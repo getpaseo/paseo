@@ -3,9 +3,7 @@ import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
 import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
-import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   SpeechToTextProvider,
@@ -108,34 +106,6 @@ function createStreamingVoiceSession() {
     },
   });
   return { voiceSession, detector, sttSession, host };
-}
-
-function createCodexOverrideVoiceSession() {
-  return new VoiceSession({
-    host: {
-      emit: () => {},
-      loadAgent: async () => {
-        throw new Error("loadAgent should not be called in this test");
-      },
-      reloadAgentSession: async () => {
-        throw new Error("reloadAgentSession should not be called in this test");
-      },
-      sendSpokenInput: async () => {},
-      interruptAgentIfRunning: async () => {},
-      hasActiveAgentRun: () => false,
-    },
-    logger: createTestLogger("silent"),
-    sessionId: "voice-session-config-test",
-    tts: null,
-    stt: null,
-    paseoHome: "/tmp/paseo-home",
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
-    mcpAuthToken: "test-token",
-    daemonRuntimeConfig: {
-      listen: "127.0.0.1:6767",
-      relay: null,
-    },
-  });
 }
 
 async function settle(): Promise<void> {
@@ -268,58 +238,5 @@ describe("VoiceSession streaming transcription", () => {
     );
 
     await voiceSession.cleanup();
-  });
-});
-
-describe("VoiceSession Codex voice MCP overrides", () => {
-  test("builds dedicated Codex voice-mode overrides when an agent MCP base URL is available", () => {
-    const session = createCodexOverrideVoiceSession();
-
-    const overrides = (
-      session as unknown as {
-        buildVoiceModeRefreshOverrides: (
-          agentId: string,
-          existingConfig: AgentSessionConfig,
-          baseConfig: { systemPrompt?: string },
-        ) => Partial<AgentSessionConfig>;
-      }
-    ).buildVoiceModeRefreshOverrides(
-      "00000000-0000-4000-8000-000000000001",
-      {
-        provider: "codex",
-        cwd: "/tmp/project",
-      },
-      { systemPrompt: "Base system prompt" },
-    );
-
-    expect(overrides.voiceToolMcpServerName).toBe("paseo");
-    expect(overrides.systemPrompt).toContain("paseo.speak");
-    expect(overrides.mcpServers).toBeUndefined();
-  });
-
-  test("leaves non-Codex voice-mode overrides on the generic speak tool path", () => {
-    const session = createCodexOverrideVoiceSession();
-
-    const overrides = (
-      session as unknown as {
-        buildVoiceModeRefreshOverrides: (
-          agentId: string,
-          existingConfig: AgentSessionConfig,
-          baseConfig: { systemPrompt?: string },
-        ) => Partial<AgentSessionConfig>;
-      }
-    ).buildVoiceModeRefreshOverrides(
-      "00000000-0000-4000-8000-000000000001",
-      {
-        provider: "claude",
-        cwd: "/tmp/project",
-      },
-      { systemPrompt: "Base system prompt" },
-    );
-
-    expect(overrides.voiceToolMcpServerName).toBeUndefined();
-    expect(overrides.systemPrompt).toContain("speak tool");
-    expect(overrides.systemPrompt).not.toContain("paseo.speak");
-    expect(overrides.mcpServers).toBeUndefined();
   });
 });
