@@ -1775,6 +1775,41 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("preserves a manual host rename when desktop status re-advertises the daemon hostname", async () => {
+    const advertisedHostname = "macbook-pro.local";
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: advertisedHostname,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    try {
+      await store.upsertConnectionFromListen({
+        listenAddress: "127.0.0.1:6767",
+        serverId: "srv_desktop",
+        hostname: advertisedHostname,
+      });
+      await store.renameHost("srv_desktop", "mac-dev");
+
+      await store.upsertConnectionFromListen({
+        listenAddress: "127.0.0.1:6767",
+        serverId: "srv_desktop",
+        hostname: advertisedHostname,
+      });
+
+      expect(store.getHosts().find((h) => h.serverId === "srv_desktop")?.label).toBe("mac-dev");
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
   it("upsertDirectConnection stores SSL and password settings", async () => {
     const store = new HostRuntimeStore({
       deps: {
@@ -1982,7 +2017,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("uses the latest advertised hostname when re-pairing an existing relay host", async () => {
+  it("preserves the existing host label when re-pairing an existing relay host", async () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
@@ -1993,6 +2028,7 @@ describe("HostRuntimeStore", () => {
         }),
         getClientId: async () => "cid_test_runtime",
       },
+      storage: createMemoryHostRuntimeStorage(),
     });
 
     await store.upsertRelayConnection({
@@ -2005,7 +2041,7 @@ describe("HostRuntimeStore", () => {
     await store.upsertConnectionFromOffer(makeOffer(), "mbp");
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
-    expect(pairedHost?.label).toBe("mbp");
+    expect(pairedHost?.label).toBe("Custom name");
 
     store.syncHosts([]);
   });
