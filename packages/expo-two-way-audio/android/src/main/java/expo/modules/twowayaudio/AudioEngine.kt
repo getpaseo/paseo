@@ -168,7 +168,7 @@ class AudioEngine (context: Context) {
     }
 
     @SuppressLint("NewApi")
-    private fun requestAudioFocus() {
+    private fun requestAudioFocus(): Boolean {
         val focusRequest =
             AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                 .setAudioAttributes(
@@ -180,9 +180,20 @@ class AudioEngine (context: Context) {
                 .setAcceptsDelayedFocusGain(true)
                 .setOnAudioFocusChangeListener { focusChange ->
                     when (focusChange) {
+                        AudioManager.AUDIOFOCUS_GAIN -> {
+                            Log.d("AudioEngine", "Audio focus gained")
+                        }
                         AudioManager.AUDIOFOCUS_LOSS -> {
                             Log.d("AudioEngine", "Audio focus lost")
-                            onAudioInterruptionCallback?.let { it("blocked") }
+                            handleAudioFocusBlocked()
+                        }
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                            Log.d("AudioEngine", "Audio focus lost transiently")
+                            handleAudioFocusBlocked()
+                        }
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                            Log.d("AudioEngine", "Audio focus duck requested")
+                            handleAudioFocusBlocked()
                         }
                     }
                 }
@@ -191,14 +202,36 @@ class AudioEngine (context: Context) {
         audioFocusRequest = focusRequest
         val result = audioManager.requestAudioFocus(focusRequest)
 
-        if (result != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            throw RuntimeException("Audio focus request failed")
+        if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            return true
         }
+
+        Log.w("AudioEngine", "Audio focus request was not granted: $result")
+        return false
+    }
+
+    private fun handleAudioFocusBlocked() {
+        if (isRecording) {
+            stopRecording()
+        }
+        if (::audioTrack.isInitialized) {
+            audioTrack.pause()
+        }
+        audioSampleQueue.clear()
+        isPlaying = false
+        isRecordingBeforePause = false
+        onOutputVolumeCallback?.invoke(0.0F)
+        onAudioInterruptionCallback?.let { it("blocked") }
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     @SuppressLint("MissingPermission")
-    private fun startRecording(){
+    private fun startRecording(): Boolean {
+        if (!requestAudioFocus()) {
+            handleAudioFocusBlocked()
+            return false
+        }
+
         val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
@@ -231,6 +264,7 @@ class AudioEngine (context: Context) {
         audioRecord.startRecording()
         isRecording = true
         startMicSampleTap()
+        return true
     }
 
     private fun startMicSampleTap(){
@@ -274,7 +308,7 @@ class AudioEngine (context: Context) {
         if (value == isRecording) return isRecording
 
         if (value) {
-            startRecording()
+            return startRecording()
         } else {
             stopRecording()
         }
@@ -353,7 +387,10 @@ class AudioEngine (context: Context) {
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun resumeRecordingAndPlayer() {
-        requestAudioFocus()
+        if (!requestAudioFocus()) {
+            handleAudioFocusBlocked()
+            return
+        }
         isRecording = toggleRecording(isRecordingBeforePause)
         audioTrack.play()
     }
