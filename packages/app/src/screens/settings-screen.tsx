@@ -99,7 +99,10 @@ import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
-import { useEnableBuiltInDaemonOption } from "@/desktop/hooks/use-enable-built-in-daemon-option";
+import {
+  type EnableBuiltInDaemonOption,
+  useEnableBuiltInDaemonOption,
+} from "@/desktop/hooks/use-enable-built-in-daemon-option";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
   buildOpenProjectRoute,
@@ -892,6 +895,7 @@ interface HostPickerProps {
   sortedHosts: HostProfile[];
   onSelectHost: (serverId: string) => void;
   onAddHost: () => void;
+  enableBuiltInDaemonOption: EnableBuiltInDaemonOption;
 }
 
 /**
@@ -901,13 +905,18 @@ interface HostPickerProps {
  * is using right now; an "Add host" row is always reachable from the list —
  * even with a single host.
  */
-function HostPicker({ activeServerId, sortedHosts, onSelectHost, onAddHost }: HostPickerProps) {
+function HostPicker({
+  activeServerId,
+  sortedHosts,
+  onSelectHost,
+  onAddHost,
+  enableBuiltInDaemonOption,
+}: HostPickerProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<View | null>(null);
   const activeHost =
     sortedHosts.find((host) => host.serverId === activeServerId) ?? sortedHosts[0] ?? null;
-  const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const hostOptionTestID = useCallback(
@@ -992,6 +1001,7 @@ function SettingsSidebar({
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const hasHosts = sortedHosts.length > 0;
+  const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => !item.desktopOnly || isDesktopApp);
   const insets = useSafeAreaInsets();
@@ -1038,6 +1048,7 @@ function SettingsSidebar({
             sortedHosts={sortedHosts}
             onSelectHost={onSelectHost}
             onAddHost={onAddHost}
+            enableBuiltInDaemonOption={enableBuiltInDaemonOption}
           />
           {HOST_SECTION_ITEMS.map((item) => (
             <SidebarHostSectionButton
@@ -1064,6 +1075,20 @@ function SettingsSidebar({
               {t("settings.addHost")}
             </Text>
           </Pressable>
+          {enableBuiltInDaemonOption.visible ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("settings.enableBuiltInDaemon")}
+              onPress={enableBuiltInDaemonOption.onPress}
+              testID="settings-enable-built-in-daemon"
+              style={sidebarItemStyle}
+            >
+              <Server size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+              <Text style={sidebarStyles.label} numberOfLines={1}>
+                {t("settings.enableBuiltInDaemon")}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       )}
     </>

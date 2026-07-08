@@ -8,7 +8,12 @@ import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useBuiltInDaemonManagement } from "@/desktop/hooks/use-built-in-daemon-management";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
-export function useEnableBuiltInDaemonOption(): { visible: boolean; onPress: () => void } {
+export interface EnableBuiltInDaemonOption {
+  visible: boolean;
+  onPress: () => void;
+}
+
+export function useEnableBuiltInDaemonOption(): EnableBuiltInDaemonOption {
   const isElectron = getIsElectron();
   const localDaemon = useLocalDaemonServerIdState();
   const hosts = useHosts();
