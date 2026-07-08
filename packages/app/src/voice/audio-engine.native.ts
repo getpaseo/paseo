@@ -119,11 +119,14 @@ export function createAudioEngine(
   const interruptionSubscription = native.addExpoTwoWayAudioEventListener(
     "onAudioInterruption",
     (event: { data: string }) => {
+      if (event.data !== "blocked") {
+        return;
+      }
       const wasCaptureActive = refs.captureActive;
       refs.captureActive = false;
       refs.muted = false;
       callbacks.onVolumeLevel(0);
-      if (wasCaptureActive && event.data === "blocked") {
+      if (wasCaptureActive) {
         callbacks.onInterruption?.();
       }
     },
