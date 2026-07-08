@@ -720,6 +720,7 @@ export const en = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "Hide whitespace",
+        showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",
         wrapLongLines: "Wrap long lines",
         collapseAll: "Collapse all files",

@@ -725,6 +725,7 @@ export const ja: TranslationResources = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "空白を非表示",
+        showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
         wrapLongLines: "長い行を折り返す",
         collapseAll: "すべて折りたたむ",

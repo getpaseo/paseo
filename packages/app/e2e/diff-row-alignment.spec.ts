@@ -233,6 +233,9 @@ test("changes diff switches between flat and tree file lists", async ({ page }) 
   await expect(page.getByTestId("changes-toggle-whitespace")).toContainText("Hide whitespace");
   await expect(page.getByTestId("changes-toggle-wrap-lines")).toContainText("Wrap long lines");
   await expect(page.getByTestId("changes-refresh")).toContainText("Refresh");
+  await page.getByTestId("changes-toggle-whitespace").click();
+  await page.getByTestId("changes-options-menu").click();
+  await expect(page.getByTestId("changes-toggle-whitespace")).toContainText("Show whitespace");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("changes-toggle-view-mode").click();

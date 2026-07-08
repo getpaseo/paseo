@@ -1398,7 +1398,9 @@ function DiffOptionsMenu({
   onToggleWrapLines,
 }: DiffOptionsMenuProps) {
   const { t } = useTranslation();
-  const whitespaceLabel = t("workspace.git.diff.hideWhitespace");
+  const whitespaceLabel = hideWhitespace
+    ? t("workspace.git.diff.showWhitespace")
+    : t("workspace.git.diff.hideWhitespace");
   const wrapLinesLabel = wrapLines
     ? t("workspace.git.diff.scrollLongLines")
     : t("workspace.git.diff.wrapLongLines");

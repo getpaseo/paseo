@@ -731,6 +731,7 @@ export const ptBR: TranslationResources = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "Ocultar espaços em branco",
+        showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",
         wrapLongLines: "Quebrar linhas longas",
         collapseAll: "Recolher todos os arquivos",

@@ -713,6 +713,7 @@ export const ar: TranslationResources = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "إخفاء المسافة البيضاء",
+        showWhitespace: "إظهار المسافة البيضاء",
         scrollLongLines: "قم بتمرير الخطوط الطويلة",
         wrapLongLines: "لف الخطوط الطويلة",
         collapseAll: "طي كافة الملفات",

@@ -739,6 +739,7 @@ export const fr: TranslationResources = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "Masquer les espaces",
+        showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
         wrapLongLines: "Enroulez les longues lignes",
         collapseAll: "Réduire tous les fichiers",

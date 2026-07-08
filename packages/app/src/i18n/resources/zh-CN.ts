@@ -707,6 +707,7 @@ export const zhCN: TranslationResources = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "隐藏空白差异",
+        showWhitespace: "显示空白差异",
         scrollLongLines: "滚动长行",
         wrapLongLines: "自动换行长行",
         collapseAll: "折叠所有文件",

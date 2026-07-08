@@ -732,6 +732,7 @@ export const ru: TranslationResources = {
         showFlatView: "Show flat file list",
         options: "Diff options",
         hideWhitespace: "Скрыть пробелы",
+        showWhitespace: "Показать пробелы",
         scrollLongLines: "Прокручивать длинные строки",
         wrapLongLines: "Перенос длинных строк",
         collapseAll: "Свернуть все файлы",
