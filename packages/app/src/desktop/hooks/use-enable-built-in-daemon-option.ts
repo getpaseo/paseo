@@ -1,10 +1,7 @@
 import { useCallback } from "react";
 import { router } from "expo-router";
 import { getIsElectron } from "@/constants/platform";
-import {
-  useIsLocalDaemonServerIdResolved,
-  useLocalDaemonServerId,
-} from "@/hooks/use-is-local-daemon";
+import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useHosts } from "@/runtime/host-runtime";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
@@ -13,8 +10,7 @@ import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
 export function useEnableBuiltInDaemonOption(): { visible: boolean; onPress: () => void } {
   const isElectron = getIsElectron();
-  const isLocalServerIdResolved = useIsLocalDaemonServerIdResolved();
-  const localServerId = useLocalDaemonServerId();
+  const localDaemon = useLocalDaemonServerIdState();
   const hosts = useHosts();
   const { settings, updateSettings } = useDesktopSettings();
   const { data, setStatus, refetch } = useDaemonStatus();
@@ -27,8 +23,10 @@ export function useEnableBuiltInDaemonOption(): { visible: boolean; onPress: () 
   });
 
   const isLocalhostConfigured =
-    localServerId !== null && hosts.some((host) => host.serverId === localServerId);
-  const visible = isElectron && isLocalServerIdResolved && !isLocalhostConfigured;
+    localDaemon.status === "resolved" &&
+    localDaemon.serverId !== null &&
+    hosts.some((host) => host.serverId === localDaemon.serverId);
+  const visible = isElectron && localDaemon.status === "resolved" && !isLocalhostConfigured;
 
   const onPress = useCallback(() => {
     void (async () => {

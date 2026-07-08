@@ -43,9 +43,25 @@ export function useLocalDaemonServerId(): string | null {
   return query.data?.serverId ?? null;
 }
 
-export function useIsLocalDaemonServerIdResolved(): boolean {
+export type LocalDaemonServerIdState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "resolved"; serverId: string | null };
+
+export function useLocalDaemonServerIdState(): LocalDaemonServerIdState {
+  const isDesktopApp = shouldUseDesktopDaemon();
   const query = useLocalDaemonServerIdQuery();
-  return !query.isLoading;
+
+  if (!isDesktopApp) {
+    return { status: "resolved", serverId: null };
+  }
+  if (query.isError) {
+    return { status: "error" };
+  }
+  if (query.isSuccess) {
+    return { status: "resolved", serverId: query.data.serverId };
+  }
+  return { status: "loading" };
 }
 
 export function useIsLocalDaemon(serverId: string): boolean {

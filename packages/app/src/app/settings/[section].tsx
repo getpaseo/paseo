@@ -2,10 +2,7 @@ import { Redirect, useLocalSearchParams } from "expo-router";
 import { useMemo } from "react";
 import { useHostRuntimeBootstrapState } from "@/app/_layout";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import {
-  useIsLocalDaemonServerIdResolved,
-  useLocalDaemonServerId,
-} from "@/hooks/use-is-local-daemon";
+import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useHosts } from "@/runtime/host-runtime";
 import SettingsScreen from "@/screens/settings-screen";
 import { StartupSplashScreen } from "@/screens/startup-splash-screen";
@@ -19,16 +16,19 @@ import {
 // COMPAT(settingsDaemonRedirect): added 2026-07-08, remove after 2027-01-08.
 function SettingsDaemonRedirect() {
   const hosts = useHosts();
-  const localServerId = useLocalDaemonServerId();
-  const isLocalServerIdResolved = useIsLocalDaemonServerIdResolved();
+  const localDaemon = useLocalDaemonServerIdState();
   const bootstrapState = useHostRuntimeBootstrapState();
 
-  if (!isLocalServerIdResolved) {
+  if (localDaemon.status === "loading") {
     return <StartupSplashScreen bootstrapState={bootstrapState} />;
   }
 
-  if (localServerId && hosts.some((host) => host.serverId === localServerId)) {
-    return <Redirect href={buildSettingsHostSectionRoute(localServerId, "host")} />;
+  if (
+    localDaemon.status === "resolved" &&
+    localDaemon.serverId !== null &&
+    hosts.some((host) => host.serverId === localDaemon.serverId)
+  ) {
+    return <Redirect href={buildSettingsHostSectionRoute(localDaemon.serverId, "host")} />;
   }
 
   return <Redirect href={buildSettingsRoute()} />;
