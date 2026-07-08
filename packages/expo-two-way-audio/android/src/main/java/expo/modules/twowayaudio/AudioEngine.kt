@@ -401,7 +401,11 @@ class AudioEngine (context: Context) {
             handleAudioFocusBlocked()
             return
         }
-        isRecording = toggleRecording(isRecordingBeforePause)
+        val wasRecordingBeforePause = isRecordingBeforePause
+        isRecording = toggleRecording(wasRecordingBeforePause)
+        if (wasRecordingBeforePause && !isRecording) {
+            return
+        }
         audioTrack.play()
     }
 
