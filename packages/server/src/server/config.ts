@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePaseoNodeEnv } from "./paseo-env.js";
@@ -27,7 +28,13 @@ const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
 const DEFAULT_TRUSTED_PROXIES = ["loopback"];
 
-export function resolveBundledWebUiDistDir(moduleUrl: string | URL = import.meta.url): string {
+interface ResolveBundledWebUiDistDirInput {
+  moduleUrl?: string | URL;
+  resourcesPath?: string;
+}
+
+export function resolveBundledWebUiDistDir(input: ResolveBundledWebUiDistDirInput = {}): string {
+  const moduleUrl = input.moduleUrl ?? import.meta.url;
   const moduleDir = path.dirname(fileURLToPath(moduleUrl));
 
   if (path.basename(moduleDir) === "server" && path.basename(path.dirname(moduleDir)) === "src") {
@@ -39,13 +46,22 @@ export function resolveBundledWebUiDistDir(moduleUrl: string | URL = import.meta
     path.basename(path.dirname(moduleDir)) === "server" &&
     path.basename(path.dirname(path.dirname(moduleDir))) === "dist"
   ) {
+    const appDistDir = input.resourcesPath ? path.join(input.resourcesPath, "app-dist") : null;
+
+    if (appDistDir && existsSync(appDistDir)) {
+      return appDistDir;
+    }
+
     return path.resolve(moduleDir, "..", "web-ui");
   }
 
   return path.resolve(moduleDir, "web-ui");
 }
 
-const BUNDLED_WEB_UI_DIST_DIR = resolveBundledWebUiDistDir();
+const processResourcesPath = "resourcesPath" in process ? process.resourcesPath : undefined;
+const BUNDLED_WEB_UI_DIST_DIR = resolveBundledWebUiDistDir({
+  resourcesPath: typeof processResourcesPath === "string" ? processResourcesPath : undefined,
+});
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {

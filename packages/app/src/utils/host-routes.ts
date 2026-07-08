@@ -482,7 +482,6 @@ export function resolveKnownHostRoute(input: {
 
 export const SETTINGS_SECTION_SLUGS = [
   "general",
-  "daemon",
   "appearance",
   "shortcuts",
   "integrations",

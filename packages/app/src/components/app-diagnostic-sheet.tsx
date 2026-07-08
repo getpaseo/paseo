@@ -9,7 +9,6 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
 import { useToast } from "@/contexts/toast-context";
-import { getDesktopDaemonLogs, getDesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import {
   formatAppDiagnosticHeader,
   formatDiagnosticSection,
@@ -17,6 +16,7 @@ import {
   formatServerInfoSection,
   redactAppDiagnosticReport,
 } from "@/diagnostics/app-diagnostic-report";
+import { collectDesktopDiagnosticSections } from "@/diagnostics/desktop-diagnostic-report";
 import { getHostRuntimeStore, useHosts, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
@@ -261,35 +261,6 @@ export function AppDiagnosticSheet({
   );
 }
 
-async function collectDesktopDiagnosticSections(): Promise<DiagnosticCollectionResult> {
-  try {
-    const [status, logs] = await Promise.all([getDesktopDaemonStatus(), getDesktopDaemonLogs()]);
-    return {
-      status: "done",
-      sections: [
-        formatDiagnosticSection("Desktop", [
-          { label: "Daemon status", value: status.status },
-          { label: "Desktop managed", value: String(status.desktopManaged) },
-          { label: "Daemon PID", value: status.pid === null ? "none" : String(status.pid) },
-          { label: "Daemon version", value: status.version ?? "unknown" },
-          { label: "Daemon home", value: status.home || "unknown" },
-          { label: "Log path", value: logs.logPath || "unknown" },
-          { label: "Error", value: status.error ?? "none" },
-        ]),
-        [
-          "Desktop daemon log tail",
-          logs.contents ? indentBlock(logs.contents) : "  No log lines found",
-        ].join("\n"),
-      ],
-    };
-  } catch (error) {
-    return {
-      status: "failed",
-      sections: [formatDiagnosticSection("Desktop", [{ label: "Error", value: toMessage(error) }])],
-    };
-  }
-}
-
 async function collectHostDiagnosticSections(
   host: HostProfile,
   snapshot: HostRuntimeSnapshot | null,
@@ -336,14 +307,6 @@ async function collectHostDiagnosticSections(
     );
     return { sections, status: "failed" };
   }
-}
-
-function indentBlock(value: string): string {
-  return value
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => `  ${line}`)
-    .join("\n");
 }
 
 function toMessage(error: unknown): string {

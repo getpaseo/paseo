@@ -1,7 +1,7 @@
 ---
 title: Browser automation
 description: Give agents a real browser inside Paseo to open pages, click, type, and verify their work.
-nav: Browser automation
+nav: Overview
 order: 35
 category: Browser
 ---

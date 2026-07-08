@@ -1,8 +1,8 @@
-import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useMemo } from "react";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useMemo } from "react";
+import { useReplicaQuery } from "@/data/query";
+import { checkoutDiffPushRoute } from "@/data/push-router";
+import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
-import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutDiffQueryOptions {
@@ -44,10 +44,7 @@ export function useCheckoutDiffQuery({
   ignoreWhitespace,
   enabled = true,
 }: UseCheckoutDiffQueryOptions) {
-  const queryClient = useQueryClient();
-  const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const hookInstanceId = useId();
   const normalizedCompare = useMemo(
     () => normalizeCheckoutDiffCompare({ mode, baseRef, ignoreWhitespace }),
     [mode, baseRef, ignoreWhitespace],
@@ -59,111 +56,25 @@ export function useCheckoutDiffQuery({
     () => checkoutDiffQueryKey(serverId, cwd, mode, baseRef, compareIgnoreWhitespace),
     [serverId, cwd, mode, baseRef, compareIgnoreWhitespace],
   );
+  const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
+  const routeEnabled = Boolean(enabled && isConnected && cwd);
 
-  const query = useQuery<CheckoutDiffQueryPayload>({
+  const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
-    queryFn: skipToken,
-    staleTime: Infinity,
-  });
-
-  useEffect(() => {
-    if (!client || !isConnected || !cwd || !enabled) {
-      return;
-    }
-
-    const subscriptionId = [
-      "checkoutDiff",
-      hookInstanceId,
+    enabled: routeEnabled,
+    pushEvent: "checkout_diff_update",
+    meta: checkoutDiffPushRoute({
+      enabled: routeEnabled,
       serverId,
+      subscriptionId,
       cwd,
-      compareMode,
-      compareBaseRef ?? "",
-      compareIgnoreWhitespace ? "ignore-ws" : "keep-ws",
-    ].join(":");
-    let cancelled = false;
-
-    const unsubscribeUpdate = client.on("checkout_diff_update", (message) => {
-      if (message.payload.subscriptionId !== subscriptionId) {
-        return;
-      }
-      queryClient.setQueryData<CheckoutDiffQueryPayload>(queryKey, {
-        cwd: message.payload.cwd,
-        files: orderCheckoutDiffFiles(message.payload.files),
-        error: message.payload.error,
-        requestId: `subscription:${subscriptionId}`,
-      });
-    });
-    const unsubscribeSubscribeResponse = client.on(
-      "subscribe_checkout_diff_response",
-      (message) => {
-        if (message.payload.subscriptionId !== subscriptionId) {
-          return;
-        }
-        queryClient.setQueryData<CheckoutDiffQueryPayload>(queryKey, {
-          cwd: message.payload.cwd,
-          files: orderCheckoutDiffFiles(message.payload.files),
-          error: message.payload.error,
-          requestId: message.payload.requestId,
-        });
+      compare: {
+        mode: compareMode,
+        ...(compareBaseRef ? { baseRef: compareBaseRef } : {}),
+        ignoreWhitespace: compareIgnoreWhitespace,
       },
-    );
-
-    void client
-      .subscribeCheckoutDiff(
-        cwd,
-        {
-          mode: compareMode,
-          baseRef: compareBaseRef,
-          ignoreWhitespace: compareIgnoreWhitespace,
-        },
-        { subscriptionId },
-      )
-      .then((payload) => {
-        if (cancelled) {
-          return;
-        }
-        queryClient.setQueryData<CheckoutDiffQueryPayload>(queryKey, {
-          cwd: payload.cwd,
-          files: orderCheckoutDiffFiles(payload.files),
-          error: payload.error,
-          requestId: payload.requestId,
-        });
-        return;
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        console.error("[useCheckoutDiffQuery] subscribeCheckoutDiff failed", {
-          serverId,
-          cwd,
-          error,
-        });
-      });
-
-    return () => {
-      cancelled = true;
-      unsubscribeUpdate();
-      unsubscribeSubscribeResponse();
-      try {
-        client.unsubscribeCheckoutDiff(subscriptionId);
-      } catch {
-        // Ignore disconnect race during effect cleanup.
-      }
-    };
-  }, [
-    client,
-    isConnected,
-    cwd,
-    enabled,
-    hookInstanceId,
-    serverId,
-    compareMode,
-    compareBaseRef,
-    compareIgnoreWhitespace,
-    queryKey,
-    queryClient,
-  ]);
+    }),
+  });
 
   const payload = query.data ?? null;
   const payloadError = payload?.error ?? null;

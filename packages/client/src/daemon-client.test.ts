@@ -132,6 +132,25 @@ function parseSentFrame(
     .parse(JSON.parse(assertStr(data))).message;
 }
 
+function respondToScheduleRequest(
+  mock: ReturnType<typeof createMockTransport>,
+  request: Record<string, unknown>,
+): void {
+  const responseType =
+    request.type === "schedule/create" ? "schedule/create/response" : "schedule/update/response";
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: responseType,
+      payload: {
+        requestId: request.requestId,
+        schedule: null,
+        error: null,
+      },
+    }),
+  );
+}
+
 const clients: DaemonClient[] = [];
 
 afterEach(async () => {
@@ -543,6 +562,112 @@ test("advertises client capabilities in hello", async () => {
         hostKind: "desktop app",
       },
     },
+  });
+});
+
+test("sends new-agent run options when creating schedules", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.scheduleCreate({
+    requestId: "request-1",
+    prompt: "Run the task",
+    cadence: { type: "every", everyMs: 60_000 },
+    target: {
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        thinkingOptionId: "think-hard",
+        archiveOnFinish: false,
+        isolation: "worktree",
+      },
+    },
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "schedule/create",
+    requestId: "request-1",
+    prompt: "Run the task",
+    cadence: { type: "every", everyMs: 60_000 },
+    target: {
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        thinkingOptionId: "think-hard",
+        archiveOnFinish: false,
+        isolation: "worktree",
+      },
+    },
+  });
+
+  respondToScheduleRequest(mock, request);
+  await expect(createPromise).resolves.toEqual({
+    requestId: "request-1",
+    schedule: null,
+    error: null,
+  });
+});
+
+test("sends new-agent run options when updating schedules", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const updatePromise = client.scheduleUpdate({
+    id: "schedule-1",
+    requestId: "request-1",
+    newAgentConfig: {
+      thinkingOptionId: "think-hard",
+      archiveOnFinish: false,
+      isolation: "worktree",
+    },
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "schedule/update",
+    requestId: "request-1",
+    scheduleId: "schedule-1",
+    newAgentConfig: {
+      thinkingOptionId: "think-hard",
+      archiveOnFinish: false,
+      isolation: "worktree",
+    },
+  });
+
+  respondToScheduleRequest(mock, request);
+  await expect(updatePromise).resolves.toEqual({
+    requestId: "request-1",
+    schedule: null,
+    error: null,
   });
 });
 

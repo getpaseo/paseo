@@ -173,10 +173,32 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### Agent Tool Catalog Measurement
+
+Measure the MCP `tools/list` payload that Paseo injects into agents with:
+
+```bash
+npm run measure:agent-tools --workspace=@getpaseo/server
+```
+
+The command reports compact JSON bytes, estimated tokens, field totals, largest
+tools, and the browser-tools delta. It defaults to the agent-scoped catalog; use
+`-- --scope=top-level` for the unaffiliated `/mcp/agents` shape and `-- --json`
+for machine-readable output.
+
 ## paseo.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
 of commands. Both run sequentially.
+
+Lifecycle commands run in the worktree through a stable script shell: `bash`
+resolved from `PATH` on macOS/Linux, and PowerShell with `-NoProfile` on
+Windows. They inherit the daemon environment plus Paseo's lifecycle variables;
+login and interactive shell startup files are not loaded, and Bash's `BASH_ENV`
+hook is unset. Daemon-run loop verify checks and ACP single-string terminal
+commands use the same non-login Bash behavior on macOS/Linux, but preserve their
+existing `cmd.exe /c` string semantics on Windows. Service scripts are separate:
+they launch in a terminal and receive the service environment described below.
 
 ```json
 {

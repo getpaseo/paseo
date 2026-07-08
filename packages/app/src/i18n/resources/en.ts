@@ -719,6 +719,8 @@ export const en = {
         wrapLongLines: "Wrap long lines",
         collapseAll: "Collapse all files",
         expandAll: "Expand all files",
+        collapseAllFolders: "Collapse all folders",
+        expandAllFolders: "Expand all folders",
         refreshing: "Refreshing",
         refresh: "Refresh",
         refreshState: "Refresh git and GitHub state",
@@ -1054,6 +1056,12 @@ export const en = {
         uninstallFailed: "Unable to uninstall orchestration skills.",
       },
     },
+  },
+  rootError: {
+    kicker: "Something went wrong",
+    title: "Paseo ran into a problem.",
+    body: "Try again to reload the app. If this keeps happening, include the details below when you report it.",
+    details: "Details",
   },
   startup: {
     errorTitle: "Something went wrong",
@@ -1412,6 +1420,7 @@ export const en = {
     },
     backToWorkspace: "Back",
     addHost: "Add host",
+    enableBuiltInDaemon: "Enable built-in daemon",
     projects: "Projects",
     projectList: {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
@@ -1420,7 +1429,6 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
-      daemon: "Daemon",
       appearance: "Appearance",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
@@ -1435,7 +1443,7 @@ export const en = {
       providers: "Providers",
       usage: "Usage",
       terminals: "Terminals",
-      host: "Host",
+      host: "Overview",
     },
     general: {
       title: "General",

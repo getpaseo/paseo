@@ -3,7 +3,7 @@ title: Paseo MCP
 description: Paseo MCP tools injected into agents.
 nav: Paseo MCP
 order: 30
-category: Automation
+category: Orchestration
 ---
 
 # Paseo MCP
@@ -19,7 +19,6 @@ The MCP server itself is controlled by `daemon.mcp.enabled`. Existing agents may
 | Tool                 | Function                                                                                             |
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
 | `create_agent`       | Create an agent tied to a working directory, optionally with initial settings or a new git worktree. |
-| `wait_for_agent`     | Block until an agent requests permission or finishes its current run.                                |
 | `send_agent_prompt`  | Send a task to a running agent.                                                                      |
 | `get_agent_status`   | Return the latest snapshot for an agent.                                                             |
 | `list_agents`        | List recent agents as compact metadata.                                                              |

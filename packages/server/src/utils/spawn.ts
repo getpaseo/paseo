@@ -113,19 +113,3 @@ export async function execCommand(
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
 }
-
-export function platformShell(): { command: string; flag: string[] } {
-  if (process.platform === "win32") {
-    return { command: "cmd.exe", flag: ["/c"] };
-  }
-
-  return { command: "/bin/sh", flag: ["-lc"] };
-}
-
-export function platformBash(): { command: string; flag: string[] } {
-  if (process.platform === "win32") {
-    return { command: "cmd.exe", flag: ["/c"] };
-  }
-
-  return { command: "/bin/bash", flag: ["-lc"] };
-}

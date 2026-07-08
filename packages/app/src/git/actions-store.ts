@@ -1,7 +1,7 @@
 import type { QueryKey } from "@tanstack/react-query";
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
-import { queryClient as appQueryClient } from "@/query/query-client";
+import { queryClient as appQueryClient } from "@/data/query-client";
 import {
   buildWorkspaceTabPersistenceKey,
   useWorkspaceLayoutStore,

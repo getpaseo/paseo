@@ -5,21 +5,27 @@ import { z } from "zod";
 import type { Logger } from "pino";
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { curateAgentActivity } from "./agent/activity-curator.js";
+import {
+  type BoundCreateAgentCommand,
+  type EnsureWorkspaceForCreate,
+  formatProviderModel,
+} from "./agent/create-agent/create.js";
 import type { AgentManager } from "./agent/agent-manager.js";
-import { getStructuredAgentResponse } from "./agent/agent-response-loop.js";
+import {
+  buildStructuredAgentResponsePrompt,
+  getStructuredAgentResponse,
+} from "./agent/agent-response-loop.js";
 import type {
   AgentPromptInput,
-  AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
-import { execCommand, platformShell } from "../utils/spawn.js";
-import type {
-  ProviderSnapshotManager,
-  ResolvedProviderCreateConfig,
-  ResolveProviderCreateConfigOptions,
-} from "./agent/provider-snapshot-manager.js";
+import {
+  buildStringCommandShellInvocation,
+  createStringCommandShellEnvOverlay,
+} from "../utils/string-command-shell.js";
+import { execCommand } from "../utils/spawn.js";
 
 const LOOP_ID_LENGTH = 8;
 const DEFAULT_LOOP_PROVIDER: AgentProvider = "claude";
@@ -201,6 +207,21 @@ function ensureNonNegativeInteger(value: number | undefined, field: string): num
   return value;
 }
 
+async function assertLoopCwdDirectory(cwd: string): Promise<void> {
+  let stats;
+  try {
+    stats = await fs.stat(cwd);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Working directory ${cwd} no longer exists`, { cause: error });
+    }
+    throw error;
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(`Working directory ${cwd} is not a directory`);
+  }
+}
+
 function buildWorkerTitle(loop: LoopRecord, iterationIndex: number): string {
   const prefix = loop.name ?? loop.id;
   return `${prefix} [loop ${iterationIndex} worker]`;
@@ -211,7 +232,14 @@ function buildVerifierTitle(loop: LoopRecord, iterationIndex: number): string {
   return `${prefix} [loop ${iterationIndex} verifier]`;
 }
 
-type CreateConfigResolver = Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+type LoopAgentManager = Pick<
+  AgentManager,
+  "archiveAgent" | "cancelAgentRun" | "closeAgent" | "runAgent" | "subscribe" | "waitForAgentEvent"
+>;
+
+interface LoopExecutionContext {
+  workspaceId: Promise<string>;
+}
 
 function formatStreamLog(event: AgentStreamEvent): string | null {
   switch (event.type) {
@@ -266,10 +294,15 @@ async function runVerifyCheck(options: {
 }): Promise<LoopVerifyCheckResult> {
   const startedAt = nowIso();
   try {
-    const shell = platformShell();
-    const result = await execCommand(shell.command, [...shell.flag, options.command], {
+    const shell = buildStringCommandShellInvocation({
+      command: options.command,
+      windowsShell: "cmd",
+    });
+    const result = await execCommand(shell.shell, shell.args, {
       cwd: options.cwd,
+      envOverlay: createStringCommandShellEnvOverlay(),
       maxBuffer: MAX_VERIFY_OUTPUT_BYTES,
+      shell: false,
     });
     return {
       command: options.command,
@@ -309,9 +342,10 @@ export class LoopService {
   constructor(
     private readonly options: {
       paseoHome: string;
-      agentManager: AgentManager;
+      agentManager: LoopAgentManager;
       logger: Logger;
-      providerSnapshotManager: CreateConfigResolver;
+      createAgent: BoundCreateAgentCommand;
+      ensureWorkspaceForCreate: EnsureWorkspaceForCreate;
     },
   ) {
     this.storePath = path.join(options.paseoHome, "loops", "loops.json");
@@ -380,13 +414,15 @@ export class LoopService {
     if (!verifyPrompt && verifyChecks.length === 0) {
       throw new Error("Loop requires --verify or at least one --verify-check");
     }
+    const cwd = path.resolve(input.cwd);
+    await assertLoopCwdDirectory(cwd);
 
     const createdAt = nowIso();
     const record = LoopRecordSchema.parse({
       id: createLoopId(),
       name: normalizeName(input.name),
       prompt,
-      cwd: path.resolve(input.cwd),
+      cwd,
       provider: input.provider ?? DEFAULT_LOOP_PROVIDER,
       model: normalizePrompt(input.model, "model"),
       modeId: normalizePrompt(input.modeId, "modeId"),
@@ -480,10 +516,12 @@ export class LoopService {
       level: "info",
       text: "Stop requested.",
     });
+    if (running) {
+      running.abortController.abort(new Error("Loop aborted"));
+    }
     await this.persist();
 
     if (running) {
-      running.abortController.abort(new Error("Loop aborted"));
       if (loop.activeWorkerAgentId) {
         await this.options.agentManager.cancelAgentRun(loop.activeWorkerAgentId).catch(() => {});
       }
@@ -504,6 +542,11 @@ export class LoopService {
   private async executeLoop(loopId: string, signal: AbortSignal): Promise<void> {
     const loop = this.requireLoop(loopId);
     const deadline = loop.maxTimeMs ? Date.now() + loop.maxTimeMs : null;
+    const workspaceId = this.options.ensureWorkspaceForCreate(loop.cwd, { prompt: loop.prompt });
+    workspaceId.catch(() => {});
+    const context: LoopExecutionContext = {
+      workspaceId,
+    };
 
     try {
       for (let index = 1; ; index += 1) {
@@ -542,14 +585,14 @@ export class LoopService {
         });
         await this.persist();
 
-        const workerPassed = await this.runWorkerIteration(loop, iteration, signal);
+        const workerPassed = await this.runWorkerIteration(loop, iteration, signal, context);
         if (signal.aborted) {
           throw new Error("Loop aborted");
         }
         if (!workerPassed) {
           iteration.status = iteration.status === "stopped" ? "stopped" : "failed";
         } else {
-          const verificationPassed = await this.runVerification(loop, iteration, signal);
+          const verificationPassed = await this.runVerification(loop, iteration, signal, context);
           if (verificationPassed) {
             iteration.status = "succeeded";
             this.finishLoop(loop, "succeeded", `Iteration ${index} passed verification.`);
@@ -587,11 +630,11 @@ export class LoopService {
     loopId: string,
     error: unknown,
   ): Promise<void> {
+    const iteration = loop.activeIteration
+      ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
+      : null;
     if (isAbortError(error)) {
       this.finishLoop(loop, "stopped", "Loop stopped.");
-      const iteration = loop.activeIteration
-        ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
-        : null;
       if (iteration && iteration.status === "running") {
         iteration.status = "stopped";
         iteration.failureReason = "Loop stopped";
@@ -604,9 +647,6 @@ export class LoopService {
     const message = error instanceof Error ? error.message : String(error);
     this.logger.error({ err: error, loopId }, "Loop execution failed");
     this.finishLoop(loop, "failed", message);
-    const iteration = loop.activeIteration
-      ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
-      : null;
     if (iteration && iteration.status === "running") {
       iteration.status = "failed";
       iteration.failureReason = message;
@@ -619,19 +659,39 @@ export class LoopService {
     loop: LoopRecord,
     iteration: LoopIterationRecord,
     signal: AbortSignal,
+    context: LoopExecutionContext,
   ): Promise<boolean> {
-    const agent = await this.options.agentManager.createAgent(
-      await this.buildWorkerConfig(loop, iteration),
-    );
+    const workspaceId = await context.workspaceId;
+    if (signal.aborted) {
+      throw new Error("Loop aborted");
+    }
+    const created = await this.options.createAgent({
+      kind: "mcp",
+      provider: this.formatWorkerProviderModel(loop),
+      cwd: loop.cwd,
+      workspaceId,
+      title: buildWorkerTitle(loop, iteration.index),
+      mode: loop.modeId ?? undefined,
+      unattended: true,
+      promptFailure: "return-error",
+      background: true,
+      notifyOnFinish: false,
+      internal: true,
+    });
+    const agent = created.snapshot;
     iteration.workerAgentId = agent.id;
     loop.activeWorkerAgentId = agent.id;
     loop.updatedAt = nowIso();
     await this.persist();
 
+    let workerCanceledReason: string | null = null;
     const unsubscribe = this.options.agentManager.subscribe(
       (event) => {
         if (event.type !== "agent_stream") {
           return;
+        }
+        if (event.event.type === "turn_canceled") {
+          workerCanceledReason = event.event.reason;
         }
         const text = formatStreamLog(event.event);
         if (!text) {
@@ -649,14 +709,11 @@ export class LoopService {
     );
 
     try {
-      const prompt = this.toPrompt(loop.prompt);
-      const result = await this.options.agentManager.runAgent(agent.id, prompt);
+      const result = await this.options.agentManager.runAgent(agent.id, this.toPrompt(loop.prompt));
       iteration.workerCompletedAt = nowIso();
-      iteration.workerOutcome = result.canceled ? "canceled" : "completed";
-      if (result.canceled) {
-        iteration.failureReason = "Worker run was canceled.";
-        iteration.status = "stopped";
-        return false;
+      iteration.workerOutcome = "completed";
+      if (result.canceled || workerCanceledReason) {
+        throw new Error(`Loop worker ${agent.id} was canceled: ${workerCanceledReason}`);
       }
       return true;
     } catch (error) {
@@ -694,6 +751,7 @@ export class LoopService {
     loop: LoopRecord,
     iteration: LoopIterationRecord,
     signal: AbortSignal,
+    context: LoopExecutionContext,
   ): Promise<boolean> {
     for (const command of loop.verifyChecks) {
       if (signal.aborted) {
@@ -727,9 +785,25 @@ export class LoopService {
     }
 
     const startedAt = nowIso();
-    const verifierAgent = await this.options.agentManager.createAgent(
-      await this.buildVerifierConfig(loop, iteration),
-    );
+    const initialVerifierPrompt = buildStructuredAgentResponsePrompt({
+      prompt: loop.verifyPrompt,
+      schema: LoopVerifyPromptSchema,
+      schemaName: "LoopVerifierResult",
+    });
+    const created = await this.options.createAgent({
+      kind: "mcp",
+      provider: this.formatVerifierProviderModel(loop),
+      cwd: loop.cwd,
+      workspaceId: await context.workspaceId,
+      title: buildVerifierTitle(loop, iteration.index),
+      mode: loop.verifierModeId ?? loop.modeId ?? undefined,
+      unattended: true,
+      promptFailure: "return-error",
+      background: true,
+      notifyOnFinish: false,
+      internal: true,
+    });
+    const verifierAgent = created.snapshot;
     iteration.verifierAgentId = verifierAgent.id;
     loop.activeVerifierAgentId = verifierAgent.id;
     loop.updatedAt = nowIso();
@@ -756,8 +830,17 @@ export class LoopService {
     );
 
     try {
+      let waitingForInitialResponse = true;
       const result = await getStructuredAgentResponse({
         caller: async (nextPrompt) => {
+          if (waitingForInitialResponse) {
+            waitingForInitialResponse = false;
+            const run = await this.options.agentManager.runAgent(
+              verifierAgent.id,
+              initialVerifierPrompt,
+            );
+            return this.resolveFinalText(run.timeline, run.finalText);
+          }
           const run = await this.options.agentManager.runAgent(
             verifierAgent.id,
             this.toPrompt(nextPrompt),
@@ -803,56 +886,18 @@ export class LoopService {
     }
   }
 
-  private async buildWorkerConfig(
-    loop: LoopRecord,
-    iteration: LoopIterationRecord,
-  ): Promise<AgentSessionConfig> {
-    const provider = loop.workerProvider ?? loop.provider;
-    const resolvedUnattendedConfig = loop.modeId
-      ? { modeId: loop.modeId, featureValues: undefined }
-      : await this.resolveProviderCreateConfig({ provider, cwd: loop.cwd });
-    return {
-      provider,
-      cwd: loop.cwd,
-      model: loop.workerModel ?? loop.model ?? undefined,
-      modeId: resolvedUnattendedConfig.modeId,
-      featureValues: resolvedUnattendedConfig.featureValues,
-      title: buildWorkerTitle(loop, iteration.index),
-      internal: true,
-    };
+  private formatWorkerProviderModel(loop: LoopRecord): string {
+    return formatProviderModel(
+      loop.workerProvider ?? loop.provider,
+      loop.workerModel ?? loop.model,
+    );
   }
 
-  private async buildVerifierConfig(
-    loop: LoopRecord,
-    iteration: LoopIterationRecord,
-  ): Promise<AgentSessionConfig> {
-    const provider = loop.verifierProvider ?? loop.provider;
-    const explicitModeId = loop.verifierModeId ?? loop.modeId;
-    const resolvedUnattendedConfig = explicitModeId
-      ? { modeId: explicitModeId, featureValues: undefined }
-      : await this.resolveProviderCreateConfig({ provider, cwd: loop.cwd });
-    return {
-      provider,
-      cwd: loop.cwd,
-      model: loop.verifierModel ?? loop.model ?? undefined,
-      modeId: resolvedUnattendedConfig.modeId,
-      featureValues: resolvedUnattendedConfig.featureValues,
-      title: buildVerifierTitle(loop, iteration.index),
-      internal: true,
-    };
-  }
-
-  private resolveProviderCreateConfig(
-    input: Pick<ResolveProviderCreateConfigOptions, "provider" | "cwd">,
-  ): Promise<ResolvedProviderCreateConfig> {
-    return this.options.providerSnapshotManager.resolveCreateConfig({
-      provider: input.provider,
-      cwd: input.cwd,
-      requestedMode: undefined,
-      featureValues: undefined,
-      parent: null,
-      unattended: true,
-    });
+  private formatVerifierProviderModel(loop: LoopRecord): string {
+    return formatProviderModel(
+      loop.verifierProvider ?? loop.provider,
+      loop.verifierModel ?? loop.model,
+    );
   }
 
   private resolveFinalText(timeline: AgentTimelineItem[], finalText: string): string {

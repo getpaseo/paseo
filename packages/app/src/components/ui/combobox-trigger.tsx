@@ -1,9 +1,18 @@
-import { forwardRef, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import {
   Pressable,
   View,
+  type NativeSyntheticEvent,
   type PressableProps,
   type PressableStateCallbackType,
+  type TargetedEvent,
   type ViewStyle,
   type StyleProp,
 } from "react-native";
@@ -20,6 +29,7 @@ const chevronColorMapping = (theme: Theme) => ({
 interface TriggerState {
   pressed: boolean;
   hovered: boolean;
+  focused: boolean;
 }
 
 type TriggerStyleProp = StyleProp<ViewStyle> | ((state: TriggerState) => StyleProp<ViewStyle>);
@@ -36,23 +46,45 @@ interface ComboboxTriggerProps extends Omit<PressableProps, "style" | "children"
 }
 
 export const ComboboxTrigger = forwardRef<View, ComboboxTriggerProps>(function ComboboxTrigger(
-  { children, chevron, style, block = false, ...props },
+  { children, chevron, style, block = false, onFocus, onBlur, ...props },
   ref,
 ): ReactElement {
+  const [focused, setFocused] = useState(false);
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (typeof style === "function") {
-        return style({ pressed, hovered });
+        return style({ pressed, hovered, focused });
       }
       return style;
     },
-    [style],
+    [focused, style],
+  );
+  const handleFocus = useCallback(
+    (event: NativeSyntheticEvent<TargetedEvent>) => {
+      setFocused(true);
+      onFocus?.(event);
+    },
+    [onFocus],
+  );
+  const handleBlur = useCallback(
+    (event: NativeSyntheticEvent<TargetedEvent>) => {
+      setFocused(false);
+      onBlur?.(event);
+    },
+    [onBlur],
   );
 
   const rowStyle = useMemo(() => [styles.row, block && styles.rowBlock], [block]);
 
   return (
-    <Pressable ref={ref} collapsable={false} style={pressableStyle} {...props}>
+    <Pressable
+      ref={ref}
+      collapsable={false}
+      style={pressableStyle}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      {...props}
+    >
       <View style={rowStyle}>
         {children}
         {chevron !== null &&

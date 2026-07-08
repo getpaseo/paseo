@@ -278,6 +278,7 @@ async function createManagedSession(
       cwd: workdir,
     },
     agentId,
+    { workspaceId: undefined },
   );
   return {
     agentId,

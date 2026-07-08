@@ -731,6 +731,8 @@ export const ru: TranslationResources = {
         wrapLongLines: "Перенос длинных строк",
         collapseAll: "Свернуть все файлы",
         expandAll: "Развернуть все файлы",
+        collapseAllFolders: "Свернуть все папки",
+        expandAllFolders: "Развернуть все папки",
         refreshing: "Освежающий",
         refresh: "Обновить",
         refreshState: "Обновить состояние git и GitHub.",
@@ -1073,6 +1075,12 @@ export const ru: TranslationResources = {
         uninstallFailed: "Невозможно удалить навыки оркестровки.",
       },
     },
+  },
+  rootError: {
+    kicker: "Что-то пошло не так",
+    title: "В Paseo возникла проблема.",
+    body: "Попробуйте снова перезагрузить приложение. Если это повторяется, приложите приведенные ниже подробности к отчету.",
+    details: "Подробности",
   },
   startup: {
     errorTitle: "Что- то пошло не так",
@@ -1435,6 +1443,7 @@ export const ru: TranslationResources = {
     },
     backToWorkspace: "Назад",
     addHost: "Добавить хост",
+    enableBuiltInDaemon: "Включить встроенный демон",
     projects: "Проекты",
     projectList: {
       hostLoadFailed: "Не удалось загрузить проекты с хоста{{hostName}}:{{message}}.",
@@ -1443,7 +1452,6 @@ export const ru: TranslationResources = {
     groupInfo: "О{{title}}",
     sections: {
       general: "Общий",
-      daemon: "Daemon",
       appearance: "Появление",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
@@ -1458,7 +1466,7 @@ export const ru: TranslationResources = {
       providers: "Провайдеры",
       usage: "Использование",
       terminals: "Terminals",
-      host: "Host",
+      host: "Обзор",
     },
     general: {
       title: "Общий",

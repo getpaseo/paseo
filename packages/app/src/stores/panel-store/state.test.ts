@@ -103,6 +103,20 @@ describe("panel-store migration", () => {
 
     expect(state.explorerShowHiddenFiles).toBe(true);
   });
+
+  it("initializes diffCollapsedFoldersByWorkspace for pre-v12 state", () => {
+    const state = migratePanelState({}, 11, { isWeb: false });
+
+    expect(state.diffCollapsedFoldersByWorkspace).toEqual({});
+  });
+
+  it("preserves an existing diffCollapsedFoldersByWorkspace map", () => {
+    const state = migratePanelState({ diffCollapsedFoldersByWorkspace: { ws: ["src/app"] } }, 12, {
+      isWeb: false,
+    });
+
+    expect(state.diffCollapsedFoldersByWorkspace).toEqual({ ws: ["src/app"] });
+  });
 });
 
 describe("panel-store visibility selectors", () => {

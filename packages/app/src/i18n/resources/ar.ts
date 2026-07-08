@@ -712,6 +712,8 @@ export const ar: TranslationResources = {
         wrapLongLines: "لف الخطوط الطويلة",
         collapseAll: "طي كافة الملفات",
         expandAll: "قم بتوسيع كافة الملفات",
+        collapseAllFolders: "طي كافة المجلدات",
+        expandAllFolders: "توسيع كافة المجلدات",
         refreshing: "منعش",
         refresh: "ينعش",
         refreshState: "تحديث بوابة وحالة GitHub",
@@ -1047,6 +1049,12 @@ export const ar: TranslationResources = {
         uninstallFailed: "غير قادر على إلغاء تثبيت مهارات التنسيق.",
       },
     },
+  },
+  rootError: {
+    kicker: "حدث خطأ",
+    title: "واجه Paseo مشكلة.",
+    body: "جرّب مرة أخرى لإعادة تحميل التطبيق. إذا استمر حدوث ذلك، فأرفق التفاصيل أدناه عند الإبلاغ عنه.",
+    details: "التفاصيل",
   },
   startup: {
     errorTitle: "حدث خطأ ما",
@@ -1404,6 +1412,7 @@ export const ar: TranslationResources = {
     },
     backToWorkspace: "خلف",
     addHost: "أضف مضيفًا",
+    enableBuiltInDaemon: "تفعيل البرنامج الخفي المدمج",
     projects: "المشاريع",
     projectList: {
       hostLoadFailed: "تعذر تحميل المشاريع من المضيف{{hostName}}:{{message}}",
@@ -1412,7 +1421,6 @@ export const ar: TranslationResources = {
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
-      daemon: "Daemon",
       appearance: "مظهر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -1427,7 +1435,7 @@ export const ar: TranslationResources = {
       providers: "مقدمي الخدمات",
       usage: "الاستخدام",
       terminals: "Terminals",
-      host: "Host",
+      host: "نظرة عامة",
     },
     general: {
       title: "عام",

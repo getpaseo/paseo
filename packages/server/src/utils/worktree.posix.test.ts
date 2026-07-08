@@ -33,8 +33,9 @@ import {
   realpathSync,
   writeFileSync,
   readFileSync,
+  chmodSync,
 } from "fs";
-import { dirname, join } from "path";
+import { delimiter, dirname, join } from "path";
 import { tmpdir } from "os";
 import net from "node:net";
 
@@ -635,6 +636,68 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(readFileSync(join(result.worktreePath, "setup.log"), "utf8").trim()).toBe(
         "hello from string setup",
       );
+    });
+
+    it("runs setup commands with the daemon PATH instead of login profile PATH", async () => {
+      const home = join(tempDir, "host-home");
+      const binDir = join(tempDir, "daemon-bin");
+      mkdirSync(home);
+      mkdirSync(binDir);
+
+      const shimPath = join(binDir, "paseo-shim");
+      writeFileSync(shimPath, "#!/bin/sh\nprintf 'shim:%s\\n' \"$1\"\n");
+      chmodSync(shimPath, 0o755);
+      writeFileSync(join(home, ".bash_profile"), "export PATH=/usr/bin:/bin\n");
+      const bashEnvPath = join(home, "bash-env");
+      writeFileSync(bashEnvPath, "export PATH=/usr/bin:/bin\n");
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            setup: "command -v paseo-shim >/dev/null && paseo-shim ok > setup-path.log",
+          },
+        }),
+      );
+
+      const originalHome = process.env.HOME;
+      const originalPath = process.env.PATH;
+      const originalBashEnv = process.env.BASH_ENV;
+      process.env.HOME = home;
+      process.env.PATH = `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`;
+      process.env.BASH_ENV = bashEnvPath;
+
+      try {
+        await runWorktreeSetupCommands({
+          worktreePath: repoDir,
+          branchName: "main",
+          cleanupOnFailure: false,
+          runtimeEnv: {
+            PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+            PASEO_ROOT_PATH: repoDir,
+            PASEO_WORKTREE_PATH: repoDir,
+            PASEO_BRANCH_NAME: "main",
+            PASEO_WORKTREE_PORT: "12345",
+          },
+        });
+      } finally {
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = originalPath;
+        }
+        if (originalBashEnv === undefined) {
+          delete process.env.BASH_ENV;
+        } else {
+          process.env.BASH_ENV = originalBashEnv;
+        }
+      }
+
+      expect(readFileSync(join(repoDir, "setup-path.log"), "utf8").trim()).toBe("shim:ok");
     });
 
     it("treats blank lifecycle strings as empty", () => {

@@ -61,10 +61,14 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
+import { buildDesktopFrameStyle } from "./combobox-frame-style";
+
+export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
 
 export type ComboboxOption = ComboboxOptionModel;
+export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
@@ -99,7 +103,7 @@ export interface ComboboxProps {
   presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  desktopPlacement?: "top-start" | "bottom-start";
+  desktopPlacement?: ComboboxDesktopPlacement;
   /**
    * Prevents an initial frame at 0,0 by hiding desktop content until floating
    * coordinates resolve. This intentionally disables fade enter/exit animation
@@ -381,7 +385,7 @@ function OptionsList({
 interface DesktopPositionInput {
   isDesktopAboveSearch: boolean;
   isMobile: boolean;
-  desktopPlacement: "top-start" | "bottom-start";
+  desktopPlacement: ComboboxDesktopPlacement;
   referenceTop: number | null;
   referenceLeft: number | null;
   referenceAtOrigin: boolean;
@@ -656,7 +660,7 @@ interface DesktopResetSetters {
 function useDesktopPositionReset(
   isOpen: boolean,
   isMobile: boolean,
-  desktopPlacement: "top-start" | "bottom-start",
+  desktopPlacement: ComboboxDesktopPlacement,
   update: () => unknown,
   setters: DesktopResetSetters,
 ) {
@@ -847,46 +851,6 @@ function buildFloatingMiddleware(input: FloatingMiddlewareInput) {
         updateReferenceWidth(setReferenceWidth, rects.reference.width);
       },
     }),
-  ];
-}
-
-interface DesktopContainerStyleInput {
-  desktopMinWidth: number | undefined;
-  referenceWidth: number | null;
-  desktopFixedHeight: number | undefined;
-  desktopPositionStyle: DesktopPositionResult["desktopPositionStyle"];
-  shouldHideDesktopContent: boolean;
-  availableHeight: number | undefined;
-}
-
-function buildDesktopFrameStyle(input: DesktopContainerStyleInput): StyleProp<ViewStyle> {
-  const {
-    desktopMinWidth,
-    referenceWidth,
-    desktopFixedHeight,
-    desktopPositionStyle,
-    shouldHideDesktopContent,
-    availableHeight,
-  } = input;
-  const fixedHeightStyle =
-    desktopFixedHeight != null
-      ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
-      : null;
-  const hiddenStyle = shouldHideDesktopContent ? { opacity: 0 } : null;
-  const availableHeightStyle =
-    typeof availableHeight === "number"
-      ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
-      : null;
-  return [
-    {
-      position: "absolute" as const,
-      minWidth: desktopMinWidth ?? referenceWidth ?? 200,
-      maxWidth: Math.max(400, desktopMinWidth ?? 0),
-    },
-    fixedHeightStyle,
-    desktopPositionStyle,
-    hiddenStyle,
-    availableHeightStyle,
   ];
 }
 
@@ -1255,7 +1219,7 @@ export function Combobox({
   presentation,
   open,
   onOpenChange,
-  desktopPlacement = "top-start",
+  desktopPlacement = "bottom-start",
   desktopPreventInitialFlash = true,
   desktopMinWidth,
   desktopFixedHeight,

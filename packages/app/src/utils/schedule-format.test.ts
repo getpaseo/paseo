@@ -85,17 +85,39 @@ describe("interval formatting", () => {
 
 describe("describeCron", () => {
   it("humanizes common fixed-time cron shapes", () => {
-    expect(describeCron("0 * * * *")).toBe("Every hour");
-    expect(describeCron("15 * * * *")).toBe("Every hour at :15");
-    expect(describeCron("0 9 * * *")).toBe("Daily at 09:00 UTC");
-    expect(describeCron("0 9 * * 1-5")).toBe("Weekdays at 09:00 UTC");
-    expect(describeCron("0 9 * * 0,6")).toBe("Weekends at 09:00 UTC");
-    expect(describeCron("0 9 * * 1")).toBe("Mondays at 09:00 UTC");
+    expect(describeCron({ type: "cron", expression: "* * * * *" })).toBe("Every minute");
+    expect(describeCron({ type: "cron", expression: "0 * * * *" })).toBe("Every hour");
+    expect(describeCron({ type: "cron", expression: "15 * * * *" })).toBe("Every hour at :15");
+    expect(describeCron({ type: "cron", expression: "0 9 * * *" })).toBe("Daily at 09:00 UTC");
+    expect(describeCron({ type: "cron", expression: "0 9 * * 1-5" })).toBe("Weekdays at 09:00 UTC");
+    expect(describeCron({ type: "cron", expression: "0 9 * * 0,6" })).toBe("Weekends at 09:00 UTC");
+    expect(describeCron({ type: "cron", expression: "0 9 * * 1" })).toBe("Mondays at 09:00 UTC");
+  });
+
+  it("labels fixed-time cron cadences with their stored timezone", () => {
+    expect(
+      describeCron({
+        type: "cron",
+        expression: "0 9 * * *",
+        timezone: "America/New_York",
+      }),
+    ).toBe("Daily at 09:00 America/New_York");
+    expect(
+      formatCadence({
+        type: "cron",
+        expression: "0 9 * * 1-5",
+        timezone: "Europe/Madrid",
+      }),
+    ).toBe("Weekdays at 09:00 Europe/Madrid");
+  });
+
+  it("keeps timezone-less fixed-time cron cadences labeled as UTC", () => {
+    expect(formatCadence({ type: "cron", expression: "0 9 * * *" })).toBe("Daily at 09:00 UTC");
   });
 
   it("returns null for invalid or unrecognized valid cron expressions", () => {
-    expect(describeCron("not a cron")).toBeNull();
-    expect(describeCron("*/5 * * * *")).toBeNull();
+    expect(describeCron({ type: "cron", expression: "not a cron" })).toBeNull();
+    expect(describeCron({ type: "cron", expression: "*/5 * * * *" })).toBeNull();
     expect(formatCadence({ type: "cron", expression: "0 9 * * *" })).toBe("Daily at 09:00 UTC");
   });
 });
