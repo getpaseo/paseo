@@ -220,6 +220,10 @@ class AudioEngine (context: Context) {
         if (isRecording) {
             stopRecording()
         }
+        audioFocusRequest?.let { request ->
+            audioManager.abandonAudioFocusRequest(request)
+            audioFocusRequest = null
+        }
         if (::audioTrack.isInitialized) {
             audioTrack.pause()
         }
