@@ -96,6 +96,8 @@ export interface UseSettingsReturn {
   resetSettings: () => Promise<void>;
 }
 
+type SettingsSelector<TSelected> = (settings: Settings) => TSelected;
+
 export function useAppSettings(): UseAppSettingsReturn {
   const queryClient = useQueryClient();
   const { data, isPending, error } = useQuery({
@@ -137,7 +139,11 @@ export function useAppSettings(): UseAppSettingsReturn {
   };
 }
 
-export function useSettings(): UseSettingsReturn {
+export function useSettings(): UseSettingsReturn;
+export function useSettings<TSelected>(selector: SettingsSelector<TSelected>): TSelected;
+export function useSettings<TSelected>(
+  selector?: SettingsSelector<TSelected>,
+): UseSettingsReturn | TSelected {
   const appSettings = useAppSettings();
   const desktopSettings = useDesktopSettings();
 
@@ -213,13 +219,19 @@ export function useSettings(): UseSettingsReturn {
     await Promise.all(resets);
   }, [appSettings, desktopSettings]);
 
+  const settings = {
+    ...DEFAULT_APP_SETTINGS,
+    ...appSettings.settings,
+    manageBuiltInDaemon: desktopSettings.settings.daemon.manageBuiltInDaemon,
+    releaseChannel: desktopSettings.settings.releaseChannel,
+  };
+
+  if (selector) {
+    return selector(settings);
+  }
+
   return {
-    settings: {
-      ...DEFAULT_APP_SETTINGS,
-      ...appSettings.settings,
-      manageBuiltInDaemon: desktopSettings.settings.daemon.manageBuiltInDaemon,
-      releaseChannel: desktopSettings.settings.releaseChannel,
-    },
+    settings,
     isLoading: appSettings.isLoading || desktopSettings.isLoading,
     error: appSettings.error ?? desktopSettings.error,
     updateSettings,

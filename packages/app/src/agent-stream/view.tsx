@@ -319,7 +319,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   ) {
     const { t } = useTranslation();
     const router = useRouter();
-    const { settings } = useSettings();
+    const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
@@ -635,12 +635,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             args={item.text}
             status={item.status === "ready" ? "completed" : "executing"}
             isLastInSequence={layoutItem.isLastInToolSequence}
-            defaultExpanded={settings.autoExpandReasoning}
-            forceInline={settings.autoExpandReasoning}
+            defaultExpanded={autoExpandReasoning}
+            forceInline={autoExpandReasoning}
           />
         );
       },
-      [setInlineDetailsExpanded, settings.autoExpandReasoning],
+      [autoExpandReasoning, setInlineDetailsExpanded],
     );
 
     const renderToolCallItem = useCallback(
