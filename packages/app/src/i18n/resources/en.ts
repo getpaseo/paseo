@@ -1549,6 +1549,9 @@ export const en = {
           auto: "System",
         },
       },
+      detailLevel: {
+        title: "Detail level",
+      },
       fonts: {
         title: "Fonts",
         systemDefault: "System default",

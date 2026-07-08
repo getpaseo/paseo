@@ -1586,6 +1586,9 @@ export const fr: TranslationResources = {
           auto: "Système",
         },
       },
+      detailLevel: {
+        title: "Niveau de détail",
+      },
       fonts: {
         title: "Polices",
         systemDefault: "Valeur par défaut du système",

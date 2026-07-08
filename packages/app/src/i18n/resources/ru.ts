@@ -1574,6 +1574,9 @@ export const ru: TranslationResources = {
           auto: "Система",
         },
       },
+      detailLevel: {
+        title: "Уровень детализации",
+      },
       fonts: {
         title: "Шрифты",
         systemDefault: "Система по умолчанию",

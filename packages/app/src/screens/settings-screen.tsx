@@ -67,7 +67,6 @@ import { AddHostModal } from "@/components/add-host-modal";
 import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -245,7 +244,6 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
-  handleAutoExpandReasoningChange: (autoExpand: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -302,7 +300,6 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
-  handleAutoExpandReasoningChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -434,20 +431,6 @@ function GeneralSection({
             selectTextOnFocus
             style={styles.terminalScrollbackInput}
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
-          />
-        </View>
-        <View style={ROW_WITH_BORDER_STYLE}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>
-              {t("settings.general.autoExpandReasoning.label")}
-            </Text>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.general.autoExpandReasoning.description")}
-            </Text>
-          </View>
-          <Switch
-            value={settings.autoExpandReasoning}
-            onValueChange={handleAutoExpandReasoningChange}
           />
         </View>
       </View>
@@ -1197,13 +1180,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
-  const handleAutoExpandReasoningChange = useCallback(
-    (autoExpandReasoning: boolean) => {
-      void updateSettings({ autoExpandReasoning });
-    },
-    [updateSettings],
-  );
-
   const handlePlaybackTest = useCallback(async () => {
     if (!voiceAudioEngine || isPlaybackTestRunning) {
       return;
@@ -1409,7 +1385,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
               handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
               handleLanguageChange={handleLanguageChange}
               handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
-              handleAutoExpandReasoningChange={handleAutoExpandReasoningChange}
             />
           );
         case "daemon":

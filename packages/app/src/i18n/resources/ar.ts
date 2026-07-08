@@ -1542,6 +1542,9 @@ export const ar: TranslationResources = {
           auto: "نظام",
         },
       },
+      detailLevel: {
+        title: "مستوى التفاصيل",
+      },
       fonts: {
         title: "الخطوط",
         systemDefault: "الافتراضي للنظام",

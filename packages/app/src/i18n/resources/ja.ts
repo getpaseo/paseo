@@ -1558,6 +1558,9 @@ export const ja: TranslationResources = {
           auto: "システム",
         },
       },
+      detailLevel: {
+        title: "詳細レベル",
+      },
       fonts: {
         title: "フォント",
         systemDefault: "システムデフォルト",

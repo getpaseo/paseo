@@ -281,6 +281,8 @@ npm run build:app-deps     # highlight -> protocol -> client -> expo-two-way-aud
 
 Use `npm run build:server` whenever you have changed any daemon/server-facing package and need clean cross-package types or runtime behavior.
 
+The app Metro config disables Watchman and uses Metro's node crawler for exports. Keep that invariant unless you have verified production app exports on machines with and without Watchman installed; distro Watchman builds can differ in capabilities and change Metro's crawl behavior.
+
 For tighter loops, you can rebuild a single workspace:
 
 - Changed `packages/protocol/src/*` or `packages/client/src/*`: `npm run build:client`.

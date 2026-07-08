@@ -1568,6 +1568,9 @@ export const ptBR: TranslationResources = {
           auto: "Sistema",
         },
       },
+      detailLevel: {
+        title: "Nível de detalhe",
+      },
       fonts: {
         title: "Fontes",
         systemDefault: "Sistema padrão",

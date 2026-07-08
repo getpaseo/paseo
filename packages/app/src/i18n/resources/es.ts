@@ -1583,6 +1583,9 @@ export const es: TranslationResources = {
           auto: "Sistema",
         },
       },
+      detailLevel: {
+        title: "Nivel de detalle",
+      },
       fonts: {
         title: "Fuentes",
         systemDefault: "Valor predeterminado del sistema",

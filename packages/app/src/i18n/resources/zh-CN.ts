@@ -1524,6 +1524,9 @@ export const zhCN: TranslationResources = {
           auto: "系统",
         },
       },
+      detailLevel: {
+        title: "详细程度",
+      },
       fonts: {
         title: "字体",
         systemDefault: "系统默认",
