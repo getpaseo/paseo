@@ -378,6 +378,40 @@ describe("checkout git utilities", () => {
     expect(message).toBe("update file");
   });
 
+  it("includes dirty nested git repository changes ignored by the parent checkout", async () => {
+    const subrepoDir = join(repoDir, "vendor", "tool");
+    mkdirSync(subrepoDir, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: subrepoDir });
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: subrepoDir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: subrepoDir });
+    writeFileSync(join(subrepoDir, "nested.txt"), "nested initial\n");
+    execFileSync("git", ["add", "nested.txt"], { cwd: subrepoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "nested initial"], {
+      cwd: subrepoDir,
+    });
+
+    writeFileSync(join(repoDir, ".git", "info", "exclude"), "vendor/\n");
+
+    writeFileSync(join(subrepoDir, "nested.txt"), "nested updated\n");
+    const parentStatus = execFileSync("git", ["status", "--porcelain"], { cwd: repoDir })
+      .toString()
+      .trim();
+    expect(parentStatus).toBe("");
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.isGit).toBe(true);
+    expect(status.isDirty).toBe(true);
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+
+    expect(diff.structured?.map((file) => file.path)).toContain("vendor/tool/nested.txt");
+    expect(diff.diff).toContain("diff --git a/vendor/tool/nested.txt b/vendor/tool/nested.txt");
+    expect(diff.diff).toContain("+nested updated");
+  });
+
   it("reuses checkout snapshot facts across status, shortstat, and PR status reads", async () => {
     setupRemoteTrackingMain(repoDir, tempDir);
     execFileSync("git", ["checkout", "-b", "feature/facts"], { cwd: repoDir });
