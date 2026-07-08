@@ -1443,7 +1443,6 @@ export const ru: TranslationResources = {
     groupInfo: "О{{title}}",
     sections: {
       general: "Общий",
-      daemon: "Daemon",
       appearance: "Появление",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
@@ -1458,7 +1457,7 @@ export const ru: TranslationResources = {
       providers: "Провайдеры",
       usage: "Использование",
       terminals: "Terminals",
-      host: "Host",
+      host: "Обзор",
     },
     general: {
       title: "Общий",

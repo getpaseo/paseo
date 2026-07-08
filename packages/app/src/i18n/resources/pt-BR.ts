@@ -1437,7 +1437,6 @@ export const ptBR: TranslationResources = {
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",
-      daemon: "Daemon",
       appearance: "Aparência",
       shortcuts: "Atalhos",
       integrations: "Integrações",
@@ -1452,7 +1451,7 @@ export const ptBR: TranslationResources = {
       providers: "Provedores",
       usage: "Uso",
       terminals: "Terminais",
-      host: "Host",
+      host: "Visão geral",
     },
     general: {
       title: "Geral",

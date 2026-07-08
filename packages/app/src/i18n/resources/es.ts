@@ -1451,7 +1451,6 @@ export const es: TranslationResources = {
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",
-      daemon: "Daemon",
       appearance: "Apariencia",
       shortcuts: "Atajos",
       integrations: "Integraciones",
@@ -1466,7 +1465,7 @@ export const es: TranslationResources = {
       providers: "Proveedores",
       usage: "Uso",
       terminals: "Terminals",
-      host: "Host",
+      host: "Resumen",
     },
     general: {
       title: "General",

@@ -72,7 +72,6 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DesktopPermissionsSection } from "@/desktop/components/desktop-permissions-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
-import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -100,6 +99,7 @@ import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { useEnableBuiltInDaemonOption } from "@/desktop/hooks/use-enable-built-in-daemon-option";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
   buildOpenProjectRoute,
@@ -131,7 +131,6 @@ interface SidebarSectionItem {
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
-  { id: "daemon", labelKey: "settings.sections.daemon", icon: Server, desktopOnly: true },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
   {
@@ -157,13 +156,13 @@ interface HostSectionItem {
 }
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
+  { id: "host", labelKey: "settings.hostSections.host", icon: Server },
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
   { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
-  { id: "host", labelKey: "settings.hostSections.host", icon: Server },
 ];
 
 function renderHostSettingsContent(
@@ -908,6 +907,7 @@ function HostPicker({ activeServerId, sortedHosts, onSelectHost, onAddHost }: Ho
   const triggerRef = useRef<View | null>(null);
   const activeHost =
     sortedHosts.find((host) => host.serverId === activeServerId) ?? sortedHosts[0] ?? null;
+  const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const hostOptionTestID = useCallback(
@@ -932,6 +932,8 @@ function HostPicker({ activeServerId, sortedHosts, onSelectHost, onAddHost }: Ho
       anchorRef={triggerRef}
       includeAddHost
       onAddHost={onAddHost}
+      includeEnableBuiltInDaemon={enableBuiltInDaemonOption.visible}
+      onEnableBuiltInDaemon={enableBuiltInDaemonOption.onPress}
       showActiveConnection
       searchable={false}
       title={t("settings.hostPicker.switchHost")}
@@ -1387,8 +1389,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
               handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
             />
           );
-        case "daemon":
-          return <LocalDaemonSection />;
         case "appearance":
           return <AppearanceSection />;
         case "shortcuts":
