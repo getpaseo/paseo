@@ -1922,16 +1922,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     this.pendingPermissions.delete(requestId);
     const selectedOption = selectPermissionOption(pending.options, response);
-    pending.resolve(
-      selectedOption
-        ? {
-            outcome: {
-              outcome: "selected",
-              optionId: selectedOption.optionId,
-            },
-          }
-        : { outcome: { outcome: "cancelled" } },
-    );
+    pending.resolve(buildPermissionResponse(selectedOption, response));
 
     this.pushEvent({
       type: "permission_resolved",
@@ -2027,12 +2018,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     // Match Zed acp.rs:3189-3220: generic ACP permission requests stay pure pass-through.
     const requestId = randomUUID();
-    let toolSnapshot =
-      this.toolCalls.get(params.toolCall.toolCallId) ??
-      mergeToolSnapshot(params.toolCall.toolCallId, params.toolCall);
+    let toolSnapshot = mergeToolSnapshot(
+      params.toolCall.toolCallId,
+      params.toolCall,
+      this.toolCalls.get(params.toolCall.toolCallId),
+    );
     if (this.toolSnapshotTransformer) {
       toolSnapshot = this.toolSnapshotTransformer(toolSnapshot);
     }
+    this.toolCalls.set(params.toolCall.toolCallId, toolSnapshot);
     const request = mapPermissionRequest(this.provider, requestId, params, toolSnapshot);
 
     const promise = new Promise<RequestPermissionResponse>((resolve, reject) => {
@@ -3226,26 +3220,129 @@ function extractTerminalContent(
   };
 }
 
+function parseACPQuestionOption(input: unknown): AgentMetadata | null {
+  const optionRecord = readRecord(input);
+  const label = readString(optionRecord, ["label"]);
+  if (!label) {
+    return null;
+  }
+  return {
+    label,
+    ...(typeof optionRecord?.description === "string"
+      ? { description: optionRecord.description }
+      : {}),
+  };
+}
+
+function parseACPQuestion(input: unknown): AgentMetadata | null {
+  const questionRecord = readRecord(input);
+  if (!questionRecord) {
+    return null;
+  }
+
+  const question = readString(questionRecord, ["question"]);
+  const header = readString(questionRecord, ["header"]);
+  const rawOptions = questionRecord.options;
+  if (!question || !header || !Array.isArray(rawOptions)) {
+    return null;
+  }
+
+  const options: AgentMetadata[] = [];
+  for (const option of rawOptions) {
+    const parsedOption = parseACPQuestionOption(option);
+    if (!parsedOption) {
+      return null;
+    }
+    options.push(parsedOption);
+  }
+
+  return {
+    question,
+    header,
+    options,
+    ...(questionRecord.multiSelect === true || questionRecord.multiple === true
+      ? { multiSelect: true }
+      : {}),
+    ...(questionRecord.allowOther === true || questionRecord.isOther === true
+      ? { allowOther: true }
+      : {}),
+    ...(questionRecord.allowEmpty === true ? { allowEmpty: true } : {}),
+    ...(typeof questionRecord.placeholder === "string"
+      ? { placeholder: questionRecord.placeholder }
+      : {}),
+    ...(typeof questionRecord.dismissLabel === "string"
+      ? { dismissLabel: questionRecord.dismissLabel }
+      : {}),
+  };
+}
+
+function parseACPQuestionInput(input: unknown): AgentMetadata | null {
+  const record = readRecord(input);
+  if (!Array.isArray(record?.questions)) {
+    return null;
+  }
+
+  const questions: AgentMetadata[] = [];
+  for (const item of record.questions) {
+    const question = parseACPQuestion(item);
+    if (!question) {
+      return null;
+    }
+    questions.push(question);
+  }
+
+  return questions.length > 0 ? { questions } : null;
+}
+
 function mapPermissionRequest(
   provider: string,
   requestId: string,
   params: RequestPermissionRequest,
   snapshot: ACPToolSnapshot,
 ): AgentPermissionRequest {
-  const kind: AgentPermissionRequestKind = snapshot.kind === "switch_mode" ? "mode" : "tool";
+  const questionInput =
+    snapshot.kind === "other" || snapshot.kind == null
+      ? parseACPQuestionInput(snapshot.rawInput)
+      : null;
+  let kind: AgentPermissionRequestKind = "tool";
+  if (snapshot.kind === "switch_mode") {
+    kind = "mode";
+  } else if (questionInput) {
+    kind = "question";
+  }
   return {
     id: requestId,
     provider,
-    name: snapshot.kind ?? snapshot.title,
+    name: questionInput ? snapshot.title : (snapshot.kind ?? snapshot.title),
     kind,
     title: params.toolCall.title ?? snapshot.title,
-    detail: mapToolDetail(snapshot, new Map()),
+    ...(questionInput ? { input: questionInput } : { detail: mapToolDetail(snapshot, new Map()) }),
     metadata: {
       toolCallId: params.toolCall.toolCallId,
       rawRequest: params,
       options: params.options,
     },
   };
+}
+
+function buildPermissionResponse(
+  selectedOption: PermissionOption | null,
+  response: AgentPermissionResponse,
+): RequestPermissionResponse {
+  if (!selectedOption) {
+    return { outcome: { outcome: "cancelled" } };
+  }
+
+  const result: RequestPermissionResponse = {
+    outcome: {
+      outcome: "selected",
+      optionId: selectedOption.optionId,
+    },
+  };
+  if (response.behavior === "allow" && response.updatedInput) {
+    result._meta = { updatedInput: response.updatedInput };
+  }
+  return result;
 }
 
 function selectPermissionOption(

@@ -1117,6 +1117,270 @@ describe("ACPAgentSession Zed parity", () => {
       outcome: { outcome: "selected", optionId: "allow-once" },
     });
   });
+  test("maps structured ACP question permission requests to question cards", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "submit", name: "Submit", kind: "allow_once" },
+      { optionId: "cancel", name: "Cancel", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "Need input",
+        kind: "other",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              header: "Scope",
+              question: "What should the change include?",
+              options: [
+                { label: "Option A", description: "Small change" },
+                { label: "Option B", description: "Larger change" },
+              ],
+            },
+          ],
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      provider: "kimi-acp",
+      request: {
+        id: expect.any(String),
+        provider: "kimi-acp",
+        name: "Need input",
+        kind: "question",
+        title: "Need input",
+        input: {
+          questions: [
+            {
+              header: "Scope",
+              question: "What should the change include?",
+              options: [
+                { label: "Option A", description: "Small change" },
+                { label: "Option B", description: "Larger change" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    await session.respondToPermission(requested!.request.id, {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          Scope: "Option B",
+        },
+      },
+    });
+
+    await expect(permission).resolves.toEqual({
+      _meta: {
+        updatedInput: {
+          answers: {
+            Scope: "Option B",
+          },
+        },
+      },
+      outcome: { outcome: "selected", optionId: "submit" },
+    });
+  });
+
+  test("uses permission-time rawInput questions when a tool snapshot already exists", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "submit", name: "Submit", kind: "allow_once" },
+      { optionId: "cancel", name: "Cancel", kind: "reject_once" },
+    ];
+    const internals = asInternals<ACPSessionInternals>(session);
+
+    internals.sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+    internals.translateSessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "question-1",
+      title: "Need input",
+      kind: "other",
+      status: "pending",
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "Need input",
+        kind: "other",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              header: "Scope",
+              question: "What should the change include?",
+              options: [{ label: "Option B", description: "Larger change" }],
+            },
+          ],
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    expect(events.find((event) => event.type === "permission_requested")).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [
+            {
+              header: "Scope",
+              question: "What should the change include?",
+              options: [{ label: "Option B", description: "Larger change" }],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  test("keeps ACP mode approvals as mode when rawInput contains questions", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "reject", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "mode-1",
+        title: "Switch mode",
+        kind: "switch_mode",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              header: "Mode",
+              question: "Switch modes?",
+              options: [{ label: "Yes" }],
+            },
+          ],
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "mode",
+        detail: {
+          type: "plain_text",
+          label: "Switch mode",
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+    expect(requested.request.input).toBeUndefined();
+  });
+
+  test("keeps typed ACP tool approvals as tools when rawInput contains questions", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+    const permissionOptions: PermissionOption[] = [
+      { optionId: "allow", name: "Allow", kind: "allow_once" },
+      { optionId: "reject", name: "Reject", kind: "reject_once" },
+    ];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "edit-1",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        rawInput: {
+          path: "src/example.ts",
+          oldString: "before",
+          newString: "after",
+          questions: [
+            {
+              header: "Edit",
+              question: "Which edit?",
+              options: [{ label: "A" }],
+            },
+          ],
+        },
+      },
+      options: permissionOptions,
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = events.find((event) => event.type === "permission_requested");
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "tool",
+        detail: {
+          type: "edit",
+          filePath: "src/example.ts",
+          oldString: "before",
+          newString: "after",
+        },
+      },
+    });
+    if (requested?.type !== "permission_requested") {
+      throw new Error("Expected permission request");
+    }
+    expect(requested.request.input).toBeUndefined();
+  });
 
   test("maps Copilot Allow All mode to allow_all ACP config on session start", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
