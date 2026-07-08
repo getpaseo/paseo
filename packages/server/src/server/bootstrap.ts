@@ -1280,15 +1280,9 @@ export async function createPaseoDaemon(
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
 
-    const createAgentMcpSession = async (
-      callerAgentId?: string,
-      options?: { voiceOnly?: boolean },
-    ) => {
+    const createAgentMcpSession = async (callerAgentId?: string) => {
       const agentMcpServer = await createAgentMcpServer(
-        createAgentToolHostDependencies({
-          callerAgentId,
-          ...(options?.voiceOnly ? { voiceOnly: true, enableVoiceTools: true } : {}),
-        }),
+        createAgentToolHostDependencies({ callerAgentId }),
       );
 
       // Stateless mode: each HTTP request builds a fresh server + transport that is
@@ -1364,12 +1358,7 @@ export async function createPaseoDaemon(
         } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
           callerAgentId = callerAgentIdRaw[0];
         }
-        const voiceOnlyRaw = req.query.voiceOnly;
-        const voiceOnly =
-          voiceOnlyRaw === "1" ||
-          voiceOnlyRaw === "true" ||
-          (Array.isArray(voiceOnlyRaw) && (voiceOnlyRaw[0] === "1" || voiceOnlyRaw[0] === "true"));
-        const { server, transport } = await createAgentMcpSession(callerAgentId, { voiceOnly });
+        const { server, transport } = await createAgentMcpSession(callerAgentId);
         res.on("close", () => {
           void transport.close();
           void server.close();
@@ -1497,7 +1486,6 @@ export async function createPaseoDaemon(
               config.paseoHome,
               daemonConfigStore,
               mcpBaseUrl,
-              agentMcpAuthToken,
               { allowedOrigins, hostnames: configuredHostnames },
               workspaceAutoName,
               config.auth,

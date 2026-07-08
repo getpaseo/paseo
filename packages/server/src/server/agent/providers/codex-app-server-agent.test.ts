@@ -1083,9 +1083,9 @@ describe("Codex app-server provider", () => {
   test("maps MCP approval settings into Codex inner config", () => {
     const session = createSession({
       mcpServers: {
-        paseo_voice: {
+        paseo: {
           type: "http",
-          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test&voiceOnly=1",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test",
           enabledTools: ["speak"],
           defaultToolsApprovalMode: "prompt",
           tools: {
@@ -1097,8 +1097,8 @@ describe("Codex app-server provider", () => {
 
     expect(asInternals(session).buildCodexInnerConfig()).toEqual({
       mcp_servers: {
-        paseo_voice: {
-          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test&voiceOnly=1",
+        paseo: {
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=test",
           enabled_tools: ["speak"],
           default_tools_approval_mode: "prompt",
           tools: {

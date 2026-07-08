@@ -48,4 +48,27 @@ describe("withRuntimePaseoMcpServer", () => {
 
     expect(result.mcpServers).toBeUndefined();
   });
+
+  test("adds voice approval metadata for Codex voice sessions on the generic paseo server", () => {
+    const result = withRuntimePaseoMcpServer({
+      config: {
+        provider: "codex",
+        cwd: "/tmp/agent",
+        voiceToolMcpServerName: "paseo",
+      },
+      agentId: "agent-1",
+      mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      mcpAuthToken: null,
+    });
+
+    expect(result.mcpServers?.paseo).toEqual({
+      type: "http",
+      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+      enabledTools: ["speak"],
+      defaultToolsApprovalMode: "prompt",
+      tools: {
+        speak: { approvalMode: "approve" },
+      },
+    });
+  });
 });

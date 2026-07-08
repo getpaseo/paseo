@@ -39,7 +39,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { PASEO_VOICE_MCP_SERVER_NAME } from "../voice-config.js";
+import { PASEO_MCP_SERVER_NAME } from "../voice-config.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -3765,7 +3765,7 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
   expect(older.hasOlder).toBe(true);
 });
 
-test("dedicated Codex voice MCP sessions skip generic paseo MCP injection", async () => {
+test("Codex voice MCP sessions use the generic paseo MCP injection with voice approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-voice-mcp-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const client = new TestAgentClient();
@@ -3779,24 +3779,25 @@ test("dedicated Codex voice MCP sessions skip generic paseo MCP injection", asyn
   await manager.createAgent({
     provider: "codex",
     cwd: workdir,
-    voiceToolMcpServerName: PASEO_VOICE_MCP_SERVER_NAME,
-    mcpServers: {
-      [PASEO_VOICE_MCP_SERVER_NAME]: {
-        type: "stdio",
-        command: "node",
-        args: ["bridge.mjs", "--socket", "/tmp/paseo.sock"],
-      },
-    },
+    voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
   });
 
   expect(client.createdConfigs).toHaveLength(1);
-  expect(client.createdConfigs[0]?.mcpServers).toEqual({
-    [PASEO_VOICE_MCP_SERVER_NAME]: {
-      type: "stdio",
-      command: "node",
-      args: ["bridge.mjs", "--socket", "/tmp/paseo.sock"],
+  expect(client.createdConfigs[0]?.mcpServers).toMatchObject({
+    [PASEO_MCP_SERVER_NAME]: {
+      type: "http",
+      enabledTools: ["speak"],
+      defaultToolsApprovalMode: "prompt",
+      tools: {
+        speak: { approvalMode: "approve" },
+      },
     },
   });
+  expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]?.type).toBe("http");
+  expect(client.createdConfigs[0]?.mcpServers?.[PASEO_MCP_SERVER_NAME]).toHaveProperty(
+    "url",
+    expect.stringMatching(/^http:\/\/127\.0\.0\.1:4123\/mcp\/agents\?callerAgentId=[0-9a-f-]+$/),
+  );
 });
 
 test("getTimelineRows falls back to the in-memory timeline when no durable store is configured", async () => {

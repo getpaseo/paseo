@@ -15,18 +15,16 @@ import {
 } from "../../dictation/dictation-stream-manager.js";
 import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
 import {
-  buildDedicatedVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
-  PASEO_VOICE_MCP_SERVER_NAME,
+  PASEO_MCP_SERVER_NAME,
   stripVoiceModeSystemPrompt,
 } from "../../voice-config.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { AgentSessionConfig, McpServerConfig } from "../../agent/agent-sdk-types.js";
+import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
-import type { DaemonRuntimeConfig } from "../daemon/daemon-session.js";
 
 const PCM_SAMPLE_RATE = 16000;
 const PCM_CHANNELS = 1;
@@ -42,7 +40,6 @@ type ProcessingPhase = "idle" | "transcribing";
 
 interface VoiceModeBaseConfig {
   systemPrompt?: string;
-  mcpServers?: Record<string, McpServerConfig>;
   voiceToolMcpServerName?: string;
 }
 
@@ -161,10 +158,6 @@ export interface VoiceSessionOptions {
     sttLanguage?: string;
     getSpeechReadiness?: () => SpeechReadinessSnapshot;
   };
-  paseoHome: string;
-  mcpBaseUrl?: string | null;
-  mcpAuthToken?: string | null;
-  daemonRuntimeConfig?: DaemonRuntimeConfig;
 }
 
 /**
@@ -215,30 +208,13 @@ export class VoiceSession {
   ) => void;
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
-  private readonly paseoHome: string;
-  private readonly mcpBaseUrl: string | null;
-  private readonly mcpAuthToken: string | null;
-  private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
 
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
   constructor(options: VoiceSessionOptions) {
-    const {
-      host,
-      logger,
-      sessionId,
-      sttLanguage,
-      tts,
-      stt,
-      voice,
-      voiceBridge,
-      dictation,
-      paseoHome,
-      mcpBaseUrl,
-      mcpAuthToken,
-      daemonRuntimeConfig,
-    } = options;
+    const { host, logger, sessionId, sttLanguage, tts, stt, voice, voiceBridge, dictation } =
+      options;
     this.host = host;
     this.sessionLogger = logger;
     this.sessionId = sessionId;
@@ -251,10 +227,6 @@ export class VoiceSession {
     this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
     this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
     this.getSpeechReadiness = dictation?.getSpeechReadiness;
-    this.paseoHome = paseoHome;
-    this.mcpBaseUrl = mcpBaseUrl ?? null;
-    this.mcpAuthToken = mcpAuthToken ?? null;
-    this.daemonRuntimeConfig = daemonRuntimeConfig;
 
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
     this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt, {
@@ -515,15 +487,10 @@ export class VoiceSession {
 
     const baseConfig: VoiceModeBaseConfig = {
       systemPrompt: stripVoiceModeSystemPrompt(existing.config.systemPrompt),
-      mcpServers: existing.config.mcpServers,
       voiceToolMcpServerName: existing.config.voiceToolMcpServerName,
     };
     this.voiceModeBaseConfig = baseConfig;
-    const refreshOverrides = this.buildVoiceModeRefreshOverrides(
-      agentId,
-      existing.config,
-      baseConfig,
-    );
+    const refreshOverrides = this.buildVoiceModeRefreshOverrides(existing.config, baseConfig);
 
     try {
       this.sessionLogger.info(
@@ -545,49 +512,28 @@ export class VoiceSession {
   }
 
   private buildVoiceModeRefreshOverrides(
-    agentId: string,
     existingConfig: AgentSessionConfig,
     baseConfig: VoiceModeBaseConfig,
   ): Partial<AgentSessionConfig> {
-    const codexVoiceOverrides = this.buildCodexVoiceModeOverrides(agentId, existingConfig);
+    const codexVoiceOverrides = this.buildCodexVoiceModeOverrides(existingConfig);
     return {
       systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, true, {
         voiceToolMcpServerName:
           codexVoiceOverrides?.voiceToolMcpServerName ?? baseConfig.voiceToolMcpServerName,
       }),
-      ...(codexVoiceOverrides ?? {}),
+      ...codexVoiceOverrides,
     };
   }
 
   private buildCodexVoiceModeOverrides(
-    agentId: string,
     existingConfig: AgentSessionConfig,
   ): Partial<AgentSessionConfig> | null {
     if (existingConfig.provider !== "codex") {
       return null;
     }
 
-    const voiceMcpServer = buildDedicatedVoiceAgentMcpServerConfig({
-      mcpBaseUrl: this.mcpBaseUrl,
-      callerAgentId: agentId,
-      mcpAuthToken: this.mcpAuthToken,
-      listen: this.daemonRuntimeConfig?.listen,
-      paseoHome: this.paseoHome,
-    });
-    if (!voiceMcpServer) {
-      this.sessionLogger.warn(
-        { provider: existingConfig.provider, listen: this.daemonRuntimeConfig?.listen ?? null },
-        "Voice mode could not resolve a dedicated Codex voice MCP server; falling back to generic speak tool",
-      );
-      return null;
-    }
-
     return {
-      mcpServers: {
-        ...(existingConfig.mcpServers ?? {}),
-        [PASEO_VOICE_MCP_SERVER_NAME]: voiceMcpServer,
-      },
-      voiceToolMcpServerName: PASEO_VOICE_MCP_SERVER_NAME,
+      voiceToolMcpServerName: PASEO_MCP_SERVER_NAME,
     };
   }
 
@@ -608,7 +554,6 @@ export class VoiceSession {
       try {
         await this.host.reloadAgentSession(agentId, {
           systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-          mcpServers: baseConfig.mcpServers,
           voiceToolMcpServerName: baseConfig.voiceToolMcpServerName,
         });
       } catch (error) {

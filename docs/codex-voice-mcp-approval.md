@@ -2,7 +2,7 @@
 
 ## Problem
 
-Codex voice-mode sessions were receiving the injected `paseo_voice` MCP server, but Paseo was not forwarding Codex-specific MCP approval settings into the app-server config. As a result, `paseo_voice.speak` fell back to Codex's default MCP approval behavior and could be rejected before Paseo's voice auto-allow hook ever ran.
+Codex voice-mode sessions were receiving the injected `paseo` MCP server, but Paseo was not forwarding Codex-specific MCP approval settings into the app-server config. As a result, `paseo.speak` fell back to Codex's default MCP approval behavior and could be rejected before Paseo's voice auto-allow hook ever ran.
 
 ## Fix
 
@@ -12,20 +12,20 @@ Paseo now carries MCP approval metadata in its shared agent config and forwards 
 - `mcp_servers.<id>.default_tools_approval_mode`
 - `mcp_servers.<id>.tools.<tool>.approval_mode`
 
-For Codex voice mode, the injected `paseo_voice` server is now configured with:
+For Codex voice mode, the injected `paseo` server is now configured with:
 
 - `enabled_tools = ["speak"]`
 - `default_tools_approval_mode = "prompt"`
 - `tools.speak.approval_mode = "approve"`
 
-This keeps the dedicated voice server limited to `speak` while explicitly auto-approving that tool.
+This keeps the approval override limited to `speak` while leaving the normal generic `paseo` MCP server in place.
 
 ## Verification
 
 1. Build or restart the Paseo server from this branch.
 2. Start a fresh Codex voice conversation.
 3. Speak a short prompt.
-4. Confirm the response uses `mcp__paseo_voice.speak` and plays without a manual approval prompt.
+4. Confirm the response uses `mcp__paseo.speak` and plays without a manual approval prompt.
 
 Focused tests:
 

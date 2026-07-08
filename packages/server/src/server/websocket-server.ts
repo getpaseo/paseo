@@ -472,7 +472,6 @@ export class VoiceAssistantWebSocketServer {
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
-  private readonly mcpAuthToken: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
   private serviceProxy!: ServiceProxySubsystem | null;
@@ -516,7 +515,6 @@ export class VoiceAssistantWebSocketServer {
     paseoHome: string,
     daemonConfigStore: DaemonConfigStore,
     mcpBaseUrl: string | null,
-    mcpAuthToken: string | null,
     wsConfig: WebSocketServerConfig,
     workspaceAutoName: WorkspaceAutoName,
     auth?: DaemonAuthConfig,
@@ -583,7 +581,6 @@ export class VoiceAssistantWebSocketServer {
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
-    this.mcpAuthToken = mcpAuthToken;
     this.assignOptionalServices({
       speech,
       terminalManager,
@@ -1176,7 +1173,6 @@ export class VoiceAssistantWebSocketServer {
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
       mcpBaseUrl: this.mcpBaseUrl,
-      mcpAuthToken: this.mcpAuthToken,
       stt: () => this.speech?.resolveStt() ?? null,
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,

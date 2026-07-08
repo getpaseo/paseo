@@ -292,17 +292,9 @@ describe("VoiceSession Codex voice MCP overrides", () => {
       { systemPrompt: "Base system prompt" },
     );
 
-    expect(overrides.voiceToolMcpServerName).toBe("paseo_voice");
-    expect(overrides.systemPrompt).toContain("paseo_voice.speak");
-    expect(overrides.mcpServers?.paseo_voice).toMatchObject({
-      type: "http",
-      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=00000000-0000-4000-8000-000000000001&voiceOnly=1",
-      enabledTools: ["speak"],
-      defaultToolsApprovalMode: "prompt",
-      tools: {
-        speak: { approvalMode: "approve" },
-      },
-    });
+    expect(overrides.voiceToolMcpServerName).toBe("paseo");
+    expect(overrides.systemPrompt).toContain("paseo.speak");
+    expect(overrides.mcpServers).toBeUndefined();
   });
 
   test("leaves non-Codex voice-mode overrides on the generic speak tool path", () => {
@@ -327,7 +319,7 @@ describe("VoiceSession Codex voice MCP overrides", () => {
 
     expect(overrides.voiceToolMcpServerName).toBeUndefined();
     expect(overrides.systemPrompt).toContain("speak tool");
-    expect(overrides.systemPrompt).not.toContain("paseo_voice.speak");
+    expect(overrides.systemPrompt).not.toContain("paseo.speak");
     expect(overrides.mcpServers).toBeUndefined();
   });
 });
