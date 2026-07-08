@@ -496,6 +496,10 @@ export const zhCN: TranslationResources = {
         pinTarget: "固定",
         unpinTarget: "取消固定",
       },
+      recentlyClosed: {
+        title: "最近关闭的标签",
+        empty: "没有最近关闭的标签",
+      },
       explorer: {
         open: "打开 explorer",
         close: "关闭 explorer",
@@ -1591,6 +1595,7 @@ export const zhCN: TranslationResources = {
         moveTabDown: "向下移动标签",
         closePane: "关闭窗格",
         newTerminal: "新建终端",
+        restoreLastClosedTab: "恢复最后关闭的标签",
         toggleCommandCenter: "切换命令中心",
         showKeyboardShortcuts: "显示键盘快捷键",
         toggleLeftSidebar: "切换左侧边栏",

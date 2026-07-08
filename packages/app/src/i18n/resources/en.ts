@@ -496,6 +496,10 @@ export const en = {
         pinTarget: "Pin",
         unpinTarget: "Unpin",
       },
+      recentlyClosed: {
+        title: "Recently closed tabs",
+        empty: "No recently closed tabs",
+      },
       explorer: {
         open: "Open explorer",
         close: "Close explorer",
@@ -1599,6 +1603,7 @@ export const en = {
         archiveWorktree: "Archive worktree",
         newTab: "New tab",
         closeCurrentTab: "Close current tab",
+        restoreLastClosedTab: "Restore last closed tab",
         jumpToWorkspace: "Jump to workspace",
         jumpToTab: "Jump to tab",
         previousWorkspace: "Previous workspace",

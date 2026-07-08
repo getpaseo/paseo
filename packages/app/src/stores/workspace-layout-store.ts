@@ -27,6 +27,7 @@ import {
   insertSplit,
   moveTabToPaneInLayout,
   normalizeLayout,
+  normalizeWorkspaceTab,
   openTabInLayoutBackground,
   openTabInLayoutFocused,
   reconcileWorkspaceTabs,
@@ -34,6 +35,7 @@ import {
   removeTabFromTree,
   reorderFocusedPaneTabsInLayout,
   reorderPaneTabsInLayout,
+  restoreTabInLayout,
   retargetTabInLayout,
   splitPaneEmptyInLayout,
   splitPaneInLayout,
@@ -72,6 +74,7 @@ export type {
 interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
+  recentlyClosedTabsByWorkspace: Record<string, RecentlyClosedWorkspaceTab[]>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
@@ -83,6 +86,8 @@ interface WorkspaceLayoutStore {
   ) => string | null;
   openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
+  restoreClosedTab: (workspaceKey: string, entryKey: string) => string | null;
+  restoreLastClosedTab: (workspaceKey: string) => string | null;
   focusTab: (workspaceKey: string, tabId: string) => void;
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
@@ -122,7 +127,16 @@ interface WorkspaceFocusRestorationState {
   tokens: string[];
 }
 
+export interface RecentlyClosedWorkspaceTab {
+  key: string;
+  tab: WorkspaceTab;
+  paneId: string | null;
+  parentTabId: string | null;
+  closedAt: number;
+}
+
 const MAX_TREE_DEPTH = 4;
+const MAX_RECENTLY_CLOSED_TABS = 10;
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -193,6 +207,104 @@ function withoutFocusRestoration(
   return { focusRestorationByWorkspace };
 }
 
+function isRestorableClosedTab(tab: WorkspaceTab): boolean {
+  switch (tab.target.kind) {
+    case "draft":
+    case "agent":
+    case "file":
+    case "setup":
+      return true;
+    case "terminal":
+    case "browser":
+      return false;
+  }
+}
+
+function normalizeRecentlyClosedTab(value: unknown): RecentlyClosedWorkspaceTab | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Partial<RecentlyClosedWorkspaceTab>;
+  const tab = normalizeWorkspaceTab(record.tab);
+  if (!tab || !isRestorableClosedTab(tab)) {
+    return null;
+  }
+  const closedAt = typeof record.closedAt === "number" ? record.closedAt : Date.now();
+  const key = trimNonEmpty(record.key) ?? `${closedAt}:${tab.tabId}`;
+  return {
+    key,
+    tab,
+    paneId: trimNonEmpty(record.paneId) ?? null,
+    parentTabId: trimNonEmpty(record.parentTabId) ?? null,
+    closedAt,
+  };
+}
+
+function normalizeRecentlyClosedTabs(value: unknown): RecentlyClosedWorkspaceTab[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const next: RecentlyClosedWorkspaceTab[] = [];
+  const seen = new Set<string>();
+  for (const entryValue of value) {
+    const entry = normalizeRecentlyClosedTab(entryValue);
+    if (!entry || seen.has(entry.key)) {
+      continue;
+    }
+    seen.add(entry.key);
+    next.push(entry);
+  }
+  return next
+    .sort((left, right) => right.closedAt - left.closedAt)
+    .slice(0, MAX_RECENTLY_CLOSED_TABS);
+}
+
+function enqueueRecentlyClosedTab(input: {
+  current: RecentlyClosedWorkspaceTab[];
+  tab: WorkspaceTab;
+  paneId: string | null;
+  parentTabId: string | null;
+  closedAt: number;
+}): RecentlyClosedWorkspaceTab[] {
+  if (!isRestorableClosedTab(input.tab)) {
+    return input.current;
+  }
+  const key = `${input.closedAt}:${input.tab.tabId}`;
+  const entry: RecentlyClosedWorkspaceTab = {
+    key,
+    tab: input.tab,
+    paneId: input.paneId,
+    parentTabId: input.parentTabId,
+    closedAt: input.closedAt,
+  };
+  return [entry, ...input.current.filter((current) => current.tab.tabId !== input.tab.tabId)].slice(
+    0,
+    MAX_RECENTLY_CLOSED_TABS,
+  );
+}
+
+function removeRecentlyClosedEntry(
+  entries: RecentlyClosedWorkspaceTab[],
+  entryKey: string,
+): RecentlyClosedWorkspaceTab[] {
+  return entries.filter((entry) => entry.key !== entryKey);
+}
+
+function resolveRestoredHiddenAgentIds(input: {
+  hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
+  workspaceKey: string;
+  tab: WorkspaceTab;
+}): Record<string, Set<string>> {
+  if (input.tab.target.kind !== "agent") {
+    return input.hiddenAgentIdsByWorkspace;
+  }
+  return removeAgentIdFromWorkspaceSet(
+    input.hiddenAgentIdsByWorkspace,
+    input.workspaceKey,
+    input.tab.target.agentId,
+  );
+}
+
 function attachParentTab(input: {
   layout: WorkspaceLayout;
   childTabId: string | null;
@@ -226,6 +338,7 @@ export function createWorkspaceLayoutStore(
       (set, get) => ({
         layoutByWorkspace: {},
         splitSizesByWorkspace: {},
+        recentlyClosedTabsByWorkspace: {},
         pinnedAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
@@ -337,22 +450,120 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
+            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            const sourcePane = findPaneContainingTab(layout.root, normalizedTabId);
+            const closedTab =
+              collectAllTabs(layout.root).find((tab) => tab.tabId === normalizedTabId) ?? null;
             const nextLayout = closeTabInLayout({
-              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              layout,
               tabId: normalizedTabId,
             });
             if (!nextLayout) {
               return state;
             }
 
+            const parentTabId = trimNonEmpty(layout.parentTabIdByTabId?.[normalizedTabId]);
+            const currentRecentlyClosed =
+              state.recentlyClosedTabsByWorkspace[normalizedWorkspaceKey] ?? [];
+            const nextRecentlyClosed =
+              closedTab && sourcePane
+                ? enqueueRecentlyClosedTab({
+                    current: currentRecentlyClosed,
+                    tab: closedTab,
+                    paneId: sourcePane.id,
+                    parentTabId,
+                    closedAt: Date.now(),
+                  })
+                : currentRecentlyClosed;
+            const recentlyClosedTabsByWorkspace =
+              nextRecentlyClosed === currentRecentlyClosed
+                ? state.recentlyClosedTabsByWorkspace
+                : {
+                    ...state.recentlyClosedTabsByWorkspace,
+                    [normalizedWorkspaceKey]: nextRecentlyClosed,
+                  };
+
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              recentlyClosedTabsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
               },
             };
           });
+        },
+        restoreClosedTab: (workspaceKey, entryKey) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedEntryKey = trimNonEmpty(entryKey);
+          if (!normalizedWorkspaceKey || !normalizedEntryKey) {
+            return null;
+          }
+
+          let restoredTabId: string | null = null;
+          set((state) => {
+            const entries = normalizeRecentlyClosedTabs(
+              state.recentlyClosedTabsByWorkspace[normalizedWorkspaceKey],
+            );
+            const entry = entries.find((candidate) => candidate.key === normalizedEntryKey) ?? null;
+            if (!entry) {
+              return state;
+            }
+
+            const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            const result = restoreTabInLayout({
+              layout,
+              tab: entry.tab,
+              paneId: entry.paneId,
+              parentTabId: entry.parentTabId,
+            });
+            if (!result) {
+              return state;
+            }
+
+            restoredTabId = result.tabId;
+            const nextEntries = removeRecentlyClosedEntry(entries, normalizedEntryKey);
+            const recentlyClosedTabsByWorkspace =
+              nextEntries.length === 0
+                ? (() => {
+                    const { [normalizedWorkspaceKey]: _removed, ...rest } =
+                      state.recentlyClosedTabsByWorkspace;
+                    return rest;
+                  })()
+                : {
+                    ...state.recentlyClosedTabsByWorkspace,
+                    [normalizedWorkspaceKey]: nextEntries,
+                  };
+
+            return {
+              ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+              hiddenAgentIdsByWorkspace: resolveRestoredHiddenAgentIds({
+                hiddenAgentIdsByWorkspace: state.hiddenAgentIdsByWorkspace,
+                workspaceKey: normalizedWorkspaceKey,
+                tab: entry.tab,
+              }),
+              recentlyClosedTabsByWorkspace,
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: result.layout,
+              },
+            };
+          });
+          return restoredTabId;
+        },
+        restoreLastClosedTab: (workspaceKey) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          if (!normalizedWorkspaceKey) {
+            return null;
+          }
+          const entries = normalizeRecentlyClosedTabs(
+            get().recentlyClosedTabsByWorkspace[normalizedWorkspaceKey],
+          );
+          const entry = entries[0] ?? null;
+          if (!entry) {
+            return null;
+          }
+          return get().restoreClosedTab(normalizedWorkspaceKey, entry.key);
         },
         focusTab: (workspaceKey, tabId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -869,6 +1080,7 @@ export function createWorkspaceLayoutStore(
             const hasAny =
               normalizedWorkspaceKey in state.layoutByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
+              normalizedWorkspaceKey in state.recentlyClosedTabsByWorkspace ||
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace;
@@ -879,6 +1091,8 @@ export function createWorkspaceLayoutStore(
               state.layoutByWorkspace;
             const { [normalizedWorkspaceKey]: _splits, ...splitSizesByWorkspace } =
               state.splitSizesByWorkspace;
+            const { [normalizedWorkspaceKey]: _recentlyClosed, ...recentlyClosedTabsByWorkspace } =
+              state.recentlyClosedTabsByWorkspace;
             const { [normalizedWorkspaceKey]: _pinned, ...pinnedAgentIdsByWorkspace } =
               state.pinnedAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
@@ -888,6 +1102,7 @@ export function createWorkspaceLayoutStore(
             return {
               layoutByWorkspace,
               splitSizesByWorkspace,
+              recentlyClosedTabsByWorkspace,
               pinnedAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
               focusRestorationByWorkspace,
@@ -907,6 +1122,12 @@ export function createWorkspaceLayoutStore(
           return {
             layoutByWorkspace,
             splitSizesByWorkspace: state.splitSizesByWorkspace,
+            recentlyClosedTabsByWorkspace: Object.fromEntries(
+              Object.entries(state.recentlyClosedTabsByWorkspace).map(([key, entries]) => [
+                key,
+                normalizeRecentlyClosedTabs(entries),
+              ]),
+            ),
           };
         },
       },

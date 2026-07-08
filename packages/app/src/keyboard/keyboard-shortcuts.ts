@@ -124,6 +124,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "archive-worktree": "settings.shortcuts.help.archiveWorktree",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
+  "workspace-tab-restore-last-closed": "settings.shortcuts.help.restoreLastClosedTab",
   "workspace-jump-index": "settings.shortcuts.help.jumpToWorkspace",
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
@@ -306,6 +307,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       section: "tabs-panes",
       label: "Close current tab",
       keys: ["alt", "shift", "W"],
+    },
+  },
+  {
+    id: "workspace-tab-restore-last-closed-cmd-shift-t-mac",
+    action: "workspace.tab.restore.lastClosed",
+    combo: "Cmd+Shift+T",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-restore-last-closed",
+      section: "tabs-panes",
+      label: "Restore last closed tab",
+      keys: ["mod", "shift", "T"],
+    },
+  },
+  {
+    id: "workspace-tab-restore-last-closed-ctrl-shift-t-non-mac",
+    action: "workspace.tab.restore.lastClosed",
+    combo: "Ctrl+Shift+T",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-restore-last-closed",
+      section: "tabs-panes",
+      label: "Restore last closed tab",
+      keys: ["mod", "shift", "T"],
     },
   },
 
@@ -635,27 +660,27 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 
   // --- New terminal ---
   {
-    id: "workspace-terminal-new-cmd-shift-t-mac",
+    id: "workspace-terminal-new-cmd-alt-shift-t-mac",
     action: "workspace.terminal.new",
-    combo: "Cmd+Shift+T",
+    combo: "Cmd+Alt+Shift+T",
     when: { mac: true, commandCenter: false },
     help: {
       id: "workspace-terminal-new",
       section: "panels",
       label: "New terminal",
-      keys: ["mod", "shift", "T"],
+      keys: ["mod", "alt", "shift", "T"],
     },
   },
   {
-    id: "workspace-terminal-new-ctrl-shift-t-non-mac",
+    id: "workspace-terminal-new-ctrl-alt-shift-t-non-mac",
     action: "workspace.terminal.new",
-    combo: "Ctrl+Shift+T",
+    combo: "Ctrl+Alt+Shift+T",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "workspace-terminal-new",
       section: "panels",
       label: "New terminal",
-      keys: ["mod", "shift", "T"],
+      keys: ["mod", "alt", "shift", "T"],
     },
   },
 

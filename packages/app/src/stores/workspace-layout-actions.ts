@@ -109,6 +109,18 @@ interface OpenTabInLayoutResult {
   tabId: string;
 }
 
+interface RestoreTabInLayoutInput {
+  layout: WorkspaceLayout;
+  tab: WorkspaceTab;
+  paneId: string | null;
+  parentTabId?: string | null;
+}
+
+interface RestoreTabInLayoutResult {
+  layout: WorkspaceLayout;
+  tabId: string;
+}
+
 interface RetargetTabInLayoutInput {
   layout: WorkspaceLayout;
   tabId: string;
@@ -277,7 +289,7 @@ function createGroupNode(input: {
   };
 }
 
-function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
+export function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -1115,6 +1127,60 @@ export function openTabInLayoutBackground(input: OpenTabInLayoutInput): OpenTabI
   }
 
   return insertNewTabIntoFocusedPane({ ...input, focus: false });
+}
+
+export function restoreTabInLayout(
+  input: RestoreTabInLayoutInput,
+): RestoreTabInLayoutResult | null {
+  const restoredTab = normalizeWorkspaceTab(input.tab);
+  if (!restoredTab) {
+    return null;
+  }
+
+  const layout = asInternalLayout(input.layout);
+  const existingTab = findExistingTabForTarget(layout.root, restoredTab.target);
+  if (existingTab) {
+    const nextLayout = updateExistingTabTarget(input.layout, existingTab, restoredTab.target);
+    return {
+      tabId: existingTab.tabId,
+      layout:
+        focusTabInLayout({
+          layout: nextLayout,
+          tabId: existingTab.tabId,
+        }) ?? nextLayout,
+    };
+  }
+
+  const requestedPaneId = trimNonEmpty(input.paneId);
+  const targetPane =
+    (requestedPaneId ? findPaneById(layout.root, requestedPaneId) : null) ??
+    findPaneById(layout.root, layout.focusedPaneId) ??
+    collectAllPanes(layout.root)[0] ??
+    findPaneById(createDefaultLayout().root, DEFAULT_PANE_ID);
+  invariant(targetPane, "Workspace layout must always have a pane");
+
+  return {
+    tabId: restoredTab.tabId,
+    layout: withNormalizedParentTabMap({
+      root: insertTabIntoPane(layout.root, {
+        paneId: targetPane.id,
+        tab: restoredTab,
+        focusTabId: restoredTab.tabId,
+      }),
+      focusedPaneId: targetPane.id,
+      parentTabIdByTabId: (() => {
+        const parentTabId = trimNonEmpty(input.parentTabId);
+        const openTabIds = new Set(collectAllTabs(layout.root).map((tab) => tab.tabId));
+        if (!parentTabId || !openTabIds.has(parentTabId)) {
+          return input.layout.parentTabIdByTabId;
+        }
+        return {
+          ...input.layout.parentTabIdByTabId,
+          [restoredTab.tabId]: parentTabId,
+        };
+      })(),
+    }),
+  };
 }
 
 export function closeTabInLayout(input: CloseTabInLayoutInput): WorkspaceLayout | null {

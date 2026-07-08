@@ -186,4 +186,23 @@ describe("keyboard-action-dispatcher", () => {
     expect(handled).toBe(false);
     expect(handle).not.toHaveBeenCalled();
   });
+
+  it("dispatches restore-last-closed tab actions", () => {
+    const handle = vi.fn(() => true);
+    const action: KeyboardActionDefinition = {
+      id: "workspace.tab.restore-last-closed",
+      scope: "workspace",
+    };
+
+    dispatcher.registerHandler({
+      handlerId: "workspace",
+      actions: [action.id],
+      enabled: true,
+      priority: 100,
+      handle,
+    });
+
+    expect(dispatcher.dispatch(action)).toBe(true);
+    expect(handle).toHaveBeenCalledWith(action);
+  });
 });

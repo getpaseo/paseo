@@ -209,6 +209,18 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.tab.new",
     },
     {
+      name: "matches Mod+Shift+T to restore the last closed tab",
+      event: { key: "T", code: "KeyT", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+      action: "workspace.tab.restore.lastClosed",
+    },
+    {
+      name: "matches Ctrl+Alt+Shift+T to create a new terminal on non-mac",
+      event: { key: "T", code: "KeyT", ctrlKey: true, altKey: true, shiftKey: true },
+      context: { isMac: false },
+      action: "workspace.terminal.new",
+    },
+    {
       name: "matches Alt+Shift+W to close current tab on web",
       event: { key: "W", code: "KeyW", altKey: true, shiftKey: true },
       context: { isDesktop: false },
@@ -515,10 +527,10 @@ describe("keyboard-shortcuts", () => {
 
   it("prefers advancing chord candidates over single-combo matches on the same prefix", () => {
     const bindings = buildEffectiveBindings({
-      "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+W S",
+      "workspace-terminal-new-ctrl-alt-shift-t-non-mac": "Ctrl+W S",
     });
     const chordBindingIndex = bindings.findIndex(
-      (binding) => binding.id === "workspace-terminal-new-ctrl-shift-t-non-mac",
+      (binding) => binding.id === "workspace-terminal-new-ctrl-alt-shift-t-non-mac",
     );
     expect(chordBindingIndex).toBeGreaterThan(-1);
 
@@ -552,7 +564,7 @@ describe("keyboard-shortcuts", () => {
     vi.useFakeTimers();
 
     const bindings = buildEffectiveBindings({
-      "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+W S",
+      "workspace-terminal-new-ctrl-alt-shift-t-non-mac": "Ctrl+W S",
     });
     const onChordReset = vi.fn();
 

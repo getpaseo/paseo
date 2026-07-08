@@ -65,6 +65,7 @@ import {
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   useWorkspaceLayoutStore,
+  type RecentlyClosedWorkspaceTab,
   type SplitNode,
   type SplitPane,
   type WorkspaceLayout,
@@ -85,6 +86,7 @@ interface SplitContainerProps {
   normalizedWorkspaceId: string;
   isWorkspaceFocused: boolean;
   uiTabs: WorkspaceTab[];
+  recentlyClosedTabs: RecentlyClosedWorkspaceTab[];
   hoveredCloseTabKey: string | null;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   closingTabIds: Set<string>;
@@ -98,6 +100,7 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
+  onRestoreClosedTab: (entryKey: string) => void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
@@ -366,6 +369,7 @@ export function SplitContainer({
   normalizedWorkspaceId,
   isWorkspaceFocused,
   uiTabs,
+  recentlyClosedTabs,
   hoveredCloseTabKey,
   setHoveredCloseTabKey,
   closingTabIds,
@@ -379,6 +383,7 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  onRestoreClosedTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -583,6 +588,7 @@ export function SplitContainer({
           normalizedServerId={normalizedServerId}
           normalizedWorkspaceId={normalizedWorkspaceId}
           isWorkspaceFocused={isWorkspaceFocused}
+          recentlyClosedTabs={recentlyClosedTabs}
           hoveredCloseTabKey={hoveredCloseTabKey}
           setHoveredCloseTabKey={setHoveredCloseTabKey}
           closingTabIds={closingTabIds}
@@ -596,6 +602,7 @@ export function SplitContainer({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
+          onRestoreClosedTab={onRestoreClosedTab}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
           onCreateBrowserTab={onCreateBrowserTab}
@@ -726,6 +733,7 @@ function SplitNodeView({
   normalizedServerId,
   normalizedWorkspaceId,
   isWorkspaceFocused,
+  recentlyClosedTabs,
   hoveredCloseTabKey,
   setHoveredCloseTabKey,
   closingTabIds,
@@ -739,6 +747,7 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  onRestoreClosedTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -779,6 +788,7 @@ function SplitNodeView({
         normalizedServerId={normalizedServerId}
         normalizedWorkspaceId={normalizedWorkspaceId}
         isWorkspaceFocused={isWorkspaceFocused}
+        recentlyClosedTabs={recentlyClosedTabs}
         hoveredCloseTabKey={hoveredCloseTabKey}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
         closingTabIds={closingTabIds}
@@ -792,6 +802,7 @@ function SplitNodeView({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
+        onRestoreClosedTab={onRestoreClosedTab}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
         onCreateBrowserTab={onCreateBrowserTab}
@@ -825,6 +836,7 @@ function SplitNodeView({
               normalizedServerId={normalizedServerId}
               normalizedWorkspaceId={normalizedWorkspaceId}
               isWorkspaceFocused={isWorkspaceFocused}
+              recentlyClosedTabs={recentlyClosedTabs}
               hoveredCloseTabKey={hoveredCloseTabKey}
               setHoveredCloseTabKey={setHoveredCloseTabKey}
               closingTabIds={closingTabIds}
@@ -838,6 +850,7 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
+              onRestoreClosedTab={onRestoreClosedTab}
               onCreateDraftTab={onCreateDraftTab}
               onCreateTerminalTab={onCreateTerminalTab}
               onCreateBrowserTab={onCreateBrowserTab}
@@ -877,6 +890,7 @@ function SplitPaneView({
   normalizedServerId,
   normalizedWorkspaceId,
   isWorkspaceFocused,
+  recentlyClosedTabs,
   hoveredCloseTabKey,
   setHoveredCloseTabKey,
   closingTabIds,
@@ -890,6 +904,7 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  onRestoreClosedTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -1019,6 +1034,7 @@ function SplitPaneView({
             paneId={pane.id}
             isFocused={isFocused}
             tabs={desktopTabRowItems}
+            recentlyClosedTabs={recentlyClosedTabs}
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
             setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -1032,6 +1048,7 @@ function SplitPaneView({
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
+            onRestoreClosedTab={onRestoreClosedTab}
             onCreateDraftTab={onCreateDraftTab}
             onCreateTerminalTab={onCreateTerminalTab}
             onCreateBrowserTab={onCreateBrowserTab}

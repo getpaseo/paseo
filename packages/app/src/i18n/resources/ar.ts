@@ -496,6 +496,10 @@ export const ar: TranslationResources = {
         pinTarget: "تثبيت",
         unpinTarget: "إلغاء التثبيت",
       },
+      recentlyClosed: {
+        title: "علامات التبويب المغلقة حديثًا",
+        empty: "لا توجد علامات تبويب مغلقة حديثًا",
+      },
       explorer: {
         open: "افتح المستكشف",
         close: "إغلاق المستكشف",
@@ -1592,6 +1596,7 @@ export const ar: TranslationResources = {
         archiveWorktree: "أرشفة شجرة العمل",
         newTab: "علامة تبويب جديدة",
         closeCurrentTab: "إغلاق علامة التبويب الحالية",
+        restoreLastClosedTab: "استعادة آخر علامة تبويب مغلقة",
         jumpToWorkspace: "انتقل إلى مساحة العمل",
         jumpToTab: "انتقل إلى علامة التبويب",
         previousWorkspace: "مساحة العمل السابقة",

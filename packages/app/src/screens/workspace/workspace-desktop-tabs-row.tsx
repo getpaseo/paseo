@@ -45,6 +45,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -75,6 +76,7 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { RecentlyClosedWorkspaceTab } from "@/stores/workspace-layout-store";
 import type { Theme } from "@/styles/theme";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -171,40 +173,161 @@ function PinnableProfileMenuItem({ profile, disabled, onLaunch }: PinnableProfil
 
 interface WorkspaceInlineAddTabButtonProps {
   shortcutKeys: ShortcutKey[][] | null;
+  recentlyClosedTabs: RecentlyClosedWorkspaceTab[];
+  normalizedServerId: string;
+  normalizedWorkspaceId: string;
   onCreateAgentTab: () => void;
+  onRestoreClosedTab: (entryKey: string) => void;
   onLayout: (event: LayoutChangeEvent) => void;
 }
 
 function WorkspaceInlineAddTabButton({
   shortcutKeys,
+  recentlyClosedTabs,
+  normalizedServerId,
+  normalizedWorkspaceId,
   onCreateAgentTab,
+  onRestoreClosedTab,
   onLayout,
 }: WorkspaceInlineAddTabButtonProps) {
   const { t } = useTranslation();
   const tooltipText = t("workspace.tabs.actions.newAgent");
+  const fallbackTabLabels = useMemo(
+    () => ({
+      newAgent: t("workspace.tabs.fallback.newAgent"),
+      setup: t("workspace.tabs.fallback.setup"),
+      terminal: t("workspace.tabs.fallback.terminal"),
+      agent: t("workspace.tabs.fallback.agent"),
+    }),
+    [t],
+  );
 
   return (
     <View style={styles.inlineAddButton} onLayout={onLayout}>
-      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger
-          testID="workspace-new-agent-tab-inline"
-          onPress={onCreateAgentTab}
-          accessibilityRole="button"
-          accessibilityLabel={tooltipText}
-          style={inlineAddActionButtonStyle}
+      <ContextMenu>
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild triggerRefProp="triggerRef">
+            <ContextMenuTrigger
+              testID="workspace-new-agent-tab-inline"
+              onPress={onCreateAgentTab}
+              accessibilityRole="button"
+              accessibilityLabel={tooltipText}
+              enabledOnMobile={false}
+              style={inlineAddActionButtonStyle}
+            >
+              <ThemedPlus size={14} uniProps={mutedColorMapping} />
+            </ContextMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8}>
+            <View style={styles.newTabTooltipRow}>
+              <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
+              {shortcutKeys ? (
+                <Shortcut chord={shortcutKeys} style={styles.newTabTooltipShortcut} />
+              ) : null}
+            </View>
+          </TooltipContent>
+        </Tooltip>
+        <ContextMenuContent
+          align="start"
+          minWidth={220}
+          testID="workspace-recently-closed-tabs-menu"
         >
-          <ThemedPlus size={14} uniProps={mutedColorMapping} />
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center" offset={8}>
-          <View style={styles.newTabTooltipRow}>
-            <Text style={styles.newTabTooltipText}>{tooltipText}</Text>
-            {shortcutKeys ? (
-              <Shortcut chord={shortcutKeys} style={styles.newTabTooltipShortcut} />
-            ) : null}
-          </View>
-        </TooltipContent>
-      </Tooltip>
+          <ContextMenuLabel>{t("workspace.tabs.recentlyClosed.title")}</ContextMenuLabel>
+          {recentlyClosedTabs.length === 0 ? (
+            <ContextMenuItem testID="workspace-recently-closed-tabs-empty" disabled>
+              {t("workspace.tabs.recentlyClosed.empty")}
+            </ContextMenuItem>
+          ) : (
+            recentlyClosedTabs.map((entry) => (
+              <RecentlyClosedTabMenuItem
+                key={entry.key}
+                entry={entry}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                fallbackLabels={fallbackTabLabels}
+                onRestoreClosedTab={onRestoreClosedTab}
+              />
+            ))
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
     </View>
+  );
+}
+
+function RecentlyClosedTabMenuItemResolved({
+  entryKey,
+  label,
+  presentation,
+  onSelect,
+}: {
+  entryKey: string;
+  label: string;
+  presentation: WorkspaceTabPresentation;
+  onSelect: () => void;
+}) {
+  const leading = useMemo(
+    () => <WorkspaceTabIcon presentation={presentation} active={false} />,
+    [presentation],
+  );
+  return (
+    <ContextMenuItem
+      testID={`workspace-recently-closed-tab-${entryKey}`}
+      leading={leading}
+      onSelect={onSelect}
+    >
+      {label}
+    </ContextMenuItem>
+  );
+}
+
+function RecentlyClosedTabMenuItem({
+  entry,
+  normalizedServerId,
+  normalizedWorkspaceId,
+  fallbackLabels,
+  onRestoreClosedTab,
+}: {
+  entry: RecentlyClosedWorkspaceTab;
+  normalizedServerId: string;
+  normalizedWorkspaceId: string;
+  fallbackLabels: { newAgent: string; setup: string; terminal: string; agent: string };
+  onRestoreClosedTab: (entryKey: string) => void;
+}) {
+  const tab = useMemo<WorkspaceTabDescriptor>(
+    () => ({
+      key: entry.tab.tabId,
+      tabId: entry.tab.tabId,
+      kind: entry.tab.target.kind,
+      target: entry.tab.target,
+    }),
+    [entry.tab],
+  );
+  const handleSelect = useCallback(() => {
+    onRestoreClosedTab(entry.key);
+  }, [entry.key, onRestoreClosedTab]);
+
+  return (
+    <WorkspaceTabPresentationResolver
+      tab={tab}
+      serverId={normalizedServerId}
+      workspaceId={normalizedWorkspaceId}
+    >
+      {(presentation) => {
+        const label =
+          presentation.titleState === "loading"
+            ? getFallbackTabLabel(tab, fallbackLabels)
+            : presentation.label;
+        return (
+          <RecentlyClosedTabMenuItemResolved
+            entryKey={entry.key}
+            label={label}
+            presentation={presentation}
+            onSelect={handleSelect}
+          />
+        );
+      }}
+    </WorkspaceTabPresentationResolver>
   );
 }
 
@@ -412,6 +535,7 @@ interface WorkspaceDesktopTabsRowProps {
   paneId?: string;
   isFocused?: boolean;
   tabs: WorkspaceDesktopTabRowItem[];
+  recentlyClosedTabs: RecentlyClosedWorkspaceTab[];
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
@@ -425,6 +549,7 @@ interface WorkspaceDesktopTabsRowProps {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  onRestoreClosedTab: (entryKey: string) => void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
@@ -732,6 +857,7 @@ export function WorkspaceDesktopTabsRow({
   paneId,
   isFocused = false,
   tabs,
+  recentlyClosedTabs,
   normalizedServerId,
   normalizedWorkspaceId,
   setHoveredCloseTabKey,
@@ -745,6 +871,7 @@ export function WorkspaceDesktopTabsRow({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  onRestoreClosedTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -989,7 +1116,11 @@ export function WorkspaceDesktopTabsRow({
         />
         <WorkspaceInlineAddTabButton
           shortcutKeys={newTabKeys}
+          recentlyClosedTabs={recentlyClosedTabs}
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
           onCreateAgentTab={handleCreateAgentTab}
+          onRestoreClosedTab={onRestoreClosedTab}
           onLayout={handleInlineAddButtonLayout}
         />
       </ScrollView>

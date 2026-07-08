@@ -309,6 +309,7 @@ describe("workspace-layout-store actions", () => {
     workspaceLayoutStore.setState({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      recentlyClosedTabsByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
@@ -511,6 +512,153 @@ describe("workspace-layout-store actions", () => {
 
     expect(pane.tabIds).toEqual([leftTabId]);
     expect(pane.focusedTabId).toBe(leftTabId);
+  });
+
+  it("records recently closed restorable tabs newest-first and caps them at ten", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    for (let index = 0; index < 11; index += 1) {
+      const tabId = store.openTabFocused(workspaceKey, {
+        kind: "file",
+        path: `/repo/worktree/${index}.ts`,
+      });
+      expect(tabId).toBeTruthy();
+      workspaceLayoutStore.getState().closeTab(workspaceKey, tabId!);
+    }
+
+    const entries = workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey];
+    expect(entries).toHaveLength(10);
+    expect(entries?.map((entry) => entry.tab.target)).toEqual(
+      Array.from({ length: 10 }, (_, index) => ({
+        kind: "file",
+        path: `/repo/worktree/${10 - index}.ts`,
+      })),
+    );
+  });
+
+  it("restores a closed tab, focuses it, and removes it from recently closed tabs", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const tabId = store.openTabFocused(workspaceKey, {
+      kind: "draft",
+      draftId: "draft-to-restore",
+    });
+    expect(tabId).toBeTruthy();
+
+    workspaceLayoutStore.getState().closeTab(workspaceKey, tabId!);
+    const entry = workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey]?.[0];
+    expect(entry).toBeTruthy();
+
+    const restoredTabId = workspaceLayoutStore
+      .getState()
+      .restoreClosedTab(workspaceKey, entry!.key);
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const pane = findPaneContainingTab(layout.root, tabId!);
+
+    expect(restoredTabId).toBe(tabId);
+    expect(pane?.focusedTabId).toBe(tabId);
+    expect(
+      workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("restoring a closed agent tab clears its hidden state", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const tabId = store.openTabFocused(workspaceKey, {
+      kind: "agent",
+      agentId: "agent-to-restore",
+    });
+
+    expect(tabId).not.toBeNull();
+    store.hideAgent(workspaceKey, "agent-to-restore");
+    store.closeTab(workspaceKey, tabId!);
+
+    const entry = workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey]?.[0];
+    expect(entry).toBeDefined();
+
+    workspaceLayoutStore.getState().restoreClosedTab(workspaceKey, entry!.key);
+
+    expect(workspaceLayoutStore.getState().hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
+  });
+
+  it("restores into the focused pane when the original pane is gone", () => {
+    useWorkspaceLayoutIds(
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    );
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const leftTabId = store.openTabFocused(workspaceKey, {
+      kind: "draft",
+      draftId: "left",
+    });
+    const rightPaneId = store.splitPaneEmpty(workspaceKey, {
+      targetPaneId: "main",
+      position: "right",
+    });
+    expect(rightPaneId).toBeTruthy();
+    const rightTabId = store.openTabFocused(workspaceKey, {
+      kind: "draft",
+      draftId: "right",
+    });
+    expect(rightTabId).toBeTruthy();
+
+    workspaceLayoutStore.getState().closeTab(workspaceKey, rightTabId!);
+    workspaceLayoutStore.getState().focusTab(workspaceKey, leftTabId!);
+    const entry = workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey]?.[0];
+    expect(entry?.paneId).toBe(rightPaneId);
+
+    workspaceLayoutStore.getState().restoreLastClosedTab(workspaceKey);
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const restoredPane = findPaneContainingTab(layout.root, rightTabId!);
+
+    expect(restoredPane?.id).toBe("main");
+    expect(restoredPane?.focusedTabId).toBe(rightTabId);
+  });
+
+  it("focuses an already-open matching target and removes it from recently closed tabs", () => {
+    const workspaceKey = createWorkspaceKey();
+    const target = {
+      kind: "file" as const,
+      path: "/repo/worktree/reopened.ts",
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    };
+    const store = workspaceLayoutStore.getState();
+    const tabId = store.openTabFocused(workspaceKey, target);
+    workspaceLayoutStore.getState().closeTab(workspaceKey, tabId!);
+    const entry = workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey]?.[0];
+    expect(entry).toBeTruthy();
+
+    const reopenedTabId = workspaceLayoutStore.getState().openTabFocused(workspaceKey, target);
+    const restoredTabId = workspaceLayoutStore
+      .getState()
+      .restoreClosedTab(workspaceKey, entry!.key);
+    const tabs = collectAllTabs(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+    );
+
+    expect(restoredTabId).toBe(reopenedTabId);
+    expect(tabs.filter((tab) => tab.tabId === reopenedTabId)).toHaveLength(1);
+    expect(
+      workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey],
+    ).toBeUndefined();
+  });
+
+  it("does not record terminal tabs as recently closed", () => {
+    const workspaceKey = createWorkspaceKey();
+    const tabId = workspaceLayoutStore.getState().openTabFocused(workspaceKey, {
+      kind: "terminal",
+      terminalId: "term-1",
+    });
+
+    workspaceLayoutStore.getState().closeTab(workspaceKey, tabId!);
+
+    expect(
+      workspaceLayoutStore.getState().recentlyClosedTabsByWorkspace[workspaceKey],
+    ).toBeUndefined();
   });
 
   it("unfocuses and restores the previous focused pane", () => {
@@ -1215,6 +1363,74 @@ describe("workspace-layout-store actions", () => {
     expect(partialize?.(state)).toEqual({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      recentlyClosedTabsByWorkspace: {},
+    });
+  });
+
+  it("partialize keeps only normalized restorable recently closed tabs", () => {
+    const workspaceKey = createWorkspaceKey();
+    const partialize = workspaceLayoutStore.persist.getOptions().partialize;
+
+    expect(partialize).toBeTypeOf("function");
+    workspaceLayoutStore.setState((state) => ({
+      ...state,
+      recentlyClosedTabsByWorkspace: {
+        [workspaceKey]: [
+          {
+            key: "valid",
+            tab: {
+              tabId: "",
+              target: { kind: "file", path: "/repo/worktree/restorable.ts" },
+              createdAt: 1,
+            },
+            paneId: "main",
+            parentTabId: null,
+            closedAt: 10,
+          },
+          {
+            key: "terminal",
+            tab: {
+              tabId: "term-1",
+              target: { kind: "terminal", terminalId: "term-1" },
+              createdAt: 1,
+            },
+            paneId: "main",
+            parentTabId: null,
+            closedAt: 20,
+          },
+          {
+            key: "invalid",
+            tab: {
+              tabId: "broken",
+              target: { kind: "file", path: "" },
+              createdAt: 1,
+            },
+            paneId: "main",
+            parentTabId: null,
+            closedAt: 30,
+          },
+        ],
+      },
+    }));
+
+    expect(partialize?.(workspaceLayoutStore.getState())).toEqual({
+      layoutByWorkspace: {},
+      splitSizesByWorkspace: {},
+      recentlyClosedTabsByWorkspace: {
+        [workspaceKey]: [
+          {
+            key: "valid",
+            tab: {
+              tabId: "file_/repo/worktree/restorable.ts",
+              target: { kind: "file", path: "/repo/worktree/restorable.ts" },
+              createdAt: 1,
+            },
+            paneId: "main",
+            parentTabId: null,
+            closedAt: 10,
+          },
+        ],
+      },
     });
   });
 
@@ -1251,6 +1467,7 @@ describe("workspace-layout-store actions", () => {
     expect(partialize?.(state)).toEqual({
       layoutByWorkspace: {},
       splitSizesByWorkspace: {},
+      recentlyClosedTabsByWorkspace: {},
     });
   });
 

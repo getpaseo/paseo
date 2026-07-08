@@ -361,6 +361,9 @@ describe("translation resources", () => {
     expect(en.workspace.tabs.toasts.reloadingAgent).toBe("Reloading agent...");
     expect(en.workspace.tabs.toasts.reloadedAgent).toBe("Reloaded agent");
     expect(en.workspace.tabs.toasts.failedToReloadAgent).toBe("Failed to reload agent");
+    expect(en.workspace.tabs.recentlyClosed.title).toBe("Recently closed tabs");
+    expect(en.workspace.tabs.recentlyClosed.empty).toBe("No recently closed tabs");
+    expect(en.settings.shortcuts.help.restoreLastClosedTab).toBe("Restore last closed tab");
     expect(en.workspace.header.toasts.workspacePathCopiedLabel).toBe("Workspace path");
     expect(en.workspace.header.toasts.branchNameCopiedLabel).toBe("Branch name");
   });

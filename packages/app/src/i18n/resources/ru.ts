@@ -500,6 +500,10 @@ export const ru: TranslationResources = {
         pinTarget: "Закрепить",
         unpinTarget: "Открепить",
       },
+      recentlyClosed: {
+        title: "Недавно закрытые вкладки",
+        empty: "Нет недавно закрытых вкладок",
+      },
       explorer: {
         open: "Открыть проводник",
         close: "Закрыть проводник",
@@ -1625,6 +1629,7 @@ export const ru: TranslationResources = {
         archiveWorktree: "Архив рабочего дерева",
         newTab: "Новая вкладка",
         closeCurrentTab: "Закрыть текущую вкладку",
+        restoreLastClosedTab: "Восстановить последнюю закрытую вкладку",
         jumpToWorkspace: "Перейти в рабочую область",
         jumpToTab: "Перейти на вкладку",
         previousWorkspace: "Предыдущая рабочая область",

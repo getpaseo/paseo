@@ -501,6 +501,10 @@ export const es: TranslationResources = {
         pinTarget: "Fijar",
         unpinTarget: "Desfijar",
       },
+      recentlyClosed: {
+        title: "Pestañas cerradas recientemente",
+        empty: "No hay pestañas cerradas recientemente",
+      },
       explorer: {
         open: "Explorador abierto",
         close: "Cerrar explorador",
@@ -1633,6 +1637,7 @@ export const es: TranslationResources = {
         archiveWorktree: "Árbol de trabajo de archivo",
         newTab: "Nueva pestaña",
         closeCurrentTab: "Cerrar pestaña actual",
+        restoreLastClosedTab: "Restaurar la última pestaña cerrada",
         jumpToWorkspace: "Saltar al espacio de trabajo",
         jumpToTab: "Saltar a la pestaña",
         previousWorkspace: "Espacio de trabajo anterior",

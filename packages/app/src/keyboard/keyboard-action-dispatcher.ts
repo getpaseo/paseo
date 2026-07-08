@@ -12,6 +12,7 @@ export type KeyboardActionId =
   | "message-input.mode-cycle"
   | "workspace.tab.new"
   | "workspace.tab.close-current"
+  | "workspace.tab.restore-last-closed"
   | "workspace.tab.navigate-index"
   | "workspace.tab.navigate-relative"
   | "workspace.pane.split.right"
@@ -43,6 +44,7 @@ export type KeyboardActionDefinition =
   | { id: "message-input.mode-cycle"; scope: KeyboardActionScope }
   | { id: "workspace.tab.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.restore-last-closed"; scope: KeyboardActionScope }
   | { id: "workspace.tab.navigate-index"; scope: KeyboardActionScope; index: number }
   | { id: "workspace.tab.navigate-relative"; scope: KeyboardActionScope; delta: 1 | -1 }
   | { id: "workspace.pane.split.right"; scope: KeyboardActionScope }
