@@ -221,6 +221,35 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([
+    ["started", "running"],
+    ["interacted", "running"],
+    ["interrupted", "canceled"],
+  ] as const)("maps subAgentActivity %s into canonical sub-agent detail", (kind, status) => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: `activity-${kind}`,
+      kind,
+      agentThreadId: "child-thread-1",
+      agentPath: "/root/investigator",
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: `activity-${kind}`,
+      name: "Sub-agent",
+      status,
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "/root/investigator",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
   it("does not fail a collabAgentToolCall from child error state alone", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",

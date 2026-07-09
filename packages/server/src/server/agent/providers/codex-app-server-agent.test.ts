@@ -1527,6 +1527,384 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps the parent running when a MultiAgentV2 sub-agent finishes", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the investigation, then report the result.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "spawn-child-1",
+        threadId: "child-thread-1",
+        agentPath: "/root/child",
+      });
+      appServer.says({
+        threadId: "child-thread-1",
+        itemId: "child-message-1",
+        text: "Child findings.",
+      });
+      appServer.completeTurn({ threadId: "child-thread-1" });
+      appServer.says({
+        threadId: "thread-1",
+        itemId: "parent-message-1",
+        text: "Parent report.",
+        chunks: ["Parent ", "report."],
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.finalText).toBe("Parent report.");
+      const assistantMessages = result.timeline.filter((item) => item.type === "assistant_message");
+      expect(assistantMessages.map((item) => item.messageId)).toEqual([
+        "parent-message-1",
+        "parent-message-1",
+      ]);
+      expect(assistantMessages.map((item) => item.text).join("")).toBe("Parent report.");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("returns only the latest assistant item without its visual boundary", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Report twice, then finish.");
+      await appServer.waitForTurnStart();
+
+      appServer.says({
+        threadId: "thread-1",
+        itemId: "first-parent-message",
+        text: "First report.",
+      });
+      appServer.says({
+        threadId: "thread-1",
+        itemId: "second-parent-message",
+        text: "Second report.",
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.finalText).toBe("Second report.");
+      expect(result.finalText).not.toContain("---");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("replays MultiAgentV2 child activity that arrives before its parent mapping", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the investigation, then report the result.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsTurn({ threadId: "child-thread-early" });
+      appServer.says({
+        threadId: "child-thread-early",
+        itemId: "child-message-early",
+        text: "Early child findings.",
+      });
+      appServer.completeTurn({ threadId: "child-thread-early" });
+      appServer.startsSubAgent({
+        callId: "spawn-child-early",
+        threadId: "child-thread-early",
+        agentPath: "/root/early-child",
+      });
+      appServer.says({
+        threadId: "thread-1",
+        itemId: "parent-message-after-early-child",
+        text: "Parent report after replay.",
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.finalText).toBe("Parent report after replay.");
+      expect(result.timeline.filter((item) => item.type === "assistant_message")).toEqual([
+        {
+          type: "assistant_message",
+          messageId: "parent-message-after-early-child",
+          text: "Parent report after replay.",
+        },
+      ]);
+      expect(result.timeline.findLast((item) => item.type === "tool_call")).toMatchObject({
+        type: "tool_call",
+        callId: "spawn-child-early",
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          log: "[Assistant] Early child findings.",
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps MultiAgentV2 interaction and interruption on the original child card", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-stable",
+        kind: "started",
+        agentThreadId: "child-thread-stable",
+        agentPath: "/root/stable-child",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "message-child-stable",
+        kind: "interacted",
+        agentThreadId: "child-thread-stable",
+        agentPath: "/root/stable-child",
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "child-thread-stable",
+      itemId: "stable-child-message",
+      delta: "Still on the same card.",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "interrupt-child-stable",
+        kind: "interrupted",
+        agentThreadId: "child-thread-stable",
+        agentPath: "/root/stable-child",
+      },
+    });
+
+    const toolCalls = events
+      .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
+      .map((event) => event.item);
+    expect(new Set(toolCalls.map((item) => item.callId))).toEqual(new Set(["spawn-child-stable"]));
+    expect(toolCalls.at(-1)).toMatchObject({
+      callId: "spawn-child-stable",
+      status: "canceled",
+      detail: {
+        type: "sub_agent",
+        log: "[Assistant] Still on the same card.",
+      },
+    });
+    expect(events.some((event) => event.type.startsWith("turn_"))).toBe(false);
+  });
+
+  test("keeps nested MultiAgentV2 output inside the root sub-agent card", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-root",
+        kind: "started",
+        agentThreadId: "child-thread-root",
+        agentPath: "/root/child",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-root",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-grandchild",
+        kind: "started",
+        agentThreadId: "grandchild-thread",
+        agentPath: "/root/child/grandchild",
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "grandchild-thread",
+      itemId: "grandchild-message",
+      delta: "Grandchild findings.",
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "grandchild-thread",
+      turn: { status: "completed" },
+    });
+
+    const beforeParentCompletes = events
+      .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
+      .map((event) => event.item);
+    expect(new Set(beforeParentCompletes.map((item) => item.callId))).toEqual(
+      new Set(["spawn-child-root"]),
+    );
+    expect(beforeParentCompletes.at(-1)).toMatchObject({
+      callId: "spawn-child-root",
+      status: "running",
+      detail: { type: "sub_agent", log: expect.stringContaining("Grandchild findings.") },
+    });
+
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "child-thread-root",
+      turn: { status: "completed" },
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: { callId: "spawn-child-root", status: "completed" },
+    });
+  });
+
+  test("never treats an unmapped foreign terminal as the root terminal", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "unmapped-child-thread",
+      turn: { status: "completed" },
+    });
+    expect(events).toEqual([]);
+
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
+    expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "next-root-turn" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-reused-foreign-thread",
+        kind: "started",
+        agentThreadId: "unmapped-child-thread",
+        agentPath: "/root/reused-child",
+      },
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: { callId: "spawn-reused-foreign-thread", status: "running" },
+    });
+  });
+
+  test("never replaces the root identity with an early child thread start", () => {
+    const session = createSession();
+
+    asInternals(session).handleNotification("thread/started", {
+      thread: { id: "child-thread-started-early" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-thread-started-early",
+        kind: "started",
+        agentThreadId: "child-thread-started-early",
+        agentPath: "/root/early-thread",
+      },
+    });
+
+    expect(session.currentThreadId).toBe("test-thread");
+  });
+
+  test("does not leak thread-scoped child telemetry into the root timeline", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-telemetry",
+        kind: "started",
+        agentThreadId: "child-thread-telemetry",
+        agentPath: "/root/telemetry-child",
+      },
+    });
+    const eventCountAfterSpawn = events.length;
+
+    asInternals(session).handleNotification("turn/plan/updated", {
+      threadId: "child-thread-telemetry",
+      plan: [{ step: "Child-only plan", status: "inProgress" }],
+    });
+    asInternals(session).handleNotification("codex/event/exec_command_begin", {
+      threadId: "child-thread-telemetry",
+      msg: {
+        type: "exec_command_begin",
+        call_id: "child-legacy-command",
+        command: "printf child",
+      },
+    });
+
+    expect(events).toHaveLength(eventCountAfterSpawn);
+  });
+
+  test("keeps child context compaction inside the child card", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-child-compaction",
+        kind: "started",
+        agentThreadId: "child-thread-compaction",
+        agentPath: "/root/compacting-child",
+      },
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "child-thread-compaction",
+      item: { type: "contextCompaction", id: "child-compaction" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-compaction",
+      item: { type: "contextCompaction", id: "child-compaction" },
+    });
+
+    const timelineItems = events.flatMap((event) =>
+      event.type === "timeline" ? [event.item] : [],
+    );
+    expect(timelineItems.every((item) => item.type === "tool_call")).toBe(true);
+    expect(
+      timelineItems.every(
+        (item) => item.type === "tool_call" && item.callId === "spawn-child-compaction",
+      ),
+    ).toBe(true);
+    expect(timelineItems.at(-1)).toMatchObject({
+      type: "tool_call",
+      detail: { type: "sub_agent", log: "[Compacted]" },
+    });
+  });
+
   test("keeps the parent sub-agent running when a child command fails during the child turn", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -1669,6 +2047,178 @@ describe("Codex app-server provider", () => {
           type: "compaction",
           status: "completed",
         },
+      },
+    ]);
+  });
+
+  test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    id: "legacy-spawn-history",
+                    tool: "spawnAgent",
+                    status: "completed",
+                    prompt: "Legacy child",
+                    receiverThreadIds: ["legacy-child-thread"],
+                    agentsStates: { "legacy-child-thread": { status: "completed" } },
+                  },
+                  {
+                    type: "subAgentActivity",
+                    id: "v2-spawn-history",
+                    kind: "started",
+                    agentThreadId: "v2-child-thread",
+                    agentPath: "/root/v2-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(
+      history
+        .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
+        .map((event) => event.item),
+    ).toMatchObject([
+      {
+        callId: "legacy-spawn-history",
+        status: "completed",
+        detail: { type: "sub_agent", description: "Legacy child" },
+      },
+      {
+        callId: "v2-spawn-history",
+        status: "completed",
+        detail: { type: "sub_agent", description: "/root/v2-child" },
+      },
+    ]);
+
+    const liveEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => liveEvents.push(event));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "v2-interaction-after-resume",
+        kind: "interacted",
+        agentThreadId: "v2-child-thread",
+        agentPath: "/root/v2-child",
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "v2-child-thread",
+      itemId: "v2-child-message-after-resume",
+      delta: "More findings after resume.",
+    });
+
+    const liveToolCalls = liveEvents.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+    );
+    expect(new Set(liveToolCalls.map((item) => item.callId))).toEqual(
+      new Set(["v2-spawn-history"]),
+    );
+    expect(liveToolCalls.at(-1)).toMatchObject({
+      status: "running",
+      detail: { type: "sub_agent", log: "[Assistant] More findings after resume." },
+    });
+
+    liveEvents.length = 0;
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "legacy-child-thread",
+      itemId: "legacy-child-message-after-resume",
+      delta: "Legacy findings after resume.",
+    });
+    expect(liveEvents.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "legacy-spawn-history",
+        status: "running",
+        detail: { type: "sub_agent", log: "[Assistant] Legacy findings after resume." },
+      },
+    });
+  });
+
+  test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                    timestamp: "2026-07-09T10:00:00.000Z",
+                  },
+                  {
+                    type: "subAgentActivity",
+                    id: "child-interacted-history",
+                    kind: "interacted",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                    timestamp: "2026-07-09T10:01:00.000Z",
+                  },
+                  {
+                    type: "subAgentActivity",
+                    id: "child-interrupted-history",
+                    kind: "interrupted",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                    timestamp: "2026-07-09T10:02:00.000Z",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-07-09T10:00:00.000Z",
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "child-started-history",
+          status: "canceled",
+          detail: expect.objectContaining({
+            type: "sub_agent",
+            description: "/root/history-child",
+          }),
+        }),
       },
     ]);
   });

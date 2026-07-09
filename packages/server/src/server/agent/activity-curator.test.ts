@@ -185,6 +185,46 @@ second line'`,
     ]);
   });
 
+  it("keeps nested sub-agent logs beside the sub-agent that produced them", () => {
+    const timeline: AgentTimelineItem[] = [
+      { type: "assistant_message", text: "Before first child." },
+      toolCallItem({
+        callId: "child-1",
+        name: "Sub-agent",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "Child one",
+          description: "First investigation",
+          log: "[Assistant] First child result.",
+        },
+      }),
+      { type: "assistant_message", text: "Between children." },
+      toolCallItem({
+        callId: "child-2",
+        name: "Sub-agent",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "Child two",
+          description: "Second investigation",
+          log: "[Assistant] Second child result.",
+        },
+      }),
+      { type: "assistant_message", text: "After second child." },
+    ];
+
+    const result = curateAgentActivity(timeline, { labelAssistantMessages: true });
+
+    expect(result.split("\n")).toEqual([
+      "[Assistant] Before first child.",
+      "[Child one] First investigation",
+      "[Assistant] First child result.",
+      "[Assistant] Between children.",
+      "[Child two] Second investigation",
+      "[Assistant] Second child result.",
+      "[Assistant] After second child.",
+    ]);
+  });
+
   it("renders todo/error/compaction entries", () => {
     const timeline: AgentTimelineItem[] = [
       {

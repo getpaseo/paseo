@@ -18,7 +18,15 @@ export interface FakeCodexAppServer {
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
+  startsTurn(params: { threadId: string; turnId?: string }): void;
   completeTurn(params?: { threadId?: string }): void;
+  startsSubAgent(params: {
+    callId: string;
+    threadId: string;
+    agentPath: string;
+    parentThreadId?: string;
+  }): void;
+  says(params: { threadId: string; itemId: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -215,11 +223,66 @@ export function createFakeCodexAppServer(
         child.stdin.once("data", (chunk) => resolve(chunk.toString()));
       });
     },
+    startsTurn(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/started",
+          params: {
+            threadId: params.threadId,
+            turn: { id: params.turnId ?? `turn-${params.threadId}` },
+          },
+        })}\n`,
+      );
+    },
     completeTurn(params = {}) {
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
           params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+        })}\n`,
+      );
+    },
+    startsSubAgent(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "item/completed",
+          params: {
+            threadId: params.parentThreadId ?? "thread-1",
+            item: {
+              type: "subAgentActivity",
+              id: params.callId,
+              kind: "started",
+              agentThreadId: params.threadId,
+              agentPath: params.agentPath,
+            },
+          },
+        })}\n`,
+      );
+    },
+    says(params) {
+      for (const chunk of params.chunks ?? [params.text]) {
+        child.stdout.write(
+          `${JSON.stringify({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId: params.threadId,
+              itemId: params.itemId,
+              delta: chunk,
+            },
+          })}\n`,
+        );
+      }
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "item/completed",
+          params: {
+            threadId: params.threadId,
+            item: {
+              type: "agentMessage",
+              id: params.itemId,
+              text: params.text,
+            },
+          },
         })}\n`,
       );
     },

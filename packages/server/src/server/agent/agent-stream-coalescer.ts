@@ -73,6 +73,16 @@ function isTerminalToolCall(item: CoalescableTimelineItem): boolean {
   );
 }
 
+function isSameTextStream(previous: PendingTextEntry, next: PendingTextEntry): boolean {
+  if (previous.item.type !== next.item.type) {
+    return false;
+  }
+  if (previous.item.type === "assistant_message" && next.item.type === "assistant_message") {
+    return previous.item.messageId === next.item.messageId;
+  }
+  return true;
+}
+
 export class AgentStreamCoalescer {
   private readonly buffers = new Map<string, PendingAgentStreamBuffer>();
   private readonly onFlush: (payload: AgentStreamCoalescerFlush) => void;
@@ -241,7 +251,7 @@ export class AgentStreamCoalescer {
         previous &&
         previous.kind === "text" &&
         entry.kind === "text" &&
-        previous.item.type === entry.item.type &&
+        isSameTextStream(previous, entry) &&
         previous.provider === entry.provider &&
         previous.turnId === entry.turnId
       ) {
