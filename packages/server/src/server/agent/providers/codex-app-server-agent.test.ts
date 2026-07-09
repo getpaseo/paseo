@@ -1608,6 +1608,31 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("returns only the latest id-less assistant item", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Report twice, then finish.");
+      await appServer.waitForTurnStart();
+
+      appServer.says({ threadId: "thread-1", text: "First report." });
+      appServer.says({ threadId: "thread-1", text: "Second report." });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      expect(result.finalText).toBe("Second report.");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("replays MultiAgentV2 child activity that arrives before its parent mapping", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -1664,60 +1689,109 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("keeps MultiAgentV2 interaction and interruption on the original child card", () => {
-    const session = createSession();
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
+  test("keeps MultiAgentV2 interaction and interruption on the original child card", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
 
-    asInternals(session).handleNotification("item/completed", {
-      threadId: "test-thread",
-      item: {
-        type: "subAgentActivity",
-        id: "spawn-child-stable",
-        kind: "started",
-        agentThreadId: "child-thread-stable",
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "spawn-child-stable",
+        threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
-      },
-    });
-    asInternals(session).handleNotification("item/completed", {
-      threadId: "test-thread",
-      item: {
-        type: "subAgentActivity",
-        id: "message-child-stable",
+      });
+      appServer.beginsSubAgentActivity({
+        callId: "message-child-stable",
+        threadId: "child-thread-stable",
+        agentPath: "/root/stable-child",
         kind: "interacted",
-        agentThreadId: "child-thread-stable",
+      });
+      appServer.completesSubAgentActivity({
+        callId: "message-child-stable",
+        threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
-      },
-    });
-    asInternals(session).handleNotification("item/agentMessage/delta", {
-      threadId: "child-thread-stable",
-      itemId: "stable-child-message",
-      delta: "Still on the same card.",
-    });
-    asInternals(session).handleNotification("item/completed", {
-      threadId: "test-thread",
-      item: {
-        type: "subAgentActivity",
-        id: "interrupt-child-stable",
+        kind: "interacted",
+      });
+      appServer.says({
+        threadId: "child-thread-stable",
+        itemId: "stable-child-message",
+        text: "Still on the same card.",
+      });
+      appServer.beginsSubAgentActivity({
+        callId: "interrupt-child-stable",
+        threadId: "child-thread-stable",
+        agentPath: "/root/stable-child",
         kind: "interrupted",
-        agentThreadId: "child-thread-stable",
+      });
+      appServer.completesSubAgentActivity({
+        callId: "interrupt-child-stable",
+        threadId: "child-thread-stable",
         agentPath: "/root/stable-child",
-      },
-    });
+        kind: "interrupted",
+      });
+      appServer.completeTurn();
 
-    const toolCalls = events
-      .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
-      .map((event) => event.item);
-    expect(new Set(toolCalls.map((item) => item.callId))).toEqual(new Set(["spawn-child-stable"]));
-    expect(toolCalls.at(-1)).toMatchObject({
-      callId: "spawn-child-stable",
-      status: "canceled",
-      detail: {
-        type: "sub_agent",
-        log: "[Assistant] Still on the same card.",
-      },
-    });
-    expect(events.some((event) => event.type.startsWith("turn_"))).toBe(false);
+      const result = await resultPromise;
+      const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
+      expect(new Set(toolCalls.map((item) => item.callId))).toEqual(
+        new Set(["spawn-child-stable"]),
+      );
+      expect(toolCalls.at(-1)).toMatchObject({
+        callId: "spawn-child-stable",
+        status: "canceled",
+        detail: {
+          type: "sub_agent",
+          log: "[Assistant] Still on the same card.",
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not reopen a completed MultiAgentV2 child on activity completion", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+
+      appServer.completeTurn({ threadId: "child-thread-fast" });
+      const activity = {
+        callId: "spawn-child-fast",
+        threadId: "child-thread-fast",
+        agentPath: "/root/fast-child",
+        kind: "started" as const,
+      };
+      appServer.beginsSubAgentActivity(activity);
+      appServer.completesSubAgentActivity(activity);
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
+      expect(toolCalls.map((item) => item.status)).toEqual(["running", "completed"]);
+      expect(toolCalls.at(-1)).toMatchObject({
+        callId: "spawn-child-fast",
+        status: "completed",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("keeps nested MultiAgentV2 output inside the root sub-agent card", () => {

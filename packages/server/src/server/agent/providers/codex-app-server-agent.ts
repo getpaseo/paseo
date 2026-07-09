@@ -1620,14 +1620,13 @@ function readCodexTurnHistoryTimestamp(
   return completedAt ?? startedAt;
 }
 
-interface CodexHistoricalSubAgentActivity {
+interface CodexSubAgentActivity {
+  id: string | null;
   agentThreadId: string;
   kind: "started" | "interacted" | "interrupted";
 }
 
-function readCodexHistoricalSubAgentActivity(
-  item: unknown,
-): CodexHistoricalSubAgentActivity | null {
+function readCodexSubAgentActivity(item: unknown): CodexSubAgentActivity | null {
   const record = toObjectRecord(item);
   if (!record) {
     return null;
@@ -1642,12 +1641,16 @@ function readCodexHistoricalSubAgentActivity(
   ) {
     return null;
   }
-  return { agentThreadId: record.agentThreadId, kind: record.kind };
+  return {
+    id: nonEmptyString(record.id) ?? null,
+    agentThreadId: record.agentThreadId,
+    kind: record.kind,
+  };
 }
 
 function settleHistoricalSubAgentActivity(
   item: ToolCallTimelineItem,
-  kind: CodexHistoricalSubAgentActivity["kind"],
+  kind: CodexSubAgentActivity["kind"],
 ): ToolCallTimelineItem {
   // thread/read returns completed parent items, not a live child snapshot.
   // Only an explicit interruption remains non-completed when replayed.
@@ -1661,7 +1664,7 @@ function settleHistoricalSubAgentActivity(
 function updateHistoricalSubAgentActivity(
   timeline: PersistedTimelineEntry[],
   index: number,
-  kind: CodexHistoricalSubAgentActivity["kind"],
+  kind: CodexSubAgentActivity["kind"],
 ): void {
   const existing = timeline[index];
   if (existing?.item.type !== "tool_call") {
@@ -1674,7 +1677,7 @@ function updateHistoricalSubAgentActivity(
 }
 
 function readCodexHistoricalSubAgentThreadIds(item: unknown): string[] {
-  const activity = readCodexHistoricalSubAgentActivity(item);
+  const activity = readCodexSubAgentActivity(item);
   if (activity) {
     return [activity.agentThreadId];
   }
@@ -1857,7 +1860,7 @@ async function loadCodexThreadHistoryTimeline(params: {
   const subAgentTimelineIndexByThreadId = new Map<string, number>();
   for (const turn of response.thread.turns) {
     for (const item of turn.items) {
-      const historicalSubAgentActivity = readCodexHistoricalSubAgentActivity(item);
+      const historicalSubAgentActivity = readCodexSubAgentActivity(item);
       if (historicalSubAgentActivity) {
         const existingIndex = subAgentTimelineIndexByThreadId.get(
           historicalSubAgentActivity.agentThreadId,
@@ -3052,6 +3055,7 @@ interface CodexSubAgentCallState {
   callId: string;
   toolCall: ToolCallTimelineItem;
   parentCallId: string | null;
+  activityItemIds: Set<string>;
   childItemOrder: string[];
   childItems: Map<string, AgentTimelineItem>;
 }
@@ -3686,11 +3690,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         if (item.type === "assistant_message") {
           const hasPreviousAssistantMessage = hasAssistantMessage;
           hasAssistantMessage = true;
-          const isNewMessage = Boolean(
-            item.messageId && item.messageId !== currentAssistantMessageId,
-          );
+          const isNewMessage =
+            item.messageId === undefined || item.messageId !== currentAssistantMessageId;
           if (isNewMessage) {
-            currentAssistantMessageId = item.messageId ?? currentAssistantMessageId;
+            currentAssistantMessageId = item.messageId ?? null;
             currentAssistantMessageHasBoundary =
               hasPreviousAssistantMessage &&
               item.text.startsWith(ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN);
@@ -4663,6 +4666,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         callId: timelineItem.callId,
         toolCall: timelineItem,
         parentCallId,
+        activityItemIds: new Set<string>(),
         childItemOrder: [],
         childItems: new Map<string, AgentTimelineItem>(),
       } satisfies CodexSubAgentCallState);
@@ -4677,6 +4681,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       },
     };
     state.parentCallId ??= parentCallId;
+    const activity = readCodexSubAgentActivity(rawItem);
+    if (activity?.id) {
+      state.activityItemIds.add(activity.id);
+    }
     this.subAgentCallsByCallId.set(timelineItem.callId, state);
 
     const receiverThreadIds = Array.isArray(rawItem.receiverThreadIds)
@@ -4695,30 +4703,29 @@ export class CodexAppServerAgentSession implements AgentSession {
     return childThreadIds;
   }
 
-  private handleExistingSubAgentActivity(rawItem: { [key: string]: unknown }): boolean {
-    const normalizedType = normalizeCodexThreadItemType(
-      typeof rawItem.type === "string" ? rawItem.type : undefined,
-    );
-    if (
-      normalizedType !== "subAgentActivity" ||
-      (rawItem.kind !== "interacted" && rawItem.kind !== "interrupted")
-    ) {
+  private handleRegisteredSubAgentActivity(rawItem: { [key: string]: unknown }): boolean {
+    const activity = readCodexSubAgentActivity(rawItem);
+    if (!activity) {
       return false;
     }
-    if (typeof rawItem.agentThreadId !== "string") {
-      return false;
-    }
-    const callId = this.subAgentCallIdByChildThreadId.get(rawItem.agentThreadId);
+    const callId = this.subAgentCallIdByChildThreadId.get(activity.agentThreadId);
     if (!callId) {
       return false;
     }
+    const state = this.subAgentCallsByCallId.get(callId);
+    if (!state) {
+      return false;
+    }
+    if (activity.id && state.activityItemIds.has(activity.id)) {
+      return true;
+    }
+    if (activity.id) {
+      state.activityItemIds.add(activity.id);
+    }
     this.emitSubAgentActivityUpdate(
       callId,
-      rawItem.kind === "interrupted" ? "canceled" : "running",
+      activity.kind === "interrupted" ? "canceled" : "running",
     );
-    if (typeof rawItem.id === "string") {
-      this.emittedItemCompletedIds.add(rawItem.id);
-    }
     return true;
   }
 
@@ -4755,7 +4762,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     return (
       this.handleCompletedContextCompactionItem(parsed.item) ||
-      this.handleExistingSubAgentActivity(parsed.item)
+      this.handleRegisteredSubAgentActivity(parsed.item)
     );
   }
 
@@ -5397,6 +5404,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         provider: CODEX_PROVIDER,
         item: this.createContextCompactionTimelineItem("loading", parsed.item.id),
       });
+      return;
+    }
+    if (this.handleRegisteredSubAgentActivity(parsed.item)) {
       return;
     }
     const timelineItem = threadItemToTimeline(parsed.item, {

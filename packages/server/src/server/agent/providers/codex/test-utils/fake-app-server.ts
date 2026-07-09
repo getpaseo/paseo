@@ -6,6 +6,13 @@ import type { AgentSession, AgentStreamEvent } from "../../../agent-sdk-types.js
 
 type JsonObject = Record<string, unknown>;
 type FakeCodexAppServerHandler = (params: unknown) => unknown;
+interface FakeSubAgentActivity {
+  callId: string;
+  threadId: string;
+  agentPath: string;
+  kind: "started" | "interacted" | "interrupted";
+  parentThreadId?: string;
+}
 type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -26,7 +33,9 @@ export interface FakeCodexAppServer {
     agentPath: string;
     parentThreadId?: string;
   }): void;
-  says(params: { threadId: string; itemId: string; text: string; chunks?: string[] }): void;
+  beginsSubAgentActivity(params: FakeSubAgentActivity): void;
+  completesSubAgentActivity(params: FakeSubAgentActivity): void;
+  says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
     threadId: string;
@@ -203,6 +212,27 @@ export function createFakeCodexAppServer(
     });
   }
 
+  function writeSubAgentActivity(
+    method: "item/started" | "item/completed",
+    params: FakeSubAgentActivity,
+  ): void {
+    child.stdout.write(
+      `${JSON.stringify({
+        method,
+        params: {
+          threadId: params.parentThreadId ?? "thread-1",
+          item: {
+            type: "subAgentActivity",
+            id: params.callId,
+            kind: params.kind,
+            agentThreadId: params.threadId,
+            agentPath: params.agentPath,
+          },
+        },
+      })}\n`,
+    );
+  }
+
   return {
     child,
     recordedRollbacks,
@@ -243,34 +273,28 @@ export function createFakeCodexAppServer(
       );
     },
     startsSubAgent(params) {
-      child.stdout.write(
-        `${JSON.stringify({
-          method: "item/completed",
-          params: {
-            threadId: params.parentThreadId ?? "thread-1",
-            item: {
-              type: "subAgentActivity",
-              id: params.callId,
-              kind: "started",
-              agentThreadId: params.threadId,
-              agentPath: params.agentPath,
-            },
-          },
-        })}\n`,
-      );
+      writeSubAgentActivity("item/completed", { ...params, kind: "started" });
+    },
+    beginsSubAgentActivity(params) {
+      writeSubAgentActivity("item/started", params);
+    },
+    completesSubAgentActivity(params) {
+      writeSubAgentActivity("item/completed", params);
     },
     says(params) {
-      for (const chunk of params.chunks ?? [params.text]) {
-        child.stdout.write(
-          `${JSON.stringify({
-            method: "item/agentMessage/delta",
-            params: {
-              threadId: params.threadId,
-              itemId: params.itemId,
-              delta: chunk,
-            },
-          })}\n`,
-        );
+      if (params.itemId) {
+        for (const chunk of params.chunks ?? [params.text]) {
+          child.stdout.write(
+            `${JSON.stringify({
+              method: "item/agentMessage/delta",
+              params: {
+                threadId: params.threadId,
+                itemId: params.itemId,
+                delta: chunk,
+              },
+            })}\n`,
+          );
+        }
       }
       child.stdout.write(
         `${JSON.stringify({
@@ -279,7 +303,7 @@ export function createFakeCodexAppServer(
             threadId: params.threadId,
             item: {
               type: "agentMessage",
-              id: params.itemId,
+              ...(params.itemId ? { id: params.itemId } : {}),
               text: params.text,
             },
           },
