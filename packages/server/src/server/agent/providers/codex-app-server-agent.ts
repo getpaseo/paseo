@@ -3056,6 +3056,8 @@ interface CodexSubAgentCallState {
   toolCall: ToolCallTimelineItem;
   parentCallId: string | null;
   activityItemIds: Set<string>;
+  pendingCommandOutputDeltas: Map<string, string[]>;
+  pendingFileChangeOutputDeltas: Map<string, string[]>;
   childItemOrder: string[];
   childItems: Map<string, AgentTimelineItem>;
 }
@@ -4495,10 +4497,26 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "item_completed":
         this.dispatchParsedNotification(parsed);
         return;
+      case "exec_command_output_delta":
+      case "file_change_output_delta":
+        this.handleCodexDeltaNotification(parsed, callId);
+        return;
+      case "exec_command_started":
+        this.handleExecCommandStartedNotification(parsed, callId);
+        return;
+      case "exec_command_completed":
+        this.handleExecCommandCompletedNotification(parsed, callId);
+        return;
+      case "patch_apply_started":
+        this.handlePatchApplyStartedNotification(parsed, callId);
+        return;
+      case "patch_apply_completed":
+        this.handlePatchApplyCompletedNotification(parsed, callId);
+        return;
       default:
-        // Canonical item lifecycle notifications carry the child tools and
-        // output. Thread-scoped telemetry is redundant and must not leak into
-        // the root timeline.
+        // Aggregate child telemetry is redundant and must not leak into the
+        // root timeline. Concrete legacy tools are projected above for Codex
+        // versions that do not also emit canonical item lifecycle events.
         return;
     }
   }
@@ -4667,6 +4685,8 @@ export class CodexAppServerAgentSession implements AgentSession {
         toolCall: timelineItem,
         parentCallId,
         activityItemIds: new Set<string>(),
+        pendingCommandOutputDeltas: new Map<string, string[]>(),
+        pendingFileChangeOutputDeltas: new Map<string, string[]>(),
         childItemOrder: [],
         childItems: new Map<string, AgentTimelineItem>(),
       } satisfies CodexSubAgentCallState);
@@ -4777,6 +4797,21 @@ export class CodexAppServerAgentSession implements AgentSession {
     state.childItems.set(itemId, item);
   }
 
+  private emitCodexToolTimelineItem(
+    timelineItem: ToolCallTimelineItem,
+    subAgentCallId: string | null,
+  ): void {
+    if (!subAgentCallId) {
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      return;
+    }
+    this.upsertSubAgentChildItem(subAgentCallId, timelineItem.callId, timelineItem);
+    this.emitSubAgentActivityUpdate(
+      subAgentCallId,
+      timelineItem.status === "running" ? "running" : undefined,
+    );
+  }
+
   private getSubAgentChildTimeline(state: CodexSubAgentCallState): AgentTimelineItem[] {
     return state.childItemOrder
       .map((itemId) => state.childItems.get(itemId))
@@ -4852,7 +4887,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (item.id) {
       this.upsertSubAgentChildItem(callId, item.id, { type: "compaction", status });
     }
-    this.emitSubAgentActivityUpdate(callId, "running");
+    this.emitSubAgentActivityUpdate(callId);
     return true;
   }
 
@@ -4869,7 +4904,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     return Boolean(itemId && this.emittedItemCompletedIds.has(itemId));
   }
 
-  private handleCodexDeltaNotification(parsed: CodexDeltaNotification): void {
+  private handleCodexDeltaNotification(
+    parsed: CodexDeltaNotification,
+    routedSubAgentCallId: string | null = null,
+  ): void {
     if (parsed.kind === "agent_message_delta") {
       const prev = this.pendingAgentMessages.get(parsed.itemId) ?? "";
       const text = prev + parsed.delta;
@@ -4923,12 +4961,23 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     if (parsed.kind === "exec_command_output_delta") {
-      this.appendOutputDeltaChunk(this.pendingCommandOutputDeltas, parsed.callId, parsed.chunk, {
+      const outputDeltas = routedSubAgentCallId
+        ? this.subAgentCallsByCallId.get(routedSubAgentCallId)?.pendingCommandOutputDeltas
+        : this.pendingCommandOutputDeltas;
+      if (!outputDeltas) {
+        return;
+      }
+      this.appendOutputDeltaChunk(outputDeltas, parsed.callId, parsed.chunk, {
         decodeBase64: true,
       });
       return;
     }
-    this.appendOutputDeltaChunk(this.pendingFileChangeOutputDeltas, parsed.itemId, parsed.delta);
+    const outputDeltas = routedSubAgentCallId
+      ? this.subAgentCallsByCallId.get(routedSubAgentCallId)?.pendingFileChangeOutputDeltas
+      : this.pendingFileChangeOutputDeltas;
+    if (outputDeltas) {
+      this.appendOutputDeltaChunk(outputDeltas, parsed.itemId, parsed.delta);
+    }
   }
 
   private handleThreadStartedNotification(
@@ -5119,10 +5168,19 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleExecCommandStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "exec_command_started" }>,
+    subAgentCallId: string | null = null,
   ): void {
-    if (parsed.callId) {
+    const outputDeltas = subAgentCallId
+      ? this.subAgentCallsByCallId.get(subAgentCallId)?.pendingCommandOutputDeltas
+      : this.pendingCommandOutputDeltas;
+    if (!outputDeltas) {
+      return;
+    }
+    if (parsed.callId && !subAgentCallId) {
       this.emittedExecCommandStartedCallIds.add(parsed.callId);
-      this.pendingCommandOutputDeltas.delete(parsed.callId);
+    }
+    if (parsed.callId) {
+      outputDeltas.delete(parsed.callId);
     }
     const timelineItem = mapCodexExecNotificationToToolCall({
       callId: parsed.callId,
@@ -5131,16 +5189,25 @@ export class CodexAppServerAgentSession implements AgentSession {
       running: true,
     });
     if (timelineItem) {
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
     }
   }
 
   private handleExecCommandCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "exec_command_completed" }>,
+    subAgentCallId: string | null = null,
   ): void {
-    const bufferedOutput = this.consumeOutputDelta(this.pendingCommandOutputDeltas, parsed.callId);
+    const outputDeltas = subAgentCallId
+      ? this.subAgentCallsByCallId.get(subAgentCallId)?.pendingCommandOutputDeltas
+      : this.pendingCommandOutputDeltas;
+    if (!outputDeltas) {
+      return;
+    }
+    const bufferedOutput = this.consumeOutputDelta(outputDeltas, parsed.callId);
     const resolvedOutput = parsed.output ?? bufferedOutput;
-    this.rememberTerminalProcessForCommand(parsed.command, resolvedOutput);
+    if (!subAgentCallId) {
+      this.rememberTerminalProcessForCommand(parsed.command, resolvedOutput);
+    }
     const timelineItem = mapCodexExecNotificationToToolCall({
       callId: parsed.callId,
       command: parsed.command,
@@ -5152,8 +5219,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       running: false,
     });
     if (timelineItem) {
-      this.emittedExecCommandCompletedCallIds.add(timelineItem.callId);
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      if (!subAgentCallId) {
+        this.emittedExecCommandCompletedCallIds.add(timelineItem.callId);
+      }
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
     }
   }
 
@@ -5180,9 +5249,16 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handlePatchApplyStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "patch_apply_started" }>,
+    subAgentCallId: string | null = null,
   ): void {
+    const outputDeltas = subAgentCallId
+      ? this.subAgentCallsByCallId.get(subAgentCallId)?.pendingFileChangeOutputDeltas
+      : this.pendingFileChangeOutputDeltas;
+    if (!outputDeltas) {
+      return;
+    }
     if (parsed.callId) {
-      this.pendingFileChangeOutputDeltas.delete(parsed.callId);
+      outputDeltas.delete(parsed.callId);
     }
     const timelineItem = mapCodexPatchNotificationToToolCall({
       callId: parsed.callId,
@@ -5195,17 +5271,21 @@ export class CodexAppServerAgentSession implements AgentSession {
         callId: parsed.callId,
         changes: parsed.changes,
       });
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
     }
   }
 
   private handlePatchApplyCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "patch_apply_completed" }>,
+    subAgentCallId: string | null = null,
   ): void {
-    const bufferedOutput = this.consumeOutputDelta(
-      this.pendingFileChangeOutputDeltas,
-      parsed.callId,
-    );
+    const outputDeltas = subAgentCallId
+      ? this.subAgentCallsByCallId.get(subAgentCallId)?.pendingFileChangeOutputDeltas
+      : this.pendingFileChangeOutputDeltas;
+    if (!outputDeltas) {
+      return;
+    }
+    const bufferedOutput = this.consumeOutputDelta(outputDeltas, parsed.callId);
     const timelineItem = mapCodexPatchNotificationToToolCall({
       callId: parsed.callId,
       changes: parsed.changes,
@@ -5221,7 +5301,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         changes: parsed.changes,
         stdout: parsed.stdout,
       });
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+      this.emitCodexToolTimelineItem(timelineItem, subAgentCallId);
     }
   }
 

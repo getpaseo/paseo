@@ -13,6 +13,18 @@ interface FakeSubAgentActivity {
   kind: "started" | "interacted" | "interrupted";
   parentThreadId?: string;
 }
+interface FakeLegacyCommand {
+  threadId: string;
+  callId: string;
+  command: string;
+  output: string;
+}
+interface FakeLegacyPatch {
+  threadId: string;
+  callId: string;
+  path: string;
+  diff: string;
+}
 type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
   stdout: PassThrough;
@@ -35,6 +47,10 @@ export interface FakeCodexAppServer {
   }): void;
   beginsSubAgentActivity(params: FakeSubAgentActivity): void;
   completesSubAgentActivity(params: FakeSubAgentActivity): void;
+  completesCompaction(params: { threadId: string; itemId: string }): void;
+  runsLegacyCommand(params: FakeLegacyCommand): void;
+  appliesLegacyPatch(params: FakeLegacyPatch): void;
+  completesCommand(params: FakeLegacyCommand): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
@@ -216,21 +232,28 @@ export function createFakeCodexAppServer(
     method: "item/started" | "item/completed",
     params: FakeSubAgentActivity,
   ): void {
-    child.stdout.write(
-      `${JSON.stringify({
-        method,
-        params: {
-          threadId: params.parentThreadId ?? "thread-1",
-          item: {
-            type: "subAgentActivity",
-            id: params.callId,
-            kind: params.kind,
-            agentThreadId: params.threadId,
-            agentPath: params.agentPath,
-          },
-        },
-      })}\n`,
-    );
+    writeNotification(method, {
+      threadId: params.parentThreadId ?? "thread-1",
+      item: {
+        type: "subAgentActivity",
+        id: params.callId,
+        kind: params.kind,
+        agentThreadId: params.threadId,
+        agentPath: params.agentPath,
+      },
+    });
+  }
+
+  function writeNotification(method: string, params: JsonObject): void {
+    child.stdout.write(`${JSON.stringify({ method, params })}\n`);
+  }
+
+  function completeItem(threadId: string, item: JsonObject): void {
+    writeNotification("item/completed", { threadId, item });
+  }
+
+  function writeLegacyEvent(threadId: string, method: string, msg: JsonObject): void {
+    writeNotification(method, { threadId, msg });
   }
 
   return {
@@ -281,6 +304,58 @@ export function createFakeCodexAppServer(
     completesSubAgentActivity(params) {
       writeSubAgentActivity("item/completed", params);
     },
+    completesCompaction(params) {
+      completeItem(params.threadId, { type: "contextCompaction", id: params.itemId });
+    },
+    runsLegacyCommand(params) {
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_begin", {
+        type: "exec_command_begin",
+        call_id: params.callId,
+        command: params.command,
+      });
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_output_delta", {
+        type: "exec_command_output_delta",
+        call_id: params.callId,
+        chunk: params.output,
+      });
+      writeLegacyEvent(params.threadId, "codex/event/exec_command_end", {
+        type: "exec_command_end",
+        call_id: params.callId,
+        command: params.command,
+        exit_code: 0,
+        success: true,
+      });
+    },
+    appliesLegacyPatch(params) {
+      const changes = [
+        {
+          path: params.path,
+          kind: "modify",
+          unified_diff: params.diff,
+        },
+      ];
+      for (const [method, type] of [
+        ["codex/event/patch_apply_begin", "patch_apply_begin"],
+        ["codex/event/patch_apply_end", "patch_apply_end"],
+      ] as const) {
+        writeLegacyEvent(params.threadId, method, {
+          type,
+          call_id: params.callId,
+          changes,
+          ...(type === "patch_apply_end" ? { success: true } : {}),
+        });
+      }
+    },
+    completesCommand(params) {
+      completeItem(params.threadId, {
+        type: "commandExecution",
+        id: params.callId,
+        status: "completed",
+        command: params.command,
+        aggregatedOutput: params.output,
+        exitCode: 0,
+      });
+    },
     says(params) {
       if (params.itemId) {
         for (const chunk of params.chunks ?? [params.text]) {
@@ -296,19 +371,11 @@ export function createFakeCodexAppServer(
           );
         }
       }
-      child.stdout.write(
-        `${JSON.stringify({
-          method: "item/completed",
-          params: {
-            threadId: params.threadId,
-            item: {
-              type: "agentMessage",
-              ...(params.itemId ? { id: params.itemId } : {}),
-              text: params.text,
-            },
-          },
-        })}\n`,
-      );
+      completeItem(params.threadId, {
+        type: "agentMessage",
+        ...(params.itemId ? { id: params.itemId } : {}),
+        text: params.text,
+      });
     },
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;

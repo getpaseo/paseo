@@ -1794,6 +1794,101 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("preserves a completed child status when replaying a late compaction", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+
+      appServer.completeTurn({ threadId: "child-late-compaction" });
+      appServer.completesCompaction({
+        threadId: "child-late-compaction",
+        itemId: "late-child-compaction",
+      });
+      appServer.startsSubAgent({
+        callId: "spawn-child-late-compaction",
+        threadId: "child-late-compaction",
+        agentPath: "/root/late-compaction",
+      });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
+      expect(toolCalls.map((item) => item.status)).toEqual(["running", "completed", "completed"]);
+      expect(toolCalls.at(-1)).toMatchObject({
+        callId: "spawn-child-late-compaction",
+        status: "completed",
+        detail: { type: "sub_agent", log: "[Compacted]" },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("projects legacy child tools into one stable sub-agent log", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the implementation.");
+      await appServer.waitForTurnStart();
+
+      appServer.startsSubAgent({
+        callId: "spawn-legacy-tool-child",
+        threadId: "legacy-tool-child",
+        agentPath: "/root/legacy-tool-child",
+      });
+      const command = {
+        threadId: "legacy-tool-child",
+        callId: "legacy-child-command",
+        command: "printf child",
+        output: "child output",
+      };
+      appServer.runsLegacyCommand(command);
+      appServer.completesCommand(command);
+      appServer.appliesLegacyPatch({
+        threadId: "legacy-tool-child",
+        callId: "legacy-child-patch",
+        path: "/workspace/project/src/child.ts",
+        diff: "@@\n-old\n+new\n",
+      });
+      appServer.completeTurn({ threadId: "legacy-tool-child" });
+      appServer.completeTurn();
+
+      const result = await resultPromise;
+      const toolCalls = result.timeline.filter((item) => item.type === "tool_call");
+      expect(new Set(toolCalls.map((item) => item.callId))).toEqual(
+        new Set(["spawn-legacy-tool-child"]),
+      );
+      const finalToolCall = toolCalls.at(-1);
+      expect(finalToolCall).toMatchObject({
+        callId: "spawn-legacy-tool-child",
+        status: "completed",
+        detail: { type: "sub_agent" },
+      });
+      if (finalToolCall?.detail.type === "sub_agent") {
+        expect(finalToolCall.detail.log.match(/\[Shell\]/g)).toHaveLength(1);
+        expect(finalToolCall.detail.log).toContain("[Edit]");
+      }
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("keeps nested MultiAgentV2 output inside the root sub-agent card", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -1961,7 +2056,7 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("test-thread");
   });
 
-  test("does not leak thread-scoped child telemetry into the root timeline", () => {
+  test("does not leak aggregate child telemetry into the root timeline", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -1981,14 +2076,6 @@ describe("Codex app-server provider", () => {
     asInternals(session).handleNotification("turn/plan/updated", {
       threadId: "child-thread-telemetry",
       plan: [{ step: "Child-only plan", status: "inProgress" }],
-    });
-    asInternals(session).handleNotification("codex/event/exec_command_begin", {
-      threadId: "child-thread-telemetry",
-      msg: {
-        type: "exec_command_begin",
-        call_id: "child-legacy-command",
-        command: "printf child",
-      },
     });
 
     expect(events).toHaveLength(eventCountAfterSpawn);
