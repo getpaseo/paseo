@@ -56,6 +56,7 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
+import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
@@ -362,13 +363,33 @@ function toAgentUsage(stats: PiSessionStats): AgentUsage | undefined {
   };
 }
 
-function convertPromptInput(prompt: AgentPromptInput): PiPromptPayload {
+function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
+  return model?.input === undefined || model.input.includes("image");
+}
+
+function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+  try {
+    const materialized = materializeProviderImage({
+      data: image.data,
+      mimeType: image.mimeType,
+    });
+    return `[Image available at: ${materialized.path}]`;
+  } catch (error) {
+    return `[Image attachment omitted: failed to write local file (${toDiagnosticErrorMessage(error)})]`;
+  }
+}
+
+function convertPromptInput(
+  prompt: AgentPromptInput,
+  options: { model: PiModel | null | undefined },
+): PiPromptPayload {
   if (typeof prompt === "string") {
     return { text: prompt };
   }
 
   const textParts: string[] = [];
   const images: PiImageContent[] = [];
+  const forwardImages = piModelSupportsImageInput(options.model);
 
   for (const block of prompt) {
     if (block.type === "text") {
@@ -377,11 +398,15 @@ function convertPromptInput(prompt: AgentPromptInput): PiPromptPayload {
     }
 
     if (block.type === "image") {
-      images.push({
-        type: "image",
-        data: block.data,
-        mimeType: block.mimeType,
-      });
+      if (forwardImages) {
+        images.push({
+          type: "image",
+          data: block.data,
+          mimeType: block.mimeType,
+        });
+      } else {
+        textParts.push(renderTextOnlyImageHint(block));
+      }
       continue;
     }
 
@@ -1046,7 +1071,7 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi turn is already active");
     }
 
-    const payload = convertPromptInput(prompt);
+    const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
 
