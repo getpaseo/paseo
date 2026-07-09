@@ -27,6 +27,7 @@ import {
   shutdownAgentClients,
   type ProviderDefinition,
 } from "./provider-registry.js";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
 import {
   formatProviderDiagnostic,
@@ -503,6 +504,7 @@ export class ProviderSnapshotManager {
         provider,
         status: "error",
         enabled: definition.enabled,
+        source: this.getProviderSource(provider),
         label: definition.label,
         description: definition.description,
         defaultModeId: definition.defaultModeId,
@@ -536,6 +538,11 @@ export class ProviderSnapshotManager {
     }
   }
 
+  private getProviderSource(provider: AgentProvider): ProviderSnapshotEntry["source"] {
+    const isBuiltin = BUILTIN_PROVIDER_IDS.includes(provider);
+    return !isBuiltin && this.providerOverrides?.[provider]?.extends ? "custom" : "builtin";
+  }
+
   private createLoadingEntries(): Map<AgentProvider, ProviderSnapshotEntry> {
     const entries = new Map<AgentProvider, ProviderSnapshotEntry>();
     for (const provider of this.getProviderIds()) {
@@ -544,6 +551,7 @@ export class ProviderSnapshotManager {
         provider,
         status: "loading",
         enabled: definition?.enabled ?? true,
+        source: this.getProviderSource(provider),
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
@@ -562,6 +570,7 @@ export class ProviderSnapshotManager {
       const metadata = {
         provider,
         enabled: definition?.enabled ?? true,
+        source: this.getProviderSource(provider),
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
@@ -725,6 +734,7 @@ export class ProviderSnapshotManager {
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
     const base = {
       provider,
+      source: this.getProviderSource(provider),
       label: definition.label,
       description: definition.description,
       defaultModeId: definition.defaultModeId,

@@ -368,4 +368,18 @@ describe("checkout PR schemas", () => {
       projectAdd: true,
     });
   });
+
+  test("accepts the provider removal server_info feature flag", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "srv_test",
+        features: {
+          providerRemoval: true,
+        },
+      }).features,
+    ).toEqual({
+      providerRemoval: true,
+    });
+  });
 });

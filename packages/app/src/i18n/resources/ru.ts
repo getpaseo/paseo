@@ -1946,6 +1946,17 @@ export const ru: TranslationResources = {
       loading: "Загрузка...",
       addErrorTitle: "Unable to add provider",
       updateErrorTitle: "Невозможно обновить провайдера",
+      actions: {
+        menu: "{{name}} actions",
+        remove: "Remove provider",
+        removing: "Removing...",
+      },
+      remove: {
+        confirmTitle: "Remove {{name}}?",
+        confirmMessage: "This deletes the provider entry from config.json. It cannot be undone.",
+        confirm: "Remove",
+        errorTitle: "Unable to remove provider",
+      },
       statuses: {
         disabled: "Неполноценный",
         loading: "Загрузка",

@@ -952,6 +952,9 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       expect(manager.hasProvider("zai-claude")).toBe(true);
       expect(state.providerDefinitions["zai-claude"]).toMatchObject({ enabled: true });
       expect(manager.listRegisteredProviderIds()).toContain("zai-claude");
+      expect(manager.getSnapshot().find((entry) => entry.provider === "zai-claude")?.source).toBe(
+        "custom",
+      );
     } finally {
       manager.destroy();
     }

@@ -52,6 +52,53 @@ function deepMerge<T extends Record<string, unknown>>(
   return next as T;
 }
 
+function omitProvidersFromConfig<T extends { providers?: Record<string, unknown> }>(
+  config: T,
+  providers: readonly string[],
+): T {
+  if (providers.length === 0 || !config.providers) {
+    return config;
+  }
+
+  let changed = false;
+  const nextProviders = { ...config.providers };
+  for (const provider of providers) {
+    if (provider in nextProviders) {
+      delete nextProviders[provider];
+      changed = true;
+    }
+  }
+
+  return changed ? ({ ...config, providers: nextProviders } as T) : config;
+}
+
+function omitProvidersFromOverrides(
+  overrides: Record<string, ProviderOverride> | undefined,
+  providers: readonly string[],
+): Record<string, ProviderOverride> | undefined {
+  if (!overrides) {
+    return undefined;
+  }
+
+  const nextOverrides = { ...overrides };
+  for (const provider of providers) {
+    delete nextOverrides[provider];
+  }
+
+  return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
+}
+
+function omitProvidersFromPersistedAgents(
+  agents: PersistedConfig["agents"],
+): Record<string, unknown> | undefined {
+  if (!agents) {
+    return undefined;
+  }
+
+  const { providers: _providers, ...rest } = agents as Record<string, unknown>;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
   return path
     .split(".")
@@ -100,7 +147,9 @@ export class DaemonConfigStore {
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
     const parsedPatch = MutableDaemonConfigPatchSchema.parse(partial);
-    const next = MutableDaemonConfigSchema.parse(deepMerge(this.current, parsedPatch));
+    const { removeProviders = [], ...configPatch } = parsedPatch;
+    const merged = deepMerge(this.current, configPatch);
+    const next = MutableDaemonConfigSchema.parse(omitProvidersFromConfig(merged, removeProviders));
 
     const changedFieldPaths = Array.from(this.fieldChangeHandlers.keys()).filter((path) => {
       return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));
@@ -112,7 +161,7 @@ export class DaemonConfigStore {
 
     // Persist before updating in-memory state so that if persistence fails,
     // runtime and disk stay consistent.
-    this.persistConfig(next);
+    this.persistConfig(next, removeProviders);
     this.current = next;
 
     for (const path of changedFieldPaths) {
@@ -157,11 +206,12 @@ export class DaemonConfigStore {
     };
   }
 
-  private persistConfig(config: MutableDaemonConfig): void {
+  private persistConfig(config: MutableDaemonConfig, removeProviders: readonly string[]): void {
     const persisted = loadPersistedConfig(this.paseoHome, this.logger);
     const nextPersisted = mergeMutableConfigIntoPersistedConfig({
       persisted,
       mutable: config,
+      removeProviders,
     });
     savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
   }
@@ -170,22 +220,27 @@ export class DaemonConfigStore {
 function mergeMutableConfigIntoPersistedConfig(params: {
   persisted: PersistedConfig;
   mutable: MutableDaemonConfig;
+  removeProviders: readonly string[];
 }): PersistedConfig {
-  const { persisted, mutable } = params;
+  const { persisted, mutable, removeProviders } = params;
   const browserToolsEnabled = readBrowserToolsEnabled(mutable);
   const metadataGenerationProviders = readMetadataGenerationProviders(mutable);
-  const providerOverrides = applyMutableProviderConfigToOverrides(
+  const persistedProviderOverrides = omitProvidersFromOverrides(
     persisted.agents?.providers as Record<string, ProviderOverride> | undefined,
+    removeProviders,
+  );
+  const providerOverrides = applyMutableProviderConfigToOverrides(
+    persistedProviderOverrides,
     mutable.providers,
   );
-  const persistedAgents = persisted.agents as Record<string, unknown> | undefined;
+  const persistedAgents = omitProvidersFromPersistedAgents(persisted.agents);
   const persistedMetadataGeneration = {
     providers: metadataGenerationProviders,
   };
   const shouldPersistMetadataGeneration =
     metadataGenerationProviders.length > 0 || persisted.agents?.metadataGeneration !== undefined;
 
-  let nextAgents = persisted.agents as PersistedConfig["agents"];
+  let nextAgents = persistedAgents as PersistedConfig["agents"];
   if (providerOverrides && Object.keys(providerOverrides).length > 0) {
     nextAgents = {
       ...persistedAgents,

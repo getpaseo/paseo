@@ -7,41 +7,51 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
-const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
-  () => ({
-    theme: {
-      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-      iconSize: { sm: 14, md: 20 },
-      fontSize: { xs: 11, sm: 13, base: 15 },
-      fontWeight: { normal: "400" },
-      borderRadius: { lg: 8 },
-      opacity: { 50: 0.5 },
-      colors: {
-        surface1: "#111",
-        surface2: "#222",
-        surface3: "#333",
-        foreground: "#fff",
-        foregroundMuted: "#aaa",
-        border: "#555",
-        accent: "#0a84ff",
-        statusSuccess: "#00ff00",
-        statusWarning: "#ff9500",
-        statusDanger: "#ff0000",
-        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
-      },
+const {
+  theme,
+  snapshotState,
+  configState,
+  hostFeatureState,
+  patchConfigMock,
+  openProviderSettingsMock,
+  confirmDialogMock,
+} = vi.hoisted(() => ({
+  theme: {
+    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+    iconSize: { sm: 14, md: 20 },
+    fontSize: { xs: 11, sm: 13, base: 15 },
+    fontWeight: { normal: "400" },
+    borderRadius: { lg: 8 },
+    opacity: { 50: 0.5 },
+    colors: {
+      surface1: "#111",
+      surface2: "#222",
+      surface3: "#333",
+      foreground: "#fff",
+      foregroundMuted: "#aaa",
+      border: "#555",
+      accent: "#0a84ff",
+      statusSuccess: "#00ff00",
+      statusWarning: "#ff9500",
+      statusDanger: "#ff0000",
+      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
     },
-    snapshotState: {
-      entries: undefined as ProviderSnapshotEntry[] | undefined,
-      isLoading: false,
-      isRefreshing: false,
-    },
-    configState: {
-      config: null as MutableDaemonConfig | null,
-    },
-    patchConfigMock: vi.fn(async () => undefined),
-    openProviderSettingsMock: vi.fn(),
-  }),
-);
+  },
+  snapshotState: {
+    entries: undefined as ProviderSnapshotEntry[] | undefined,
+    isLoading: false,
+    isRefreshing: false,
+  },
+  configState: {
+    config: null as MutableDaemonConfig | null,
+  },
+  hostFeatureState: {
+    providerRemoval: false,
+  },
+  patchConfigMock: vi.fn(async () => undefined),
+  openProviderSettingsMock: vi.fn(),
+  confirmDialogMock: vi.fn(async () => true),
+}));
 
 vi.mock("react-native", () => ({
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
@@ -97,25 +107,39 @@ vi.mock("lucide-react-native", () => {
   const icon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     ChevronRight: icon("ChevronRight"),
+    MoreHorizontal: icon("MoreHorizontal"),
+    Trash2: icon("Trash2"),
   };
 });
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, values?: Record<string, string | number>) => {
-      if (key === "settings.providers.providerDetails") return `${values?.name} provider details`;
-      if (key === "settings.providers.enableProvider") return `Enable ${values?.name}`;
-      if (key === "settings.providers.statuses.disabled") return "Disabled";
-      if (key === "settings.providers.statuses.available") return "Available";
-      if (key === "settings.providers.statuses.loading") return "Loading";
-      if (key === "settings.providers.statuses.error") return "Error";
-      if (key === "settings.providers.statuses.notInstalled") return "Not installed";
-      if (key === "settings.providers.models.one") return "1 model";
-      if (key === "settings.providers.models.many") return `${values?.count} models`;
-      if (key === "settings.providers.addErrorTitle") return "Unable to add provider";
-      if (key === "settings.providers.updateErrorTitle") return "Unable to update provider";
-      return key;
-    },
+    t: (key: string, values?: Record<string, string | number>) =>
+      (
+        ({
+          "settings.providers.providerDetails": "{{name}} provider details",
+          "settings.providers.enableProvider": "Enable {{name}}",
+          "settings.providers.statuses.disabled": "Disabled",
+          "settings.providers.statuses.available": "Available",
+          "settings.providers.statuses.loading": "Loading",
+          "settings.providers.statuses.error": "Error",
+          "settings.providers.statuses.notInstalled": "Not installed",
+          "settings.providers.models.one": "1 model",
+          "settings.providers.models.many": "{{count}} models",
+          "settings.providers.addErrorTitle": "Unable to add provider",
+          "settings.providers.updateErrorTitle": "Unable to update provider",
+          "settings.providers.actions.menu": "{{name}} actions",
+          "settings.providers.actions.remove": "Remove provider",
+          "settings.providers.actions.removing": "Removing...",
+          "settings.providers.remove.confirmTitle": "Remove {{name}}?",
+          "settings.providers.remove.confirmMessage":
+            "This deletes the provider entry from config.json. It cannot be undone.",
+          "settings.providers.remove.confirm": "Remove",
+          "settings.providers.remove.errorTitle": "Unable to remove provider",
+        })[key] ?? key
+      )
+        .replaceAll("{{name}}", String(values?.name ?? ""))
+        .replaceAll("{{count}}", String(values?.count ?? "")),
   }),
 }));
 
@@ -149,6 +173,68 @@ vi.mock("@/components/ui/switch", () => ({
 
 vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: () => React.createElement("span", { "data-testid": "loading-spinner" }),
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", null, children),
+  DropdownMenuTrigger: ({
+    children,
+    onPressIn,
+    accessibilityRole,
+    accessibilityLabel,
+    testID,
+  }: {
+    children?:
+      | React.ReactNode
+      | ((state: { pressed: boolean; hovered: boolean; open: boolean }) => React.ReactNode);
+    onPressIn?: (event: { stopPropagation: () => void }) => void;
+    accessibilityRole?: string;
+    accessibilityLabel?: string;
+    testID?: string;
+  }) =>
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        role: accessibilityRole,
+        "aria-label": accessibilityLabel,
+        "data-testid": testID,
+        onMouseDown: (event: React.MouseEvent) => onPressIn?.(event),
+        onClick: (event: React.MouseEvent) => event.stopPropagation(),
+      },
+      typeof children === "function"
+        ? children({ pressed: false, hovered: false, open: false })
+        : children,
+    ),
+  DropdownMenuContent: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", null, children),
+  DropdownMenuItem: ({
+    children,
+    onSelect,
+    status,
+    pendingLabel,
+    testID,
+  }: {
+    children?: React.ReactNode;
+    onSelect?: () => void;
+    status?: "idle" | "pending" | "success";
+    pendingLabel?: string;
+    testID?: string;
+  }) =>
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        "data-testid": testID,
+        disabled: status === "pending" || status === "success",
+        onClick: (event: React.MouseEvent) => {
+          event.stopPropagation();
+          onSelect?.();
+        },
+      },
+      status === "pending" ? pendingLabel : children,
+    ),
 }));
 
 vi.mock("@/components/provider-icons", () => ({
@@ -190,6 +276,17 @@ vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeIsConnected: () => true,
 }));
 
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: (serverId: string, feature: string) =>
+    serverId === "server-1" && feature === "providerRemoval"
+      ? hostFeatureState.providerRemoval
+      : false,
+}));
+
+vi.mock("@/utils/confirm-dialog", () => ({
+  confirmDialog: confirmDialogMock,
+}));
+
 import { ProvidersSection } from "./providers-section";
 
 const claudeEntry: ProviderSnapshotEntry = {
@@ -215,6 +312,18 @@ const disabledCodexEntry: ProviderSnapshotEntry = {
   description: "OpenAI Codex",
   defaultModeId: null,
   modes: [],
+};
+
+const customGeminiEntry: ProviderSnapshotEntry = {
+  provider: "gemini",
+  status: "ready",
+  enabled: true,
+  source: "custom",
+  label: "Gemini",
+  description: "Gemini CLI",
+  defaultModeId: null,
+  modes: [],
+  models: [{ provider: "gemini", id: "gemini-3-pro", label: "Gemini 3 Pro" }],
 };
 
 function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDaemonConfig {
@@ -257,9 +366,12 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
+    hostFeatureState.providerRemoval = false;
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -372,5 +484,42 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
+  });
+
+  it("removes a custom provider through the actions menu after confirmation", async () => {
+    snapshotState.entries = [customGeminiEntry];
+    configState.config = makeConfig({ gemini: {} });
+    hostFeatureState.providerRemoval = true;
+
+    render();
+
+    const row = findRow("Gemini provider details");
+    const menu = row.querySelector<HTMLElement>('[data-testid="provider-actions-gemini"]');
+    const remove = row.querySelector<HTMLElement>('[data-testid="provider-remove-gemini"]');
+    expect(menu?.getAttribute("aria-label")).toBe("Gemini actions");
+    expect(remove?.textContent).toBe("Remove provider");
+
+    await act(async () => {
+      remove?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(confirmDialogMock).toHaveBeenCalledWith({
+      title: "Remove Gemini?",
+      message: "This deletes the provider entry from config.json. It cannot be undone.",
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    expect(patchConfigMock).toHaveBeenCalledWith({ removeProviders: ["gemini"] });
+  });
+
+  it("does not show provider removal for built-in providers", () => {
+    snapshotState.entries = [claudeEntry];
+    configState.config = makeConfig();
+    hostFeatureState.providerRemoval = true;
+
+    render();
+
+    const row = findRow("Claude provider details");
+    expect(row.querySelector('[data-testid="provider-actions-claude"]')).toBeNull();
   });
 });
