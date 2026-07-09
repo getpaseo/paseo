@@ -16,14 +16,11 @@ import { isNative } from "@/constants/platform";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getLeftSidebarAnimationTargets,
+  getMobilePanelTransitionStart,
   getSidebarAnimationSyncPlan,
   MOBILE_PANEL_STATE_AGENT,
-  MOBILE_PANEL_STATE_AGENT_LIST_CLOSING,
   MOBILE_PANEL_STATE_AGENT_LIST_OPEN,
-  MOBILE_PANEL_STATE_AGENT_LIST_OPENING,
-  MOBILE_PANEL_STATE_FILE_EXPLORER_CLOSING,
   MOBILE_PANEL_STATE_FILE_EXPLORER_OPEN,
-  MOBILE_PANEL_STATE_FILE_EXPLORER_OPENING,
   MOBILE_PANEL_TARGET_AGENT,
   MOBILE_PANEL_TARGET_AGENT_LIST,
   MOBILE_PANEL_TARGET_FILE_EXPLORER,
@@ -125,26 +122,9 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const startMobilePanelTransition = useCallback(
     (nextMobileView: "agent" | "agent-list" | "file-explorer") => {
       "worklet";
-      if (nextMobileView === "agent-list") {
-        mobilePanelTarget.value = MOBILE_PANEL_TARGET_AGENT_LIST;
-        mobilePanelState.value = MOBILE_PANEL_STATE_AGENT_LIST_OPENING;
-        return;
-      }
-      if (nextMobileView === "file-explorer") {
-        mobilePanelTarget.value = MOBILE_PANEL_TARGET_FILE_EXPLORER;
-        mobilePanelState.value = MOBILE_PANEL_STATE_FILE_EXPLORER_OPENING;
-        return;
-      }
-      mobilePanelTarget.value = MOBILE_PANEL_TARGET_AGENT;
-      if (mobilePanelState.value === MOBILE_PANEL_STATE_FILE_EXPLORER_OPEN) {
-        mobilePanelState.value = MOBILE_PANEL_STATE_FILE_EXPLORER_CLOSING;
-        return;
-      }
-      if (mobilePanelState.value === MOBILE_PANEL_STATE_AGENT_LIST_OPEN) {
-        mobilePanelState.value = MOBILE_PANEL_STATE_AGENT_LIST_CLOSING;
-        return;
-      }
-      mobilePanelState.value = MOBILE_PANEL_STATE_AGENT;
+      const transition = getMobilePanelTransitionStart(nextMobileView, mobilePanelState.value);
+      mobilePanelTarget.value = transition.target;
+      mobilePanelState.value = transition.state;
     },
     [mobilePanelState, mobilePanelTarget],
   );

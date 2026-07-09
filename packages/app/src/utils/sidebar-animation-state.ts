@@ -30,6 +30,11 @@ interface SidebarAnimationTargets {
   backdropOpacity: number;
 }
 
+interface MobilePanelTransitionStart {
+  target: number;
+  state: number;
+}
+
 export const MOBILE_PANEL_STATE_AGENT = 0;
 export const MOBILE_PANEL_STATE_AGENT_LIST_OPENING = 1;
 export const MOBILE_PANEL_STATE_AGENT_LIST_OPEN = 2;
@@ -43,6 +48,47 @@ export const MOBILE_PANEL_TARGET_AGENT_LIST = 1;
 export const MOBILE_PANEL_TARGET_FILE_EXPLORER = 2;
 
 const CLOSED_POSITION_TOLERANCE = 1;
+
+export function getMobilePanelTransitionStart(
+  nextMobileView: MobileSidebarView,
+  currentState: number,
+): MobilePanelTransitionStart {
+  "worklet";
+  if (nextMobileView === "agent-list") {
+    return {
+      target: MOBILE_PANEL_TARGET_AGENT_LIST,
+      state: MOBILE_PANEL_STATE_AGENT_LIST_OPENING,
+    };
+  }
+  if (nextMobileView === "file-explorer") {
+    return {
+      target: MOBILE_PANEL_TARGET_FILE_EXPLORER,
+      state: MOBILE_PANEL_STATE_FILE_EXPLORER_OPENING,
+    };
+  }
+  if (
+    currentState === MOBILE_PANEL_STATE_FILE_EXPLORER_OPEN ||
+    currentState === MOBILE_PANEL_STATE_FILE_EXPLORER_CLOSING
+  ) {
+    return {
+      target: MOBILE_PANEL_TARGET_AGENT,
+      state: MOBILE_PANEL_STATE_FILE_EXPLORER_CLOSING,
+    };
+  }
+  if (
+    currentState === MOBILE_PANEL_STATE_AGENT_LIST_OPEN ||
+    currentState === MOBILE_PANEL_STATE_AGENT_LIST_CLOSING
+  ) {
+    return {
+      target: MOBILE_PANEL_TARGET_AGENT,
+      state: MOBILE_PANEL_STATE_AGENT_LIST_CLOSING,
+    };
+  }
+  return {
+    target: MOBILE_PANEL_TARGET_AGENT,
+    state: MOBILE_PANEL_STATE_AGENT,
+  };
+}
 
 export function shouldSyncSidebarAnimation(input: SidebarAnimationSyncInput): boolean {
   return (

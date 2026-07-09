@@ -4,6 +4,7 @@ import {
   canCloseRightSidebarGesture,
   canOpenLeftSidebarGesture,
   canOpenRightSidebarGesture,
+  getMobilePanelTransitionStart,
   getSidebarAnimationSyncPlan,
   getLeftSidebarAnimationTargets,
   getRightSidebarAnimationTargets,
@@ -98,6 +99,33 @@ describe("sidebar-animation-state", () => {
       didOpen: false,
       didOpenStateChange: false,
       ownsMobileViewChange: false,
+    });
+  });
+
+  it("keeps a repeated left-sidebar close transition in the closing state", () => {
+    const firstStart = getMobilePanelTransitionStart("agent", MOBILE_PANEL_STATE_AGENT_LIST_OPEN);
+    expect(firstStart).toEqual({
+      target: MOBILE_PANEL_TARGET_AGENT,
+      state: MOBILE_PANEL_STATE_AGENT_LIST_CLOSING,
+    });
+    expect(getMobilePanelTransitionStart("agent", firstStart.state)).toEqual({
+      target: MOBILE_PANEL_TARGET_AGENT,
+      state: MOBILE_PANEL_STATE_AGENT_LIST_CLOSING,
+    });
+  });
+
+  it("keeps a repeated right-sidebar close transition in the closing state", () => {
+    const firstStart = getMobilePanelTransitionStart(
+      "agent",
+      MOBILE_PANEL_STATE_FILE_EXPLORER_OPEN,
+    );
+    expect(firstStart).toEqual({
+      target: MOBILE_PANEL_TARGET_AGENT,
+      state: MOBILE_PANEL_STATE_FILE_EXPLORER_CLOSING,
+    });
+    expect(getMobilePanelTransitionStart("agent", firstStart.state)).toEqual({
+      target: MOBILE_PANEL_TARGET_AGENT,
+      state: MOBILE_PANEL_STATE_FILE_EXPLORER_CLOSING,
     });
   });
 
