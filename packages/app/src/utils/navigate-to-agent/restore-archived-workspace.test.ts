@@ -27,6 +27,39 @@ const SERVER_ID = "server-1";
 const AGENT_ID = "agent-1";
 const WORKSPACE_ID = "workspace-1";
 
+function agent(archivedAt: Date | null): Agent {
+  const createdAt = new Date("2026-01-01T00:00:00.000Z");
+  return {
+    serverId: SERVER_ID,
+    id: AGENT_ID,
+    provider: "codex",
+    status: "idle",
+    createdAt,
+    updatedAt: createdAt,
+    lastUserMessageAt: null,
+    lastActivityAt: createdAt,
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    cwd: "/repo",
+    workspaceId: WORKSPACE_ID,
+    model: null,
+    archivedAt,
+    parentAgentId: null,
+    labels: {},
+  };
+}
+
 function status(): "restoring" | "failed" | "needs-host-upgrade" | null {
   return (
     useSessionStore.getState().sessions[SERVER_ID]?.restoringWorkspaces.get(WORKSPACE_ID) ?? null
@@ -44,11 +77,7 @@ function seedArchivedAgent(options?: { worktreeRestore?: boolean }): void {
   } as unknown as Parameters<typeof store.updateSessionServerInfo>[1]);
   store.setAgents(SERVER_ID, (prev) => {
     const next = new Map(prev);
-    next.set(AGENT_ID, {
-      id: AGENT_ID,
-      workspaceId: WORKSPACE_ID,
-      archivedAt: new Date(),
-    } as unknown as Agent);
+    next.set(AGENT_ID, agent(new Date("2026-01-02T00:00:00.000Z")));
     return next;
   });
 }
@@ -95,11 +124,7 @@ describe("restoreArchivedWorkspace via navigateToAgent", () => {
     const store = useSessionStore.getState();
     store.setAgents(SERVER_ID, (prev) => {
       const next = new Map(prev);
-      next.set(AGENT_ID, {
-        id: AGENT_ID,
-        workspaceId: WORKSPACE_ID,
-        archivedAt: undefined,
-      } as unknown as Agent);
+      next.set(AGENT_ID, agent(null));
       return next;
     });
     refreshAgent.mockImplementation(() => new Promise(() => {}));
