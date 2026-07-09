@@ -18,6 +18,9 @@ export interface MaterializedProviderImage {
 }
 
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
+const SHARED_ATTACHMENT_DIR_MODE = 0o1777;
+const USER_ATTACHMENT_DIR_MODE = 0o700;
+const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
 
 function currentUserAttachmentDirName(): string {
   const uid = process.getuid?.();
@@ -65,17 +68,20 @@ export function materializeProviderImage(image: {
   mimeType: string | null;
 }): MaterializedProviderImage {
   const attachmentsParentDir = path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR);
-  fsSync.mkdirSync(attachmentsParentDir, { recursive: true });
+  fsSync.mkdirSync(attachmentsParentDir, { recursive: true, mode: SHARED_ATTACHMENT_DIR_MODE });
+  if (process.platform !== "win32") {
+    fsSync.chmodSync(attachmentsParentDir, SHARED_ATTACHMENT_DIR_MODE);
+  }
   const attachmentsDir = path.join(attachmentsParentDir, currentUserAttachmentDirName());
-  fsSync.mkdirSync(attachmentsDir, { recursive: true, mode: 0o700 });
-  fsSync.chmodSync(attachmentsDir, 0o700);
+  fsSync.mkdirSync(attachmentsDir, { recursive: true, mode: USER_ATTACHMENT_DIR_MODE });
+  fsSync.chmodSync(attachmentsDir, USER_ATTACHMENT_DIR_MODE);
   const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
   const bytes = Buffer.from(normalized.data, "base64");
   const extension = getImageExtension(normalized.mimeType);
   const hash = createHash("sha256").update(bytes).digest("hex");
   const filePath = path.join(attachmentsDir, `${hash}.${extension}`);
-  fsSync.writeFileSync(filePath, bytes, { mode: 0o600 });
-  fsSync.chmodSync(filePath, 0o600);
+  fsSync.writeFileSync(filePath, bytes, { mode: MATERIALIZED_IMAGE_FILE_MODE });
+  fsSync.chmodSync(filePath, MATERIALIZED_IMAGE_FILE_MODE);
   return { path: filePath };
 }
 

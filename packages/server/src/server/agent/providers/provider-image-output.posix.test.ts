@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 
 import { materializeProviderImage } from "./provider-image-output.js";
 
-describe("materializeProviderImage", () => {
+describe.skipIf(process.platform === "win32")("materializeProviderImage", () => {
   test("writes image attachments under a private user temp directory", () => {
     const materialized = materializeProviderImage({
       data: "YWJjMTIz",
@@ -13,9 +13,11 @@ describe("materializeProviderImage", () => {
 
     try {
       const attachmentDir = path.dirname(materialized.path);
+      const attachmentParentDir = path.dirname(attachmentDir);
       expect(path.basename(path.dirname(attachmentDir))).toBe("paseo-attachments");
       expect(path.basename(attachmentDir)).toMatch(/^user-/);
       expect(existsSync(materialized.path)).toBe(true);
+      expect(statSync(attachmentParentDir).mode & 0o7777).toBe(0o1777);
       expect(statSync(attachmentDir).mode & 0o777).toBe(0o700);
       expect(statSync(materialized.path).mode & 0o777).toBe(0o600);
     } finally {
