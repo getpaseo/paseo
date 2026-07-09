@@ -23,10 +23,6 @@ import {
   type ProviderModelsByProvider,
   type UserModifiedFields,
 } from "@/provider-selection/resolve-agent-form";
-import {
-  isSelectableModelId,
-  resolveModelDefinitionById,
-} from "@/provider-selection/parameterized-model";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { shortenPath } from "@/utils/shorten-path";
 import { normalizeScheduleFormCadence } from "./schedule-cadence-options";
@@ -262,7 +258,7 @@ function resolveEffectiveModel(
     return null;
   }
   return (
-    resolveModelDefinitionById(models, selectedModelId) ??
+    models.find((model) => model.id === selectedModelId) ??
     models.find((model) => model.isDefault) ??
     models[0] ??
     null
@@ -324,11 +320,10 @@ function isSelectedModelValidForProviders(input: {
   selectedProvider: AgentProvider | null;
   selectedModel: string;
 }): boolean {
-  const selectedProvider = input.selectedProvider;
-  if (!selectedProvider) {
+  if (!input.selectedProvider) {
     return false;
   }
-  const provider = input.providers.find((entry) => entry.id === selectedProvider);
+  const provider = input.providers.find((entry) => entry.id === input.selectedProvider);
   if (!provider || provider.modelSelection.kind !== "models") {
     return false;
   }
@@ -336,17 +331,7 @@ function isSelectedModelValidForProviders(input: {
   if (!selectedModel) {
     return true;
   }
-  return isSelectableModelId(
-    provider.modelSelection.rows
-      .filter((row) => row.modelId)
-      .map((row) => ({
-        provider: selectedProvider,
-        id: row.modelId,
-        label: row.modelLabel,
-        isDefault: row.isDefault ?? false,
-      })),
-    selectedModel,
-  );
+  return provider.modelSelection.rows.some((row) => row.modelId === selectedModel);
 }
 
 function normalizeInitialValues(input: {

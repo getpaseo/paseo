@@ -7,7 +7,6 @@ import type {
   AgentModelDefinition,
   AgentMode,
   AgentSessionConfig,
-  AgentSlashCommand,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
 
@@ -44,7 +43,6 @@ const mockState = vi.hoisted(() => {
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
-    cursorListCommandsConfigs: [] as AgentSessionConfig[],
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
     reset() {
       this.constructorArgs.claude = [];
@@ -57,7 +55,6 @@ const mockState = vi.hoisted(() => {
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
-      this.cursorListCommandsConfigs = [];
       this.cursorListFeaturesConfigs = [];
     },
   };
@@ -384,17 +381,6 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
 
     async isAvailable(): Promise<boolean> {
       return true;
-    }
-
-    async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-      mockState.cursorListCommandsConfigs.push(config);
-      return [
-        {
-          id: "run",
-          name: "run",
-          description: "Run command",
-        },
-      ];
     }
 
     async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -756,39 +742,6 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
     },
   ]);
   expect(mockState.cursorListFeaturesConfigs).toEqual([
-    {
-      provider: "acp",
-      cwd: "/tmp/cursor",
-    },
-  ]);
-});
-
-test("wrapped cursor client lists ACP commands through the inner provider", async () => {
-  const registry = buildProviderRegistry(logger, {
-    providerOverrides: {
-      cursor: {
-        extends: "acp",
-        label: "Cursor",
-        command: ["cursor-agent", "acp"],
-      },
-    },
-  });
-
-  const client = registry.cursor.createClient(logger);
-
-  await expect(
-    client.listCommands?.({
-      provider: "cursor",
-      cwd: "/tmp/cursor",
-    }),
-  ).resolves.toEqual([
-    {
-      id: "run",
-      name: "run",
-      description: "Run command",
-    },
-  ]);
-  expect(mockState.cursorListCommandsConfigs).toEqual([
     {
       provider: "acp",
       cwd: "/tmp/cursor",

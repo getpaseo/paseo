@@ -408,69 +408,6 @@ describe("resolveFormState", () => {
     expect(resolved.model).toBe("gpt-5.3-codex");
   });
 
-  it("preserves parameterized initial model ids when their base model is available", () => {
-    const models: AgentModelDefinition[] = [
-      {
-        provider: "codex",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-        isDefault: true,
-        defaultThinkingOptionId: "high",
-        thinkingOptions: [
-          { id: "medium", label: "Medium" },
-          { id: "high", label: "High", isDefault: true },
-        ],
-      },
-    ];
-
-    const resolved = resolveFormState(
-      { model: "gpt-5.4[reasoning=medium,fast=true]" },
-      { provider: "codex" },
-      models,
-      INITIAL_USER_MODIFIED,
-      makeState({ provider: "codex" }).form,
-
-      codexProviderMap,
-    );
-
-    expect(resolved.model).toBe("gpt-5.4[reasoning=medium,fast=true]");
-    expect(resolved.thinkingOptionId).toBe("medium");
-  });
-
-  it("preserves parameterized preferred model ids when their base model is available", () => {
-    const models: AgentModelDefinition[] = [
-      {
-        provider: "codex",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-        isDefault: true,
-        defaultThinkingOptionId: "high",
-        thinkingOptions: [
-          { id: "medium", label: "Medium" },
-          { id: "high", label: "High", isDefault: true },
-        ],
-      },
-    ];
-
-    const resolved = resolveFormState(
-      undefined,
-      {
-        provider: "codex",
-        providerPreferences: {
-          codex: { model: "gpt-5.4[reasoning=medium,fast=true]" },
-        },
-      },
-      models,
-      INITIAL_USER_MODIFIED,
-      makeState({ provider: "codex" }).form,
-
-      codexProviderMap,
-    );
-
-    expect(resolved.model).toBe("gpt-5.4[reasoning=medium,fast=true]");
-    expect(resolved.thinkingOptionId).toBe("medium");
-  });
-
   it("keeps an explicit initial thinking option when it is valid", () => {
     const resolved = resolveFormState(
       { model: "gpt-5.3-codex", thinkingOptionId: "low" },
@@ -954,35 +891,6 @@ describe("resolveAgentForm", () => {
       expect(next.form.modeId).toBe("full-access");
       expect(next.userModified.provider).toBe(true);
       expect(next.userModified.model).toBe(false);
-    });
-
-    it("preserves parameterized preferred model ids when switching providers", () => {
-      const models: AgentModelDefinition[] = [
-        {
-          provider: "codex",
-          id: "gpt-5.4",
-          label: "GPT-5.4",
-          isDefault: true,
-          defaultThinkingOptionId: "high",
-          thinkingOptions: [
-            { id: "medium", label: "Medium" },
-            { id: "high", label: "High", isDefault: true },
-          ],
-        },
-      ];
-      const state = makeState({ provider: "claude", model: "claude-sonnet-4-6" });
-
-      const next = resolveAgentForm(state, {
-        type: "SET_PROVIDER_FROM_USER",
-        provider: "codex",
-        providerModels: models,
-        providerDef: TEST_CODEX_DEFINITION,
-        providerPrefs: { model: "gpt-5.4[reasoning=medium,fast=false]" },
-      });
-
-      expect(next.form.provider).toBe("codex");
-      expect(next.form.model).toBe("gpt-5.4[reasoning=medium,fast=false]");
-      expect(next.form.thinkingOptionId).toBe("medium");
     });
 
     it("falls back to provider defaults when no prefs", () => {

@@ -1,11 +1,5 @@
 import type { Logger } from "pino";
 
-import type {
-  AgentLaunchContext,
-  AgentPersistenceHandle,
-  AgentSession,
-  AgentSessionConfig,
-} from "../agent-sdk-types.js";
 import type { ACPConfigFeatureOption } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
@@ -32,20 +26,6 @@ export const CURSOR_FAST_FEATURE_OPTION: ACPConfigFeatureOption = {
   icon: "zap",
 };
 
-export const CURSOR_CONTEXT_FEATURE_OPTION: ACPConfigFeatureOption = {
-  id: "context",
-  configId: "context",
-  label: "Context",
-  description: "Cursor context window",
-  tooltip: "Select Cursor context window",
-};
-
-interface CursorParameterizedModel {
-  model: string;
-  featureValues: Record<string, string>;
-  thinkingOptionId?: string;
-}
-
 export class CursorACPAgentClient extends GenericACPAgentClient {
   constructor(options: CursorACPAgentClientOptions) {
     super({
@@ -59,115 +39,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
-      configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION, CURSOR_CONTEXT_FEATURE_OPTION],
-      modelFeatureValuesResolver: resolveCursorModelFeatureValues,
+      configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
     });
   }
-
-  override async createSession(
-    config: AgentSessionConfig,
-    launchContext?: AgentLaunchContext,
-  ): Promise<AgentSession> {
-    return super.createSession(normalizeCursorACPConfig(config), launchContext);
-  }
-
-  override async resumeSession(
-    handle: AgentPersistenceHandle,
-    overrides?: Partial<AgentSessionConfig>,
-    launchContext?: AgentLaunchContext,
-  ): Promise<AgentSession> {
-    return super.resumeSession(
-      normalizeCursorPersistenceHandle(handle),
-      overrides ? normalizeCursorACPConfig(overrides) : undefined,
-      launchContext,
-    );
-  }
-}
-
-export function normalizeCursorACPConfig<T extends Partial<AgentSessionConfig>>(config: T): T {
-  const parsed = parseCursorParameterizedModel(config.model);
-  if (!parsed && !config.model) {
-    return config;
-  }
-  const modelSelectionCandidates =
-    parsed && config.model ? [parsed.model, config.model] : undefined;
-  const featureValues = {
-    ...resolveCursorModelFeatureValues(config.model),
-    ...config.featureValues,
-  };
-
-  return {
-    ...config,
-    ...(parsed
-      ? {
-          model: parsed.model,
-          modelSelectionCandidates,
-        }
-      : {}),
-    ...(parsed?.thinkingOptionId && !config.thinkingOptionId
-      ? { thinkingOptionId: parsed.thinkingOptionId }
-      : {}),
-    ...(Object.keys(featureValues).length > 0 ? { featureValues } : {}),
-  };
-}
-
-export function resolveCursorModelFeatureValues(
-  model: string | null | undefined,
-): Record<string, string> {
-  const featureValues = { ...parseCursorParameterizedModel(model ?? undefined)?.featureValues };
-  if (
-    model &&
-    !Object.prototype.hasOwnProperty.call(featureValues, CURSOR_FAST_FEATURE_OPTION.id)
-  ) {
-    featureValues[CURSOR_FAST_FEATURE_OPTION.id] = "false";
-  }
-  return featureValues;
-}
-
-function normalizeCursorPersistenceHandle(handle: AgentPersistenceHandle): AgentPersistenceHandle {
-  if (!handle.metadata) {
-    return handle;
-  }
-  return {
-    ...handle,
-    metadata: normalizeCursorACPConfig(handle.metadata as Partial<AgentSessionConfig>),
-  };
-}
-
-function parseCursorParameterizedModel(model: string | undefined): CursorParameterizedModel | null {
-  if (!model) {
-    return null;
-  }
-
-  const match = /^(.+)\[([^\]]+)\]$/.exec(model);
-  if (!match) {
-    return null;
-  }
-
-  const [, baseModel, rawParameters] = match;
-  if (!baseModel) {
-    return null;
-  }
-
-  const featureValues: Record<string, string> = {};
-  let thinkingOptionId: string | undefined;
-  for (const rawParameter of rawParameters.split(",")) {
-    const [rawKey, ...rawValueParts] = rawParameter.split("=");
-    const key = rawKey?.trim();
-    const value = rawValueParts.join("=").trim();
-    if (!key || rawValueParts.length === 0) {
-      continue;
-    }
-    if (key === "reasoning" || key === "thought_level") {
-      thinkingOptionId = value;
-      continue;
-    }
-    featureValues[key] = value;
-  }
-
-  return {
-    model: baseModel,
-    featureValues,
-    ...(thinkingOptionId ? { thinkingOptionId } : {}),
-  };
 }

@@ -116,22 +116,6 @@ describe("resolveEffectiveComposerThinkingOptionId", () => {
       ),
     ).toBe("high");
   });
-
-  it("falls back through a parameterized model id to the base model thinking option", () => {
-    expect(
-      resolveEffectiveComposerThinkingOptionId(
-        {
-          provider: "codex",
-          modelId: "gpt-5.4[fast=true]",
-          modeId: "",
-          thinkingOptionId: "",
-          availableModels: models,
-          modeOptions: [],
-        },
-        "gpt-5.4[fast=true]",
-      ),
-    ).toBe("high");
-  });
 });
 
 describe("buildDraftComposerCommandConfig", () => {

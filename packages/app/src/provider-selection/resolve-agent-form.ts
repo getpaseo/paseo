@@ -9,11 +9,6 @@ import {
   type FormPreferences,
   type ProviderPreferences,
 } from "@/hooks/use-form-preferences";
-import {
-  isSelectableModelId,
-  resolveModelDefinitionById,
-  resolveParameterizedModelThinkingOptionId,
-} from "./parameterized-model";
 
 export interface FormInitialValues {
   serverId?: string | null;
@@ -136,7 +131,7 @@ export function resolveEffectiveModel(
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) return null;
   return (
-    resolveModelDefinitionById(availableModels, normalizedModelId) ??
+    availableModels.find((model) => model.id === normalizedModelId) ??
     resolveDefaultModel(availableModels)
   );
 }
@@ -313,7 +308,7 @@ function resolveModelField(input: {
     input;
   if (userModified) return currentModel;
   if (!provider) return "";
-  const isValidModel = (m: string) => isSelectableModelId(availableModels, m);
+  const isValidModel = (m: string) => availableModels?.some((am) => am.id === m) ?? false;
   const initialModel = normalizeSelectedModelId(initialValues?.model);
   const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
   const defaultModelId = resolveDefaultModelId(availableModels);
@@ -343,19 +338,11 @@ function resolveThinkingOption(input: {
       ? initialValues.thinkingOptionId.trim()
       : "";
   const effectiveModelId = modelId.trim();
-  const initialModel = normalizeSelectedModelId(initialValues?.model);
-  const initialModelThinkingOptionId =
-    effectiveModelId && effectiveModelId === initialModel
-      ? resolveParameterizedModelThinkingOptionId(effectiveModelId)
-      : "";
   const preferredThinking = effectiveModelId
     ? (providerPrefs?.thinkingByModel?.[effectiveModelId]?.trim() ?? "")
     : "";
   if (initialThinkingOptionId.length > 0) return initialThinkingOptionId;
-  if (initialModelThinkingOptionId.length > 0) return initialModelThinkingOptionId;
   if (preferredThinking.length > 0) return preferredThinking;
-  const modelThinkingOptionId = resolveParameterizedModelThinkingOptionId(effectiveModelId);
-  if (modelThinkingOptionId.length > 0) return modelThinkingOptionId;
   return "";
 }
 
@@ -463,7 +450,7 @@ function pickNextModelForProvider(input: {
   providerPrefs: ProviderPrefs | undefined;
 }): string {
   const { providerModels, providerPrefs } = input;
-  const isValidModel = (m: string) => isSelectableModelId(providerModels, m);
+  const isValidModel = (m: string) => providerModels?.some((am) => am.id === m) ?? false;
   const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
   const defaultModelId = resolveDefaultModelId(providerModels);
   if (preferredModel && (!providerModels || isValidModel(preferredModel))) {
@@ -510,8 +497,7 @@ function pickNextThinkingOptionForProvider(input: {
   return resolveThinkingOptionId({
     availableModels: providerModels,
     modelId,
-    requestedThinkingOptionId:
-      preferredThinking || resolveParameterizedModelThinkingOptionId(modelId),
+    requestedThinkingOptionId: preferredThinking,
   });
 }
 

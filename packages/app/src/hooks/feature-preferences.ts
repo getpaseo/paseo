@@ -43,10 +43,8 @@ export function resolveFeatureValues(args: {
   features: AgentFeature[];
   persistedFeatureValues: Record<string, unknown>;
   localFeatureValues: Record<string, unknown>;
-  modelFeatureValues?: Record<string, unknown>;
 }): Record<string, unknown> {
   const next: Record<string, unknown> = {};
-  const modelFeatureValues = args.modelFeatureValues ?? {};
 
   for (const feature of args.features) {
     if (Object.prototype.hasOwnProperty.call(args.localFeatureValues, feature.id)) {
@@ -55,11 +53,6 @@ export function resolveFeatureValues(args: {
     }
     if (Object.prototype.hasOwnProperty.call(args.persistedFeatureValues, feature.id)) {
       next[feature.id] = args.persistedFeatureValues[feature.id];
-      continue;
-    }
-    if (Object.prototype.hasOwnProperty.call(modelFeatureValues, feature.id)) {
-      next[feature.id] = modelFeatureValues[feature.id];
-      continue;
     }
   }
 

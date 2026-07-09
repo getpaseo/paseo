@@ -203,50 +203,6 @@ describe("schedule form model", () => {
     });
   });
 
-  it("accepts parameterized stored model ids when the host exposes their base model", () => {
-    const models: AgentModelDefinition[] = [
-      {
-        provider: "mock",
-        id: "model-a",
-        label: "Model A",
-        isDefault: true,
-      },
-      {
-        provider: "mock",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-        isDefault: false,
-        defaultThinkingOptionId: "high",
-        thinkingOptions: [
-          { id: "medium", label: "Medium" },
-          { id: "high", label: "High", isDefault: true },
-        ],
-      },
-    ];
-    const form = open({
-      mode: "edit",
-      schedule: scheduleOnHost({
-        serverId: "host-a",
-        serverName: "Host A",
-        cwd: "/repo/a",
-        model: "gpt-5.4[context=272k,fast=false]",
-      }),
-      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
-    });
-
-    form.applyProviderSnapshot("host-a", providerSnapshot(models));
-
-    expect(form.getState()).toMatchObject({
-      selectedModel: "gpt-5.4[context=272k,fast=false]",
-      selectedModelDisplay: { label: "GPT-5.4" },
-      availableThinkingOptions: [
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High", isDefault: true },
-      ],
-      canSubmit: true,
-    });
-  });
-
   it("opens create pristine after an edit instance closes", () => {
     const edit = open({
       mode: "edit",
