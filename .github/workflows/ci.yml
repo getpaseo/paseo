@@ -293,6 +293,55 @@ jobs:
             packages/app/playwright-report/
           retention-days: 7
 
+  playwright-desktop:
+    name: playwright (desktop overlay)
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies with retry
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            else
+              exit_code=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit $exit_code
+            fi
+            sleep $((attempt * 20))
+          done
+
+      - name: Install Playwright browser
+        timeout-minutes: 10
+        run: npx playwright install chromium
+
+      - name: Build app and server dependencies
+        run: |
+          npm run build:app-deps
+          npm run build:server
+
+      - name: Run desktop-overlay Playwright test
+        run: npm run test:e2e:desktop --workspace=@getpaseo/app
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results-desktop-overlay
+          path: |
+            packages/app/test-results/
+            packages/app/playwright-report/
+          retention-days: 7
+
   relay-tests:
     runs-on: ubuntu-latest
     env:

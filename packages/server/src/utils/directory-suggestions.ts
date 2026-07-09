@@ -34,7 +34,8 @@ export type WorkspaceMatchMode = "fuzzy" | "suffix";
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const DEFAULT_MAX_DEPTH = 12;
-const DEFAULT_MAX_DIRECTORIES_SCANNED = 20000;
+const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
+const HOME_RESULT_SCAN_BUDGET = 5_000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
 
@@ -49,6 +50,7 @@ interface RankedDirectory {
   matchTier: number;
   segmentIndex: number;
   matchOffset: number;
+  fuzzyScore: number;
   depth: number;
 }
 
@@ -78,7 +80,7 @@ const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>();
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
 const NO_FUZZY_SCORE = Number.MAX_SAFE_INTEGER;
-const NO_WORKSPACE_MATCH_TIER = 5;
+const NO_MATCH_TIER = 5;
 const IGNORED_SUGGESTION_DIRECTORY_NAMES = new Set([
   "node_modules",
   "venv",
@@ -135,7 +137,7 @@ export async function searchHomeDirectories(
     searchTerm: queryParts.searchTerm,
     limit,
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
-    maxDirectoriesScanned: options.maxDirectoriesScanned ?? DEFAULT_MAX_DIRECTORIES_SCANNED,
+    maxDirectoriesScanned: options.maxDirectoriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
   });
 }
 
@@ -206,7 +208,7 @@ export async function searchWorkspaceEntries(
     includeFiles,
     matchMode,
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
-    maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_DIRECTORIES_SCANNED,
+    maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
   });
   return exactEntry ? prependWorkspaceEntry(exactEntry, entries).slice(0, limit) : entries;
 }
@@ -299,17 +301,15 @@ async function searchWithinParentDirectory(input: {
   });
 
   for (const entry of entries) {
-    if (searchLower && !entry.name.toLowerCase().includes(searchLower)) {
+    const rankedEntry = rankDirectory({
+      absolutePath: entry.absolutePath,
+      homeRoot: parentRoot,
+      searchLower,
+    });
+    if (searchLower && rankedEntry.matchTier === NO_MATCH_TIER) {
       continue;
     }
-
-    ranked.push(
-      rankDirectory({
-        absolutePath: entry.absolutePath,
-        homeRoot: input.homeRoot,
-        searchLower,
-      }),
-    );
+    ranked.push(rankedEntry);
   }
 
   return dedupeAndSort(ranked).slice(0, input.limit);
@@ -322,55 +322,101 @@ async function searchAcrossHomeTree(input: {
   maxDepth: number;
   maxDirectoriesScanned: number;
 }): Promise<string[]> {
-  const queue: Array<{ directory: string; depth: number }> = [
-    { directory: input.homeRoot, depth: 0 },
-  ];
+  if (!(input.maxDirectoriesScanned > 0)) {
+    return [];
+  }
+
   const visited = new Set<string>([input.homeRoot]);
+  const rootEntries = await listChildDirectories({
+    directory: input.homeRoot,
+    homeRoot: input.homeRoot,
+  });
+  // Recursively interleave sibling subtrees so one wide directory cannot spend
+  // the whole candidate budget before a neighboring project branch advances.
+  const branches = rootEntries.map((entry) =>
+    iterateHomeDirectoryBranch({
+      branchRoot: entry.absolutePath,
+      depth: 1,
+      homeRoot: input.homeRoot,
+      maxDepth: input.maxDepth,
+      visited,
+    }),
+  );
+
   const ranked: RankedDirectory[] = [];
   let scanned = 0;
   const searchLower = input.searchTerm.toLowerCase();
+  // A successful quick pass should return promptly for interactive search. If
+  // it finds nothing, retain the full fallback budget for unusually large homes.
+  const resultScanBudget = Math.min(input.maxDirectoriesScanned, HOME_RESULT_SCAN_BUDGET);
 
-  for (
-    let queueIndex = 0;
-    queueIndex < queue.length && scanned < input.maxDirectoriesScanned;
-    queueIndex += 1
-  ) {
-    const current = queue[queueIndex];
-    if (!current) continue;
-    const entries = await listChildDirectories({
-      directory: current.directory,
+  for await (const directory of iterateRoundRobin(branches)) {
+    scanned += 1;
+    const rankedEntry = rankDirectory({
+      absolutePath: directory,
       homeRoot: input.homeRoot,
+      searchLower,
     });
-
-    for (const entry of entries) {
-      const resolvedCandidate = entry.absolutePath;
-      if (visited.has(resolvedCandidate)) {
-        continue;
-      }
-      visited.add(resolvedCandidate);
-      scanned += 1;
-
-      const relativePath = normalizeRelativePath(input.homeRoot, resolvedCandidate);
-      if (
-        relativePath.toLowerCase().includes(searchLower) ||
-        entry.name.toLowerCase().includes(searchLower)
-      ) {
-        ranked.push(
-          rankDirectory({
-            absolutePath: resolvedCandidate,
-            homeRoot: input.homeRoot,
-            searchLower,
-          }),
-        );
-      }
-
-      if (current.depth < input.maxDepth && scanned < input.maxDirectoriesScanned) {
-        queue.push({ directory: resolvedCandidate, depth: current.depth + 1 });
-      }
+    if (rankedEntry.matchTier !== NO_MATCH_TIER) {
+      ranked.push(rankedEntry);
+    }
+    if (
+      scanned >= input.maxDirectoriesScanned ||
+      (scanned >= resultScanBudget && ranked.length > 0)
+    ) {
+      break;
     }
   }
 
   return dedupeAndSort(ranked).slice(0, input.limit);
+}
+
+async function* iterateHomeDirectoryBranch(input: {
+  branchRoot: string;
+  depth: number;
+  homeRoot: string;
+  maxDepth: number;
+  visited: Set<string>;
+}): AsyncGenerator<string> {
+  if (input.visited.has(input.branchRoot)) {
+    return;
+  }
+  input.visited.add(input.branchRoot);
+  yield input.branchRoot;
+
+  if (input.depth > input.maxDepth) {
+    return;
+  }
+
+  const entries = await listChildDirectories({
+    directory: input.branchRoot,
+    homeRoot: input.homeRoot,
+  });
+  const childBranches = entries.map((entry) =>
+    iterateHomeDirectoryBranch({
+      branchRoot: entry.absolutePath,
+      depth: input.depth + 1,
+      homeRoot: input.homeRoot,
+      maxDepth: input.maxDepth,
+      visited: input.visited,
+    }),
+  );
+  yield* iterateRoundRobin(childBranches);
+}
+
+async function* iterateRoundRobin(branches: Array<AsyncGenerator<string>>): AsyncGenerator<string> {
+  let activeBranches = branches;
+  while (activeBranches.length > 0) {
+    const nextRound: Array<AsyncGenerator<string>> = [];
+    for (const branch of activeBranches) {
+      const next = await branch.next();
+      if (!next.done) {
+        nextRound.push(branch);
+        yield next.value;
+      }
+    }
+    activeBranches = nextRound;
+  }
 }
 
 async function searchWorkspaceWithinParentDirectory(input: {
@@ -410,7 +456,7 @@ async function searchWorkspaceWithinParentDirectory(input: {
       workspaceRoot: input.workspaceRoot,
       searchLower,
     });
-    if (searchLower && rankedEntry.matchTier === NO_WORKSPACE_MATCH_TIER) {
+    if (searchLower && rankedEntry.matchTier === NO_MATCH_TIER) {
       continue;
     }
 
@@ -495,11 +541,7 @@ async function searchWorkspaceAcrossTree(input: {
         workspaceRoot: input.workspaceRoot,
         searchLower,
       });
-      if (
-        input.matchMode !== "suffix" &&
-        searchLower &&
-        rankedEntry.matchTier === NO_WORKSPACE_MATCH_TIER
-      ) {
+      if (input.matchMode !== "suffix" && searchLower && rankedEntry.matchTier === NO_MATCH_TIER) {
         continue;
       }
 
@@ -607,6 +649,9 @@ function compareRankedDirectories(left: RankedDirectory, right: RankedDirectory)
   if (left.matchOffset !== right.matchOffset) {
     return left.matchOffset - right.matchOffset;
   }
+  if (left.fuzzyScore !== right.fuzzyScore) {
+    return left.fuzzyScore - right.fuzzyScore;
+  }
   if (left.depth !== right.depth) {
     return left.depth - right.depth;
   }
@@ -628,6 +673,7 @@ function rankDirectory(input: {
       matchTier: 3,
       segmentIndex: NO_SEGMENT_INDEX,
       matchOffset: 0,
+      fuzzyScore: NO_FUZZY_SCORE,
       depth,
     };
   }
@@ -640,7 +686,9 @@ function rankDirectory(input: {
     segment.includes(searchLower),
   );
   const matchOffset = relativeLower.indexOf(searchLower);
-  let matchTier = 4;
+  const basename = segments.at(-1) ?? "";
+  const fuzzyScore = scoreFuzzySubsequence(searchLower, basename);
+  let matchTier = NO_MATCH_TIER;
   let segmentIndex = NO_SEGMENT_INDEX;
 
   if (exactSegmentIndex >= 0) {
@@ -652,8 +700,10 @@ function rankDirectory(input: {
   } else if (partialSegmentIndex >= 0) {
     matchTier = 2;
     segmentIndex = partialSegmentIndex;
-  } else if (relativeLower.startsWith(searchLower)) {
+  } else if (matchOffset >= 0) {
     matchTier = 3;
+  } else if (fuzzyScore !== null) {
+    matchTier = 4;
   }
 
   return {
@@ -661,6 +711,7 @@ function rankDirectory(input: {
     matchTier,
     segmentIndex,
     matchOffset: matchOffset >= 0 ? matchOffset : NO_MATCH_OFFSET,
+    fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
     depth,
   };
 }
@@ -698,7 +749,7 @@ function rankWorkspaceEntry(input: {
   const matchOffset = relativeLower.indexOf(searchLower);
   const basename = segments.at(-1) ?? "";
   const fuzzyScore = scoreFuzzySubsequence(searchLower, basename);
-  let matchTier = NO_WORKSPACE_MATCH_TIER;
+  let matchTier = NO_MATCH_TIER;
   let segmentIndex = NO_SEGMENT_INDEX;
 
   if (exactSegmentIndex >= 0) {
@@ -930,6 +981,7 @@ async function listChildDirectories(input: {
   const entries: ChildDirectoryEntry[] = resolved.filter(
     (entry): entry is ChildDirectoryEntry => entry !== null,
   );
+  entries.sort((left, right) => left.name.localeCompare(right.name));
 
   setDirectoryListCache(input.directory, {
     expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,

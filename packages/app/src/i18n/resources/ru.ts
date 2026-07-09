@@ -1120,6 +1120,7 @@ export const ru: TranslationResources = {
   },
   projectPicker: {
     placeholder: "Введите путь к каталогу...",
+    browse: "Обзор…",
     opening: "Открытие проекта...",
     searching: "Идет поиск...",
     empty: "Начните вводить путь",

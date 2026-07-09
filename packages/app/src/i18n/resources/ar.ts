@@ -1094,6 +1094,7 @@ export const ar: TranslationResources = {
   },
   projectPicker: {
     placeholder: "اكتب مسار الدليل...",
+    browse: "استعراض…",
     opening: "افتتاح المشروع...",
     searching: "جارٍ البحث...",
     empty: "ابدأ بكتابة المسار",

@@ -1132,6 +1132,7 @@ export const fr: TranslationResources = {
   },
   projectPicker: {
     placeholder: "Tapez un chemin de répertoire...",
+    browse: "Parcourir…",
     opening: "Projet d'ouverture...",
     searching: "Recherche en cours...",
     empty: "Commencez à taper un chemin",

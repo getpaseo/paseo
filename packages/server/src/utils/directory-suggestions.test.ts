@@ -48,6 +48,17 @@ describe("searchHomeDirectories", () => {
     ).resolves.toEqual([]);
   });
 
+  it("does not inspect directories when the scan budget is zero", async () => {
+    await expect(
+      searchHomeDirectories({
+        homeDir,
+        query: "documents",
+        limit: 10,
+        maxDirectoriesScanned: 0,
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("returns only existing directories", async () => {
     const results = await searchHomeDirectories({
       homeDir,
@@ -61,6 +72,109 @@ describe("searchHomeDirectories", () => {
     expect(results).not.toContain(path.join(homeDir, "projects", "README.md"));
   });
 
+  it("finds a nested project by basename when the home-tree scan reaches its budget", async () => {
+    const budgetHome = path.join(tempRoot, "budget-home");
+    const projectPath = path.join(budgetHome, "projects", "client", "team", "paseo-desktop");
+    mkdirSync(projectPath, { recursive: true });
+    for (let index = 0; index < 10; index += 1) {
+      mkdirSync(path.join(budgetHome, "archive", `noise-${index.toString().padStart(2, "0")}`), {
+        recursive: true,
+      });
+    }
+
+    const basenameResults = await searchHomeDirectories({
+      homeDir: budgetHome,
+      query: "paseo-desktop",
+      limit: 10,
+      maxDirectoriesScanned: 8,
+    });
+
+    expect(basenameResults.map((result) => realpathSync.native(result))).toEqual([
+      realpathSync.native(projectPath),
+    ]);
+  });
+
+  it("shares the scan budget fairly between nested sibling branches", async () => {
+    const budgetHome = path.join(tempRoot, "nested-budget-home");
+    const projectPath = path.join(budgetHome, "work", "client", "team", "paseo-desktop");
+    mkdirSync(projectPath, { recursive: true });
+    for (let index = 0; index < 10; index += 1) {
+      mkdirSync(
+        path.join(budgetHome, "work", "archive", `noise-${index.toString().padStart(2, "0")}`),
+        { recursive: true },
+      );
+    }
+
+    const results = await searchHomeDirectories({
+      homeDir: budgetHome,
+      query: "paseo-desktop",
+      limit: 10,
+      maxDirectoriesScanned: 8,
+    });
+
+    expect(results.map((result) => realpathSync.native(result))).toEqual([
+      realpathSync.native(projectPath),
+    ]);
+  });
+
+  it.skipIf(isWindows)("does not let a queued symlink hide the direct project branch", async () => {
+    const symlinkHome = path.join(tempRoot, "symlink-budget-home");
+    const projectRoot = path.join(symlinkHome, "b-projects", "project-root");
+    const projectPath = path.join(projectRoot, "paseo-desktop");
+    const noisyBranch = path.join(symlinkHome, "a-noisy");
+    mkdirSync(projectPath, { recursive: true });
+    for (let index = 0; index < 10; index += 1) {
+      mkdirSync(path.join(noisyBranch, `noise-${index.toString().padStart(2, "0")}`), {
+        recursive: true,
+      });
+    }
+    // The alias is intentionally queued behind the noise. Discovery must not
+    // reserve its target before the direct b-projects branch gets a turn.
+    symlinkSync(projectRoot, path.join(noisyBranch, "zz-target-link"));
+
+    const results = await searchHomeDirectories({
+      homeDir: symlinkHome,
+      query: "paseo-desktop",
+      limit: 10,
+      maxDirectoriesScanned: 6,
+    });
+
+    expect(results.map((result) => realpathSync.native(result))).toEqual([
+      realpathSync.native(projectPath),
+    ]);
+  });
+
+  it.skipIf(isWindows)("follows visible directory symlinks that stay inside home", async () => {
+    const symlinkHome = path.join(tempRoot, "internal-symlink-home");
+    const projectPath = path.join(symlinkHome, ".linked", "project-root", "paseo-desktop");
+    mkdirSync(projectPath, { recursive: true });
+    symlinkSync(path.dirname(projectPath), path.join(symlinkHome, "linked-project"));
+
+    const results = await searchHomeDirectories({
+      homeDir: symlinkHome,
+      query: "pso",
+      limit: 10,
+    });
+
+    expect(results.map((result) => realpathSync.native(result))).toEqual([
+      realpathSync.native(projectPath),
+    ]);
+  });
+
+  it("finds a nested project from a fuzzy basename query", async () => {
+    const projectPath = realpathSync.native(path.join(homeDir, "projects", "paseo"));
+
+    const fuzzyBasenameResults = await searchHomeDirectories({
+      homeDir,
+      query: "pso",
+      limit: 10,
+    });
+
+    expect(fuzzyBasenameResults.map((result) => realpathSync.native(result))).toEqual([
+      projectPath,
+    ]);
+  });
+
   it("supports home-relative path query syntax", async () => {
     const results = await searchHomeDirectories({
       homeDir,
@@ -70,6 +184,7 @@ describe("searchHomeDirectories", () => {
 
     expect(results.map((result) => realpathSync.native(result))).toEqual([
       realpathSync.native(path.join(homeDir, "projects", "paseo")),
+      realpathSync.native(path.join(homeDir, "projects", "playground")),
     ]);
   });
 

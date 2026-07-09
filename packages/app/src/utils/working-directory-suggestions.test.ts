@@ -36,6 +36,40 @@ describe("buildWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/Users/me/projects/playground", "/Users/me/projects/planbook"]);
   });
 
+  it("keeps fuzzy server matches within the queried parent path", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: [
+        "/Users/me/notprojects/paseo-desktop",
+        "/Users/me/projects/archive/paseo-desktop",
+        "/Users/me/projects/paseo-desktop",
+      ],
+      query: "~/projects/pso",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
+  });
+
+  it("normalizes dot-relative parent paths before filtering fuzzy matches", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: ["/Users/me/projects/paseo-desktop"],
+      query: "./projects/pso",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
+  });
+
+  it("keeps descendant matches for unrooted multi-segment searches", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: ["/Users/me/projects/paseo/packages/app"],
+      query: "projects/paseo",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/paseo/packages/app"]);
+  });
+
   it("treats '~' as an active query and includes server suggestions", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: ["/Users/me/projects/paseo"],

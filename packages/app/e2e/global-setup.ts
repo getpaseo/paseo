@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { Buffer } from "node:buffer";
@@ -265,6 +265,7 @@ let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
 let fakeEditorBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
+let projectPickerSearchFixtureRoot: string | null = null;
 
 function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
   const trimmed = value?.trim();
@@ -324,6 +325,22 @@ if (recordPath) {
   }
 
   return binDir;
+}
+
+async function createProjectPickerSearchFixture(): Promise<{
+  projectPath: string;
+  query: string;
+}> {
+  projectPickerSearchFixtureRoot = await mkdtemp(path.join(homedir(), "paseo-e2e-project-picker-"));
+  const nonce = randomUUID().replaceAll("-", "").slice(0, 8);
+  const projectPath = path.join(
+    projectPickerSearchFixtureRoot,
+    "client",
+    "team",
+    `paseo-desktop-fuzzy-target-${nonce}`,
+  );
+  await mkdir(projectPath, { recursive: true });
+  return { projectPath, query: `psodfzt${nonce}` };
 }
 
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
@@ -743,6 +760,10 @@ async function performCleanup(shouldRemovePaseoHome: boolean): Promise<void> {
     await removeTempTree(fakeEditorBinDir);
     fakeEditorBinDir = null;
   }
+  if (projectPickerSearchFixtureRoot) {
+    await removeTempTree(projectPickerSearchFixtureRoot);
+    projectPickerSearchFixtureRoot = null;
+  }
 }
 
 export default async function globalSetup() {
@@ -767,6 +788,9 @@ export default async function globalSetup() {
   await logSpeechHarnessConfig();
 
   try {
+    const projectPickerFixture = await createProjectPickerSearchFixture();
+    process.env.E2E_PROJECT_PICKER_SEARCH_PATH = projectPickerFixture.projectPath;
+    process.env.E2E_PROJECT_PICKER_SEARCH_QUERY = projectPickerFixture.query;
     const relayPort = await startRelay(new Set([port, metroPort]));
     metroProcess = startMetro({
       metroPort,

@@ -1,3 +1,5 @@
+import { scoreMatch } from "./score-match";
+
 export interface BuildWorkingDirectorySuggestionsInput {
   recommendedPaths: string[];
   serverPaths: string[];
@@ -14,16 +16,17 @@ export function buildWorkingDirectorySuggestions(
   }
 
   const normalizedQuery = normalizeQuery(rawQuery);
+  const isRootedPathQuery = isRootedQuery(rawQuery);
   const shouldFilterByQuery = normalizedQuery.length > 0;
 
   const recommendedMatches = shouldFilterByQuery
-    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery))
+    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery))
     : recommended;
   const seen = new Set(recommendedMatches);
   const ordered = [...recommendedMatches];
 
   for (const entry of uniquePaths(input.serverPaths)) {
-    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery)) {
+    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery)) {
       continue;
     }
     if (seen.has(entry)) {
@@ -34,6 +37,16 @@ export function buildWorkingDirectorySuggestions(
   }
 
   return ordered;
+}
+
+function isRootedQuery(query: string): boolean {
+  const normalized = query.trim().replace(/\\/g, "/");
+  return (
+    normalized.startsWith("~") ||
+    normalized.startsWith("./") ||
+    normalized.startsWith("/") ||
+    /^[a-z]:\//i.test(normalized)
+  );
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -58,15 +71,38 @@ function normalizeQuery(query: string): string {
   if (normalized.startsWith("~")) {
     normalized = normalized.slice(1);
   }
-  normalized = normalized.replace(/^\/+/, "").toLowerCase();
+  normalized = normalized
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/{2,}/g, "/")
+    .toLowerCase();
   return normalized;
 }
 
-function pathMatchesQuery(candidatePath: string, query: string): boolean {
-  const lowerPath = candidatePath.toLowerCase();
-  if (lowerPath.includes(query)) {
+function pathMatchesQuery(
+  candidatePath: string,
+  query: string,
+  isRootedPathQuery: boolean,
+): boolean {
+  const normalizedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
+  if (!isRootedPathQuery && normalizedPath.includes(query)) {
     return true;
   }
-  const segments = lowerPath.split("/");
-  return (segments[segments.length - 1] ?? "").includes(query);
+
+  const querySegments = query.split("/");
+  const basenameQuery = querySegments.pop() ?? "";
+  const parentQuery = querySegments.join("/");
+  const candidateSegments = normalizedPath.split("/");
+  const basename = candidateSegments.pop() ?? "";
+  const parentPath = candidateSegments.join("/");
+  if (parentQuery) {
+    const relativeParentPath = parentPath.replace(/^\/+/, "");
+    if (relativeParentPath !== parentQuery && !relativeParentPath.endsWith(`/${parentQuery}`)) {
+      return false;
+    }
+  } else if (normalizedPath.includes(query)) {
+    return true;
+  }
+  return scoreMatch(basenameQuery, basename) !== null;
 }

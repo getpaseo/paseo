@@ -1116,6 +1116,7 @@ export const ptBR: TranslationResources = {
   },
   projectPicker: {
     placeholder: "Digite um caminho de diretório...",
+    browse: "Procurar…",
     opening: "Abrindo projeto...",
     searching: "Buscando...",
     empty: "Comece digitando um caminho",

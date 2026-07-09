@@ -1108,6 +1108,7 @@ export const ja: TranslationResources = {
   },
   projectPicker: {
     placeholder: "ディレクトリパスを入力...",
+    browse: "参照…",
     opening: "プロジェクトを開いています...",
     searching: "検索中...",
     empty: "パスを入力してください",
