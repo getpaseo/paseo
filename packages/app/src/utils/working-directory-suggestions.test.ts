@@ -73,7 +73,7 @@ describe("buildWorkingDirectorySuggestions", () => {
   it("preserves the root anchor for single-segment absolute queries", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [],
-      serverPaths: ["/Users/me/tmp", "/tmp", "/tmp/project"],
+      serverPaths: ["/Users/me/tmp", "/tmpfoo", "/tmp", "/tmp/project"],
       query: "/tmp",
     });
 

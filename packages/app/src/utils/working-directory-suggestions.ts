@@ -107,6 +107,11 @@ function pathMatchesQuery(
     ) {
       return true;
     }
+    // With no typed parent, the anchored checks above are the whole contract:
+    // `/tmp` may include `/tmp/project`, but not a fuzzy sibling like `/tmpfoo`.
+    if (!query.includes("/")) {
+      return false;
+    }
   }
 
   const querySegments = query.split("/");
