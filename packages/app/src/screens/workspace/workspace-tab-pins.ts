@@ -26,6 +26,24 @@ export function toggleWorkspaceTabPinKey(
   return next;
 }
 
+// Recompute the pin list after a same-pane drag so pin order follows the new
+// visual order. Pinned keys present in `orderedTargets` adopt their relative
+// order there; pinned keys not present (pins are workspace-wide — a pane sees
+// a subset) keep their original index positions. Membership never changes, so
+// a pinned tab dropped into the unpinned zone clamps to the end of the pinned
+// section, and an unpinned tab dropped into the pinned zone stays unpinned.
+export function reorderWorkspaceTabPinKeys(
+  pinnedTabKeys: readonly string[],
+  orderedTargets: readonly WorkspaceTabTarget[],
+): string[] {
+  const pinnedSet = new Set(pinnedTabKeys);
+  const presentQueue = orderedTargets
+    .map((target) => workspaceTabPinKey(target))
+    .filter((key) => pinnedSet.has(key));
+  const presentSet = new Set(presentQueue);
+  return pinnedTabKeys.map((key) => (presentSet.has(key) ? (presentQueue.shift() ?? key) : key));
+}
+
 // Pinned tabs render first, ordered by their position in the pin list (pin
 // order); unpinned tabs keep their local order. Pin keys with no matching open
 // tab are ignored.

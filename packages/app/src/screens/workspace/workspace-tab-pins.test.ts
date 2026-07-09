@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isWorkspaceTabPinned,
+  reorderWorkspaceTabPinKeys,
   sortWorkspaceTabsPinnedFirst,
   toggleWorkspaceTabPinKey,
   workspaceTabPinKey,
@@ -52,6 +53,54 @@ describe("isWorkspaceTabPinned", () => {
   it("matches by deterministic key", () => {
     expect(isWorkspaceTabPinned(["agent_a1"], { kind: "agent", agentId: "a1" })).toBe(true);
     expect(isWorkspaceTabPinned(["agent_a1"], { kind: "agent", agentId: "a2" })).toBe(false);
+  });
+});
+
+describe("reorderWorkspaceTabPinKeys", () => {
+  const agent = (agentId: string) => ({ kind: "agent", agentId }) as const;
+
+  it("is a no-op when nothing is pinned", () => {
+    expect(reorderWorkspaceTabPinKeys([], [agent("a1"), agent("a2")])).toEqual([]);
+  });
+
+  it("adopts the new relative order of pinned tabs", () => {
+    const next = reorderWorkspaceTabPinKeys(
+      ["agent_a1", "agent_a2", "agent_a3"],
+      [agent("a2"), agent("a1"), agent("a3"), agent("x")],
+    );
+    expect(next).toEqual(["agent_a2", "agent_a1", "agent_a3"]);
+  });
+
+  it("clamps a pinned tab dragged past unpinned tabs to the end of the pinned section", () => {
+    // Visual drop order: a2 stayed first, unpinned x in the middle, pinned a1
+    // dragged to the end. a1 stays pinned but moves after a2.
+    const next = reorderWorkspaceTabPinKeys(
+      ["agent_a1", "agent_a2"],
+      [agent("a2"), agent("x"), agent("a1")],
+    );
+    expect(next).toEqual(["agent_a2", "agent_a1"]);
+  });
+
+  it("leaves pins untouched when an unpinned tab is dragged into the pinned zone", () => {
+    const next = reorderWorkspaceTabPinKeys(
+      ["agent_a1", "agent_a2"],
+      [agent("a1"), agent("x"), agent("a2")],
+    );
+    expect(next).toEqual(["agent_a1", "agent_a2"]);
+  });
+
+  it("keeps pinned keys absent from the reordered pane at their original positions", () => {
+    // Pane only shows a2 and a3; a1 is pinned in another pane and keeps slot 0.
+    const next = reorderWorkspaceTabPinKeys(
+      ["agent_a1", "agent_a2", "agent_a3"],
+      [agent("a3"), agent("a2")],
+    );
+    expect(next).toEqual(["agent_a1", "agent_a3", "agent_a2"]);
+  });
+
+  it("ignores unpinned targets entirely", () => {
+    const next = reorderWorkspaceTabPinKeys(["agent_a1"], [agent("x"), agent("a1"), agent("y")]);
+    expect(next).toEqual(["agent_a1"]);
   });
 });
 

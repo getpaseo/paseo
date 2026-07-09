@@ -150,6 +150,7 @@ import {
 } from "@/workspace-tabs/agent-visibility";
 import {
   isWorkspaceTabPinned,
+  reorderWorkspaceTabPinKeys,
   toggleWorkspaceTabPinKey,
 } from "@/screens/workspace/workspace-tab-pins";
 import {
@@ -214,20 +215,31 @@ function getWorkspaceScripts(
 
 // COMPAT(workspaceTabPins): added in v0.1.104, drop the gate when floor >= v0.1.104.
 // Undefined means the daemon doesn't support tab pins — pin UI stays hidden.
+// The optimistic setter overlays a local pin list while a setWorkspaceTabPins
+// RPC round-trips so pin mutations (toggle, drag reorder) don't snap back; the
+// overlay clears whenever the server descriptor's pin list content changes.
 function useWorkspacePinnedTabKeys(
   serverId: string,
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
-): readonly string[] | undefined {
+): [readonly string[] | undefined, (next: readonly string[] | null) => void] {
   const tabPinsSupported = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceTabPins === true,
   );
   const pinnedTabs = workspaceDescriptor?.pinnedTabs;
-  return useMemo(() => {
+  const [optimisticPinnedTabs, setOptimisticPinnedTabs] = useState<readonly string[] | null>(null);
+  // Compare by content, not reference — workspace_update replaces the array
+  // on every message, and an unrelated update must not drop the overlay.
+  const pinnedTabsFingerprint = useMemo(() => JSON.stringify(pinnedTabs ?? []), [pinnedTabs]);
+  useEffect(() => {
+    setOptimisticPinnedTabs(null);
+  }, [pinnedTabsFingerprint]);
+  const pinnedTabKeys = useMemo(() => {
     if (!tabPinsSupported) {
       return undefined;
     }
-    return pinnedTabs ?? [];
-  }, [tabPinsSupported, pinnedTabs]);
+    return optimisticPinnedTabs ?? pinnedTabs ?? [];
+  }, [tabPinsSupported, pinnedTabs, optimisticPinnedTabs]);
+  return [pinnedTabKeys, setOptimisticPinnedTabs];
 }
 
 interface WorkspaceFileLocationFields {
@@ -1989,7 +2001,10 @@ function WorkspaceScreenContent({
     [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
   );
 
-  const pinnedTabKeys = useWorkspacePinnedTabKeys(normalizedServerId, workspaceDescriptor);
+  const [pinnedTabKeys, setOptimisticPinnedTabs] = useWorkspacePinnedTabKeys(
+    normalizedServerId,
+    workspaceDescriptor,
+  );
 
   const focusedPaneTabState = useMemo(
     () =>
@@ -2754,13 +2769,15 @@ function WorkspaceScreenContent({
         return;
       }
       const nextPinnedTabs = toggleWorkspaceTabPinKey(pinnedTabKeys, tab.target);
+      setOptimisticPinnedTabs(nextPinnedTabs);
       void client.setWorkspaceTabPins(normalizedWorkspaceId, nextPinnedTabs).catch((error) => {
+        setOptimisticPinnedTabs(null);
         toast.error(
           error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToPinTab"),
         );
       });
     },
-    [client, isConnected, normalizedWorkspaceId, pinnedTabKeys, toast, t],
+    [client, isConnected, normalizedWorkspaceId, pinnedTabKeys, setOptimisticPinnedTabs, toast, t],
   );
 
   const handleCopyWorkspacePath = useCallback(async () => {
@@ -3279,14 +3296,60 @@ function WorkspaceScreenContent({
     [persistenceKey, resizeWorkspaceSplit],
   );
 
+  // Drag reorders run against the pinned-first sorted order, so a same-pane
+  // drop that changes the relative order of pinned tabs must rewrite the
+  // workspace pin list too — otherwise the next render re-applies the stale
+  // pin order and snaps the drag back. Optimistic overlay hides the RPC
+  // round-trip. Cross-pane moves don't change pin membership or order.
+  const syncTabPinOrderAfterReorder = useCallback(
+    (orderedTabIds: readonly string[]) => {
+      if (!pinnedTabKeys || pinnedTabKeys.length === 0 || !normalizedWorkspaceId) {
+        return;
+      }
+      if (!client || !isConnected) {
+        return;
+      }
+      const targetsByTabId = new Map(uiTabs.map((tab) => [tab.tabId, tab.target]));
+      const orderedTargets: WorkspaceTabTarget[] = [];
+      for (const tabId of orderedTabIds) {
+        const target = targetsByTabId.get(tabId);
+        if (target) {
+          orderedTargets.push(target);
+        }
+      }
+      const nextPinnedTabs = reorderWorkspaceTabPinKeys(pinnedTabKeys, orderedTargets);
+      if (nextPinnedTabs.every((key, index) => key === pinnedTabKeys[index])) {
+        return;
+      }
+      setOptimisticPinnedTabs(nextPinnedTabs);
+      void client.setWorkspaceTabPins(normalizedWorkspaceId, nextPinnedTabs).catch((error) => {
+        setOptimisticPinnedTabs(null);
+        toast.error(
+          error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToPinTab"),
+        );
+      });
+    },
+    [
+      client,
+      isConnected,
+      normalizedWorkspaceId,
+      pinnedTabKeys,
+      setOptimisticPinnedTabs,
+      toast,
+      t,
+      uiTabs,
+    ],
+  );
+
   const handleReorderTabsInPane = useCallback(
     function handleReorderTabsInPane(paneId: string, tabIds: string[]) {
       if (!persistenceKey) {
         return;
       }
       reorderWorkspaceTabsInPane(persistenceKey, paneId, tabIds);
+      syncTabPinOrderAfterReorder(tabIds);
     },
-    [persistenceKey, reorderWorkspaceTabsInPane],
+    [persistenceKey, reorderWorkspaceTabsInPane, syncTabPinOrderAfterReorder],
   );
 
   const handleReorderTabsInFocusedPane = useCallback(
