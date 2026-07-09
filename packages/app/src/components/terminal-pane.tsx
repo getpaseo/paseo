@@ -13,6 +13,7 @@ import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-m
 import { useTranslation } from "react-i18next";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
+import { useSoftKeyboardVisible } from "@/hooks/use-soft-keyboard-visible";
 import { useAppVisible } from "@/hooks/use-app-visible";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import {
@@ -180,12 +181,12 @@ export function TerminalPane({
     return trimmed.length > 0 ? trimmed : undefined;
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
+  const softKeyboardVisible = useSoftKeyboardVisible();
   const mobileView = usePanelStore((state) => state.mobileView);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const swipeGesturesEnabled = isMobile && mobileView === "agent";
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
     mode: "padding",
-    enabled: isMobile,
   });
 
   const client = useHostRuntimeClient(serverId);
@@ -337,14 +338,14 @@ export function TerminalPane({
   }, [clearKeyboardRefitTimeouts]);
 
   useAnimatedReaction(
-    () => isMobile && keyboardShift.value > 0,
+    () => keyboardShift.value > 0,
     (next, prev) => {
       if (next === prev) {
         return;
       }
       runOnJS(pulseKeyboardRefits)();
     },
-    [isMobile, pulseKeyboardRefits],
+    [pulseKeyboardRefits],
   );
 
   useEffect(() => {
@@ -819,7 +820,7 @@ export function TerminalPane({
         </View>
       ) : null}
 
-      {isMobile ? (
+      {softKeyboardVisible ? (
         <View style={styles.keyboardContainer} testID="terminal-virtual-keyboard">
           <View style={styles.keyboardRows}>
             <View style={styles.keyboardRow}>
