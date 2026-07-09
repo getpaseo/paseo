@@ -591,18 +591,11 @@ function MobileSidebar({
     animateToOpen,
     animateToClose,
     overlayVisible,
-    isGesturing,
     mobilePanelState,
-    gestureAnimatingRef,
     closeGestureRef,
   } = useSidebarAnimation();
   const closeTouchStartX = useSharedValue(0);
   const closeTouchStartY = useSharedValue(0);
-
-  const handleCloseFromGesture = useCallback(() => {
-    gestureAnimatingRef.current = true;
-    closeSidebar();
-  }, [closeSidebar, gestureAnimatingRef]);
 
   const handleViewMore = useCallback(() => {
     translateX.value = -windowWidth;
@@ -665,9 +658,6 @@ function MobileSidebar({
             stateManager.activate();
           }
         })
-        .onStart(() => {
-          isGesturing.value = true;
-        })
         .onUpdate((event) => {
           const newTranslateX = Math.min(0, Math.max(-windowWidth, event.translationX));
           translateX.value = newTranslateX;
@@ -679,30 +669,25 @@ function MobileSidebar({
           );
         })
         .onEnd((event) => {
-          isGesturing.value = false;
           const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
           if (shouldClose) {
             animateToClose();
-            runOnJS(handleCloseFromGesture)();
+            runOnJS(closeSidebar)();
           } else {
             animateToOpen();
           }
-        })
-        .onFinalize(() => {
-          isGesturing.value = false;
         }),
     [
       closeGestureRef,
       closeTouchStartX,
       closeTouchStartY,
-      isGesturing,
       mobilePanelState,
       windowWidth,
       translateX,
       backdropOpacity,
       animateToClose,
       animateToOpen,
-      handleCloseFromGesture,
+      closeSidebar,
     ],
   );
 

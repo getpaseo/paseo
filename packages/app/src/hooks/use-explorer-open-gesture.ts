@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { Gesture } from "react-native-gesture-handler";
 import { Extrapolation, interpolate, runOnJS, useSharedValue } from "react-native-reanimated";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
@@ -21,23 +21,11 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
     animateToOpen,
     animateToClose,
     setOverlayPeek,
-    isGesturing,
-    gestureAnimatingRef,
     openGestureRef,
   } = useExplorerSidebarAnimation();
-  const {
-    mobilePanelState,
-    gestureAnimatingRef: mobilePanelGestureAnimatingRef,
-    openGestureRef: leftOpenGestureRef,
-  } = useSidebarAnimation();
+  const { mobilePanelState, openGestureRef: leftOpenGestureRef } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
-
-  const handleGestureOpen = useCallback(() => {
-    gestureAnimatingRef.current = true;
-    mobilePanelGestureAnimatingRef.current = true;
-    onOpen();
-  }, [onOpen, gestureAnimatingRef, mobilePanelGestureAnimatingRef]);
 
   return useMemo(
     () =>
@@ -93,7 +81,6 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
           }
         })
         .onStart(() => {
-          isGesturing.value = true;
           // The overlay is display:none while closed; reveal it for the drag.
           runOnJS(setOverlayPeek)(true);
         })
@@ -112,19 +99,17 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
           );
         })
         .onEnd((event) => {
-          isGesturing.value = false;
           const shouldOpenByPosition = translateX.value < (windowWidth * 2) / 3;
           const shouldOpenByVelocity = event.velocityX < -500;
           const shouldOpen = shouldOpenByPosition || shouldOpenByVelocity;
           if (shouldOpen) {
             animateToOpen();
-            runOnJS(handleGestureOpen)();
+            runOnJS(onOpen)();
           } else {
             animateToClose();
           }
         })
         .onFinalize(() => {
-          isGesturing.value = false;
           runOnJS(setOverlayPeek)(false);
         }),
     [
@@ -136,10 +121,9 @@ export function useExplorerOpenGesture({ enabled, onOpen }: UseExplorerOpenGestu
       animateToOpen,
       animateToClose,
       setOverlayPeek,
-      isGesturing,
       openGestureRef,
       leftOpenGestureRef,
-      handleGestureOpen,
+      onOpen,
       touchStartX,
       touchStartY,
     ],

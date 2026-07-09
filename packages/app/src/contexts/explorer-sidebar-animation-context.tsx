@@ -32,8 +32,6 @@ interface ExplorerSidebarAnimationContextValue {
   animateToClose: () => void;
   overlayVisible: boolean;
   setOverlayPeek: (peek: boolean) => void;
-  isGesturing: SharedValue<boolean>;
-  gestureAnimatingRef: React.MutableRefObject<boolean>;
   openGestureRef: React.MutableRefObject<GestureType | undefined>;
   closeGestureRef: React.MutableRefObject<GestureType | undefined>;
 }
@@ -55,8 +53,6 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
   const initialTargets = getRightSidebarAnimationTargets({ isOpen, windowWidth });
   const translateX = useSharedValue(initialTargets.translateX);
   const backdropOpacity = useSharedValue(initialTargets.backdropOpacity);
-  const isGesturing = useSharedValue(false);
-  const gestureAnimatingRef = useRef(false);
   const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
@@ -81,7 +77,9 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
   const prevMobileView = useRef(mobileView);
   const prevWindowWidth = useRef(windowWidth);
 
-  // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close)
+  // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close).
+  // Gestures may start the same animation on the UI thread, but the store remains
+  // authoritative so shared values cannot stay split from React state.
   useEffect(() => {
     const didStateChange = shouldSyncSidebarAnimation({
       previousIsOpen: prevIsOpen.current,
@@ -99,16 +97,6 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     prevWindowWidth.current = windowWidth;
 
     if (!didStateChange && !didMobileViewChange) {
-      return;
-    }
-
-    if (gestureAnimatingRef.current) {
-      gestureAnimatingRef.current = false;
-      return;
-    }
-
-    // Don't animate if we're in the middle of a gesture - the gesture handler will handle it
-    if (isGesturing.value) {
       return;
     }
 
@@ -173,7 +161,6 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     translateX,
     backdropOpacity,
     windowWidth,
-    isGesturing,
     isCompactLayout,
     startMobilePanelTransition,
     settleMobilePanel,
@@ -228,20 +215,10 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       animateToClose,
       overlayVisible,
       setOverlayPeek,
-      isGesturing,
-      gestureAnimatingRef,
       openGestureRef,
       closeGestureRef,
     }),
-    [
-      translateX,
-      backdropOpacity,
-      windowWidth,
-      animateToOpen,
-      animateToClose,
-      overlayVisible,
-      isGesturing,
-    ],
+    [translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, overlayVisible],
   );
 
   return (

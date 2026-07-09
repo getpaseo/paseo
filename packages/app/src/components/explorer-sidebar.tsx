@@ -93,8 +93,7 @@ export function CompactExplorerSidebar({
   });
   const closeTouchStartX = useSharedValue(0);
   const closeTouchStartY = useSharedValue(0);
-  const { mobilePanelState, gestureAnimatingRef: mobilePanelGestureAnimatingRef } =
-    useSidebarAnimation();
+  const { mobilePanelState } = useSidebarAnimation();
   const { style: mobileKeyboardInsetStyle } = useKeyboardShiftStyle({
     mode: "padding",
     enabled: true,
@@ -106,8 +105,6 @@ export function CompactExplorerSidebar({
     animateToOpen,
     animateToClose,
     overlayVisible,
-    isGesturing,
-    gestureAnimatingRef,
     closeGestureRef,
   } = useExplorerSidebarAnimation();
 
@@ -121,12 +118,6 @@ export function CompactExplorerSidebar({
     },
     [isOpen, showMobileAgent],
   );
-
-  const handleCloseFromGesture = useCallback(() => {
-    gestureAnimatingRef.current = true;
-    mobilePanelGestureAnimatingRef.current = true;
-    showMobileAgent();
-  }, [gestureAnimatingRef, mobilePanelGestureAnimatingRef, showMobileAgent]);
 
   const handleHeaderClose = useCallback(() => handleClose("header-close-button"), [handleClose]);
 
@@ -179,9 +170,6 @@ export function CompactExplorerSidebar({
             stateManager.activate();
           }
         })
-        .onStart(() => {
-          isGesturing.value = true;
-        })
         .onUpdate((event) => {
           // Right sidebar: swipe right to close (positive translationX)
           const newTranslateX = Math.max(0, Math.min(windowWidth, event.translationX));
@@ -190,7 +178,6 @@ export function CompactExplorerSidebar({
           backdropOpacity.value = Math.max(0, Math.min(1, progress));
         })
         .onEnd((event) => {
-          isGesturing.value = false;
           const shouldClose = event.translationX > windowWidth / 3 || event.velocityX > 500;
           runOnJS(logExplorerSidebar)("closeGestureEnd", {
             translationX: event.translationX,
@@ -200,13 +187,10 @@ export function CompactExplorerSidebar({
           });
           if (shouldClose) {
             animateToClose();
-            runOnJS(handleCloseFromGesture)();
+            runOnJS(showMobileAgent)();
           } else {
             animateToOpen();
           }
-        })
-        .onFinalize(() => {
-          isGesturing.value = false;
         }),
     [
       windowWidth,
@@ -215,8 +199,7 @@ export function CompactExplorerSidebar({
       mobilePanelState,
       animateToOpen,
       animateToClose,
-      handleCloseFromGesture,
-      isGesturing,
+      showMobileAgent,
       closeGestureRef,
       closeTouchStartX,
       closeTouchStartY,

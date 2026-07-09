@@ -49,10 +49,8 @@ interface SidebarAnimationContextValue {
   settleMobilePanel: (mobileView: "agent" | "agent-list" | "file-explorer") => void;
   overlayVisible: boolean;
   setOverlayPeek: (peek: boolean) => void;
-  isGesturing: SharedValue<boolean>;
   mobileVisualPanel: SharedValue<number>;
   mobilePanelState: SharedValue<number>;
-  gestureAnimatingRef: React.MutableRefObject<boolean>;
   openGestureRef: React.MutableRefObject<GestureType | undefined>;
   closeGestureRef: React.MutableRefObject<GestureType | undefined>;
 }
@@ -91,11 +89,9 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   const initialTargets = getLeftSidebarAnimationTargets({ isOpen, windowWidth });
   const translateX = useSharedValue(initialTargets.translateX);
   const backdropOpacity = useSharedValue(initialTargets.backdropOpacity);
-  const isGesturing = useSharedValue(false);
   const mobileVisualPanel = useSharedValue(getMobileVisualPanel(mobileView));
   const mobilePanelState = useSharedValue(getSettledMobilePanelState(mobileView));
   const mobilePanelTarget = useSharedValue(getMobileVisualPanel(mobileView));
-  const gestureAnimatingRef = useRef(false);
   const openGestureRef = useRef<GestureType | undefined>(undefined);
   const closeGestureRef = useRef<GestureType | undefined>(undefined);
 
@@ -191,7 +187,9 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
     [mobileVisualPanel, mobilePanelState, mobilePanelTarget],
   );
 
-  // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close)
+  // Sync animation with store state changes (e.g., backdrop tap, programmatic open/close).
+  // Gestures may start the same animation on the UI thread, but the store remains
+  // authoritative so shared values cannot stay split from React state.
   useEffect(() => {
     const didStateChange = shouldSyncSidebarAnimation({
       previousIsOpen: prevIsOpen.current,
@@ -214,19 +212,6 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
 
     if (didOpen && isCompactLayout && isNative) {
       Keyboard.dismiss();
-    }
-
-    // Gesture onEnd already started the animation on the UI thread — skip to avoid
-    // a second competing withTiming that can desync translateX and backdropOpacity
-    // after a provider remount (e.g. theme change).
-    if (gestureAnimatingRef.current) {
-      gestureAnimatingRef.current = false;
-      return;
-    }
-
-    // Don't animate if we're in the middle of a gesture - the gesture handler will handle it
-    if (isGesturing.value) {
-      return;
     }
 
     const targets = getLeftSidebarAnimationTargets({ isOpen, windowWidth });
@@ -290,7 +275,6 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
     translateX,
     backdropOpacity,
     windowWidth,
-    isGesturing,
     isCompactLayout,
     mobileVisualPanel,
     mobilePanelState,
@@ -349,10 +333,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       settleMobilePanel,
       overlayVisible,
       setOverlayPeek,
-      isGesturing,
       mobileVisualPanel,
       mobilePanelState,
-      gestureAnimatingRef,
       openGestureRef,
       closeGestureRef,
     }),
@@ -365,10 +347,8 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
       startMobilePanelTransition,
       settleMobilePanel,
       overlayVisible,
-      isGesturing,
       mobileVisualPanel,
       mobilePanelState,
-      gestureAnimatingRef,
       openGestureRef,
       closeGestureRef,
     ],

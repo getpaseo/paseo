@@ -535,19 +535,12 @@ function MobileGestureWrapper({
     animateToOpen,
     animateToClose,
     setOverlayPeek,
-    isGesturing,
     mobilePanelState,
-    gestureAnimatingRef,
     openGestureRef,
   } = useSidebarAnimation();
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
   const openGestureEnabled = chromeEnabled;
-
-  const handleGestureOpen = useCallback(() => {
-    gestureAnimatingRef.current = true;
-    showMobileAgentList();
-  }, [showMobileAgentList, gestureAnimatingRef]);
 
   const openGesture = useMemo(
     () =>
@@ -602,7 +595,6 @@ function MobileGestureWrapper({
           }
         })
         .onStart(() => {
-          isGesturing.value = true;
           // The overlay is display:none while closed; reveal it for the drag.
           runOnJS(setOverlayPeek)(true);
         })
@@ -617,17 +609,15 @@ function MobileGestureWrapper({
           );
         })
         .onEnd((event) => {
-          isGesturing.value = false;
           const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
           if (shouldOpen) {
             animateToOpen();
-            runOnJS(handleGestureOpen)();
+            runOnJS(showMobileAgentList)();
           } else {
             animateToClose();
           }
         })
         .onFinalize(() => {
-          isGesturing.value = false;
           runOnJS(setOverlayPeek)(false);
         }),
     [
@@ -639,8 +629,7 @@ function MobileGestureWrapper({
       animateToOpen,
       animateToClose,
       setOverlayPeek,
-      handleGestureOpen,
-      isGesturing,
+      showMobileAgentList,
       openGestureRef,
       horizontalScroll?.isAnyScrolledRight,
       touchStartX,
