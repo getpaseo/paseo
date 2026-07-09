@@ -29,7 +29,7 @@ The candidate list is assembled in this order:
 2. **Built-in defaults**, matched against the models of the providers you have enabled:
    1. a `haiku` model
    2. `gpt-5.4-mini` (low reasoning)
-   3. `minimax-m2.5`
+   3. `minimax-m3`
    4. `nemotron-3-super`
 3. **The model currently selected** for that agent or draft, as a last resort.
 
