@@ -2025,11 +2025,25 @@ const ContextCompactedNotificationSchema = z
   })
   .passthrough();
 
+const CodexEventThreadIdFields = {
+  threadId: z.string().optional(),
+  thread_id: z.string().optional(),
+};
+
+function getCodexEventThreadId(params: {
+  threadId?: string;
+  thread_id?: string;
+  msg: { threadId?: string; thread_id?: string };
+}): string | null {
+  return params.threadId ?? params.thread_id ?? params.msg.threadId ?? params.msg.thread_id ?? null;
+}
+
 const CodexEventTurnAbortedNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("turn_aborted"),
         reason: z.string().optional(),
       })
@@ -2039,9 +2053,10 @@ const CodexEventTurnAbortedNotificationSchema = z
 
 const CodexEventTaskCompleteNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("task_complete"),
       })
       .passthrough(),
@@ -2050,12 +2065,11 @@ const CodexEventTaskCompleteNotificationSchema = z
 
 const CodexEventItemLifecycleNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.enum(["item_started", "item_completed"]),
-        threadId: z.string().optional(),
-        thread_id: z.string().optional(),
         item: z
           .object({
             id: z.string().optional(),
@@ -2069,9 +2083,10 @@ const CodexEventItemLifecycleNotificationSchema = z
 
 const CodexEventExecCommandBeginNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("exec_command_begin"),
         call_id: z.string().optional(),
         command: z.unknown().optional(),
@@ -2083,9 +2098,10 @@ const CodexEventExecCommandBeginNotificationSchema = z
 
 const CodexEventExecCommandEndNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("exec_command_end"),
         call_id: z.string().optional(),
         command: z.unknown().optional(),
@@ -2105,9 +2121,10 @@ const CodexEventExecCommandEndNotificationSchema = z
 
 const CodexEventExecCommandOutputDeltaNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("exec_command_output_delta"),
         call_id: z.string().optional(),
         stream: z.string().optional(),
@@ -2120,9 +2137,10 @@ const CodexEventExecCommandOutputDeltaNotificationSchema = z
 
 const CodexEventTerminalInteractionNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("terminal_interaction"),
         call_id: z.string().optional(),
         process_id: z.union([z.string(), z.number()]).optional(),
@@ -2143,9 +2161,10 @@ const ItemCommandExecutionTerminalInteractionNotificationSchema = z
 
 const CodexEventPatchApplyBeginNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("patch_apply_begin"),
         call_id: z.string().optional(),
         changes: z.unknown().optional(),
@@ -2156,9 +2175,10 @@ const CodexEventPatchApplyBeginNotificationSchema = z
 
 const CodexEventPatchApplyEndNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("patch_apply_end"),
         call_id: z.string().optional(),
         changes: z.unknown().optional(),
@@ -2181,9 +2201,10 @@ const ItemFileChangeOutputDeltaNotificationSchema = z
 
 const CodexEventTurnDiffNotificationSchema = z
   .object({
-    threadId: z.string().optional(),
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("turn_diff"),
         unified_diff: z.string().optional(),
         diff: z.string().optional(),
@@ -2194,8 +2215,10 @@ const CodexEventTurnDiffNotificationSchema = z
 
 const CodexEventThreadRolledBackNotificationSchema = z
   .object({
+    ...CodexEventThreadIdFields,
     msg: z
       .object({
+        ...CodexEventThreadIdFields,
         type: z.literal("thread_rolled_back"),
         num_turns: z.number().int().nonnegative().optional(),
         numTurns: z.number().int().nonnegative().optional(),
@@ -2288,7 +2311,7 @@ type ParsedCodexNotification =
       delta: string | null;
       threadId: string | null;
     }
-  | { kind: "thread_rolled_back"; numTurns: number }
+  | { kind: "thread_rolled_back"; numTurns: number; threadId: string | null }
   | { kind: "context_compacted"; threadId: string; turnId: string | null }
   | { kind: "invalid_payload"; method: string; params: unknown }
   | { kind: "unknown_method"; method: string; params: unknown };
@@ -2524,7 +2547,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "item_started",
         source: "codex_event",
-        threadId: params.threadId ?? params.msg.threadId ?? params.msg.thread_id ?? null,
+        threadId: getCodexEventThreadId(params),
         item: params.msg.item,
       }),
     ),
@@ -2544,7 +2567,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "item_completed",
         source: "codex_event",
-        threadId: params.threadId ?? params.msg.threadId ?? params.msg.thread_id ?? null,
+        threadId: getCodexEventThreadId(params),
         item: params.msg.item,
       }),
     ),
@@ -2566,7 +2589,7 @@ const CodexNotificationSchema = z.union([
         callId: params.msg.call_id ?? null,
         command: params.msg.command ?? null,
         cwd: params.msg.cwd ?? null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/exec_command_begin"), params: z.unknown() }).transform(
@@ -2596,7 +2619,7 @@ const CodexNotificationSchema = z.union([
         exitCode: params.msg.exit_code ?? params.msg.exitCode ?? null,
         success: params.msg.success ?? null,
         stderr: params.msg.stderr ?? null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/exec_command_end"), params: z.unknown() }).transform(
@@ -2617,7 +2640,7 @@ const CodexNotificationSchema = z.union([
         callId: params.msg.call_id ?? null,
         stream: params.msg.stream ?? null,
         chunk: params.msg.chunk ?? params.msg.delta ?? null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z
@@ -2647,7 +2670,7 @@ const CodexNotificationSchema = z.union([
             ? String(params.msg.process_id)
             : (params.msg.process_id ?? null),
         stdin: params.msg.stdin ?? null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z
@@ -2699,7 +2722,7 @@ const CodexNotificationSchema = z.union([
         kind: "patch_apply_started",
         callId: params.msg.call_id ?? null,
         changes: params.msg.changes ?? null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/patch_apply_begin"), params: z.unknown() }).transform(
@@ -2722,7 +2745,7 @@ const CodexNotificationSchema = z.union([
         stdout: params.msg.stdout ?? null,
         stderr: params.msg.stderr ?? null,
         success: params.msg.success ?? null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/patch_apply_end"), params: z.unknown() }).transform(
@@ -2761,7 +2784,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "diff_updated",
         diff: params.msg.unified_diff ?? params.msg.diff ?? "",
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/turn_diff"), params: z.unknown() }).transform(
@@ -2781,7 +2804,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: "interrupted",
         errorMessage: null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/turn_aborted"), params: z.unknown() }).transform(
@@ -2801,7 +2824,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: "completed",
         errorMessage: null,
-        threadId: params.threadId ?? null,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/task_complete"), params: z.unknown() }).transform(
@@ -2820,6 +2843,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "thread_rolled_back",
         numTurns: params.msg.num_turns ?? params.msg.numTurns ?? 0,
+        threadId: getCodexEventThreadId(params),
       }),
     ),
   z.object({ method: z.literal("codex/event/thread_rolled_back"), params: z.unknown() }).transform(

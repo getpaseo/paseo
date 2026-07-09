@@ -1814,6 +1814,59 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("routes msg-scoped legacy Codex events to their child thread", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-legacy-envelope-child",
+        kind: "started",
+        agentThreadId: "legacy-envelope-child",
+        agentPath: "/root/legacy-envelope-child",
+      },
+    });
+    asInternals(session).handleNotification("codex/event/exec_command_begin", {
+      msg: {
+        type: "exec_command_begin",
+        threadId: "legacy-envelope-child",
+        call_id: "child-command",
+        command: "pwd",
+      },
+    });
+    asInternals(session).handleNotification("codex/event/task_complete", {
+      msg: {
+        type: "task_complete",
+        thread_id: "legacy-envelope-child",
+      },
+    });
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "child-command",
+      ),
+    ).toBe(false);
+    expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "spawn-legacy-envelope-child",
+        status: "completed",
+      },
+    });
+
+    asInternals(session).handleNotification("codex/event/task_complete", {
+      msg: { type: "task_complete" },
+    });
+    expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
+  });
+
   test("never replaces the root identity with an early child thread start", () => {
     const session = createSession();
 
