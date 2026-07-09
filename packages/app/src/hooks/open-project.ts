@@ -2,7 +2,9 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProjectAddResponse } from "@getpaseo/protocol/messages";
 import {
   normalizeEmptyProjectDescriptor as normalizeProjectWithoutWorkspacesDescriptor,
+  normalizeWorkspaceDescriptor,
   type EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor,
+  type WorkspaceDescriptor,
 } from "@/stores/session-store";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
@@ -10,6 +12,7 @@ type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;
 
 export interface OpenProjectSuccess {
   ok: true;
+  workspaceId: string | null;
 }
 
 export interface OpenProjectFailure {
@@ -40,9 +43,26 @@ export interface OpenProjectDirectlyInput {
   projectPath: string;
   isConnected: boolean;
   canAddProject: boolean;
-  client: Pick<DaemonClient, "addProject"> | null;
+  client: Pick<DaemonClient, "addProject" | "createWorkspace" | "getCheckoutStatus"> | null;
   addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => void;
+  mergeWorkspaces: (serverId: string, workspaces: WorkspaceDescriptor[]) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+}
+
+async function isExistingGitWorktree(
+  client: Pick<DaemonClient, "getCheckoutStatus">,
+  path: string,
+): Promise<boolean> {
+  try {
+    const status = await client.getCheckoutStatus(path);
+    return (
+      status.isGit === true &&
+      typeof status.mainRepoRoot === "string" &&
+      status.mainRepoRoot.length > 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function openProjectDirectly(
@@ -62,6 +82,23 @@ export async function openProjectDirectly(
     };
   }
 
+  if (await isExistingGitWorktree(input.client, trimmedPath)) {
+    const payload = await input.client.createWorkspace({
+      source: { kind: "directory", path: trimmedPath },
+    });
+    if (payload.error || !payload.workspace) {
+      return {
+        ok: false,
+        errorCode: null,
+        error: payload.error,
+      };
+    }
+    const workspace = normalizeWorkspaceDescriptor(payload.workspace);
+    input.mergeWorkspaces(normalizedServerId, [workspace]);
+    input.setHasHydratedWorkspaces(normalizedServerId, true);
+    return { ok: true, workspaceId: workspace.id };
+  }
+
   const payload = await input.client.addProject(trimmedPath);
   if (payload.error || !payload.project) {
     return {
@@ -76,5 +113,5 @@ export async function openProjectDirectly(
     normalizeProjectWithoutWorkspacesDescriptor(payload.project),
   );
   input.setHasHydratedWorkspaces(normalizedServerId, true);
-  return { ok: true };
+  return { ok: true, workspaceId: null };
 }

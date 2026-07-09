@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { openProjectDirectly, type OpenProjectResult } from "@/hooks/open-project";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 
 export function useOpenProject(
   serverId: string | null,
@@ -15,6 +16,7 @@ export function useOpenProject(
       : false,
   );
   const addEmptyProject = useSessionStore((state) => state.addEmptyProject);
+  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
@@ -26,8 +28,12 @@ export function useOpenProject(
         canAddProject,
         client,
         addEmptyProject,
+        mergeWorkspaces,
         setHasHydratedWorkspaces,
       });
+      if (result.ok && result.workspaceId) {
+        navigateToWorkspace(normalizedServerId, result.workspaceId);
+      }
       return result;
     },
     [
@@ -35,6 +41,7 @@ export function useOpenProject(
       canAddProject,
       client,
       isConnected,
+      mergeWorkspaces,
       normalizedServerId,
       setHasHydratedWorkspaces,
     ],
