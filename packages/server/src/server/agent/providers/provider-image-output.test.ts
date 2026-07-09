@@ -18,6 +18,9 @@ function renderImageMarkdown(path: string): string {
 describe("isProviderImageMarkdown", () => {
   test("matches the markdown emitted for a materialized attachment", () => {
     expect(isProviderImageMarkdown(`![Image](/tmp/paseo-attachments/${HASH}.png)`)).toBe(true);
+    expect(isProviderImageMarkdown(`![Image](/tmp/paseo-attachments/user-1000/${HASH}.png)`)).toBe(
+      true,
+    );
     expect(isProviderImageMarkdown(`![shot](/var/folders/x/paseo-attachments/${HASH}.webp)`)).toBe(
       true,
     );

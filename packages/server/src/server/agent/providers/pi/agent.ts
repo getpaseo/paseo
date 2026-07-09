@@ -364,7 +364,7 @@ function toAgentUsage(stats: PiSessionStats): AgentUsage | undefined {
 }
 
 function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
-  return model?.input === undefined || model.input.includes("image");
+  return model?.input?.includes("image") === true;
 }
 
 function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {

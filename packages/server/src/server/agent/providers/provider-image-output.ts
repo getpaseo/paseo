@@ -19,6 +19,15 @@ export interface MaterializedProviderImage {
 
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 
+function currentUserAttachmentDirName(): string {
+  const uid = process.getuid?.();
+  if (typeof uid === "number") {
+    return `user-${uid}`;
+  }
+  const username = os.userInfo().username;
+  return `user-${createHash("sha256").update(username).digest("hex").slice(0, 12)}`;
+}
+
 function getImageExtension(mimeType: string): string {
   switch (mimeType) {
     case "image/jpeg":
@@ -55,14 +64,18 @@ export function materializeProviderImage(image: {
   data: string;
   mimeType: string | null;
 }): MaterializedProviderImage {
-  const attachmentsDir = path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR);
-  fsSync.mkdirSync(attachmentsDir, { recursive: true });
+  const attachmentsParentDir = path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR);
+  fsSync.mkdirSync(attachmentsParentDir, { recursive: true });
+  const attachmentsDir = path.join(attachmentsParentDir, currentUserAttachmentDirName());
+  fsSync.mkdirSync(attachmentsDir, { recursive: true, mode: 0o700 });
+  fsSync.chmodSync(attachmentsDir, 0o700);
   const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
   const bytes = Buffer.from(normalized.data, "base64");
   const extension = getImageExtension(normalized.mimeType);
   const hash = createHash("sha256").update(bytes).digest("hex");
   const filePath = path.join(attachmentsDir, `${hash}.${extension}`);
-  fsSync.writeFileSync(filePath, bytes);
+  fsSync.writeFileSync(filePath, bytes, { mode: 0o600 });
+  fsSync.chmodSync(filePath, 0o600);
   return { path: filePath };
 }
 
@@ -71,7 +84,7 @@ export function materializeProviderImage(image: {
 // keeps user-authored text from being mistaken for a provider image during history replay. The
 // separator still accepts old doubled-backslash Windows history; new Windows output uses file URIs.
 const PROVIDER_IMAGE_MARKDOWN = new RegExp(
-  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\]+[0-9a-f]{64}\\.[a-z0-9]+\\)`,
+  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\]+(?:[^/\\\\)]+[/\\\\]+)?[0-9a-f]{64}\\.[a-z0-9]+\\)`,
 );
 
 export function isProviderImageMarkdown(text: string): boolean {
