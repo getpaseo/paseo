@@ -1026,7 +1026,6 @@ describe("OpenCode adapter context-window normalization", () => {
       type: "agent_attention",
       provider: "opencode",
       reason: "finished",
-      broadcast: false,
     });
     expectNoParentTerminalEvent(terminalEvents);
   });
@@ -1064,7 +1063,6 @@ describe("OpenCode adapter context-window normalization", () => {
       type: "agent_attention",
       provider: "opencode",
       reason: "error",
-      broadcast: false,
     });
     expectNoParentTerminalEvent(terminalEvents);
   });
@@ -1087,6 +1085,42 @@ describe("OpenCode adapter context-window normalization", () => {
 
     expect(timelineToolCalls(terminalEvents)).toHaveLength(1);
     expect(countEventsByType(terminalEvents, "agent_attention")).toBe(1);
+    expectNoParentTerminalEvent(terminalEvents);
+  });
+
+  test("uses the first linked child terminal event when idle and error both arrive", () => {
+    const state = createOpenCodeTranslationState();
+
+    translateOpenCodeEvents(
+      [
+        parentSubAgentToolEvent({ callId: "call-child", description: "Handle mixed terminal" }),
+        childSessionCreatedEvent("child-session"),
+      ],
+      state,
+    );
+
+    const terminalEvents = [
+      ...translateOpenCodeEvents([childSessionIdleEvent("child-session")], state),
+      ...translateOpenCodeEvents([childSessionErrorEvent("child-session", "late failure")], state),
+    ];
+
+    expect(timelineToolCalls(terminalEvents)).toEqual([
+      expect.objectContaining({
+        callId: "call-child",
+        status: "completed",
+        error: null,
+        detail: expect.objectContaining({
+          childSessionId: "child-session",
+          log: expect.stringMatching(/\[subagent\] completed$/),
+        }),
+      }),
+    ]);
+    expect(countEventsByType(terminalEvents, "agent_attention")).toBe(1);
+    expect(terminalEvents).toContainEqual({
+      type: "agent_attention",
+      provider: "opencode",
+      reason: "finished",
+    });
     expectNoParentTerminalEvent(terminalEvents);
   });
 

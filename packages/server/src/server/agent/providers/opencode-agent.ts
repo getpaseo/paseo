@@ -2103,7 +2103,6 @@ function appendOpenCodeSubAgentAttentionEvent(
     type: "agent_attention",
     provider: "opencode",
     reason,
-    broadcast: false,
   });
 }
 
@@ -2119,9 +2118,8 @@ function appendOpenCodeSubAgentTerminalEvent(
   if (!parentCallId) {
     return false;
   }
-  const terminalKey = `${childSessionId}:${status}`;
   state.emittedSubAgentTerminalEvents ??= new Set();
-  if (state.emittedSubAgentTerminalEvents.has(terminalKey)) {
+  if (state.emittedSubAgentTerminalEvents.has(childSessionId)) {
     return true;
   }
   const activity = maps.byCallId.get(parentCallId);
@@ -2129,7 +2127,10 @@ function appendOpenCodeSubAgentTerminalEvent(
     return false;
   }
 
-  state.emittedSubAgentTerminalEvents.add(terminalKey);
+  // OpenCode may emit more than one terminal-flavored event for a child session.
+  // The first terminal event wins so the parent tool call cannot flip between
+  // completed and failed or raise duplicate attention.
+  state.emittedSubAgentTerminalEvents.add(childSessionId);
   if (status === "completed") {
     activity.toolCall = {
       ...activity.toolCall,
