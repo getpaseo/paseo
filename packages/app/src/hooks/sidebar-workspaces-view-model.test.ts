@@ -231,6 +231,7 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "host-a",
+          workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
               "main",
@@ -246,6 +247,7 @@ describe("shared sidebar workspace model", () => {
         },
         {
           serverId: "host-b",
+          workspaceAgentActivity: new Map(),
           workspaces: new Map([
             [
               "feature",

@@ -34,16 +34,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
-import {
-  type SidebarProjectEntry,
-  type SidebarStatusWorkspacePlacement,
-  useSidebarWorkspacesList,
-} from "@/hooks/use-sidebar-workspaces-list";
-import { useStatusModeWorkspacePlacements } from "@/hooks/use-status-mode-workspaces";
-import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { type SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
+import { useSidebarModel } from "@/components/sidebar/sidebar-model";
+import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
+import { type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -73,25 +69,20 @@ import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 
 const MIN_CHAT_WIDTH = 400;
 
-type SidebarShortcutModel = ReturnType<typeof useSidebarShortcutModel>;
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
-
-interface LeftSidebarProps {
-  selectedAgentId?: string;
-}
 
 interface SidebarSharedProps {
   theme: SidebarTheme;
-  statusWorkspacePlacements: SidebarStatusWorkspacePlacement[];
+  statusGroups: StatusGroup[];
   projects: SidebarProjectEntry[];
   projectNamesByKey: Map<string, string>;
   isInitialLoad: boolean;
   isRevalidating: boolean;
   isManualRefresh: boolean;
   groupMode: SidebarGroupMode;
-  collapsedProjectKeys: SidebarShortcutModel["collapsedProjectKeys"];
-  shortcutIndexByWorkspaceKey: SidebarShortcutModel["shortcutIndexByWorkspaceKey"];
-  toggleProjectCollapsed: SidebarShortcutModel["toggleProjectCollapsed"];
+  collapsedProjectKeys: ReadonlySet<string>;
+  shortcutIndexByWorkspaceKey: Map<string, number>;
+  toggleProjectCollapsed: (projectKey: string) => void;
   handleRefresh: () => void;
   handleOpenProject: () => void;
   handleHome: () => void;
@@ -129,11 +120,7 @@ interface DesktopSidebarProps extends SidebarSharedProps {
   handleViewSchedules: () => void;
 }
 
-export const LeftSidebar = memo(function LeftSidebar({
-  selectedAgentId: _selectedAgentId,
-}: LeftSidebarProps) {
-  void _selectedAgentId;
-
+export const LeftSidebar = memo(function LeftSidebar() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -144,22 +131,18 @@ export const LeftSidebar = memo(function LeftSidebar({
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
 
   const {
-    workspacePlacements,
     projects,
     projectNamesByKey,
     isInitialLoad,
     isRevalidating,
     refreshAll,
-  } = useSidebarWorkspacesList({
-    enabled: isCompactLayout || isOpen,
-  });
-  const statusWorkspacePlacements = useStatusModeWorkspacePlacements({
-    placements: workspacePlacements,
-  });
-  const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
-    useSidebarShortcutModel({ projects });
-
-  const groupMode = useSidebarViewStore((state) => state.groupMode);
+    statusGroups,
+    collapsedProjectKeys,
+    toggleProjectCollapsed,
+    groupMode,
+    shortcutModel,
+  } = useSidebarModel();
+  const { shortcutIndexByWorkspaceKey } = shortcutModel;
 
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
@@ -250,7 +233,7 @@ export const LeftSidebar = memo(function LeftSidebar({
 
   const sharedProps = {
     theme,
-    statusWorkspacePlacements,
+    statusGroups,
     projects,
     projectNamesByKey,
     isInitialLoad,
@@ -548,7 +531,7 @@ function SidebarFooter({
 
 function MobileSidebar({
   theme,
-  statusWorkspacePlacements,
+  statusGroups,
   projects,
   projectNamesByKey,
   isInitialLoad,
@@ -659,7 +642,7 @@ function MobileSidebar({
             onToggleProjectCollapsed={toggleProjectCollapsed}
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
             groupMode={groupMode}
-            statusWorkspacePlacements={statusWorkspacePlacements}
+            statusGroups={statusGroups}
             projects={projects}
             projectNamesByKey={projectNamesByKey}
             isRefreshing={isManualRefresh && isRevalidating}
@@ -686,7 +669,7 @@ function MobileSidebar({
 
 function DesktopSidebar({
   theme,
-  statusWorkspacePlacements,
+  statusGroups,
   projects,
   projectNamesByKey,
   isInitialLoad,
@@ -811,7 +794,7 @@ function DesktopSidebar({
             onToggleProjectCollapsed={toggleProjectCollapsed}
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
             groupMode={groupMode}
-            statusWorkspacePlacements={statusWorkspacePlacements}
+            statusGroups={statusGroups}
             projects={projects}
             projectNamesByKey={projectNamesByKey}
             isRefreshing={isManualRefresh && isRevalidating}

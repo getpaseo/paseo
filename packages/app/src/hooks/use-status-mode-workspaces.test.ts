@@ -4,20 +4,21 @@ import {
   selectStatusModeSessions,
   type StatusModeSession,
 } from "./use-status-mode-workspaces";
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 
 function workspaceMap(): Map<string, WorkspaceDescriptor> {
   return new Map();
 }
 
-function agentMap(): Map<string, Agent> {
+function activityMap(): Map<string, WorkspaceAgentActivity> {
   return new Map();
 }
 
 function statusSession(input?: Partial<Omit<StatusModeSession, "serverId">>) {
   return {
     workspaces: input?.workspaces ?? workspaceMap(),
-    agents: input?.agents ?? agentMap(),
+    workspaceAgentActivity: input?.workspaceAgentActivity ?? activityMap(),
   };
 }
 
@@ -37,34 +38,44 @@ describe("status mode session selection", () => {
         ["host-b", "missing", "host-a"],
       ),
     ).toEqual([
-      { serverId: "host-b", workspaces: hostB.workspaces, agents: hostB.agents },
-      { serverId: "host-a", workspaces: hostA.workspaces, agents: hostA.agents },
+      {
+        serverId: "host-b",
+        workspaces: hostB.workspaces,
+        workspaceAgentActivity: hostB.workspaceAgentActivity,
+      },
+      {
+        serverId: "host-a",
+        workspaces: hostA.workspaces,
+        workspaceAgentActivity: hostA.workspaceAgentActivity,
+      },
     ]);
   });
 
   it("keeps selector output equal when only wrapper objects change", () => {
     const workspaces = workspaceMap();
-    const agents = agentMap();
+    const workspaceAgentActivity = activityMap();
 
-    const previous = selectStatusModeSessions({ "host-a": statusSession({ workspaces, agents }) }, [
-      "host-a",
-    ]);
-    const next = selectStatusModeSessions({ "host-a": statusSession({ workspaces, agents }) }, [
-      "host-a",
-    ]);
+    const previous = selectStatusModeSessions(
+      { "host-a": statusSession({ workspaces, workspaceAgentActivity }) },
+      ["host-a"],
+    );
+    const next = selectStatusModeSessions(
+      { "host-a": statusSession({ workspaces, workspaceAgentActivity }) },
+      ["host-a"],
+    );
 
     expect(previous).not.toBe(next);
     expect(areStatusModeSessionsEqual(previous, next)).toBe(true);
   });
 
-  it("detects workspace or agent map changes for selected hosts", () => {
-    const agents = agentMap();
+  it("detects workspace or activity index changes for selected hosts", () => {
+    const workspaceAgentActivity = activityMap();
     const previous = selectStatusModeSessions(
-      { "host-a": statusSession({ agents, workspaces: workspaceMap() }) },
+      { "host-a": statusSession({ workspaceAgentActivity, workspaces: workspaceMap() }) },
       ["host-a"],
     );
     const next = selectStatusModeSessions(
-      { "host-a": statusSession({ agents, workspaces: workspaceMap() }) },
+      { "host-a": statusSession({ workspaceAgentActivity, workspaces: workspaceMap() }) },
       ["host-a"],
     );
 

@@ -68,7 +68,6 @@ import {
   shouldShowSidebarHostLabels,
   useSidebarWorkspaceEntry,
   type SidebarProjectEntry,
-  type SidebarStatusWorkspacePlacement,
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
@@ -93,6 +92,7 @@ import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
+import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -228,7 +228,7 @@ function selectionForSelectedWorkspace(
 }
 
 interface SidebarWorkspaceListProps {
-  statusWorkspacePlacements: SidebarStatusWorkspacePlacement[];
+  statusGroups: StatusGroup[];
   projects: SidebarProjectEntry[];
   projectNamesByKey: Map<string, string>;
   collapsedProjectKeys: ReadonlySet<string>;
@@ -2166,7 +2166,7 @@ function areProjectBlockSelectionsEqual(
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
 export function SidebarWorkspaceList({
-  statusWorkspacePlacements,
+  statusGroups,
   projects,
   projectNamesByKey,
   collapsedProjectKeys,
@@ -2196,7 +2196,7 @@ export function SidebarWorkspaceList({
   const content =
     groupMode === "status" ? (
       <SidebarStatusModeWrapper
-        statusWorkspacePlacements={statusWorkspacePlacements}
+        statusGroups={statusGroups}
         projectNamesByKey={projectNamesByKey}
         shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
         onWorkspacePress={onWorkspacePress}
@@ -2224,14 +2224,14 @@ export function SidebarWorkspaceList({
 }
 
 function SidebarStatusModeWrapper({
-  statusWorkspacePlacements,
+  statusGroups,
   projectNamesByKey,
   shortcutIndexByWorkspaceKey: _projectShortcutIndex,
   onWorkspacePress,
   hostLabelByServerId,
   showHostLabels,
 }: {
-  statusWorkspacePlacements: SidebarStatusWorkspacePlacement[];
+  statusGroups: StatusGroup[];
   projectNamesByKey: Map<string, string>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   onWorkspacePress?: () => void;
@@ -2242,7 +2242,7 @@ function SidebarStatusModeWrapper({
 
   return (
     <SidebarStatusWorkspaceList
-      workspaces={statusWorkspacePlacements}
+      groups={statusGroups}
       projectNamesByKey={projectNamesByKey}
       shortcutIndexByWorkspaceKey={_projectShortcutIndex}
       showShortcutBadges={showShortcutBadges}
@@ -2268,7 +2268,7 @@ function ProjectModeList({
   supportsMultiplicityByServerId,
 }: Omit<
   SidebarWorkspaceListProps,
-  "statusWorkspacePlacements" | "projectNamesByKey" | "groupMode" | "isRefreshing" | "onRefresh"
+  "statusGroups" | "projectNamesByKey" | "groupMode" | "isRefreshing" | "onRefresh"
 > & {
   pathname: string;
   hostLabelByServerId: ReadonlyMap<string, string>;

@@ -37,6 +37,10 @@ import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
 } from "@/runtime/activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  type WorkspaceAgentActivity,
+} from "@/utils/workspace-agent-activity";
 
 // Re-export types that were in session-context
 export type MessageEntry =
@@ -353,6 +357,7 @@ export interface SessionState {
 
   // Agents
   agents: Map<string, Agent>;
+  workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
   agentDetails: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   // Project parents with no active workspaces, keyed by projectId. The
@@ -560,6 +565,7 @@ function createInitialSessionState(serverId: string, client: DaemonClient): Sess
     agentAuthoritativeHistoryApplied: new Map(),
     initializingAgents: new Map(),
     agents: new Map(),
+    workspaceAgentActivity: new Map(),
     agentDetails: new Map(),
     workspaces: new Map(),
     emptyProjects: new Map(),
@@ -1194,7 +1200,11 @@ export const useSessionStore = create<SessionStore>()(
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, agents: nextAgents },
+              [serverId]: {
+                ...session,
+                agents: nextAgents,
+                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(nextAgents),
+              },
             },
           };
         });

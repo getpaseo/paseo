@@ -16,13 +16,13 @@ const EMPTY_PENDING_CREATE_ATTEMPTS: ReturnType<
 
 interface StatusModeSessionSource {
   workspaces: SessionState["workspaces"];
-  agents: SessionState["agents"];
+  workspaceAgentActivity: SessionState["workspaceAgentActivity"];
 }
 
 export interface StatusModeSession {
   serverId: string;
   workspaces: SessionState["workspaces"];
-  agents: SessionState["agents"];
+  workspaceAgentActivity: SessionState["workspaceAgentActivity"];
 }
 
 export function selectStatusModeSessions(
@@ -38,7 +38,7 @@ export function selectStatusModeSessions(
     statusSessions.push({
       serverId,
       workspaces: session.workspaces,
-      agents: session.agents,
+      workspaceAgentActivity: session.workspaceAgentActivity,
     });
   }
   return statusSessions;
@@ -59,7 +59,7 @@ export function areStatusModeSessionsEqual(
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
       leftSession.workspaces !== rightSession.workspaces ||
-      leftSession.agents !== rightSession.agents
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
     ) {
       return false;
     }
