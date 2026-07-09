@@ -28,6 +28,8 @@ import {
   Import as ImportIcon,
   PanelRight,
   Pencil,
+  Pin,
+  PinOff,
   RotateCw,
   Settings,
   SquarePen,
@@ -147,6 +149,10 @@ import {
   workspaceAgentVisibilityEqual,
 } from "@/workspace-tabs/agent-visibility";
 import {
+  isWorkspaceTabPinned,
+  toggleWorkspaceTabPinKey,
+} from "@/screens/workspace/workspace-tab-pins";
+import {
   deriveWorkspacePaneState,
   resolveSideFileOpenPlacement,
 } from "@/screens/workspace/workspace-pane-state";
@@ -206,6 +212,24 @@ function getWorkspaceScripts(
   return workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS;
 }
 
+// COMPAT(workspaceTabPins): added in v0.1.104, drop the gate when floor >= v0.1.104.
+// Undefined means the daemon doesn't support tab pins — pin UI stays hidden.
+function useWorkspacePinnedTabKeys(
+  serverId: string,
+  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
+): readonly string[] | undefined {
+  const tabPinsSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceTabPins === true,
+  );
+  const pinnedTabs = workspaceDescriptor?.pinnedTabs;
+  return useMemo(() => {
+    if (!tabPinsSupported) {
+      return undefined;
+    }
+    return pinnedTabs ?? [];
+  }, [tabPinsSupported, pinnedTabs]);
+}
+
 interface WorkspaceFileLocationFields {
   path: string | null;
   lineStart?: number;
@@ -241,6 +265,8 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
+const ThemedPin = withUnistyles(Pin);
+const ThemedPinOff = withUnistyles(PinOff);
 const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
@@ -397,6 +423,9 @@ interface MobileWorkspaceTabSwitcherProps {
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  // Undefined when the daemon doesn't support tab pins — the menu entry is omitted.
+  pinnedTabKeys?: readonly string[];
+  onTogglePinTab?: (tab: WorkspaceTabDescriptor) => void;
 }
 
 function MobileActiveTabTrigger({
@@ -542,6 +571,10 @@ function MobileTabDropdownMenuItem({
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+      case "pin":
+        return <ThemedPin size={16} uniProps={mutedColorMapping} />;
+      case "pin-off":
+        return <ThemedPinOff size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
       default:
@@ -585,6 +618,8 @@ function MobileWorkspaceTabOption({
   onCloseTabsAbove,
   onCloseTabsBelow,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
 }: {
   tab: WorkspaceTabDescriptor;
   tabIndex: number;
@@ -603,6 +638,8 @@ function MobileWorkspaceTabOption({
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  pinnedTabKeys: readonly string[] | undefined;
+  onTogglePinTab: ((tab: WorkspaceTabDescriptor) => void) | undefined;
 }) {
   const { t } = useTranslation();
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
@@ -618,6 +655,8 @@ function MobileWorkspaceTabOption({
       closeOthers: t("workspace.tabs.menu.closeOthers"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
+      pinTab: t("workspace.tabs.menu.pinTab"),
+      unpinTab: t("workspace.tabs.menu.unpinTab"),
       close: t("workspace.tabs.menu.close"),
     }),
     [t],
@@ -638,6 +677,13 @@ function MobileWorkspaceTabOption({
     onCloseTabsBefore: onCloseTabsAbove,
     onCloseTabsAfter: onCloseTabsBelow,
     onCloseOtherTabs,
+    pin:
+      pinnedTabKeys && onTogglePinTab
+        ? {
+            isPinned: isWorkspaceTabPinned(pinnedTabKeys, tab.target),
+            onToggle: () => onTogglePinTab(tab),
+          }
+        : undefined,
     labels: tabMenuLabels,
   });
 
@@ -705,6 +751,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCloseTabsAbove,
   onCloseTabsBelow,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
 }: MobileWorkspaceTabSwitcherProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -761,6 +809,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onCloseTabsAbove={onCloseTabsAbove}
           onCloseTabsBelow={onCloseTabsBelow}
           onCloseOtherTabs={onCloseOtherTabs}
+          pinnedTabKeys={pinnedTabKeys}
+          onTogglePinTab={onTogglePinTab}
         />
       );
     },
@@ -779,6 +829,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       onCloseTabsAbove,
       onCloseTabsBelow,
       onCloseOtherTabs,
+      pinnedTabKeys,
+      onTogglePinTab,
     ],
   );
 
@@ -1937,13 +1989,16 @@ function WorkspaceScreenContent({
     [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
   );
 
+  const pinnedTabKeys = useWorkspacePinnedTabKeys(normalizedServerId, workspaceDescriptor);
+
   const focusedPaneTabState = useMemo(
     () =>
       deriveWorkspacePaneState({
         layout: workspaceLayout,
         tabs: uiTabs,
+        pinnedTabKeys,
       }),
-    [uiTabs, workspaceLayout],
+    [pinnedTabKeys, uiTabs, workspaceLayout],
   );
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
@@ -2687,6 +2742,25 @@ function WorkspaceScreenContent({
       }
     },
     [client, isConnected, normalizedServerId, toast, t],
+  );
+
+  const handleTogglePinTab = useCallback(
+    (tab: WorkspaceTabDescriptor) => {
+      if (!pinnedTabKeys || !normalizedWorkspaceId) {
+        return;
+      }
+      if (!client || !isConnected) {
+        toast.error(t("workspace.terminal.hostDisconnected"));
+        return;
+      }
+      const nextPinnedTabs = toggleWorkspaceTabPinKey(pinnedTabKeys, tab.target);
+      void client.setWorkspaceTabPins(normalizedWorkspaceId, nextPinnedTabs).catch((error) => {
+        toast.error(
+          error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToPinTab"),
+        );
+      });
+    },
+    [client, isConnected, normalizedWorkspaceId, pinnedTabKeys, toast, t],
   );
 
   const handleCopyWorkspacePath = useCallback(async () => {
@@ -3454,6 +3528,8 @@ function WorkspaceScreenContent({
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
         onCloseOtherTabs={handleCloseOtherTabsInPane}
+        pinnedTabKeys={pinnedTabKeys}
+        onTogglePinTab={handleTogglePinTab}
         onCreateDraftTab={handleCreateDraftTab}
         onCreateTerminalTab={handleCreateTerminal}
         onCreateBrowserTab={handleCreateBrowserTab}
@@ -3489,6 +3565,8 @@ function WorkspaceScreenContent({
     handleCloseTabsToLeftInPane,
     handleCloseTabsToRightInPane,
     handleCloseOtherTabsInPane,
+    pinnedTabKeys,
+    handleTogglePinTab,
     handleCreateDraftTab,
     handleCreateTerminal,
     handleCreateBrowserTab,
@@ -3571,6 +3649,8 @@ function WorkspaceScreenContent({
           onCloseTabsAbove={handleCloseTabsToLeft}
           onCloseTabsBelow={handleCloseTabsToRight}
           onCloseOtherTabs={handleCloseOtherTabs}
+          pinnedTabKeys={pinnedTabKeys}
+          onTogglePinTab={handleTogglePinTab}
         />
       ) : null}
 
@@ -3592,6 +3672,8 @@ function WorkspaceScreenContent({
           onCloseTabsToLeft={handleCloseTabsToLeft}
           onCloseTabsToRight={handleCloseTabsToRight}
           onCloseOtherTabs={handleCloseOtherTabs}
+          pinnedTabKeys={pinnedTabKeys}
+          onTogglePinTab={handleTogglePinTab}
           onCreateDraftTab={handleCreateDraftTab}
           onCreateTerminalTab={handleCreateTerminal}
           onCreateBrowserTab={handleCreateBrowserTab}

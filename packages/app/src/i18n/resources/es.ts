@@ -484,6 +484,8 @@ export const es: TranslationResources = {
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",
+        pinTab: "Anclar pestaña",
+        unpinTab: "Desanclar pestaña",
         close: "Cerca",
         renameTerminal: "Cambiar nombre de terminal",
         renameAgent: "Cambiar nombre del agente",
@@ -518,6 +520,7 @@ export const es: TranslationResources = {
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
         failedToReloadAgent: "No se pudo recargar el agente",
+        failedToPinTab: "No se pudieron actualizar las pestañas ancladas",
       },
       confirmations: {
         close: "Cerca",

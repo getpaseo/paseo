@@ -284,6 +284,17 @@ function buildWorkspaceCheckout(
   };
 }
 
+function dedupeNonEmptyStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      seen.add(trimmed);
+    }
+  }
+  return Array.from(seen);
+}
+
 function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boolean {
   if (!appVersion) return false;
   // Strip prerelease suffix: "0.1.45-beta.4" -> "0.1.45"
@@ -1624,6 +1635,12 @@ export class Session {
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+      case "workspace.tabs.pins.set.request":
+        return this.handleWorkspaceTabPinsSetRequest(
+          msg.workspaceId,
+          msg.pinnedTabs,
+          msg.requestId,
+        );
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg);
       case "project_icon_request":
@@ -2304,6 +2321,72 @@ export class Session {
           accepted: false,
           title: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceTabPinsSetRequest(
+    workspaceId: string,
+    pinnedTabs: string[],
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { workspaceId, requestId, pinCount: pinnedTabs.length },
+      "session: workspace.tabs.pins.set.request",
+    );
+
+    try {
+      const existing = await this.workspaceRegistry.get(workspaceId);
+      if (!existing) {
+        this.emit({
+          type: "workspace.tabs.pins.set.response",
+          payload: {
+            requestId,
+            workspaceId,
+            accepted: false,
+            pinnedTabs: [],
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+
+      const nextPinnedTabs = dedupeNonEmptyStrings(pinnedTabs);
+
+      await this.workspaceRegistry.upsert({
+        ...existing,
+        pinnedTabs: nextPinnedTabs,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "workspace.tabs.pins.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          pinnedTabs: nextPinnedTabs,
+          error: null,
+        },
+      });
+
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
+        skipReconcile: true,
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.tabs.pins.set.request error",
+      );
+      this.emit({
+        type: "workspace.tabs.pins.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: false,
+          pinnedTabs: [],
+          error: getErrorMessageOr(error, "Failed to set workspace tab pins"),
         },
       });
     }
@@ -3523,6 +3606,7 @@ export class Session {
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
+      pinnedTabs: workspace.pinnedTabs,
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -3607,6 +3691,7 @@ export class Session {
         derivedDisplayName: result.worktree.branchName || result.workspace.displayName,
       }),
       title: result.workspace.title,
+      pinnedTabs: result.workspace.pinnedTabs,
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,

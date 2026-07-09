@@ -98,6 +98,9 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
+  // Undefined when the daemon doesn't support tab pins — the menu entry is omitted.
+  pinnedTabKeys?: readonly string[];
+  onTogglePinTab?: (tab: WorkspaceTabDescriptor) => void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
@@ -286,13 +289,14 @@ function computeTabOverDropPreview(input: {
   rects: DragMoveRects;
   panesById: Map<string, SplitPane>;
   uiTabs: WorkspaceTab[];
+  pinnedTabKeys: readonly string[] | undefined;
 }): TabDropPreview | null {
-  const { activeData, overData, rects, panesById, uiTabs } = input;
+  const { activeData, overData, rects, panesById, uiTabs, pinnedTabKeys } = input;
   const targetPane = panesById.get(overData.paneId) ?? null;
   if (!targetPane) {
     return null;
   }
-  const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
+  const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs, pinnedTabKeys });
   return computeTabDropPreview({
     activePaneId: activeData.paneId,
     activeTabId: activeData.tabId,
@@ -379,6 +383,8 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -464,6 +470,7 @@ export function SplitContainer({
           rects,
           panesById,
           uiTabs,
+          pinnedTabKeys,
         });
         setDropPreview(null);
         setTabDropPreview(preview);
@@ -478,7 +485,7 @@ export function SplitContainer({
 
       setDropPreview(computePaneOverDropPreview({ overData, rects }));
     },
-    [panesById, uiTabs],
+    [panesById, pinnedTabKeys, uiTabs],
   );
 
   const applyTabDropEnd = useCallback(
@@ -490,8 +497,16 @@ export function SplitContainer({
         return;
       }
 
-      const sourceTabs = getWorkspacePaneDescriptors({ pane: sourcePane, tabs: uiTabs });
-      const targetTabs = getWorkspacePaneDescriptors({ pane: targetPane, tabs: uiTabs });
+      const sourceTabs = getWorkspacePaneDescriptors({
+        pane: sourcePane,
+        tabs: uiTabs,
+        pinnedTabKeys,
+      });
+      const targetTabs = getWorkspacePaneDescriptors({
+        pane: targetPane,
+        tabs: uiTabs,
+        pinnedTabKeys,
+      });
       const sourceIndex = sourceTabs.findIndex((tab) => tab.tabId === activeData.tabId);
       const resolvedTabDropPreview =
         tabDropPreview?.paneId === overData.paneId ? tabDropPreview : null;
@@ -519,7 +534,7 @@ export function SplitContainer({
       onMoveTabToPane(activeData.tabId, overData.paneId);
       onReorderTabsInPane(overData.paneId, nextTargetTabIds);
     },
-    [onMoveTabToPane, onReorderTabsInPane, panesById, tabDropPreview, uiTabs],
+    [onMoveTabToPane, onReorderTabsInPane, panesById, pinnedTabKeys, tabDropPreview, uiTabs],
   );
 
   const applyPaneDropEnd = useCallback(
@@ -596,6 +611,8 @@ export function SplitContainer({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
+          pinnedTabKeys={pinnedTabKeys}
+          onTogglePinTab={onTogglePinTab}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
           onCreateBrowserTab={onCreateBrowserTab}
@@ -739,6 +756,8 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -792,6 +811,8 @@ function SplitNodeView({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
+        pinnedTabKeys={pinnedTabKeys}
+        onTogglePinTab={onTogglePinTab}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
         onCreateBrowserTab={onCreateBrowserTab}
@@ -838,6 +859,8 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
+              pinnedTabKeys={pinnedTabKeys}
+              onTogglePinTab={onTogglePinTab}
               onCreateDraftTab={onCreateDraftTab}
               onCreateTerminalTab={onCreateTerminalTab}
               onCreateBrowserTab={onCreateBrowserTab}
@@ -890,6 +913,8 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -914,8 +939,9 @@ function SplitPaneView({
       deriveWorkspacePaneState({
         pane,
         tabs: uiTabs,
+        pinnedTabKeys,
       }),
-    [pane, uiTabs],
+    [pane, pinnedTabKeys, uiTabs],
   );
   const paneTabs = useMemo(() => paneState.tabs.map((tab) => tab.descriptor), [paneState.tabs]);
   const paneTabIds = useMemo(() => paneTabs.map((tab) => tab.tabId), [paneTabs]);
@@ -1032,6 +1058,8 @@ function SplitPaneView({
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
+            pinnedTabKeys={pinnedTabKeys}
+            onTogglePinTab={onTogglePinTab}
             onCreateDraftTab={onCreateDraftTab}
             onCreateTerminalTab={onCreateTerminalTab}
             onCreateBrowserTab={onCreateBrowserTab}

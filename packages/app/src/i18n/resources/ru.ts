@@ -483,6 +483,8 @@ export const ru: TranslationResources = {
         closeOthers: "Закрыть другие вкладки",
         reloadAgent: "Перезагрузить агент",
         reloadAgentTooltip: "Перезагрузите агента, чтобы обновить навыки, MCP или статус входа.",
+        pinTab: "Закрепить вкладку",
+        unpinTab: "Открепить вкладку",
         close: "Закрывать",
         renameTerminal: "Переименование терминала",
         renameAgent: "Переименовать агента",
@@ -517,6 +519,7 @@ export const ru: TranslationResources = {
         reloadingAgent: "Перезагрузка агента...",
         reloadedAgent: "Перезагруженный агент",
         failedToReloadAgent: "Не удалось перезагрузить агент",
+        failedToPinTab: "Не удалось обновить закреплённые вкладки",
       },
       confirmations: {
         close: "Закрывать",

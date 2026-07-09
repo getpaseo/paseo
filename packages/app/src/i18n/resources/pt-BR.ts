@@ -483,6 +483,8 @@ export const ptBR: TranslationResources = {
         closeOthers: "Fechar outras abas",
         reloadAgent: "Recarregar agente",
         reloadAgentTooltip: "Recarregue o agente para atualizar skills, MCPs ou status de login.",
+        pinTab: "Fixar guia",
+        unpinTab: "Desafixar guia",
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",
@@ -517,6 +519,7 @@ export const ptBR: TranslationResources = {
         reloadingAgent: "Recarregando agente...",
         reloadedAgent: "Agente recarregado",
         failedToReloadAgent: "Falha ao recarregar agente",
+        failedToPinTab: "Falha ao atualizar guias fixadas",
       },
       confirmations: {
         close: "Fechar",

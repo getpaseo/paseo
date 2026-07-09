@@ -11,6 +11,7 @@ import {
   workspaceTabTargetsEqual,
 } from "@/workspace-tabs/identity";
 import { findAdjacentPane } from "@/utils/split-navigation";
+import { sortWorkspaceTabsPinnedFirst } from "@/screens/workspace/workspace-tab-pins";
 
 export interface WorkspaceDerivedTab {
   descriptor: WorkspaceTabDescriptor;
@@ -164,6 +165,7 @@ export function deriveWorkspacePaneState(input: {
   tabs: WorkspaceTab[];
   focusedTabId?: string | null;
   preferredTarget?: WorkspaceTabTarget | null;
+  pinnedTabKeys?: readonly string[];
 }): WorkspacePaneState {
   const pane = getPane({
     layout: input.layout ?? null,
@@ -175,9 +177,14 @@ export function deriveWorkspacePaneState(input: {
     tabs: input.tabs,
   });
   const normalizedTabs = normalizeWorkspacePaneTabs(orderedTabs);
+  const sortedTabs = sortWorkspaceTabsPinnedFirst(
+    normalizedTabs.tabs,
+    input.pinnedTabKeys ?? [],
+    (tab) => tab.descriptor.target,
+  );
   const focusedTabId = pane?.focusedTabId ?? trimNonEmpty(input.focusedTabId) ?? null;
   const activeTabId = getActiveTabId({
-    tabs: normalizedTabs.tabs,
+    tabs: sortedTabs,
     openTabIds: normalizedTabs.openTabIds,
     focusedTabId,
     preferredTarget: input.preferredTarget,
@@ -185,11 +192,11 @@ export function deriveWorkspacePaneState(input: {
 
   return {
     pane,
-    tabs: normalizedTabs.tabs,
+    tabs: sortedTabs,
     focusedTabId,
     activeTabId,
     activeTab: activeTabId
-      ? (normalizedTabs.tabs.find((tab) => tab.descriptor.tabId === activeTabId) ?? null)
+      ? (sortedTabs.find((tab) => tab.descriptor.tabId === activeTabId) ?? null)
       : null,
   };
 }
@@ -199,6 +206,7 @@ export function getWorkspacePaneDescriptors(input: {
   pane?: SplitPane | null;
   paneId?: string | null;
   tabs: WorkspaceTab[];
+  pinnedTabKeys?: readonly string[];
 }): WorkspaceTabDescriptor[] {
   return deriveWorkspacePaneState(input).tabs.map((tab) => tab.descriptor);
 }

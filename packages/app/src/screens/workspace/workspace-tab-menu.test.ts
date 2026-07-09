@@ -253,6 +253,94 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onCopyFilePath).toHaveBeenCalledWith("/some/path.ts");
   });
 
+  it("omits the pin entry when no pin input is provided", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    expect(entries.some((entry) => entry.kind === "item" && entry.key === "toggle-pin")).toBe(
+      false,
+    );
+  });
+
+  it("shows Pin tab for unpinned tabs and invokes the toggle", () => {
+    const onToggle = vi.fn();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 2,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      pin: { isPinned: false, onToggle },
+    });
+
+    const pinEntry = entries.find((entry) => entry.kind === "item" && entry.key === "toggle-pin");
+    if (!pinEntry || pinEntry.kind !== "item") {
+      throw new Error("Pin entry missing");
+    }
+    expect(pinEntry.label).toBe("Pin tab");
+    expect(pinEntry.icon).toBe("pin");
+    expect(pinEntry.testID).toBe("workspace-tab-context-agent_123-toggle-pin");
+    pinEntry.onSelect();
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    const pinIndex = entries.indexOf(pinEntry);
+    expect(entries[pinIndex + 1]).toEqual({ kind: "separator", key: "pin-separator" });
+    const closeBeforeIndex = entries.findIndex(
+      (entry) => entry.kind === "item" && entry.key === "close-before",
+    );
+    expect(pinIndex).toBeLessThan(closeBeforeIndex);
+  });
+
+  it("shows Unpin tab for pinned tabs", () => {
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "mobile",
+      tab: createAgentTab(),
+      index: 0,
+      tabCount: 2,
+      menuTestIDBase: "workspace-tab-menu-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      pin: { isPinned: true, onToggle: vi.fn() },
+    });
+
+    const pinEntry = entries.find((entry) => entry.kind === "item" && entry.key === "toggle-pin");
+    if (!pinEntry || pinEntry.kind !== "item") {
+      throw new Error("Pin entry missing");
+    }
+    expect(pinEntry.label).toBe("Unpin tab");
+    expect(pinEntry.icon).toBe("pin-off");
+  });
+
   it("uses the same rename entry shape for agent and terminal tabs", () => {
     const terminalTab: WorkspaceTabDescriptor = {
       key: "terminal_abc",

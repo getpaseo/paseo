@@ -24,6 +24,8 @@ import {
   Columns2,
   Copy,
   Pencil,
+  Pin,
+  PinOff,
   RotateCw,
   Rows2,
   Globe,
@@ -68,6 +70,7 @@ import {
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
+import { isWorkspaceTabPinned } from "@/screens/workspace/workspace-tab-pins";
 import {
   buildWorkspaceDesktopTabActions,
   type WorkspaceDesktopTabActions,
@@ -102,6 +105,8 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
+const ThemedPin = withUnistyles(Pin);
+const ThemedPinOff = withUnistyles(PinOff);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -338,6 +343,10 @@ function TabContextMenuItem({
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+      case "pin":
+        return <ThemedPin size={16} uniProps={mutedColorMapping} />;
+      case "pin-off":
+        return <ThemedPinOff size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
       default:
@@ -425,6 +434,9 @@ interface WorkspaceDesktopTabsRowProps {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  // Undefined when the daemon doesn't support tab pins — the menu entry is omitted.
+  pinnedTabKeys?: readonly string[];
+  onTogglePinTab?: (tab: WorkspaceTabDescriptor) => void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string; profile?: TerminalProfileInput }) => void;
   onCreateBrowserTab: (input: { paneId?: string }) => void;
@@ -745,6 +757,8 @@ export function WorkspaceDesktopTabsRow({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
   onCreateDraftTab,
   onCreateTerminalTab,
   onCreateBrowserTab,
@@ -820,6 +834,8 @@ export function WorkspaceDesktopTabsRow({
       closeOthers: t("workspace.tabs.menu.closeOthers"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
+      pinTab: t("workspace.tabs.menu.pinTab"),
+      unpinTab: t("workspace.tabs.menu.unpinTab"),
       close: t("workspace.tabs.menu.close"),
     }),
     [t],
@@ -915,6 +931,8 @@ export function WorkspaceDesktopTabsRow({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
+          pinnedTabKeys={pinnedTabKeys}
+          onTogglePinTab={onTogglePinTab}
           resolvedTabWidth={resolvedTabWidth}
           showLabel={showLabel}
           showCloseButton={shouldShowCloseButton}
@@ -945,6 +963,8 @@ export function WorkspaceDesktopTabsRow({
       onNavigateTab,
       onReloadAgent,
       onRenameTab,
+      onTogglePinTab,
+      pinnedTabKeys,
       setHoveredCloseTabKey,
       tabMenuLabels,
       tabDropPreviewIndex,
@@ -1042,6 +1062,8 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
+  pinnedTabKeys,
+  onTogglePinTab,
   resolvedTabWidth,
   showLabel,
   showCloseButton,
@@ -1068,6 +1090,8 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  pinnedTabKeys: readonly string[] | undefined;
+  onTogglePinTab: ((tab: WorkspaceTabDescriptor) => void) | undefined;
   resolvedTabWidth: number;
   showLabel: boolean;
   showCloseButton: boolean;
@@ -1095,6 +1119,13 @@ function ResolvedDesktopTabChip({
         onCloseTabsToLeft,
         onCloseTabsToRight,
         onCloseOtherTabs,
+        pin:
+          pinnedTabKeys && onTogglePinTab
+            ? {
+                isPinned: isWorkspaceTabPinned(pinnedTabKeys, item.tab.target),
+                onToggle: () => onTogglePinTab(item.tab),
+              }
+            : undefined,
         labels,
       }),
     [
@@ -1110,6 +1141,8 @@ function ResolvedDesktopTabChip({
       labels,
       onReloadAgent,
       onRenameTab,
+      onTogglePinTab,
+      pinnedTabKeys,
       tabCount,
     ],
   );

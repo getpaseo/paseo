@@ -6678,6 +6678,147 @@ test("workspace.title.set.request returns accepted=false when workspace is not f
   expect(response?.payload.error).toBeTruthy();
 });
 
+test("workspace.tabs.pins.set.request stores deduped pins and emits an updated descriptor", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const projects = new Map([[project.projectId, project]]);
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.list = async () => Array.from(projects.values());
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    workspaces.set(parsed.workspaceId, parsed);
+  };
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  await session.handleMessage({
+    type: "workspace.tabs.pins.set.request",
+    workspaceId: workspace.workspaceId,
+    pinnedTabs: ["agent_a1", " file_/repo/README.md ", "agent_a1", ""],
+    requestId: "req-pins-1",
+  });
+
+  const response = findByType(emitted, "workspace.tabs.pins.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-pins-1",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    pinnedTabs: ["agent_a1", "file_/repo/README.md"],
+    error: null,
+  });
+
+  expect(workspaces.get(workspace.workspaceId)?.pinnedTabs).toEqual([
+    "agent_a1",
+    "file_/repo/README.md",
+  ]);
+
+  const update = findByType(emitted, "workspace_update");
+  expect(update?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: "ws-1",
+      pinnedTabs: ["agent_a1", "file_/repo/README.md"],
+    },
+  });
+});
+
+test("workspace.tabs.pins.set.request with an empty list clears the pins", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  workspace.pinnedTabs.push("agent_a1");
+
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceRegistry.get = async (id: string) => workspaces.get(id) ?? null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const parsed = record as typeof workspace;
+    workspaces.set(parsed.workspaceId, parsed);
+  };
+
+  await session.handleMessage({
+    type: "workspace.tabs.pins.set.request",
+    workspaceId: workspace.workspaceId,
+    pinnedTabs: [],
+    requestId: "req-pins-clear",
+  });
+
+  const response = findByType(emitted, "workspace.tabs.pins.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-pins-clear",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    pinnedTabs: [],
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.pinnedTabs).toEqual([]);
+});
+
+test("workspace.tabs.pins.set.request returns accepted=false when workspace is not found", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.workspaceRegistry.get = async () => null;
+
+  await session.handleMessage({
+    type: "workspace.tabs.pins.set.request",
+    workspaceId: "does-not-exist",
+    pinnedTabs: ["agent_a1"],
+    requestId: "req-pins-missing",
+  });
+
+  const response = findByType(emitted, "workspace.tabs.pins.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-pins-missing",
+    workspaceId: "does-not-exist",
+    accepted: false,
+    pinnedTabs: [],
+  });
+  expect(response?.payload.error).toBeTruthy();
+});
+
 function createSessionWithTerminalManager(options: {
   workspaces: PersistedWorkspaceRecord[];
   projects: PersistedProjectRecord[];

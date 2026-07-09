@@ -2295,6 +2295,26 @@ export class DaemonClient {
     return { title: payload.title };
   }
 
+  async setWorkspaceTabPins(
+    workspaceId: string,
+    pinnedTabs: string[],
+    requestId?: string,
+  ): Promise<{ pinnedTabs: string[] }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.tabs.pins.set.request",
+        workspaceId,
+        pinnedTabs,
+      },
+      responseType: "workspace.tabs.pins.set.response",
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspaceTabPins rejected");
+    }
+    return { pinnedTabs: payload.pinnedTabs };
+  }
+
   async resumeAgent(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,

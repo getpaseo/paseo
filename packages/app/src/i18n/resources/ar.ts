@@ -479,6 +479,8 @@ export const ar: TranslationResources = {
         closeOthers: "أغلق علامات التبويب الأخرى",
         reloadAgent: "إعادة تحميل الوكيل",
         reloadAgentTooltip: "قم بإعادة تحميل الوكيل لتحديث المهارات أو MCPs أو حالة تسجيل الدخول.",
+        pinTab: "تثبيت علامة التبويب",
+        unpinTab: "إلغاء تثبيت علامة التبويب",
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",
@@ -513,6 +515,7 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
+        failedToPinTab: "فشل في تحديث علامات التبويب المثبتة",
       },
       confirmations: {
         close: "يغلق",

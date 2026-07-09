@@ -62,6 +62,37 @@ describe("workspace-pane-state", () => {
     expect(state.activeTabId).toBe("agent_agent-a");
   });
 
+  it("orders pinned tabs first while keeping unpinned pane order", () => {
+    const pane = {
+      id: "main",
+      tabIds: ["agent_agent-a", "file_/repo/README.md", "terminal_term-1"],
+      focusedTabId: "agent_agent-a",
+    };
+    const tabs: WorkspaceTab[] = [
+      createTab("agent_agent-a", { kind: "agent", agentId: "agent-a" }),
+      createTab("file_/repo/README.md", { kind: "file", path: "/repo/README.md" }),
+      createTab("terminal_term-1", { kind: "terminal", terminalId: "term-1" }),
+    ];
+
+    const state = deriveWorkspacePaneState({
+      pane,
+      tabs,
+      pinnedTabKeys: ["terminal_term-1"],
+    });
+
+    expect(state.tabs.map((tab) => tab.descriptor.tabId)).toEqual([
+      "terminal_term-1",
+      "agent_agent-a",
+      "file_/repo/README.md",
+    ]);
+    expect(state.activeTabId).toBe("agent_agent-a");
+    expect(
+      getWorkspacePaneDescriptors({ pane, tabs, pinnedTabKeys: ["terminal_term-1"] }).map(
+        (tab) => tab.tabId,
+      ),
+    ).toEqual(["terminal_term-1", "agent_agent-a", "file_/repo/README.md"]);
+  });
+
   it("falls back to the first ordered pane tab when focusedTabId is empty", () => {
     const pane = {
       id: "main",

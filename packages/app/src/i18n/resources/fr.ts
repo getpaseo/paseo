@@ -484,6 +484,8 @@ export const fr: TranslationResources = {
         reloadAgent: "Agent de rechargement",
         reloadAgentTooltip:
           "Rechargez l'agent pour mettre à jour les compétences, les MCP ou le statut de connexion.",
+        pinTab: "Épingler l'onglet",
+        unpinTab: "Désépingler l'onglet",
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l'agent",
@@ -518,6 +520,7 @@ export const fr: TranslationResources = {
         reloadingAgent: "Agent de rechargement...",
         reloadedAgent: "Agent rechargé",
         failedToReloadAgent: "Échec du rechargement de l'agent",
+        failedToPinTab: "Échec de la mise à jour des onglets épinglés",
       },
       confirmations: {
         close: "Fermer",

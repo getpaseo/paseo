@@ -479,6 +479,8 @@ export const zhCN: TranslationResources = {
         closeOthers: "关闭其他标签",
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
+        pinTab: "固定标签页",
+        unpinTab: "取消固定标签页",
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",
@@ -513,6 +515,7 @@ export const zhCN: TranslationResources = {
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",
+        failedToPinTab: "更新固定标签页失败",
       },
       confirmations: {
         close: "关闭",

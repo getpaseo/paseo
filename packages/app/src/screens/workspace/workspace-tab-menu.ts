@@ -10,6 +10,8 @@ export interface WorkspaceTabMenuLabels {
   copyAgentId: string;
   copyFilePath: string;
   rename: string;
+  pinTab: string;
+  unpinTab: string;
   closeAbove: string;
   closeBelow: string;
   closeLeft: string;
@@ -25,6 +27,8 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
   rename: i18n.t("workspace.tabs.menu.rename"),
+  pinTab: i18n.t("workspace.tabs.menu.pinTab"),
+  unpinTab: i18n.t("workspace.tabs.menu.unpinTab"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
   closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
   closeLeft: i18n.t("workspace.tabs.menu.closeLeft"),
@@ -47,6 +51,8 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "pin"
+        | "pin-off"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -75,7 +81,14 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  // Absent when the daemon doesn't support tab pins — the entry is omitted.
+  pin?: WorkspaceTabPinMenuInput;
   labels?: WorkspaceTabMenuLabels;
+}
+
+export interface WorkspaceTabPinMenuInput {
+  isPinned: boolean;
+  onToggle: () => void;
 }
 
 interface BuildWorkspaceDesktopTabActionsInput {
@@ -91,6 +104,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  pin?: WorkspaceTabPinMenuInput;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -159,6 +173,7 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsBefore,
     onCloseTabsAfter,
     onCloseOtherTabs,
+    pin,
   } = input;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
@@ -219,6 +234,21 @@ export function buildWorkspaceTabMenuEntries(
     entries.push({
       kind: "separator",
       key: "rename-separator",
+    });
+  }
+
+  if (pin) {
+    entries.push({
+      kind: "item",
+      key: "toggle-pin",
+      label: pin.isPinned ? labels.unpinTab : labels.pinTab,
+      icon: pin.isPinned ? "pin-off" : "pin",
+      testID: `${menuTestIDBase}-toggle-pin`,
+      onSelect: pin.onToggle,
+    });
+    entries.push({
+      kind: "separator",
+      key: "pin-separator",
     });
   }
 
@@ -304,6 +334,7 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
+      pin: input.pin,
       labels: input.labels,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),

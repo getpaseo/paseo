@@ -479,6 +479,8 @@ export const en = {
         closeOthers: "Close other tabs",
         reloadAgent: "Reload agent",
         reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
+        pinTab: "Pin tab",
+        unpinTab: "Unpin tab",
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",
@@ -513,6 +515,7 @@ export const en = {
         reloadingAgent: "Reloading agent...",
         reloadedAgent: "Reloaded agent",
         failedToReloadAgent: "Failed to reload agent",
+        failedToPinTab: "Failed to update pinned tabs",
       },
       confirmations: {
         close: "Close",

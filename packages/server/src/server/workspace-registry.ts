@@ -53,6 +53,13 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Deterministic tab ids the user pinned in this workspace, in pin order.
+  // Pinned tabs render first in the tab strip on every device. Keys for tabs
+  // that no longer exist are harmless — clients ignore unknown keys.
+  pinnedTabs: z
+    .array(z.string())
+    .optional()
+    .transform((value) => value ?? []),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
