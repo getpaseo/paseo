@@ -1,4 +1,4 @@
-import { open, readFile, unlink, mkdir } from "node:fs/promises";
+import { open, readFile, stat, unlink, mkdir, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
@@ -34,6 +34,10 @@ export class PidLockError extends Error {
   }
 }
 
+// Stale recovery is for abandoned locks, so keep this well above ordinary event-loop stalls.
+const PID_LOCK_STALE_MS = 5 * 60_000;
+const PID_LOCK_HEARTBEAT_INTERVAL_MS = 30_000;
+
 function isPidRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -45,6 +49,29 @@ function isPidRunning(pid: number): boolean {
 
 function getPidFilePath(paseoHome: string): string {
   return join(paseoHome, "paseo.pid");
+}
+
+async function isPidLockFresh(pidPath: string): Promise<boolean> {
+  try {
+    const lockStat = await stat(pidPath);
+    return lockStat.mtimeMs >= Date.now() - PID_LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+async function touchPidLockFile(pidPath: string): Promise<void> {
+  const now = new Date();
+  await utimes(pidPath, now, now);
+}
+
+async function readPidLock(pidPath: string): Promise<PidLockInfo | null> {
+  try {
+    const content = await readFile(pidPath, "utf-8");
+    return parsePidLockInfo(JSON.parse(content));
+  } catch {
+    return null;
+  }
 }
 
 function resolveOwnerPid(ownerPid?: number): number {
@@ -67,22 +94,17 @@ export async function acquirePidLock(
   }
 
   // Try to read existing lock
-  let existingLock: PidLockInfo | null = null;
-  try {
-    const content = await readFile(pidPath, "utf-8");
-    existingLock = parsePidLockInfo(JSON.parse(content));
-  } catch {
-    // No existing lock or invalid JSON - that's fine
-  }
+  const existingLock = await readPidLock(pidPath);
 
   // Check if existing lock is stale
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   if (existingLock) {
-    if (isPidRunning(existingLock.pid)) {
-      if (existingLock.pid === lockOwnerPid) {
-        return;
-      }
-
+    const lockOwnerRunning = isPidRunning(existingLock.pid);
+    if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
+      await touchPidLockFile(pidPath);
+      return;
+    }
+    if (lockOwnerRunning && (await isPidLockFresh(pidPath))) {
       throw new PidLockError(
         `Another Paseo daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
         existingLock,
@@ -129,6 +151,45 @@ export async function acquirePidLock(
   } finally {
     await fd?.close();
   }
+}
+
+export async function refreshPidLock(
+  paseoHome: string,
+  options?: { ownerPid?: number },
+): Promise<void> {
+  const pidPath = getPidFilePath(paseoHome);
+  const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
+  const lock = await readPidLock(pidPath);
+  if (!lock) {
+    throw new PidLockError("Cannot refresh PID lock: invalid lock file");
+  }
+  if (lock.pid !== lockOwnerPid) {
+    throw new PidLockError(`Cannot refresh PID lock owned by PID ${lock.pid}`, lock);
+  }
+  await touchPidLockFile(pidPath);
+}
+
+export function startPidLockHeartbeat(
+  paseoHome: string,
+  options?: { ownerPid?: number; intervalMs?: number },
+): () => void {
+  const intervalMs = options?.intervalMs ?? PID_LOCK_HEARTBEAT_INTERVAL_MS;
+  let refreshing = false;
+
+  const timer = setInterval(() => {
+    if (refreshing) {
+      return;
+    }
+    refreshing = true;
+    refreshPidLock(paseoHome, options)
+      .catch(() => undefined)
+      .finally(() => {
+        refreshing = false;
+      });
+  }, intervalMs);
+  timer.unref();
+
+  return () => clearInterval(timer);
 }
 
 export async function updatePidLock(
@@ -182,12 +243,7 @@ export async function releasePidLock(
 
 export async function getPidLockInfo(paseoHome: string): Promise<PidLockInfo | null> {
   const pidPath = getPidFilePath(paseoHome);
-  try {
-    const content = await readFile(pidPath, "utf-8");
-    return parsePidLockInfo(JSON.parse(content));
-  } catch {
-    return null;
-  }
+  return readPidLock(pidPath);
 }
 
 export async function isLocked(
@@ -197,7 +253,8 @@ export async function isLocked(
   if (!info) {
     return { locked: false };
   }
-  if (!isPidRunning(info.pid)) {
+  const pidPath = getPidFilePath(paseoHome);
+  if (!isPidRunning(info.pid) || !(await isPidLockFresh(pidPath))) {
     return { locked: false, info };
   }
   return { locked: true, info };

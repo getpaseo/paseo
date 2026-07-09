@@ -5,6 +5,7 @@ import {
   acquirePidLock,
   PidLockError,
   releasePidLock,
+  startPidLockHeartbeat,
   updatePidLock,
 } from "../src/server/pid-lock.js";
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
@@ -120,11 +121,15 @@ async function main(): Promise<void> {
   }
 
   let lockReleased = false;
+  const stopLockHeartbeat = startPidLockHeartbeat(paseoHome, {
+    ownerPid: process.pid,
+  });
   const releaseLock = async (): Promise<void> => {
     if (lockReleased) {
       return;
     }
     lockReleased = true;
+    stopLockHeartbeat();
     await releasePidLock(paseoHome, {
       ownerPid: process.pid,
     });
