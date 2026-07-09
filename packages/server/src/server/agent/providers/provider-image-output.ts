@@ -18,17 +18,22 @@ export interface MaterializedProviderImage {
 }
 
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
-const SHARED_ATTACHMENT_DIR_MODE = 0o1777;
-const USER_ATTACHMENT_DIR_MODE = 0o700;
+const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
+const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
 
-function currentUserAttachmentDirName(): string {
-  const uid = process.getuid?.();
-  if (typeof uid === "number") {
-    return `user-${uid}`;
+let materializedImageAttachmentDir: string | null = null;
+
+function getMaterializedImageAttachmentDir(): string {
+  if (materializedImageAttachmentDir) {
+    return materializedImageAttachmentDir;
   }
-  const username = os.userInfo().username;
-  return `user-${createHash("sha256").update(username).digest("hex").slice(0, 12)}`;
+
+  materializedImageAttachmentDir = fsSync.mkdtempSync(
+    path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX),
+  );
+  fsSync.chmodSync(materializedImageAttachmentDir, PRIVATE_ATTACHMENT_DIR_MODE);
+  return materializedImageAttachmentDir;
 }
 
 function getImageExtension(mimeType: string): string {
@@ -61,20 +66,13 @@ function normalizeImageData(mimeType: string, data: string): { mimeType: string;
 }
 
 // Filenames are a content hash of the bytes so re-materializing the same image
-// is idempotent: history replay reuses the existing temp file instead of leaking
-// a fresh one on every load.
+// within a process reuses the existing temp file instead of leaking a fresh one
+// for repeated image blocks or history replay.
 export function materializeProviderImage(image: {
   data: string;
   mimeType: string | null;
 }): MaterializedProviderImage {
-  const attachmentsParentDir = path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR);
-  fsSync.mkdirSync(attachmentsParentDir, { recursive: true, mode: SHARED_ATTACHMENT_DIR_MODE });
-  if (process.platform !== "win32") {
-    fsSync.chmodSync(attachmentsParentDir, SHARED_ATTACHMENT_DIR_MODE);
-  }
-  const attachmentsDir = path.join(attachmentsParentDir, currentUserAttachmentDirName());
-  fsSync.mkdirSync(attachmentsDir, { recursive: true, mode: USER_ATTACHMENT_DIR_MODE });
-  fsSync.chmodSync(attachmentsDir, USER_ATTACHMENT_DIR_MODE);
+  const attachmentsDir = getMaterializedImageAttachmentDir();
   const normalized = normalizeImageData(image.mimeType ?? "image/png", image.data);
   const bytes = Buffer.from(normalized.data, "base64");
   const extension = getImageExtension(normalized.mimeType);
@@ -90,7 +88,7 @@ export function materializeProviderImage(image: {
 // keeps user-authored text from being mistaken for a provider image during history replay. The
 // separator still accepts old doubled-backslash Windows history; new Windows output uses file URIs.
 const PROVIDER_IMAGE_MARKDOWN = new RegExp(
-  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}[/\\\\]+(?:[^/\\\\)]+[/\\\\]+)?[0-9a-f]{64}\\.[a-z0-9]+\\)`,
+  `^!\\[[^\\]]*\\]\\([^)]*${PROVIDER_IMAGE_ATTACHMENT_DIR}(?:-[^/\\\\)]+)?[/\\\\]+(?:[^/\\\\)]+[/\\\\]+)?[0-9a-f]{64}\\.[a-z0-9]+\\)`,
 );
 
 export function isProviderImageMarkdown(text: string): boolean {

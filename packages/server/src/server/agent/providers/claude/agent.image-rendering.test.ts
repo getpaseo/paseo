@@ -9,7 +9,8 @@ import { ClaudeAgentClient } from "./agent.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
-const MATERIALIZED_PNG_PATH_PATTERN = /paseo-attachments[\\/](?:[^\\/]+[\\/])?[0-9a-f]{64}\.png$/;
+const MATERIALIZED_PNG_PATH_PATTERN =
+  /paseo-attachments(?:-[^\\/]+)?[\\/](?:[^\\/]+[\\/])?[0-9a-f]{64}\.png$/;
 
 interface ClaudeImageTestSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];

@@ -2354,7 +2354,7 @@ describe("Codex app-server provider", () => {
     expect(event.item.text).not.toContain("data:image");
     expect(event.item.text).not.toContain(ONE_BY_ONE_PNG_BASE64);
     const source = markdownImageSource(event.item.text);
-    expect(source).toMatch(/paseo-attachments[\\/].+\.png$/);
+    expect(source).toMatch(/paseo-attachments(?:-[^\\/]+)?[\\/].+\.png$/);
     expect(existsSync(source)).toBe(true);
     rmSync(source, { force: true });
   });
@@ -2470,7 +2470,7 @@ describe("Codex app-server provider", () => {
       }
       expect(JSON.stringify(events)).not.toContain(ONE_BY_ONE_PNG_BASE64);
       const source = markdownImageSource(imageEvent.item.text);
-      expect(source).toMatch(/paseo-attachments[\\/].+\.png$/);
+      expect(source).toMatch(/paseo-attachments(?:-[^\\/]+)?[\\/].+\.png$/);
       expect(existsSync(source)).toBe(true);
       rmSync(source, { force: true });
       appServer.assertNoErrors();

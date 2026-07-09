@@ -687,7 +687,9 @@ describe("PiRpcAgentSession", () => {
       expect(prompt.message).not.toContain(ONE_BY_ONE_PNG_BASE64);
       imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
       expect(imagePath).toBeTypeOf("string");
-      expect(imagePath).toMatch(/paseo-attachments[\\/].+[\\/][0-9a-f]{64}\.png$/);
+      expect(imagePath).toMatch(
+        /paseo-attachments(?:-[^\\/]+)?[\\/](?:[^\\/]+[\\/])?[0-9a-f]{64}\.png$/,
+      );
       expect(existsSync(imagePath!)).toBe(true);
     } finally {
       if (imagePath) {
