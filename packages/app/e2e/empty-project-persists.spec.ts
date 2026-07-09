@@ -1,10 +1,7 @@
 import path from "node:path";
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
-import {
-  getProjectPickerFixture,
-  removeProjectPickerFixture,
-} from "./helpers/project-picker-fixture";
+import { expectOpenedProject } from "./helpers/project-picker-ui";
 import { connectSeedClient, seedWorkspace } from "./helpers/seed-client";
 import { getServerId } from "./helpers/server-id";
 import { createTempGitRepo } from "./helpers/workspace";
@@ -78,44 +75,24 @@ async function waitForSidebarProjectListReady(page: Page): Promise<void> {
 }
 
 test.describe("Project picker search", () => {
-  test("opens a project from a fuzzy directory-name search", async ({ page }) => {
-    const fixture = getProjectPickerFixture();
-    let client: Awaited<ReturnType<typeof connectSeedClient>> | null = null;
-    let projectId: string | null = null;
+  test("opens a project from a fuzzy directory-name search", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    await gotoAppShell(page);
+    await waitForSidebarProjectListReady(page);
+    await page.getByTestId("sidebar-add-project").click();
 
-    try {
-      client = await connectSeedClient();
-      await gotoAppShell(page);
-      await waitForSidebarProjectListReady(page);
-      await page.getByTestId("sidebar-add-project").click();
+    const input = page.getByPlaceholder("Type a directory path...");
+    await expect(input).toBeVisible({ timeout: 30_000 });
+    await input.fill(projectPickerFixture.fuzzyQuery);
 
-      const input = page.getByPlaceholder("Type a directory path...");
-      await expect(input).toBeVisible({ timeout: 30_000 });
-      await input.fill(fixture.fuzzyQuery);
+    const suggestion = page.getByText(projectPickerFixture.projectName, { exact: false }).first();
+    await expect(suggestion).toBeVisible({ timeout: 30_000 });
+    await suggestion.click();
 
-      const suggestion = page.getByText(fixture.projectName, { exact: false }).first();
-      await expect(suggestion).toBeVisible({ timeout: 30_000 });
-      await suggestion.click();
-
-      const projectRow = page
-        .locator('[data-testid^="sidebar-project-row-"]')
-        .filter({ hasText: fixture.projectName })
-        .first();
-      await expect(projectRow).toBeVisible({ timeout: 30_000 });
-      const testId = await projectRow.getAttribute("data-testid");
-      if (!testId) {
-        throw new Error("Opened project row is missing its data-testid");
-      }
-      projectId = testId.replace("sidebar-project-row-", "");
-    } finally {
-      if (client) {
-        try {
-          await removeProjectPickerFixture(client, fixture, projectId);
-        } finally {
-          await client.close();
-        }
-      }
-    }
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
   });
 
   test("shows a loading state after typing while directory suggestions are pending", async ({
