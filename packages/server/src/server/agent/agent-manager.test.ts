@@ -447,6 +447,40 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
   };
 }
 
+class AgentAttentionSession extends TestAgentSession {
+  constructor(
+    config: AgentSessionConfig,
+    private readonly historyEvents: readonly AgentStreamEvent[] = [],
+  ) {
+    super(config);
+  }
+
+  override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    for (const event of this.historyEvents) {
+      yield event;
+    }
+  }
+}
+
+class AgentAttentionClient extends TestAgentClient {
+  session: AgentAttentionSession | null = null;
+
+  constructor(private readonly historyEvents: readonly AgentStreamEvent[] = []) {
+    super();
+  }
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new AgentAttentionSession(config, this.historyEvents);
+    return this.session;
+  }
+}
+
+type HandleStreamEventForTest = (
+  agent: ManagedAgent,
+  event: AgentStreamEvent,
+  options?: { fromHistory?: boolean },
+) => Promise<boolean>;
+
 const logger = createTestLogger();
 
 test("normalizeConfig injects the provider default model when omitted", async () => {
@@ -4736,6 +4770,102 @@ test("onAgentAttention is not called for delegated child agents", async () => {
   await manager.runAgent(agent.id, "hello");
 
   expect(attentionCalls).toEqual([]);
+});
+
+test("agent_attention sets parent attention without stream payload or callback", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000132";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-agent-attention-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new AgentAttentionClient();
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const events: AgentManagerEvent[] = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+    onAgentAttention: ({ reason }) => {
+      attentionReasons.push(reason);
+    },
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent Agent" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  manager.subscribe((event) => events.push(event), { replayState: false });
+
+  client.session?.pushEvent({
+    type: "agent_attention",
+    provider: "codex",
+    reason: "finished",
+    broadcast: false,
+  });
+  await manager.flush();
+
+  const updated = manager.getAgent(agent.id);
+  expect(updated?.attention).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+  expect(
+    updated?.attention.requiresAttention ? updated.attention.attentionTimestamp : null,
+  ).toBeInstanceOf(Date);
+  expect(events.filter((event) => event.type === "agent_state")).toHaveLength(1);
+  expect(events.filter((event) => event.type === "agent_stream")).toEqual([]);
+  expect(attentionReasons).toEqual([]);
+});
+
+test("agent_attention from history is ignored", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000133";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-agent-attention-history-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const events: AgentManagerEvent[] = [];
+  const manager = new AgentManager({
+    clients: { codex: new AgentAttentionClient() },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+    onAgentAttention: ({ reason }) => {
+      attentionReasons.push(reason);
+    },
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Parent Agent" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  const current = manager.getAgent(agent.id);
+  expect(current).not.toBeNull();
+  if (!current) {
+    throw new Error("missing agent");
+  }
+  const handleStreamEvent: HandleStreamEventForTest = Reflect.get(
+    manager,
+    "handleStreamEvent",
+  ).bind(manager);
+
+  await handleStreamEvent(
+    current,
+    {
+      type: "agent_attention",
+      provider: "codex",
+      reason: "error",
+      broadcast: false,
+    },
+    { fromHistory: true },
+  );
+  await manager.flush();
+
+  expect(manager.getAgent(agent.id)?.attention).toEqual({ requiresAttention: false });
+  expect(events).toEqual([]);
+  expect(attentionReasons).toEqual([]);
 });
 
 test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {

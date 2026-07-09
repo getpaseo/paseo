@@ -3124,6 +3124,9 @@ export class AgentManager {
       case "permission_resolved":
         this.onStreamPermissionResolved({ agent, event, options, flags });
         return undefined;
+      case "agent_attention":
+        this.onStreamAgentAttention({ agent, event, options, flags });
+        return undefined;
       default:
         return undefined;
     }
@@ -3324,6 +3327,26 @@ export class AgentManager {
       flags.shouldDispatchEvent = false;
       return;
     }
+    this.emitState(agent);
+  }
+
+  private onStreamAgentAttention(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "agent_attention" }>;
+    options: { fromHistory?: boolean } | undefined;
+    flags: StreamEventFlags;
+  }): void {
+    const { agent, event, options, flags } = params;
+    flags.shouldDispatchEvent = false;
+    flags.shouldNotifyWaiters = false;
+    if (options?.fromHistory) {
+      return;
+    }
+    agent.attention = {
+      requiresAttention: true,
+      attentionReason: event.reason,
+      attentionTimestamp: new Date(),
+    };
     this.emitState(agent);
   }
 

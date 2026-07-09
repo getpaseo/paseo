@@ -426,6 +426,13 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       reason: "finished" | "error" | "permission";
       timestamp: string;
+    }
+  | {
+      type: "agent_attention";
+      provider: AgentProvider;
+      reason: "finished" | "error";
+      broadcast: false;
+      turnId?: string;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
