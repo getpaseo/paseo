@@ -16,6 +16,7 @@ import { isNative } from "@/constants/platform";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getLeftSidebarAnimationTargets,
+  getSidebarAnimationSyncPlan,
   MOBILE_PANEL_STATE_AGENT,
   MOBILE_PANEL_STATE_AGENT_LIST_CLOSING,
   MOBILE_PANEL_STATE_AGENT_LIST_OPEN,
@@ -27,7 +28,6 @@ import {
   MOBILE_PANEL_TARGET_AGENT_LIST,
   MOBILE_PANEL_TARGET_FILE_EXPLORER,
   shouldSettleMobilePanelTransition,
-  shouldSyncSidebarAnimation,
 } from "@/utils/sidebar-animation-state";
 
 const ANIMATION_DURATION = 220;
@@ -191,32 +191,30 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
   // Gestures may start the same animation on the UI thread, but the store remains
   // authoritative so shared values cannot stay split from React state.
   useEffect(() => {
-    const didStateChange = shouldSyncSidebarAnimation({
+    const syncPlan = getSidebarAnimationSyncPlan({
       previousIsOpen: prevIsOpen.current,
       nextIsOpen: isOpen,
+      previousMobileView: prevMobileView.current,
+      nextMobileView: mobileView,
       previousWindowWidth: prevWindowWidth.current,
       nextWindowWidth: windowWidth,
+      ownedMobileView: "agent-list",
     });
-    const didMobileViewChange = prevMobileView.current !== mobileView;
-    const previousIsOpen = prevIsOpen.current;
-    const previousMobileView = prevMobileView.current;
-    const ownsMobileViewChange = previousMobileView === "agent-list" || mobileView === "agent-list";
     prevIsOpen.current = isOpen;
     prevMobileView.current = mobileView;
     prevWindowWidth.current = windowWidth;
-    const didOpen = !previousIsOpen && isOpen;
 
-    if (!didStateChange && !didMobileViewChange) {
+    if (!syncPlan.shouldSync) {
       return;
     }
 
-    if (didOpen && isCompactLayout && isNative) {
+    if (syncPlan.didOpen && isCompactLayout && isNative) {
       Keyboard.dismiss();
     }
 
     const targets = getLeftSidebarAnimationTargets({ isOpen, windowWidth });
 
-    if (previousIsOpen !== isOpen) {
+    if (syncPlan.didOpenStateChange) {
       if (isOpen) {
         if (isCompactLayout) {
           startMobilePanelTransition("agent-list");
@@ -266,7 +264,7 @@ export function SidebarAnimationProvider({ children }: { children: ReactNode }) 
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-    if (isCompactLayout && ownsMobileViewChange) {
+    if (isCompactLayout && syncPlan.ownsMobileViewChange) {
       settleMobilePanel(mobileView);
     }
   }, [

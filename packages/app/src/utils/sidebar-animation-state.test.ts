@@ -4,6 +4,7 @@ import {
   canCloseRightSidebarGesture,
   canOpenLeftSidebarGesture,
   canOpenRightSidebarGesture,
+  getSidebarAnimationSyncPlan,
   getLeftSidebarAnimationTargets,
   getRightSidebarAnimationTargets,
   MOBILE_PANEL_STATE_AGENT,
@@ -41,6 +42,63 @@ describe("sidebar-animation-state", () => {
         nextWindowWidth: 430,
       }),
     ).toBe(true);
+  });
+
+  it("keeps left sidebar store transitions authoritative", () => {
+    expect(
+      getSidebarAnimationSyncPlan({
+        previousIsOpen: true,
+        nextIsOpen: false,
+        previousMobileView: "agent-list",
+        nextMobileView: "agent",
+        previousWindowWidth: 390,
+        nextWindowWidth: 390,
+        ownedMobileView: "agent-list",
+      }),
+    ).toEqual({
+      shouldSync: true,
+      didOpen: false,
+      didOpenStateChange: true,
+      ownsMobileViewChange: true,
+    });
+  });
+
+  it("keeps right sidebar store transitions authoritative", () => {
+    expect(
+      getSidebarAnimationSyncPlan({
+        previousIsOpen: false,
+        nextIsOpen: true,
+        previousMobileView: "agent",
+        nextMobileView: "file-explorer",
+        previousWindowWidth: 390,
+        nextWindowWidth: 390,
+        ownedMobileView: "file-explorer",
+      }),
+    ).toEqual({
+      shouldSync: true,
+      didOpen: true,
+      didOpenStateChange: true,
+      ownsMobileViewChange: true,
+    });
+  });
+
+  it("does not claim ownership for unrelated mobile view changes", () => {
+    expect(
+      getSidebarAnimationSyncPlan({
+        previousIsOpen: false,
+        nextIsOpen: false,
+        previousMobileView: "file-explorer",
+        nextMobileView: "agent",
+        previousWindowWidth: 390,
+        nextWindowWidth: 390,
+        ownedMobileView: "agent-list",
+      }),
+    ).toEqual({
+      shouldSync: true,
+      didOpen: false,
+      didOpenStateChange: false,
+      ownsMobileViewChange: false,
+    });
   });
 
   it("keeps the left sidebar fully off-screen when closed", () => {

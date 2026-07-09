@@ -15,8 +15,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import {
+  getSidebarAnimationSyncPlan,
   getRightSidebarAnimationTargets,
-  shouldSyncSidebarAnimation,
 } from "@/utils/sidebar-animation-state";
 
 const ANIMATION_DURATION = 220;
@@ -81,28 +81,26 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
   // Gestures may start the same animation on the UI thread, but the store remains
   // authoritative so shared values cannot stay split from React state.
   useEffect(() => {
-    const didStateChange = shouldSyncSidebarAnimation({
+    const syncPlan = getSidebarAnimationSyncPlan({
       previousIsOpen: prevIsOpen.current,
       nextIsOpen: isOpen,
+      previousMobileView: prevMobileView.current,
+      nextMobileView: mobileView,
       previousWindowWidth: prevWindowWidth.current,
       nextWindowWidth: windowWidth,
+      ownedMobileView: "file-explorer",
     });
-    const didMobileViewChange = prevMobileView.current !== mobileView;
-    const previousIsOpen = prevIsOpen.current;
-    const previousMobileView = prevMobileView.current;
-    const ownsMobileViewChange =
-      previousMobileView === "file-explorer" || mobileView === "file-explorer";
     prevIsOpen.current = isOpen;
     prevMobileView.current = mobileView;
     prevWindowWidth.current = windowWidth;
 
-    if (!didStateChange && !didMobileViewChange) {
+    if (!syncPlan.shouldSync) {
       return;
     }
 
     const targets = getRightSidebarAnimationTargets({ isOpen, windowWidth });
 
-    if (previousIsOpen !== isOpen) {
+    if (syncPlan.didOpenStateChange) {
       if (isOpen) {
         if (isCompactLayout) {
           startMobilePanelTransition("file-explorer");
@@ -152,7 +150,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
 
     translateX.value = targets.translateX;
     backdropOpacity.value = targets.backdropOpacity;
-    if (isCompactLayout && ownsMobileViewChange) {
+    if (isCompactLayout && syncPlan.ownsMobileViewChange) {
       settleMobilePanel(mobileView);
     }
   }, [

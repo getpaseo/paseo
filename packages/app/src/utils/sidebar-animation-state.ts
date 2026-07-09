@@ -5,6 +5,21 @@ interface SidebarAnimationSyncInput {
   nextWindowWidth: number;
 }
 
+export type MobileSidebarView = "agent" | "agent-list" | "file-explorer";
+
+interface SidebarAnimationSyncPlanInput extends SidebarAnimationSyncInput {
+  previousMobileView: MobileSidebarView;
+  nextMobileView: MobileSidebarView;
+  ownedMobileView: Exclude<MobileSidebarView, "agent">;
+}
+
+interface SidebarAnimationSyncPlan {
+  shouldSync: boolean;
+  didOpen: boolean;
+  didOpenStateChange: boolean;
+  ownsMobileViewChange: boolean;
+}
+
 interface SidebarAnimationTargetInput {
   isOpen: boolean;
   windowWidth: number;
@@ -33,6 +48,28 @@ export function shouldSyncSidebarAnimation(input: SidebarAnimationSyncInput): bo
   return (
     input.previousIsOpen !== input.nextIsOpen || input.previousWindowWidth !== input.nextWindowWidth
   );
+}
+
+export function getSidebarAnimationSyncPlan(
+  input: SidebarAnimationSyncPlanInput,
+): SidebarAnimationSyncPlan {
+  const didOpenStateChange = input.previousIsOpen !== input.nextIsOpen;
+  const didMobileViewChange = input.previousMobileView !== input.nextMobileView;
+  return {
+    shouldSync:
+      didMobileViewChange ||
+      shouldSyncSidebarAnimation({
+        previousIsOpen: input.previousIsOpen,
+        nextIsOpen: input.nextIsOpen,
+        previousWindowWidth: input.previousWindowWidth,
+        nextWindowWidth: input.nextWindowWidth,
+      }),
+    didOpen: !input.previousIsOpen && input.nextIsOpen,
+    didOpenStateChange,
+    ownsMobileViewChange:
+      input.previousMobileView === input.ownedMobileView ||
+      input.nextMobileView === input.ownedMobileView,
+  };
 }
 
 export function getLeftSidebarAnimationTargets(
