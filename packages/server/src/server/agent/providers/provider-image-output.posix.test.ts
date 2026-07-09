@@ -10,15 +10,15 @@ describe.skipIf(process.platform === "win32")("materializeProviderImage", () => 
       data: "YWJjMTIz",
       mimeType: "image/png",
     });
+    const attachmentDir = path.dirname(materialized.path);
 
     try {
-      const attachmentDir = path.dirname(materialized.path);
       expect(path.basename(attachmentDir)).toMatch(/^paseo-attachments-/);
       expect(existsSync(materialized.path)).toBe(true);
       expect(statSync(attachmentDir).mode & 0o777).toBe(0o700);
       expect(statSync(materialized.path).mode & 0o777).toBe(0o600);
     } finally {
-      rmSync(materialized.path, { force: true });
+      rmSync(attachmentDir, { recursive: true, force: true });
     }
   });
 });
