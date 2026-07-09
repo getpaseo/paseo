@@ -6,6 +6,12 @@ export interface BuildWorkingDirectorySuggestionsInput {
   query: string;
 }
 
+interface PathQueryMode {
+  absolute: boolean;
+  rootAnchored: boolean;
+  rooted: boolean;
+}
+
 export function buildWorkingDirectorySuggestions(
   input: BuildWorkingDirectorySuggestionsInput,
 ): string[] {
@@ -16,23 +22,17 @@ export function buildWorkingDirectorySuggestions(
   }
 
   const normalizedQuery = normalizeQuery(rawQuery);
-  const isRootedPathQuery = isRootedQuery(rawQuery);
-  const isAbsolutePathQuery = isAbsoluteQuery(rawQuery);
+  const queryMode = getPathQueryMode(rawQuery);
   const shouldFilterByQuery = normalizedQuery.length > 0;
 
   const recommendedMatches = shouldFilterByQuery
-    ? recommended.filter((entry) =>
-        pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery, isAbsolutePathQuery),
-      )
+    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery, queryMode))
     : recommended;
   const seen = new Set(recommendedMatches);
   const ordered = [...recommendedMatches];
 
   for (const entry of uniquePaths(input.serverPaths)) {
-    if (
-      shouldFilterByQuery &&
-      !pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery, isAbsolutePathQuery)
-    ) {
+    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery, queryMode)) {
       continue;
     }
     if (seen.has(entry)) {
@@ -45,9 +45,21 @@ export function buildWorkingDirectorySuggestions(
   return ordered;
 }
 
-function isRootedQuery(query: string): boolean {
+function getPathQueryMode(query: string): PathQueryMode {
   const normalized = query.trim().replace(/\\/g, "/");
-  return normalized.startsWith("~") || normalized.startsWith("./") || isAbsoluteQuery(normalized);
+  const absolute = isAbsoluteQuery(normalized);
+  const withoutTrailingSlash = normalized.replace(/\/+$/, "");
+  const rootAnchored =
+    absolute &&
+    (/^\/[^/]+$/.test(withoutTrailingSlash) ||
+      /^[a-z]:\/[^/]+$/i.test(withoutTrailingSlash) ||
+      /^\/\/[^/]+\/[^/]+(?:\/[^/]+)?$/.test(withoutTrailingSlash));
+
+  return {
+    absolute,
+    rootAnchored,
+    rooted: normalized.startsWith("~") || normalized.startsWith("./") || absolute,
+  };
 }
 
 function isAbsoluteQuery(query: string): boolean {
@@ -86,30 +98,25 @@ function normalizeQuery(query: string): string {
   return normalized;
 }
 
-function pathMatchesQuery(
-  candidatePath: string,
-  query: string,
-  isRootedPathQuery: boolean,
-  isAbsolutePathQuery: boolean,
-): boolean {
+function pathMatchesQuery(candidatePath: string, query: string, mode: PathQueryMode): boolean {
   const normalizedPath = candidatePath
     .replace(/\\/g, "/")
     .replace(/\/{2,}/g, "/")
     .toLowerCase();
-  if (!isRootedPathQuery && normalizedPath.includes(query)) {
+  if (!mode.rooted && normalizedPath.includes(query)) {
     return true;
   }
-  if (isAbsolutePathQuery) {
-    const absoluteQueryPath = /^[a-z]:\//i.test(query) ? query : `/${query}`;
+  if (mode.absolute) {
+    const absoluteQueryPath = (/^[a-z]:\//i.test(query) ? query : `/${query}`).replace(/\/+$/, "");
     if (
       normalizedPath === absoluteQueryPath ||
       normalizedPath.startsWith(`${absoluteQueryPath}/`)
     ) {
       return true;
     }
-    // With no typed parent, the anchored checks above are the whole contract:
+    // At a filesystem root, the anchored checks above are the whole contract:
     // `/tmp` may include `/tmp/project`, but not a fuzzy sibling like `/tmpfoo`.
-    if (!query.includes("/")) {
+    if (mode.rootAnchored) {
       return false;
     }
   }
@@ -121,7 +128,7 @@ function pathMatchesQuery(
   const basename = candidateSegments.pop() ?? "";
   const parentPath = candidateSegments.join("/");
   const relativeParentPath = parentPath.replace(/^\/+/, "");
-  if (isAbsolutePathQuery) {
+  if (mode.absolute) {
     if (!isAbsoluteQuery(candidatePath) || relativeParentPath !== parentQuery) {
       return false;
     }

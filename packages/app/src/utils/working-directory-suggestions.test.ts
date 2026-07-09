@@ -80,6 +80,53 @@ describe("buildWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/tmp", "/tmp/project"]);
   });
 
+  it("preserves Windows drive root anchors", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: ["C:\\tmpfoo", "C:\\tmp", "C:\\tmp\\project"],
+      query: "C:\\tmp",
+    });
+
+    expect(results).toEqual(["C:\\tmp", "C:\\tmp\\project"]);
+  });
+
+  it("preserves UNC share root anchors", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: [
+        "\\\\server\\share\\tmpfoo",
+        "\\\\server\\share\\tmp",
+        "\\\\server\\share\\tmp\\project",
+      ],
+      query: "\\\\server\\share\\tmp",
+    });
+
+    expect(results).toEqual(["\\\\server\\share\\tmp", "\\\\server\\share\\tmp\\project"]);
+  });
+
+  it.each([
+    {
+      kind: "Windows drive",
+      query: "C:\\projects\\client\\pso",
+      matchingPath: "C:\\projects\\client\\paseo",
+      outsidePath: "C:\\archive\\client\\paseo",
+    },
+    {
+      kind: "UNC share",
+      query: "\\\\server\\share\\projects\\pso",
+      matchingPath: "\\\\server\\share\\projects\\paseo",
+      outsidePath: "\\\\server\\share\\archive\\paseo",
+    },
+  ])("keeps fuzzy basename matching below $kind roots", ({ query, matchingPath, outsidePath }) => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: [outsidePath, matchingPath],
+      query,
+    });
+
+    expect(results).toEqual([matchingPath]);
+  });
+
   it("keeps descendant matches for unrooted multi-segment searches", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [],
