@@ -502,8 +502,10 @@ function WorkspaceKebabMenu({
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }) {
   const { t } = useTranslation();
+  // No physical keyboard on native — the shortcut badge is meaningless there.
   const archiveTrailing = useMemo(
-    () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
+    () =>
+      archiveShortcutKeys && !platformIsNative ? <Shortcut chord={archiveShortcutKeys} /> : null,
     [archiveShortcutKeys],
   );
   return (
