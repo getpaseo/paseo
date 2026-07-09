@@ -4,6 +4,7 @@ export interface BuildProjectPickerOptionsInput {
   recommendedPaths: string[];
   serverPaths: string[];
   query: string;
+  rootPath?: string | null;
 }
 
 export interface ProjectPickerPathOption {

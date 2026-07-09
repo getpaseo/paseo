@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
-import { searchHomeDirectories, searchWorkspaceEntries } from "./directory-suggestions.js";
+import {
+  searchHomeDirectories,
+  searchHomeDirectoriesWithRoot,
+  searchWorkspaceEntries,
+} from "./directory-suggestions.js";
 
 const isWindows = isPlatform("win32");
 
@@ -220,13 +224,14 @@ describe("searchHomeDirectories", () => {
   });
 
   it("supports home-relative path query syntax", async () => {
-    const results = await searchHomeDirectories({
+    const result = await searchHomeDirectoriesWithRoot({
       homeDir,
       query: "~/projects/pa",
       limit: 10,
     });
 
-    expect(results.map((result) => realpathSync.native(result))).toEqual([
+    expect(result.rootPath).toBe(homeDir);
+    expect(result.paths.map((entry) => realpathSync.native(entry))).toEqual([
       realpathSync.native(path.join(homeDir, "projects", "paseo")),
       realpathSync.native(path.join(homeDir, "projects", "playground")),
     ]);

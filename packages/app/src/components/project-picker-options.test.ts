@@ -50,6 +50,7 @@ describe("buildProjectPickerOptions", () => {
       recommendedPaths: ["/Users/mo/src/api"],
       serverPaths: [],
       query: "~/src",
+      rootPath: "/Users/mo",
     });
 
     expect(options).toEqual([

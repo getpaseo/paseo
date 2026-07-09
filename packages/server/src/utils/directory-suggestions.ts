@@ -11,6 +11,11 @@ export interface SearchHomeDirectoriesOptions {
   maxDirectoriesScanned?: number;
 }
 
+export interface SearchHomeDirectoriesResult {
+  rootPath: string | null;
+  paths: string[];
+}
+
 export type WorkspaceSuggestionKind = "file" | "directory";
 
 export interface WorkspaceSuggestionEntry {
@@ -113,38 +118,50 @@ const TRAVERSABLE_HIDDEN_WORKSPACE_DIRECTORY_NAMES = new Set([
 export async function searchHomeDirectories(
   options: SearchHomeDirectoriesOptions,
 ): Promise<string[]> {
+  return (await searchHomeDirectoriesWithRoot(options)).paths;
+}
+
+export async function searchHomeDirectoriesWithRoot(
+  options: SearchHomeDirectoriesOptions,
+): Promise<SearchHomeDirectoriesResult> {
   const query = options.query.trim();
   if (!query) {
-    return [];
+    return { rootPath: null, paths: [] };
   }
 
   const limit = normalizeLimit(options.limit);
   const homeRoot = await resolveDirectory(options.homeDir);
   if (!homeRoot) {
-    return [];
+    return { rootPath: null, paths: [] };
   }
 
   const queryParts = normalizeQueryParts(query, homeRoot);
   if (!queryParts) {
-    return [];
+    return { rootPath: homeRoot, paths: [] };
   }
 
   if (queryParts.isPathQuery) {
-    return searchWithinParentDirectory({
-      homeRoot,
-      parentPart: queryParts.parentPart,
-      searchTerm: queryParts.searchTerm,
-      limit,
-    });
+    return {
+      rootPath: homeRoot,
+      paths: await searchWithinParentDirectory({
+        homeRoot,
+        parentPart: queryParts.parentPart,
+        searchTerm: queryParts.searchTerm,
+        limit,
+      }),
+    };
   }
 
-  return searchAcrossHomeTree({
-    homeRoot,
-    searchTerm: queryParts.searchTerm,
-    limit,
-    maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
-    maxDirectoriesScanned: options.maxDirectoriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
-  });
+  return {
+    rootPath: homeRoot,
+    paths: await searchAcrossHomeTree({
+      homeRoot,
+      searchTerm: queryParts.searchTerm,
+      limit,
+      maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
+      maxDirectoriesScanned: options.maxDirectoriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
+    }),
+  };
 }
 
 interface RankedWorkspaceEntry {

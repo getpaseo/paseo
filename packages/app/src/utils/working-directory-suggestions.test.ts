@@ -38,13 +38,15 @@ describe("buildWorkingDirectorySuggestions", () => {
 
   it("keeps fuzzy server matches within the queried parent path", () => {
     const results = buildWorkingDirectorySuggestions({
-      recommendedPaths: [],
+      recommendedPaths: ["/Users/me/archive/projects/paseo-desktop"],
       serverPaths: [
         "/Users/me/notprojects/paseo-desktop",
         "/Users/me/projects/archive/paseo-desktop",
+        "/Users/me/archive/projects/paseo-desktop",
         "/Users/me/projects/paseo-desktop",
       ],
       query: "~/projects/pso",
+      rootPath: "/Users/me",
     });
 
     expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
@@ -53,11 +55,55 @@ describe("buildWorkingDirectorySuggestions", () => {
   it("normalizes dot-relative parent paths before filtering fuzzy matches", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [],
-      serverPaths: ["/Users/me/projects/paseo-desktop"],
+      serverPaths: ["/Users/me/archive/projects/paseo-desktop", "/Users/me/projects/paseo-desktop"],
       query: "./projects/pso",
+      rootPath: "/Users/me",
     });
 
     expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
+  });
+
+  it.each([
+    {
+      query: "~/./projects/pso",
+      matchingPath: "/Users/me/projects/paseo-desktop",
+    },
+    {
+      query: "~/projects/../secret/pso",
+      matchingPath: "/Users/me/secret/paseo-desktop",
+    },
+  ])("resolves dot segments in rooted query $query", ({ query, matchingPath }) => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: [matchingPath],
+      query,
+      rootPath: "/Users/me",
+    });
+
+    expect(results).toEqual([matchingPath]);
+  });
+
+  it("trusts scoped server results but not recommendations from daemons without a root path", () => {
+    const matchingPath = "/Users/me/projects/paseo-desktop";
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: ["/Users/me/archive/projects/paseo-desktop", matchingPath],
+      serverPaths: [matchingPath],
+      query: "~/projects/pso",
+    });
+
+    expect(results).toEqual([matchingPath]);
+  });
+
+  it("anchors home-relative queries to Windows home paths", () => {
+    const matchingPath = "C:\\Users\\me\\projects\\paseo-desktop";
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: ["C:\\Users\\me\\archive\\projects\\paseo-desktop", matchingPath],
+      serverPaths: [],
+      query: "~\\projects\\pso",
+      rootPath: "C:\\Users\\me",
+    });
+
+    expect(results).toEqual([matchingPath]);
   });
 
   it("requires an exact parent path for absolute queries", () => {
@@ -106,6 +152,41 @@ describe("buildWorkingDirectorySuggestions", () => {
 
   it.each([
     {
+      kind: "POSIX",
+      query: "/foo/../tmp",
+      siblingPath: "/tmpfoo",
+      matchingPath: "/tmp",
+      descendantPath: "/tmp/project",
+    },
+    {
+      kind: "Windows drive",
+      query: "C:\\foo\\..\\tmp",
+      siblingPath: "C:\\tmpfoo",
+      matchingPath: "C:\\tmp",
+      descendantPath: "C:\\tmp\\project",
+    },
+    {
+      kind: "UNC share",
+      query: "\\\\server\\share\\foo\\..\\tmp",
+      siblingPath: "\\\\server\\share\\tmpfoo",
+      matchingPath: "\\\\server\\share\\tmp",
+      descendantPath: "\\\\server\\share\\tmp\\project",
+    },
+  ])(
+    "preserves $kind root anchors after resolving dot segments",
+    ({ query, siblingPath, matchingPath, descendantPath }) => {
+      const results = buildWorkingDirectorySuggestions({
+        recommendedPaths: [],
+        serverPaths: [siblingPath, matchingPath, descendantPath],
+        query,
+      });
+
+      expect(results).toEqual([matchingPath, descendantPath]);
+    },
+  );
+
+  it.each([
+    {
       kind: "Windows drive",
       query: "C:\\projects\\client\\pso",
       matchingPath: "C:\\projects\\client\\paseo",
@@ -121,6 +202,53 @@ describe("buildWorkingDirectorySuggestions", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [],
       serverPaths: [outsidePath, matchingPath],
+      query,
+    });
+
+    expect(results).toEqual([matchingPath]);
+  });
+
+  it.each([
+    {
+      kind: "POSIX",
+      query: "/server/share/projects/pso",
+      matchingPath: "/server/share/projects/paseo",
+      otherRootPath: "\\\\server\\share\\projects\\paseo",
+    },
+    {
+      kind: "UNC",
+      query: "\\\\server\\share\\projects\\pso",
+      matchingPath: "\\\\server\\share\\projects\\paseo",
+      otherRootPath: "/server/share/projects/paseo",
+    },
+  ])(
+    "does not mix $kind queries with another absolute root kind",
+    ({ query, matchingPath, otherRootPath }) => {
+      const results = buildWorkingDirectorySuggestions({
+        recommendedPaths: [],
+        serverPaths: [otherRootPath, matchingPath],
+        query,
+      });
+
+      expect(results).toEqual([matchingPath]);
+    },
+  );
+
+  it.each([
+    {
+      kind: "POSIX",
+      query: "/tmp/foo/pso",
+      matchingPath: "/tmp/foo/paseo/",
+    },
+    {
+      kind: "Windows drive",
+      query: "C:\\tmp\\foo\\pso",
+      matchingPath: "C:\\tmp\\foo\\paseo\\",
+    },
+  ])("fuzzy-matches $kind candidates with trailing separators", ({ query, matchingPath }) => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: [matchingPath],
       query,
     });
 

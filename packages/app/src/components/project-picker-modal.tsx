@@ -156,31 +156,41 @@ export function ProjectPickerModal() {
   const directorySuggestionsQuery = useQuery({
     queryKey: ["project-picker-directory-suggestions", serverId, debouncedQuery],
     queryFn: async () => {
-      if (!client) return [];
+      if (!client) {
+        return { query: debouncedQuery, paths: [], rootPath: null };
+      }
       const result = await client.getDirectorySuggestions({
         query: debouncedQuery,
         includeDirectories: true,
         includeFiles: false,
         limit: 30,
       });
-      return (
-        result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ?? []
-      );
+      return {
+        query: debouncedQuery,
+        paths:
+          result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ??
+          [],
+        // COMPAT(directorySuggestionsRootPath): added in v0.1.105. Old daemons
+        // omit it, so rooted recommendations stay hidden while their scoped
+        // RPC results remain usable. Drop this fallback after 2027-01-09.
+        rootPath: result.rootPath ?? null,
+      };
     },
     enabled: Boolean(client) && isConnected && open,
     staleTime: 15_000,
     retry: false,
   });
 
-  const options = useMemo(
-    () =>
-      buildProjectPickerOptions({
-        recommendedPaths,
-        serverPaths: directorySuggestionsQuery.data ?? [],
-        query,
-      }),
-    [directorySuggestionsQuery.data, query, recommendedPaths],
-  );
+  const options = useMemo(() => {
+    const currentSuggestions =
+      directorySuggestionsQuery.data?.query === query ? directorySuggestionsQuery.data : null;
+    return buildProjectPickerOptions({
+      recommendedPaths,
+      serverPaths: currentSuggestions?.paths ?? [],
+      query,
+      rootPath: currentSuggestions?.rootPath ?? null,
+    });
+  }, [directorySuggestionsQuery.data, query, recommendedPaths]);
   const hasQuery = query.trim().length > 0;
   const isSearching =
     hasQuery &&

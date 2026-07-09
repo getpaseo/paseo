@@ -174,7 +174,10 @@ import {
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
-import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
+import {
+  searchHomeDirectoriesWithRoot,
+  searchWorkspaceEntries,
+} from "../utils/directory-suggestions.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
@@ -3049,22 +3052,26 @@ export class Session {
 
     try {
       const workspaceCwd = cwd?.trim();
-      const entries = workspaceCwd
-        ? await searchWorkspaceEntries({
-            cwd: expandTilde(workspaceCwd),
-            query,
-            limit,
-            includeFiles,
-            includeDirectories,
-            matchMode,
-          })
-        : (
-            await searchHomeDirectories({
-              homeDir: process.env.HOME ?? homedir(),
-              query,
-              limit,
-            })
-          ).map((path) => ({ path, kind: "directory" as const }));
+      let rootPath: string | null = null;
+      let entries: Array<{ path: string; kind: "file" | "directory" }>;
+      if (workspaceCwd) {
+        entries = await searchWorkspaceEntries({
+          cwd: expandTilde(workspaceCwd),
+          query,
+          limit,
+          includeFiles,
+          includeDirectories,
+          matchMode,
+        });
+      } else {
+        const result = await searchHomeDirectoriesWithRoot({
+          homeDir: process.env.HOME ?? homedir(),
+          query,
+          limit,
+        });
+        rootPath = result.rootPath;
+        entries = result.paths.map((path) => ({ path, kind: "directory" }));
+      }
       const directories = entries
         .filter((entry) => entry.kind === "directory")
         .map((entry) => entry.path);
@@ -3073,6 +3080,7 @@ export class Session {
         payload: {
           directories,
           entries,
+          ...(rootPath ? { rootPath } : {}),
           error: null,
           requestId,
         },

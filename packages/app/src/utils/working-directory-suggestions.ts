@@ -4,12 +4,25 @@ export interface BuildWorkingDirectorySuggestionsInput {
   recommendedPaths: string[];
   serverPaths: string[];
   query: string;
+  rootPath?: string | null;
 }
 
-interface PathQueryMode {
-  absolute: boolean;
-  rootAnchored: boolean;
+interface PathQueryContext {
+  absoluteRootKind: AbsoluteRootKind | null;
+  relativeRootAnchor: PathAnchor | null;
   rooted: boolean;
+  rootedRelative: boolean;
+}
+
+interface PathQueryMode extends PathQueryContext {
+  rootAnchored: boolean;
+}
+
+type AbsoluteRootKind = "posix" | "windows-drive" | "windows-unc";
+
+interface PathAnchor {
+  path: string;
+  rootKind: AbsoluteRootKind;
 }
 
 export function buildWorkingDirectorySuggestions(
@@ -21,18 +34,22 @@ export function buildWorkingDirectorySuggestions(
     return recommended;
   }
 
-  const normalizedQuery = normalizeQuery(rawQuery);
-  const queryMode = getPathQueryMode(rawQuery);
+  const queryContext = getPathQueryContext(rawQuery, input.rootPath);
+  const normalizedQuery = normalizeQuery(rawQuery, queryContext);
+  const queryMode: PathQueryMode = {
+    ...queryContext,
+    rootAnchored: isRootAnchoredQuery(normalizedQuery, queryContext.absoluteRootKind),
+  };
   const shouldFilterByQuery = normalizedQuery.length > 0;
 
   const recommendedMatches = shouldFilterByQuery
-    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery, queryMode))
+    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery, queryMode, false))
     : recommended;
   const seen = new Set(recommendedMatches);
   const ordered = [...recommendedMatches];
 
   for (const entry of uniquePaths(input.serverPaths)) {
-    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery, queryMode)) {
+    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery, queryMode, true)) {
       continue;
     }
     if (seen.has(entry)) {
@@ -45,26 +62,62 @@ export function buildWorkingDirectorySuggestions(
   return ordered;
 }
 
-function getPathQueryMode(query: string): PathQueryMode {
+function getPathQueryContext(query: string, rootPath: string | null | undefined): PathQueryContext {
   const normalized = query.trim().replace(/\\/g, "/");
-  const absolute = isAbsoluteQuery(normalized);
-  const withoutTrailingSlash = normalized.replace(/\/+$/, "");
-  const rootAnchored =
-    absolute &&
-    (/^\/[^/]+$/.test(withoutTrailingSlash) ||
-      /^[a-z]:\/[^/]+$/i.test(withoutTrailingSlash) ||
-      /^\/\/[^/]+\/[^/]+(?:\/[^/]+)?$/.test(withoutTrailingSlash));
+  const absoluteRootKind = getAbsoluteRootKind(normalized);
+  const rootedRelative = normalized.startsWith("~") || normalized.startsWith("./");
 
   return {
-    absolute,
-    rootAnchored,
-    rooted: normalized.startsWith("~") || normalized.startsWith("./") || absolute,
+    absoluteRootKind,
+    relativeRootAnchor: rootedRelative ? getPathAnchor(rootPath) : null,
+    rooted: rootedRelative || absoluteRootKind !== null,
+    rootedRelative,
   };
 }
 
-function isAbsoluteQuery(query: string): boolean {
+function isRootAnchoredQuery(
+  normalizedQuery: string,
+  absoluteRootKind: AbsoluteRootKind | null,
+): boolean {
+  const withoutTrailingSlash = normalizedQuery.replace(/\/+$/, "");
+  if (absoluteRootKind === "posix") {
+    return /^[^/]+$/.test(withoutTrailingSlash);
+  }
+  if (absoluteRootKind === "windows-drive") {
+    return /^[a-z]:\/[^/]+$/i.test(withoutTrailingSlash);
+  }
+  if (absoluteRootKind === "windows-unc") {
+    return /^[^/]+\/[^/]+(?:\/[^/]+)?$/.test(withoutTrailingSlash);
+  }
+  return false;
+}
+
+function getPathAnchor(rootPath: string | null | undefined): PathAnchor | null {
+  if (!rootPath) {
+    return null;
+  }
+  const rootKind = getAbsoluteRootKind(rootPath);
+  if (!rootKind) {
+    return null;
+  }
+  return {
+    path: normalizePath(rootPath),
+    rootKind,
+  };
+}
+
+function getAbsoluteRootKind(query: string): AbsoluteRootKind | null {
   const normalized = query.trim().replace(/\\/g, "/");
-  return normalized.startsWith("/") || /^[a-z]:\//i.test(normalized);
+  if (normalized.startsWith("//")) {
+    return "windows-unc";
+  }
+  if (/^[a-z]:\//i.test(normalized)) {
+    return "windows-drive";
+  }
+  if (normalized.startsWith("/")) {
+    return "posix";
+  }
+  return null;
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -81,7 +134,7 @@ function uniquePaths(paths: string[]): string[] {
   return ordered;
 }
 
-function normalizeQuery(query: string): string {
+function normalizeQuery(query: string, mode: PathQueryContext): string {
   let normalized = query.trim();
   if (!normalized) {
     return "";
@@ -93,20 +146,105 @@ function normalizeQuery(query: string): string {
     .replace(/\\/g, "/")
     .replace(/^\.\/+/, "")
     .replace(/^\/+/, "")
-    .replace(/\/{2,}/g, "/")
-    .toLowerCase();
-  return normalized;
+    .replace(/\/{2,}/g, "/");
+  return (
+    mode.rooted ? resolveQueryParentDotSegments(normalized, mode.absoluteRootKind) : normalized
+  ).toLowerCase();
 }
 
-function pathMatchesQuery(candidatePath: string, query: string, mode: PathQueryMode): boolean {
-  const normalizedPath = candidatePath
+function resolveQueryParentDotSegments(
+  query: string,
+  absoluteRootKind: AbsoluteRootKind | null,
+): string {
+  const segments = query.split("/");
+  const basename = segments.pop() ?? "";
+  let protectedSegmentCount = 0;
+  if (absoluteRootKind === "windows-drive") {
+    protectedSegmentCount = 1;
+  } else if (absoluteRootKind === "windows-unc") {
+    protectedSegmentCount = 2;
+  }
+  const parentSegments: string[] = [];
+  for (const segment of segments) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      const canAscend =
+        parentSegments.length > protectedSegmentCount && parentSegments.at(-1) !== "..";
+      if (canAscend) {
+        parentSegments.pop();
+      } else if (absoluteRootKind === null) {
+        parentSegments.push(segment);
+      }
+      continue;
+    }
+    parentSegments.push(segment);
+  }
+  return [...parentSegments, basename].join("/");
+}
+
+function normalizePath(candidatePath: string): string {
+  return candidatePath
+    .trim()
     .replace(/\\/g, "/")
     .replace(/\/{2,}/g, "/")
+    .replace(/\/+$/, "")
     .toLowerCase();
+}
+
+function joinNormalizedPath(parentPath: string, childPath: string): string {
+  const parent = parentPath.replace(/\/+$/, "");
+  const child = childPath.replace(/^\/+/, "");
+  return `${parent}/${child}`;
+}
+
+function parentMatchesQuery(input: {
+  candidatePath: string;
+  parentPath: string;
+  parentQuery: string;
+  mode: PathQueryMode;
+  trustRootedRelative: boolean;
+}): boolean {
+  const relativeParentPath = input.parentPath.replace(/^\/+/, "");
+  if (input.mode.absoluteRootKind !== null) {
+    return relativeParentPath === input.parentQuery;
+  }
+  if (input.mode.rootedRelative && input.parentQuery) {
+    const anchor = input.mode.relativeRootAnchor;
+    if (!anchor) {
+      return input.trustRootedRelative;
+    }
+    return (
+      getAbsoluteRootKind(input.candidatePath) === anchor.rootKind &&
+      input.parentPath === joinNormalizedPath(anchor.path, input.parentQuery)
+    );
+  }
+  if (!input.parentQuery) {
+    return true;
+  }
+  return (
+    relativeParentPath === input.parentQuery || relativeParentPath.endsWith(`/${input.parentQuery}`)
+  );
+}
+
+function pathMatchesQuery(
+  candidatePath: string,
+  query: string,
+  mode: PathQueryMode,
+  trustRootedRelative: boolean,
+): boolean {
+  if (
+    mode.absoluteRootKind !== null &&
+    getAbsoluteRootKind(candidatePath) !== mode.absoluteRootKind
+  ) {
+    return false;
+  }
+  const normalizedPath = normalizePath(candidatePath);
   if (!mode.rooted && normalizedPath.includes(query)) {
     return true;
   }
-  if (mode.absolute) {
+  if (mode.absoluteRootKind !== null) {
     const absoluteQueryPath = (/^[a-z]:\//i.test(query) ? query : `/${query}`).replace(/\/+$/, "");
     if (
       normalizedPath === absoluteQueryPath ||
@@ -127,16 +265,18 @@ function pathMatchesQuery(candidatePath: string, query: string, mode: PathQueryM
   const candidateSegments = normalizedPath.split("/");
   const basename = candidateSegments.pop() ?? "";
   const parentPath = candidateSegments.join("/");
-  const relativeParentPath = parentPath.replace(/^\/+/, "");
-  if (mode.absolute) {
-    if (!isAbsoluteQuery(candidatePath) || relativeParentPath !== parentQuery) {
-      return false;
-    }
-  } else if (parentQuery) {
-    if (relativeParentPath !== parentQuery && !relativeParentPath.endsWith(`/${parentQuery}`)) {
-      return false;
-    }
-  } else if (normalizedPath.includes(query)) {
+  if (
+    !parentMatchesQuery({
+      candidatePath,
+      parentPath,
+      parentQuery,
+      mode,
+      trustRootedRelative,
+    })
+  ) {
+    return false;
+  }
+  if (!parentQuery && normalizedPath.includes(query)) {
     return true;
   }
   return scoreMatch(basenameQuery, basename) !== null;

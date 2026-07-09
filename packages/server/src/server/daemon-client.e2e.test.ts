@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
@@ -840,6 +840,7 @@ test("returns home-scoped directory suggestions", async () => {
       limit: 25,
     });
     expect(insideResult.error).toBeNull();
+    expect(insideResult.rootPath).toBe(realpathSync.native(homedir()));
     expect(insideResult.directories).toContain(insideHomeDir);
 
     const outsideQuery = path.basename(outsideHomeDir);
