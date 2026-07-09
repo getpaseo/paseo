@@ -21,13 +21,7 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  Extrapolation,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-} from "react-native-reanimated";
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -38,7 +32,6 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { useSidebarAnimation } from "@/contexts/sidebar-animation-context";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
@@ -62,7 +55,8 @@ import {
   usePanelStore,
 } from "@/stores/panel-store";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
-import { canCloseLeftSidebarGesture } from "@/utils/sidebar-animation-state";
+import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
+import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import {
   buildOpenProjectRoute,
   buildNewWorkspaceRoute,
@@ -123,7 +117,6 @@ interface SidebarLabels {
 interface MobileSidebarProps extends SidebarSharedProps {
   insetsTop: number;
   insetsBottom: number;
-  isOpen: boolean;
   closeSidebar: () => void;
   handleViewMoreNavigate: () => void;
   handleViewSchedulesNavigate: () => void;
@@ -278,7 +271,6 @@ export const LeftSidebar = memo(function LeftSidebar({
         {...sharedProps}
         insetsTop={insets.top}
         insetsBottom={insets.bottom}
-        isOpen={isOpen}
         closeSidebar={showMobileAgent}
         handleOpenProject={handleOpenProjectMobile}
         handleHome={handleHomeMobile}
@@ -576,7 +568,6 @@ function MobileSidebar({
   handleOpenHostSettings,
   insetsTop,
   insetsBottom,
-  isOpen,
   closeSidebar,
   handleViewMoreNavigate,
   handleViewSchedulesNavigate,
@@ -584,247 +575,112 @@ function MobileSidebar({
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
   const isSchedulesActive = pathname.includes("/schedules");
-  const {
-    translateX,
-    backdropOpacity,
-    windowWidth,
-    animateToOpen,
-    animateToClose,
-    overlayVisible,
-    mobilePanelState,
-    closeGestureRef,
-  } = useSidebarAnimation();
-  const closeTouchStartX = useSharedValue(0);
-  const closeTouchStartY = useSharedValue(0);
+  const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
 
   const handleViewMore = useCallback(() => {
-    translateX.value = -windowWidth;
-    backdropOpacity.value = 0;
     closeSidebar();
     handleViewMoreNavigate();
-  }, [backdropOpacity, closeSidebar, handleViewMoreNavigate, translateX, windowWidth]);
+  }, [closeSidebar, handleViewMoreNavigate]);
 
   const handleViewSchedules = useCallback(() => {
-    translateX.value = -windowWidth;
-    backdropOpacity.value = 0;
     closeSidebar();
     handleViewSchedulesNavigate();
-  }, [backdropOpacity, closeSidebar, handleViewSchedulesNavigate, translateX, windowWidth]);
+  }, [closeSidebar, handleViewSchedulesNavigate]);
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
   }, [closeSidebar]);
 
-  const closeGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .withRef(closeGestureRef)
-        .enabled(true)
-        .manualActivation(true)
-        .onTouchesDown((event) => {
-          const touch = event.changedTouches[0];
-          if (!touch) {
-            return;
-          }
-          closeTouchStartX.value = touch.absoluteX;
-          closeTouchStartY.value = touch.absoluteY;
-        })
-        .onTouchesMove((event, stateManager) => {
-          const touch = event.changedTouches[0];
-          if (!touch || event.numberOfTouches !== 1) {
-            stateManager.fail();
-            return;
-          }
-
-          const deltaX = touch.absoluteX - closeTouchStartX.value;
-          const deltaY = touch.absoluteY - closeTouchStartY.value;
-          const absDeltaX = Math.abs(deltaX);
-          const absDeltaY = Math.abs(deltaY);
-
-          if (!canCloseLeftSidebarGesture(mobilePanelState.value)) {
-            stateManager.fail();
-            return;
-          }
-
-          if (deltaX >= 10) {
-            stateManager.fail();
-            return;
-          }
-          if (absDeltaY > 10 && absDeltaY > absDeltaX) {
-            stateManager.fail();
-            return;
-          }
-          if (deltaX <= -15 && absDeltaX > absDeltaY) {
-            stateManager.activate();
-          }
-        })
-        .onUpdate((event) => {
-          const newTranslateX = Math.min(0, Math.max(-windowWidth, event.translationX));
-          translateX.value = newTranslateX;
-          backdropOpacity.value = interpolate(
-            newTranslateX,
-            [-windowWidth, 0],
-            [0, 1],
-            Extrapolation.CLAMP,
-          );
-        })
-        .onEnd((event) => {
-          const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
-          if (shouldClose) {
-            animateToClose();
-            runOnJS(closeSidebar)();
-          } else {
-            animateToOpen();
-          }
-        }),
-    [
-      closeGestureRef,
-      closeTouchStartX,
-      closeTouchStartY,
-      mobilePanelState,
-      windowWidth,
-      translateX,
-      backdropOpacity,
-      animateToClose,
-      animateToOpen,
-      closeSidebar,
-    ],
-  );
-
   const mobileSidebarInsetStyle = useMemo(
-    () => ({ width: windowWidth, paddingTop: insetsTop, paddingBottom: insetsBottom }),
-    [windowWidth, insetsTop, insetsBottom],
-  );
-
-  const sidebarAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-  }));
-
-  const backdropAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: backdropOpacity.value,
-  }));
-
-  let overlayPointerEvents: "auto" | "none" | "box-none";
-  if (!isWeb) overlayPointerEvents = "box-none";
-  else if (isOpen) overlayPointerEvents = "auto";
-  else overlayPointerEvents = "none";
-
-  const backdropStyle = useMemo(
-    () => [
-      staticStyles.backdrop,
-      backdropAnimatedStyle,
-      // pointerEvents is React-owned, not worklet-owned: Reanimated never
-      // touches it, so a stale animated-prop revert can't wedge an invisible
-      // tap-eating backdrop.
-      { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
-    ],
-    [backdropAnimatedStyle, isOpen],
-  );
-  const mobileSidebarStyle = useMemo(
-    () => [
-      staticStyles.mobileSidebar,
-      mobileSidebarInsetStyle,
-      sidebarAnimatedStyle,
-      { backgroundColor: theme.colors.surfaceSidebar },
-    ],
-    [mobileSidebarInsetStyle, sidebarAnimatedStyle, theme.colors.surfaceSidebar],
-  );
-  // display is React-owned on the plain wrapper View (no animated styles), so
-  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
-  // reverts the panel transform to after a heavy commit (reanimated#9635).
-  const overlayStyle = useMemo(
-    () => [
-      StyleSheet.absoluteFillObject,
-      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
-    ],
-    [overlayVisible],
+    () => ({
+      paddingTop: insetsTop,
+      paddingBottom: insetsBottom,
+      backgroundColor: theme.colors.surfaceSidebar,
+    }),
+    [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
   );
 
   return (
-    <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
-      <Animated.View style={backdropStyle} />
-
-      <GestureDetector gesture={closeGesture} touchAction="pan-y">
-        <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
-          <View style={styles.sidebarContent} pointerEvents="auto">
-            <View style={styles.sidebarHeaderGroup}>
-              <SidebarNewWorkspaceHeaderRow
-                label={labels.newWorkspace}
-                testID="sidebar-global-new-workspace"
-                variant="compact"
-                shortcutKeys={newWorkspaceKeys}
-                onBeforeNavigate={closeSidebar}
-              />
-              <SidebarHeaderRow
-                icon={History}
-                label={labels.sessions}
-                onPress={handleViewMore}
-                isActive={isSessionsActive}
-                testID="sidebar-sessions"
-                variant="compact"
-              />
-              <SidebarHeaderRow
-                icon={CalendarClock}
-                label={labels.schedules}
-                onPress={handleViewSchedules}
-                isActive={isSchedulesActive}
-                testID="sidebar-schedules"
-                variant="compact"
-              />
-            </View>
-            <WorkspacesSectionHeader />
-            <Pressable
-              style={styles.mobileCloseButton}
-              onPress={closeSidebar}
-              testID="sidebar-close"
-              nativeID="sidebar-close"
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel={labels.closeSidebar}
-              hitSlop={8}
-            >
-              {({ hovered, pressed }) => (
-                <X
-                  size={theme.iconSize.md}
-                  color={
-                    hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted
-                  }
-                />
-              )}
-            </Pressable>
-
-            {isInitialLoad ? (
-              <SidebarAgentListSkeleton />
-            ) : (
-              <SidebarWorkspaceList
-                collapsedProjectKeys={collapsedProjectKeys}
-                onToggleProjectCollapsed={toggleProjectCollapsed}
-                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                groupMode={groupMode}
-                statusWorkspacePlacements={statusWorkspacePlacements}
-                projects={projects}
-                projectNamesByKey={projectNamesByKey}
-                isRefreshing={isManualRefresh && isRevalidating}
-                onRefresh={handleRefresh}
-                onWorkspacePress={handleWorkspacePress}
-                onAddProject={handleOpenProject}
-                parentGestureRef={closeGestureRef}
-              />
-            )}
-
-            <SidebarFooter
-              theme={theme}
-              handleOpenProject={handleOpenProject}
-              handleHome={handleHome}
-              handleSettings={handleSettings}
-              labels={labels}
-              handleAddHost={handleAddHost}
-              handleOpenHostSettings={handleOpenHostSettings}
+    <MobilePanelOverlay
+      panel="agent-list"
+      closeGesture={closeGesture}
+      panelStyle={mobileSidebarInsetStyle}
+    >
+      <View style={styles.sidebarContent} pointerEvents="auto">
+        <View style={styles.sidebarHeaderGroup}>
+          <SidebarNewWorkspaceHeaderRow
+            label={labels.newWorkspace}
+            testID="sidebar-global-new-workspace"
+            variant="compact"
+            shortcutKeys={newWorkspaceKeys}
+            onBeforeNavigate={closeSidebar}
+          />
+          <SidebarHeaderRow
+            icon={History}
+            label={labels.sessions}
+            onPress={handleViewMore}
+            isActive={isSessionsActive}
+            testID="sidebar-sessions"
+            variant="compact"
+          />
+          <SidebarHeaderRow
+            icon={CalendarClock}
+            label={labels.schedules}
+            onPress={handleViewSchedules}
+            isActive={isSchedulesActive}
+            testID="sidebar-schedules"
+            variant="compact"
+          />
+        </View>
+        <WorkspacesSectionHeader />
+        <Pressable
+          style={styles.mobileCloseButton}
+          onPress={closeSidebar}
+          testID="sidebar-close"
+          nativeID="sidebar-close"
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={labels.closeSidebar}
+          hitSlop={8}
+        >
+          {({ hovered, pressed }) => (
+            <X
+              size={theme.iconSize.md}
+              color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
             />
-          </View>
-        </Animated.View>
-      </GestureDetector>
-    </View>
+          )}
+        </Pressable>
+
+        {isInitialLoad ? (
+          <SidebarAgentListSkeleton />
+        ) : (
+          <SidebarWorkspaceList
+            collapsedProjectKeys={collapsedProjectKeys}
+            onToggleProjectCollapsed={toggleProjectCollapsed}
+            shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+            groupMode={groupMode}
+            statusWorkspacePlacements={statusWorkspacePlacements}
+            projects={projects}
+            projectNamesByKey={projectNamesByKey}
+            isRefreshing={isManualRefresh && isRevalidating}
+            onRefresh={handleRefresh}
+            onWorkspacePress={handleWorkspacePress}
+            onAddProject={handleOpenProject}
+            parentGestureRef={closeGestureRef}
+          />
+        )}
+
+        <SidebarFooter
+          theme={theme}
+          handleOpenProject={handleOpenProject}
+          handleHome={handleHome}
+          handleSettings={handleSettings}
+          labels={labels}
+          handleAddHost={handleAddHost}
+          handleOpenHostSettings={handleOpenHostSettings}
+        />
+      </View>
+    </MobilePanelOverlay>
   );
 }
 
@@ -1044,17 +900,6 @@ function WorkspacesSectionHeader() {
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
 const staticStyles = RNStyleSheet.create({
-  backdrop: {
-    ...RNStyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-  },
-  mobileSidebar: {
-    position: "absolute" as const,
-    top: 0,
-    left: 0,
-    bottom: 0,
-    overflow: "hidden" as const,
-  },
   desktopSidebar: {
     position: "relative" as const,
   },
