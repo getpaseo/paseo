@@ -73,11 +73,11 @@ describe("buildWorkingDirectorySuggestions", () => {
   it("preserves the root anchor for single-segment absolute queries", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [],
-      serverPaths: ["/Users/me/tmp", "/tmp"],
+      serverPaths: ["/Users/me/tmp", "/tmp", "/tmp/project"],
       query: "/tmp",
     });
 
-    expect(results).toEqual(["/tmp"]);
+    expect(results).toEqual(["/tmp", "/tmp/project"]);
   });
 
   it("keeps descendant matches for unrooted multi-segment searches", () => {

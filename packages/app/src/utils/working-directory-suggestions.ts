@@ -92,9 +92,21 @@ function pathMatchesQuery(
   isRootedPathQuery: boolean,
   isAbsolutePathQuery: boolean,
 ): boolean {
-  const normalizedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
+  const normalizedPath = candidatePath
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .toLowerCase();
   if (!isRootedPathQuery && normalizedPath.includes(query)) {
     return true;
+  }
+  if (isAbsolutePathQuery) {
+    const absoluteQueryPath = /^[a-z]:\//i.test(query) ? query : `/${query}`;
+    if (
+      normalizedPath === absoluteQueryPath ||
+      normalizedPath.startsWith(`${absoluteQueryPath}/`)
+    ) {
+      return true;
+    }
   }
 
   const querySegments = query.split("/");
