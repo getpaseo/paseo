@@ -69,6 +69,16 @@ Agent lifecycle status stays literal: a parent agent is `idle` when its own turn
 
 Workspace status is an aggregate activity signal computed **per `workspaceId`**: a workspace's status reflects only records whose `workspaceId === workspace.id`. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. A root agent contributes its normal state bucket to its owning workspace only. Running subagents contribute `running` to their root parent's owning workspace (by the parent agent's `workspaceId`), not to the subagent's current `cwd` or worktree. Non-running subagent attention, permission, and error states stay in the parent's subagents track and do not escalate the workspace bucket.
 
+## Subagent completion and notifications
+
+When a subagent finishes or fails, the parent agent's timeline gains a new entry reflecting that outcome. The parent's attention dot also activates, signaling that something in the subagent track needs a look. Neither of these events changes the parent's own lifecycle status: a parent that was `idle` before a child completed stays `idle` after it.
+
+No OS push notification or local notification fires per child completion. The parent's attention dot is the signal. This keeps notification volume proportional to the work a user actually cares about: the parent turn, not every delegated step inside it.
+
+`notifyOnFinish` on `create_agent` and background prompt follow-ups controls explicit finish reporting back to the creating agent. It defaults to `true` for agent-scoped creation. Set it to `false` only for truly fire-and-forget work where the parent doesn't need an explicit finish signal.
+
+The parent's own lifecycle ends only when the parent's own turn ends. A fleet of completed children does not close, error, or finish the parent.
+
 ## The subagents track
 
 The collapsible track above the composer in an agent's pane (`packages/app/src/subagents/track.tsx`). Membership rule (`packages/app/src/subagents/select.ts`):

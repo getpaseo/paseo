@@ -237,6 +237,7 @@ initializing → idle ⇄ running
 - Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
 - Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json` (timeline rows live alongside the record). That storage path is derived from `cwd`, not from workspace id.
+- When a subagent completes or fails, the parent agent's timeline gains an entry for that outcome and the parent's attention dot activates. The parent's own lifecycle status (`idle`, `running`, etc.) is unaffected. No OS push notification fires per child completion; the attention dot is the signal.
 
 ## Right-sidebar boundary: directory-backed vs workspace-owned
 
