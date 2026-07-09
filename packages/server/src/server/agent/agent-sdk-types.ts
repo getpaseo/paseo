@@ -431,7 +431,6 @@ export type AgentStreamEvent =
       type: "agent_attention";
       provider: AgentProvider;
       reason: "finished" | "error";
-      broadcast: false;
       turnId?: string;
     };
 

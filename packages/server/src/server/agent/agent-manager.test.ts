@@ -475,12 +475,6 @@ class AgentAttentionClient extends TestAgentClient {
   }
 }
 
-type HandleStreamEventForTest = (
-  agent: ManagedAgent,
-  event: AgentStreamEvent,
-  options?: { fromHistory?: boolean },
-) => Promise<boolean>;
-
 const logger = createTestLogger();
 
 test("normalizeConfig injects the provider default model when omitted", async () => {
@@ -4801,7 +4795,6 @@ test("agent_attention sets parent attention without stream payload or callback",
     type: "agent_attention",
     provider: "codex",
     reason: "finished",
-    broadcast: false,
   });
   await manager.flush();
 
@@ -4825,8 +4818,15 @@ test("agent_attention from history is ignored", async () => {
   const storage = new AgentStorage(storagePath, logger);
   const attentionReasons: Array<"finished" | "error" | "permission"> = [];
   const events: AgentManagerEvent[] = [];
+  const client = new AgentAttentionClient([
+    {
+      type: "agent_attention",
+      provider: "codex",
+      reason: "error",
+    },
+  ]);
   const manager = new AgentManager({
-    clients: { codex: new AgentAttentionClient() },
+    clients: { codex: client },
     registry: storage,
     logger,
     idFactory: () => agentId,
@@ -4841,26 +4841,7 @@ test("agent_attention from history is ignored", async () => {
     { workspaceId: undefined },
   );
   manager.subscribe((event) => events.push(event), { replayState: false });
-  const current = manager.getAgent(agent.id);
-  expect(current).not.toBeNull();
-  if (!current) {
-    throw new Error("missing agent");
-  }
-  const handleStreamEvent: HandleStreamEventForTest = Reflect.get(
-    manager,
-    "handleStreamEvent",
-  ).bind(manager);
 
-  await handleStreamEvent(
-    current,
-    {
-      type: "agent_attention",
-      provider: "codex",
-      reason: "error",
-      broadcast: false,
-    },
-    { fromHistory: true },
-  );
   await manager.flush();
 
   expect(manager.getAgent(agent.id)?.attention).toEqual({ requiresAttention: false });
