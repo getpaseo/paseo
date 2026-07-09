@@ -200,7 +200,9 @@ describe("searchHomeDirectories", () => {
       maxDirectoriesScanned: 6_000,
     });
 
-    expect(results[0]).toBe(exactMatchPath);
+    expect(results.map((result) => realpathSync.native(result))[0]).toBe(
+      realpathSync.native(exactMatchPath),
+    );
   });
 
   it("finds a nested project from a fuzzy basename query", async () => {
