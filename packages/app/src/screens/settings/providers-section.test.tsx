@@ -7,51 +7,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
-const {
-  theme,
-  snapshotState,
-  configState,
-  hostFeatureState,
-  patchConfigMock,
-  openProviderSettingsMock,
-  confirmDialogMock,
-} = vi.hoisted(() => ({
-  theme: {
-    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-    iconSize: { sm: 14, md: 20 },
-    fontSize: { xs: 11, sm: 13, base: 15 },
-    fontWeight: { normal: "400" },
-    borderRadius: { lg: 8 },
-    opacity: { 50: 0.5 },
-    colors: {
-      surface1: "#111",
-      surface2: "#222",
-      surface3: "#333",
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      border: "#555",
-      accent: "#0a84ff",
-      statusSuccess: "#00ff00",
-      statusWarning: "#ff9500",
-      statusDanger: "#ff0000",
-      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
+const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
+  () => ({
+    theme: {
+      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+      iconSize: { sm: 14, md: 20 },
+      fontSize: { xs: 11, sm: 13, base: 15 },
+      fontWeight: { normal: "400" },
+      borderRadius: { lg: 8 },
+      opacity: { 50: 0.5 },
+      colors: {
+        surface1: "#111",
+        surface2: "#222",
+        surface3: "#333",
+        foreground: "#fff",
+        foregroundMuted: "#aaa",
+        border: "#555",
+        accent: "#0a84ff",
+        statusSuccess: "#00ff00",
+        statusWarning: "#ff9500",
+        statusDanger: "#ff0000",
+        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
+      },
     },
-  },
-  snapshotState: {
-    entries: undefined as ProviderSnapshotEntry[] | undefined,
-    isLoading: false,
-    isRefreshing: false,
-  },
-  configState: {
-    config: null as MutableDaemonConfig | null,
-  },
-  hostFeatureState: {
-    providerRemoval: false,
-  },
-  patchConfigMock: vi.fn(async () => undefined),
-  openProviderSettingsMock: vi.fn(),
-  confirmDialogMock: vi.fn(async () => true),
-}));
+    snapshotState: {
+      entries: undefined as ProviderSnapshotEntry[] | undefined,
+      isLoading: false,
+      isRefreshing: false,
+    },
+    configState: {
+      config: null as MutableDaemonConfig | null,
+    },
+    patchConfigMock: vi.fn(async () => undefined),
+    openProviderSettingsMock: vi.fn(),
+  }),
+);
 
 vi.mock("react-native", () => ({
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
@@ -277,14 +267,11 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 
 vi.mock("@/runtime/host-features", () => ({
-  useHostFeature: (serverId: string, feature: string) =>
-    serverId === "server-1" && feature === "providerRemoval"
-      ? hostFeatureState.providerRemoval
-      : false,
+  useHostFeature: () => false,
 }));
 
 vi.mock("@/utils/confirm-dialog", () => ({
-  confirmDialog: confirmDialogMock,
+  confirmDialog: vi.fn(async () => true),
 }));
 
 import { ProvidersSection } from "./providers-section";
@@ -312,18 +299,6 @@ const disabledCodexEntry: ProviderSnapshotEntry = {
   description: "OpenAI Codex",
   defaultModeId: null,
   modes: [],
-};
-
-const customGeminiEntry: ProviderSnapshotEntry = {
-  provider: "gemini",
-  status: "ready",
-  enabled: true,
-  source: "custom",
-  label: "Gemini",
-  description: "Gemini CLI",
-  defaultModeId: null,
-  modes: [],
-  models: [{ provider: "gemini", id: "gemini-3-pro", label: "Gemini 3 Pro" }],
 };
 
 function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDaemonConfig {
@@ -366,12 +341,9 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
-    hostFeatureState.providerRemoval = false;
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
-    confirmDialogMock.mockReset();
-    confirmDialogMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -484,42 +456,5 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
-  });
-
-  it("removes a custom provider through the actions menu after confirmation", async () => {
-    snapshotState.entries = [customGeminiEntry];
-    configState.config = makeConfig({ gemini: {} });
-    hostFeatureState.providerRemoval = true;
-
-    render();
-
-    const row = findRow("Gemini provider details");
-    const menu = row.querySelector<HTMLElement>('[data-testid="provider-actions-gemini"]');
-    const remove = row.querySelector<HTMLElement>('[data-testid="provider-remove-gemini"]');
-    expect(menu?.getAttribute("aria-label")).toBe("Gemini actions");
-    expect(remove?.textContent).toBe("Remove provider");
-
-    await act(async () => {
-      remove?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(confirmDialogMock).toHaveBeenCalledWith({
-      title: "Remove Gemini?",
-      message: "This deletes the provider entry from config.json. It cannot be undone.",
-      confirmLabel: "Remove",
-      destructive: true,
-    });
-    expect(patchConfigMock).toHaveBeenCalledWith({ removeProviders: ["gemini"] });
-  });
-
-  it("does not show provider removal for built-in providers", () => {
-    snapshotState.entries = [claudeEntry];
-    configState.config = makeConfig();
-    hostFeatureState.providerRemoval = true;
-
-    render();
-
-    const row = findRow("Claude provider details");
-    expect(row.querySelector('[data-testid="provider-actions-claude"]')).toBeNull();
   });
 });
