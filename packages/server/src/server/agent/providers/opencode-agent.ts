@@ -1630,6 +1630,7 @@ export interface OpenCodeEventTranslationState {
   subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
   subAgentCallIdByChildSessionId?: Map<string, string>;
   pendingChildToolPartsBySessionId?: Map<string, OpenCodeToolPartEventPart[]>;
+  emittedSubAgentTerminalEvents?: Set<string>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 }
@@ -1967,6 +1968,11 @@ export function translateOpenCodeEvent(
       }
       break;
     case "session.idle":
+      if (
+        appendOpenCodeSubAgentTerminalEvent(event.properties.sessionID, "completed", state, events)
+      ) {
+        break;
+      }
       if (event.properties.sessionID === state.sessionId) {
         resetOpenCodeTurnTrackingState(state);
         events.push({ type: "turn_completed", provider: "opencode", usage: undefined });
@@ -2078,6 +2084,87 @@ function buildOpenCodeSubAgentTimelineItem(
       log: buildOpenCodeSubAgentLog(toolCall.detail, activity),
     },
   };
+}
+
+function appendOpenCodeSubAgentTerminalMarker(log: string, marker: string): string {
+  return [log, marker].filter((part) => part.trim().length > 0).join("\n");
+}
+
+function readOpenCodeErrorMessage(error: unknown): string {
+  const record = readOpenCodeRecord(error);
+  return readNonEmptyString(record?.message) ?? "Subagent failed";
+}
+
+function appendOpenCodeSubAgentAttentionEvent(
+  reason: "finished" | "error",
+  events: AgentStreamEvent[],
+): void {
+  events.push({
+    type: "agent_attention",
+    provider: "opencode",
+    reason,
+    broadcast: false,
+  });
+}
+
+function appendOpenCodeSubAgentTerminalEvent(
+  childSessionId: string,
+  status: "completed" | "failed",
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+  error?: unknown,
+): boolean {
+  const maps = getOpenCodeSubAgentMaps(state);
+  const parentCallId = maps.callIdByChildSessionId.get(childSessionId);
+  if (!parentCallId) {
+    return false;
+  }
+  const terminalKey = `${childSessionId}:${status}`;
+  state.emittedSubAgentTerminalEvents ??= new Set();
+  if (state.emittedSubAgentTerminalEvents.has(terminalKey)) {
+    return true;
+  }
+  const activity = maps.byCallId.get(parentCallId);
+  if (!activity || activity.toolCall.detail.type !== "sub_agent") {
+    return false;
+  }
+
+  state.emittedSubAgentTerminalEvents.add(terminalKey);
+  if (status === "completed") {
+    activity.toolCall = {
+      ...activity.toolCall,
+      status: "completed",
+      error: null,
+      detail: {
+        ...activity.toolCall.detail,
+        log: appendOpenCodeSubAgentTerminalMarker(
+          activity.toolCall.detail.log,
+          "[subagent] completed",
+        ),
+      },
+    };
+  } else {
+    const failedMessage = readOpenCodeErrorMessage(error);
+    activity.toolCall = {
+      ...activity.toolCall,
+      status: "failed",
+      error: { message: failedMessage },
+      detail: {
+        ...activity.toolCall.detail,
+        log: appendOpenCodeSubAgentTerminalMarker(
+          activity.toolCall.detail.log,
+          `[subagent] failed: ${failedMessage}`,
+        ),
+      },
+    };
+  }
+  events.push({
+    type: "timeline",
+    provider: "opencode",
+    item: buildOpenCodeSubAgentTimelineItem(activity),
+  });
+  appendOpenCodeSubAgentAttentionEvent(status === "failed" ? "error" : "finished", events);
+  return true;
 }
 
 function registerOpenCodeSubAgentToolCall(
@@ -2634,6 +2721,13 @@ function appendOpenCodeSessionError(
   state: OpenCodeEventTranslationState,
   events: AgentStreamEvent[],
 ): void {
+  const sessionId = readNonEmptyString(event.properties.sessionID);
+  if (
+    sessionId &&
+    appendOpenCodeSubAgentTerminalEvent(sessionId, "failed", state, events, event.properties.error)
+  ) {
+    return;
+  }
   if (event.properties.sessionID !== state.sessionId) {
     return;
   }

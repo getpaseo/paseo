@@ -6,6 +6,7 @@ import path from "node:path";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
 import {
+  type OpenCodeEventTranslationState,
   __openCodeInternals,
   OpenCodeAgentClient,
   translateOpenCodeEvent,
@@ -19,9 +20,10 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   ToolCallTimelineItem,
-  AssistantMessageTimelineItem,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
+
+type AssistantMessageTimelineItem = Extract<AgentTimelineItem, { type: "assistant_message" }>;
 
 function tmpCwd(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "opencode-agent-test-"));
@@ -118,7 +120,7 @@ function manualCompactEvents({
 }: {
   sessionId?: string;
   summaryText?: string;
-} = {}): OpenCodeEvent[] {
+} = {}): unknown[] {
   return [
     {
       type: "message.updated",
@@ -172,6 +174,103 @@ function manualCompactEvents({
   ];
 }
 
+function createOpenCodeTranslationState(): OpenCodeEventTranslationState {
+  return {
+    sessionId: "parent-session",
+    cwd: "/tmp/project",
+    messageRoles: new Map(),
+    accumulatedUsage: {},
+    streamedPartKeys: new Set(),
+    emittedStructuredMessageIds: new Set(),
+    compactionSummaryMessageIds: new Set(),
+    emittedCompactionPartIds: new Set(),
+    partTypes: new Map(),
+  };
+}
+
+function translateOpenCodeEvents(
+  events: readonly OpenCodeEvent[],
+  state: OpenCodeEventTranslationState,
+): AgentStreamEvent[] {
+  return events.flatMap((event) => translateOpenCodeEvent(event, state));
+}
+
+interface ParentSubAgentToolEventInput {
+  callId: string;
+  description: string;
+}
+
+function parentSubAgentToolEvent(input: ParentSubAgentToolEventInput): OpenCodeEvent {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: `part-${input.callId}`,
+        sessionID: "parent-session",
+        messageID: "message-parent",
+        type: "tool",
+        tool: "task",
+        callID: input.callId,
+        state: {
+          status: "running",
+          input: {
+            subagent_type: "explore",
+            description: input.description,
+          },
+          output: null,
+        },
+      },
+    },
+  } as unknown as OpenCodeEvent;
+}
+
+function childSessionCreatedEvent(childSessionId: string): OpenCodeEvent {
+  return {
+    type: "session.created",
+    properties: {
+      info: {
+        id: childSessionId,
+        parentID: "parent-session",
+      },
+    },
+  } as unknown as OpenCodeEvent;
+}
+
+function childSessionIdleEvent(childSessionId: string): OpenCodeEvent {
+  return {
+    type: "session.idle",
+    properties: { sessionID: childSessionId },
+  } as unknown as OpenCodeEvent;
+}
+
+function childSessionErrorEvent(childSessionId: string, message: string): OpenCodeEvent {
+  return {
+    type: "session.error",
+    properties: {
+      sessionID: childSessionId,
+      error: { message },
+    },
+  } as unknown as OpenCodeEvent;
+}
+
+function timelineToolCalls(events: readonly AgentStreamEvent[]): ToolCallTimelineItem[] {
+  return events.flatMap((event) => {
+    if (event.type !== "timeline" || event.item.type !== "tool_call") {
+      return [];
+    }
+    return [event.item];
+  });
+}
+
+function expectNoParentTerminalEvent(events: readonly AgentStreamEvent[]): void {
+  expect(events).not.toContainEqual(expect.objectContaining({ type: "turn_completed" }));
+  expect(events).not.toContainEqual(expect.objectContaining({ type: "turn_failed" }));
+}
+
+function countEventsByType(events: readonly AgentStreamEvent[], type: string): number {
+  return events.filter((event) => event.type === type).length;
+}
+
 describe("OpenCodeAgentClient adapter smoke tests", () => {
   const logger = createTestLogger();
   const buildConfig = (cwd: string): AgentSessionConfig => ({
@@ -190,8 +289,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     });
     const session = await client.createSession(buildConfig(cwd));
 
-    expect(typeof session.id).toBe("string");
-    expect(session.id.length).toBeGreaterThan(0);
+    expect(session.id ?? "").not.toBe("");
     expect(session.provider).toBe("opencode");
 
     await session.close();
@@ -858,6 +956,8 @@ describe("OpenCode adapter context-window normalization", () => {
         accumulatedUsage: usage,
         streamedPartKeys: new Set(),
         emittedStructuredMessageIds: new Set(),
+        compactionSummaryMessageIds: new Set(),
+        emittedCompactionPartIds: new Set(),
         partTypes: new Map(),
         modelContextWindowsByModelKey: new Map([["openai/gpt-5", 400_000]]),
         onAssistantModelContextWindowResolved,
@@ -894,6 +994,126 @@ describe("OpenCode adapter context-window normalization", () => {
     expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "all", hidden: true })).toBe(
       false,
     );
+  });
+
+  test("marks the linked parent subagent tool call completed when a child session idles", () => {
+    const state = createOpenCodeTranslationState();
+
+    translateOpenCodeEvents(
+      [
+        parentSubAgentToolEvent({ callId: "call-child", description: "Inspect traces" }),
+        childSessionCreatedEvent("child-session"),
+      ],
+      state,
+    );
+
+    const terminalEvents = translateOpenCodeEvents([childSessionIdleEvent("child-session")], state);
+
+    expect(timelineToolCalls(terminalEvents)).toEqual([
+      expect.objectContaining({
+        callId: "call-child",
+        name: "task",
+        status: "completed",
+        error: null,
+        detail: expect.objectContaining({
+          type: "sub_agent",
+          childSessionId: "child-session",
+          log: expect.stringMatching(/\[subagent\] completed$/),
+        }),
+      }),
+    ]);
+    expect(terminalEvents).toContainEqual({
+      type: "agent_attention",
+      provider: "opencode",
+      reason: "finished",
+      broadcast: false,
+    });
+    expectNoParentTerminalEvent(terminalEvents);
+  });
+
+  test("marks the linked parent subagent tool call failed when a child session errors", () => {
+    const state = createOpenCodeTranslationState();
+
+    translateOpenCodeEvents(
+      [
+        parentSubAgentToolEvent({ callId: "call-child", description: "Run checks" }),
+        childSessionCreatedEvent("child-session"),
+      ],
+      state,
+    );
+
+    const terminalEvents = translateOpenCodeEvents(
+      [childSessionErrorEvent("child-session", "model overloaded")],
+      state,
+    );
+
+    expect(timelineToolCalls(terminalEvents)).toEqual([
+      expect.objectContaining({
+        callId: "call-child",
+        name: "task",
+        status: "failed",
+        error: { message: "model overloaded" },
+        detail: expect.objectContaining({
+          type: "sub_agent",
+          childSessionId: "child-session",
+          log: expect.stringMatching(/\[subagent\] failed: model overloaded$/),
+        }),
+      }),
+    ]);
+    expect(terminalEvents).toContainEqual({
+      type: "agent_attention",
+      provider: "opencode",
+      reason: "error",
+      broadcast: false,
+    });
+    expectNoParentTerminalEvent(terminalEvents);
+  });
+
+  test("dedupes duplicate linked child terminal events", () => {
+    const state = createOpenCodeTranslationState();
+
+    translateOpenCodeEvents(
+      [
+        parentSubAgentToolEvent({ callId: "call-child", description: "Review diff" }),
+        childSessionCreatedEvent("child-session"),
+      ],
+      state,
+    );
+
+    const terminalEvents = [
+      ...translateOpenCodeEvents([childSessionIdleEvent("child-session")], state),
+      ...translateOpenCodeEvents([childSessionIdleEvent("child-session")], state),
+    ];
+
+    expect(timelineToolCalls(terminalEvents)).toHaveLength(1);
+    expect(countEventsByType(terminalEvents, "agent_attention")).toBe(1);
+    expectNoParentTerminalEvent(terminalEvents);
+  });
+
+  test("ignores ambiguous and unlinked child terminal events", () => {
+    const ambiguousState = createOpenCodeTranslationState();
+    const ambiguousEvents = translateOpenCodeEvents(
+      [
+        parentSubAgentToolEvent({ callId: "call-one", description: "First child" }),
+        parentSubAgentToolEvent({ callId: "call-two", description: "Second child" }),
+        childSessionCreatedEvent("ambiguous-child"),
+        childSessionIdleEvent("ambiguous-child"),
+      ],
+      ambiguousState,
+    );
+    const unlinkedEvents = translateOpenCodeEvents(
+      [childSessionIdleEvent("unlinked-child")],
+      createOpenCodeTranslationState(),
+    );
+
+    expect(timelineToolCalls(ambiguousEvents)).toEqual([
+      expect.objectContaining({ callId: "call-one", status: "running" }),
+      expect.objectContaining({ callId: "call-two", status: "running" }),
+    ]);
+    expect(countEventsByType(ambiguousEvents, "agent_attention")).toBe(0);
+    expect(countEventsByType(unlinkedEvents, "agent_attention")).toBe(0);
+    expect(timelineToolCalls(unlinkedEvents)).toEqual([]);
+    expectNoParentTerminalEvent([...ambiguousEvents, ...unlinkedEvents]);
   });
 
   test("carries only hex OpenCode agent colors as mode color tiers", () => {
@@ -1071,11 +1291,11 @@ describe("OpenCode adapter startTurn error handling", () => {
           return { data: {}, error: undefined };
         }),
       },
-    } as never;
+    };
 
     const session = new __openCodeInternals.OpenCodeAgentSession(
       { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
+      fakeClient as never,
       "ses_unit_test",
       createTestLogger(),
     );
@@ -1171,11 +1391,11 @@ describe("OpenCode adapter startTurn error handling", () => {
           return { data: {}, error: undefined };
         }),
       },
-    } as never;
+    };
 
     const session = new __openCodeInternals.OpenCodeAgentSession(
       { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
+      fakeClient as never,
       "ses_unit_test",
       createTestLogger(),
     );
@@ -1239,11 +1459,11 @@ describe("OpenCode adapter startTurn error handling", () => {
           return { data: {}, error: undefined };
         }),
       },
-    } as never;
+    };
 
     const session = new __openCodeInternals.OpenCodeAgentSession(
       { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
+      fakeClient as never,
       "ses_unit_test",
       createTestLogger(),
     );
@@ -1278,11 +1498,11 @@ describe("OpenCode adapter startTurn error handling", () => {
         update: vi.fn().mockResolvedValue({ error: null }),
         delete: vi.fn().mockResolvedValue({ error: null }),
       },
-    } as never;
+    };
 
     const session = new __openCodeInternals.OpenCodeAgentSession(
       { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
+      fakeClient as never,
       "ses_unit_test",
       createTestLogger(),
       new Map(),
@@ -1305,11 +1525,11 @@ describe("OpenCode adapter startTurn error handling", () => {
         update: vi.fn().mockResolvedValue({ error: null }),
         delete: vi.fn().mockResolvedValue({ error: null }),
       },
-    } as never;
+    };
 
     const session = new __openCodeInternals.OpenCodeAgentSession(
       { provider: "opencode", cwd: "/tmp/test" },
-      fakeClient,
+      fakeClient as never,
       "ses_unit_test",
       createTestLogger(),
     );
@@ -1810,7 +2030,7 @@ describe("OpenCode persisted sessions", () => {
           time: { created: 1001, completed: 1002 },
           providerID: "test-provider",
           modelID: "gpt-5.5",
-        },
+        } as never,
         parts: [
           {
             id: "prt_summary",
