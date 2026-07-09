@@ -5,7 +5,6 @@ import {
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useStatusModeWorkspacePlacements } from "@/hooks/use-status-mode-workspaces";
 import { buildStatusGroups, type StatusGroup } from "@/hooks/sidebar-status-view-model";
-import type { SidebarStatusWorkspacePlacement } from "@/hooks/sidebar-workspaces-view-model";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import {
@@ -16,7 +15,6 @@ import {
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   groupMode: SidebarGroupMode;
-  statusWorkspacePlacements: SidebarStatusWorkspacePlacement[];
   statusGroups: StatusGroup[];
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectKey: string) => void;
@@ -60,21 +58,12 @@ export function SidebarModelProvider({ children }: { children: ReactNode }) {
     () => ({
       ...list,
       groupMode,
-      statusWorkspacePlacements,
       statusGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
       shortcutModel,
     }),
-    [
-      collapsedProjectKeys,
-      groupMode,
-      list,
-      shortcutModel,
-      statusGroups,
-      statusWorkspacePlacements,
-      toggleProjectCollapsed,
-    ],
+    [collapsedProjectKeys, groupMode, list, shortcutModel, statusGroups, toggleProjectCollapsed],
   );
 
   return <SidebarModelContext.Provider value={value}>{children}</SidebarModelContext.Provider>;
