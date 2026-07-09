@@ -17,16 +17,22 @@ export function buildWorkingDirectorySuggestions(
 
   const normalizedQuery = normalizeQuery(rawQuery);
   const isRootedPathQuery = isRootedQuery(rawQuery);
+  const isAbsolutePathQuery = isAbsoluteQuery(rawQuery);
   const shouldFilterByQuery = normalizedQuery.length > 0;
 
   const recommendedMatches = shouldFilterByQuery
-    ? recommended.filter((entry) => pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery))
+    ? recommended.filter((entry) =>
+        pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery, isAbsolutePathQuery),
+      )
     : recommended;
   const seen = new Set(recommendedMatches);
   const ordered = [...recommendedMatches];
 
   for (const entry of uniquePaths(input.serverPaths)) {
-    if (shouldFilterByQuery && !pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery)) {
+    if (
+      shouldFilterByQuery &&
+      !pathMatchesQuery(entry, normalizedQuery, isRootedPathQuery, isAbsolutePathQuery)
+    ) {
       continue;
     }
     if (seen.has(entry)) {
@@ -41,12 +47,12 @@ export function buildWorkingDirectorySuggestions(
 
 function isRootedQuery(query: string): boolean {
   const normalized = query.trim().replace(/\\/g, "/");
-  return (
-    normalized.startsWith("~") ||
-    normalized.startsWith("./") ||
-    normalized.startsWith("/") ||
-    /^[a-z]:\//i.test(normalized)
-  );
+  return normalized.startsWith("~") || normalized.startsWith("./") || isAbsoluteQuery(normalized);
+}
+
+function isAbsoluteQuery(query: string): boolean {
+  const normalized = query.trim().replace(/\\/g, "/");
+  return normalized.startsWith("/") || /^[a-z]:\//i.test(normalized);
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -84,6 +90,7 @@ function pathMatchesQuery(
   candidatePath: string,
   query: string,
   isRootedPathQuery: boolean,
+  isAbsolutePathQuery: boolean,
 ): boolean {
   const normalizedPath = candidatePath.replace(/\\/g, "/").toLowerCase();
   if (!isRootedPathQuery && normalizedPath.includes(query)) {
@@ -96,8 +103,12 @@ function pathMatchesQuery(
   const candidateSegments = normalizedPath.split("/");
   const basename = candidateSegments.pop() ?? "";
   const parentPath = candidateSegments.join("/");
-  if (parentQuery) {
-    const relativeParentPath = parentPath.replace(/^\/+/, "");
+  const relativeParentPath = parentPath.replace(/^\/+/, "");
+  if (isAbsolutePathQuery) {
+    if (!isAbsoluteQuery(candidatePath) || relativeParentPath !== parentQuery) {
+      return false;
+    }
+  } else if (parentQuery) {
     if (relativeParentPath !== parentQuery && !relativeParentPath.endsWith(`/${parentQuery}`)) {
       return false;
     }

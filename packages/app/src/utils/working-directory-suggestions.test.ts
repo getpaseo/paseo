@@ -60,6 +60,26 @@ describe("buildWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
   });
 
+  it("requires an exact parent path for absolute queries", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: ["/Users/me/tmp/foo/paseo", "/tmp/foo/paseo"],
+      query: "/tmp/foo/pso",
+    });
+
+    expect(results).toEqual(["/tmp/foo/paseo"]);
+  });
+
+  it("preserves the root anchor for single-segment absolute queries", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: [],
+      serverPaths: ["/Users/me/tmp", "/tmp"],
+      query: "/tmp",
+    });
+
+    expect(results).toEqual(["/tmp"]);
+  });
+
   it("keeps descendant matches for unrooted multi-segment searches", () => {
     const results = buildWorkingDirectorySuggestions({
       recommendedPaths: [],

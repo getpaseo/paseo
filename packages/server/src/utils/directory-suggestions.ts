@@ -36,6 +36,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_MAX_DEPTH = 12;
 const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
 const HOME_RESULT_SCAN_BUDGET = 5_000;
+const MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER = 2;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
 
@@ -57,6 +58,11 @@ interface RankedDirectory {
 interface ChildDirectoryEntry {
   name: string;
   absolutePath: string;
+}
+
+interface TraversedHomeDirectory {
+  visiblePath: string;
+  resolvedPath: string;
 }
 
 interface ChildWorkspaceEntry {
@@ -299,11 +305,12 @@ async function searchWithinParentDirectory(input: {
     directory: parentRoot,
     homeRoot: input.homeRoot,
   });
+  const visibleParentPath = path.resolve(input.homeRoot, input.parentPart || ".");
 
   for (const entry of entries) {
     const rankedEntry = rankDirectory({
-      absolutePath: entry.absolutePath,
-      homeRoot: parentRoot,
+      absolutePath: path.join(visibleParentPath, entry.name),
+      homeRoot: visibleParentPath,
       searchLower,
     });
     if (searchLower && rankedEntry.matchTier === NO_MATCH_TIER) {
@@ -335,7 +342,10 @@ async function searchAcrossHomeTree(input: {
   // the whole candidate budget before a neighboring project branch advances.
   const branches = rootEntries.map((entry) =>
     iterateHomeDirectoryBranch({
-      branchRoot: entry.absolutePath,
+      directory: {
+        visiblePath: path.join(input.homeRoot, entry.name),
+        resolvedPath: entry.absolutePath,
+      },
       depth: 1,
       homeRoot: input.homeRoot,
       maxDepth: input.maxDepth,
@@ -353,7 +363,7 @@ async function searchAcrossHomeTree(input: {
   for await (const directory of iterateRoundRobin(branches)) {
     scanned += 1;
     const rankedEntry = rankDirectory({
-      absolutePath: directory,
+      absolutePath: directory.visiblePath,
       homeRoot: input.homeRoot,
       searchLower,
     });
@@ -362,7 +372,7 @@ async function searchAcrossHomeTree(input: {
     }
     if (
       scanned >= input.maxDirectoriesScanned ||
-      (scanned >= resultScanBudget && ranked.length > 0)
+      (scanned >= resultScanBudget && hasConfidentResult(ranked, searchLower))
     ) {
       break;
     }
@@ -372,29 +382,35 @@ async function searchAcrossHomeTree(input: {
 }
 
 async function* iterateHomeDirectoryBranch(input: {
-  branchRoot: string;
+  directory: TraversedHomeDirectory;
   depth: number;
   homeRoot: string;
   maxDepth: number;
   visited: Set<string>;
-}): AsyncGenerator<string> {
-  if (input.visited.has(input.branchRoot)) {
+}): AsyncGenerator<TraversedHomeDirectory> {
+  // Yield the user-visible path even when its target was reached through
+  // another branch. This keeps directory symlink names searchable while the
+  // resolved path still owns traversal and cycle detection.
+  yield input.directory;
+  if (input.visited.has(input.directory.resolvedPath)) {
     return;
   }
-  input.visited.add(input.branchRoot);
-  yield input.branchRoot;
+  input.visited.add(input.directory.resolvedPath);
 
   if (input.depth > input.maxDepth) {
     return;
   }
 
   const entries = await listChildDirectories({
-    directory: input.branchRoot,
+    directory: input.directory.resolvedPath,
     homeRoot: input.homeRoot,
   });
   const childBranches = entries.map((entry) =>
     iterateHomeDirectoryBranch({
-      branchRoot: entry.absolutePath,
+      directory: {
+        visiblePath: path.join(input.directory.visiblePath, entry.name),
+        resolvedPath: entry.absolutePath,
+      },
       depth: input.depth + 1,
       homeRoot: input.homeRoot,
       maxDepth: input.maxDepth,
@@ -404,10 +420,10 @@ async function* iterateHomeDirectoryBranch(input: {
   yield* iterateRoundRobin(childBranches);
 }
 
-async function* iterateRoundRobin(branches: Array<AsyncGenerator<string>>): AsyncGenerator<string> {
+async function* iterateRoundRobin<T>(branches: Array<AsyncGenerator<T>>): AsyncGenerator<T> {
   let activeBranches = branches;
   while (activeBranches.length > 0) {
-    const nextRound: Array<AsyncGenerator<string>> = [];
+    const nextRound: Array<AsyncGenerator<T>> = [];
     for (const branch of activeBranches) {
       const next = await branch.next();
       if (!next.done) {
@@ -417,6 +433,17 @@ async function* iterateRoundRobin(branches: Array<AsyncGenerator<string>>): Asyn
     }
     activeBranches = nextRound;
   }
+}
+
+function hasConfidentResult(ranked: RankedDirectory[], searchLower: string): boolean {
+  // Fuzzy score counts characters skipped before and between query characters.
+  // A tight subsequence can end the interactive pass; loose acronym-like hits
+  // keep the full fallback budget so they cannot hide a stronger late match.
+  const confidentFuzzyScore = searchLower.length * MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER;
+  return ranked.some(
+    (entry) =>
+      entry.matchTier < 4 || (entry.matchTier === 4 && entry.fuzzyScore <= confidentFuzzyScore),
+  );
 }
 
 async function searchWorkspaceWithinParentDirectory(input: {

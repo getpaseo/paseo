@@ -161,6 +161,48 @@ describe("searchHomeDirectories", () => {
     ]);
   });
 
+  it.skipIf(isWindows)("matches the visible name of a directory symlink", async () => {
+    const symlinkHome = path.join(tempRoot, "visible-symlink-home");
+    const projectsPath = path.join(symlinkHome, "projects");
+    const targetPath = path.join(symlinkHome, "work", "current");
+    const visibleProjectPath = path.join(projectsPath, "paseo");
+    mkdirSync(projectsPath, { recursive: true });
+    mkdirSync(targetPath, { recursive: true });
+    symlinkSync(targetPath, visibleProjectPath);
+
+    const results = await searchHomeDirectories({
+      homeDir: symlinkHome,
+      query: "paseo",
+      limit: 10,
+    });
+
+    expect(results).toContain(visibleProjectPath);
+  });
+
+  it("keeps scanning past weak fuzzy matches for a stronger late result", async () => {
+    const largeHome = path.join(tempRoot, "large-home");
+    const exactMatchPath = path.join(largeHome, "pso");
+    for (let index = 0; index < 10; index += 1) {
+      mkdirSync(
+        path.join(largeHome, `a-${index.toString().padStart(2, "0")}-project-search-output`),
+        { recursive: true },
+      );
+    }
+    for (let index = 0; index < 5_000; index += 1) {
+      mkdirSync(path.join(largeHome, `b-noise-${index.toString().padStart(4, "0")}`));
+    }
+    mkdirSync(exactMatchPath);
+
+    const results = await searchHomeDirectories({
+      homeDir: largeHome,
+      query: "pso",
+      limit: 10,
+      maxDirectoriesScanned: 6_000,
+    });
+
+    expect(results[0]).toBe(exactMatchPath);
+  });
+
   it("finds a nested project from a fuzzy basename query", async () => {
     const projectPath = realpathSync.native(path.join(homeDir, "projects", "paseo"));
 
