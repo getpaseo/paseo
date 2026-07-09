@@ -24,8 +24,24 @@ const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
 
 let materializedImageAttachmentDir: string | null = null;
 
+function canReuseMaterializedImageAttachmentDir(dir: string): boolean {
+  try {
+    const stats = fsSync.lstatSync(dir);
+    if (!stats.isDirectory()) {
+      return false;
+    }
+    fsSync.chmodSync(dir, PRIVATE_ATTACHMENT_DIR_MODE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getMaterializedImageAttachmentDir(): string {
-  if (materializedImageAttachmentDir) {
+  if (
+    materializedImageAttachmentDir &&
+    canReuseMaterializedImageAttachmentDir(materializedImageAttachmentDir)
+  ) {
     return materializedImageAttachmentDir;
   }
 
