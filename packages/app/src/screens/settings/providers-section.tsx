@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -95,6 +95,10 @@ interface ProviderActionsMenuProps {
   providerId: string;
   providerLabel: string;
   isRemoving: boolean;
+  iconSize: number;
+  foregroundColor: string;
+  foregroundMutedColor: string;
+  dangerColor: string;
   onRemove: (providerId: string, providerLabel: string) => void;
 }
 
@@ -102,10 +106,13 @@ function ProviderActionsMenu({
   providerId,
   providerLabel,
   isRemoving,
+  iconSize,
+  foregroundColor,
+  foregroundMutedColor,
+  dangerColor,
   onRemove,
 }: ProviderActionsMenuProps) {
   const { t } = useTranslation();
-  const { theme } = useUnistyles();
   const handleRemove = useCallback(() => {
     onRemove(providerId, providerLabel);
   }, [onRemove, providerId, providerLabel]);
@@ -121,14 +128,12 @@ function ProviderActionsMenu({
     ],
     [],
   );
-  const trashLeading = useMemo(
-    () => <Trash2 size={16} color={theme.colors.statusDanger} />,
-    [theme.colors.statusDanger],
-  );
+  const trashLeading = useMemo(() => <Trash2 size={16} color={dangerColor} />, [dangerColor]);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        disabled={isRemoving}
         hitSlop={8}
         onPressIn={stopPressInPropagation}
         style={triggerStyle}
@@ -138,8 +143,8 @@ function ProviderActionsMenu({
       >
         {({ hovered, open }) => (
           <MoreHorizontal
-            size={theme.iconSize.sm}
-            color={hovered || open ? theme.colors.foreground : theme.colors.foregroundMuted}
+            size={iconSize}
+            color={hovered || open ? foregroundColor : foregroundMutedColor}
           />
         )}
       </DropdownMenuTrigger>
@@ -246,6 +251,10 @@ function ProviderRow({
                 providerId={def.id}
                 providerLabel={def.label}
                 isRemoving={isRemoving}
+                iconSize={theme.iconSize.sm}
+                foregroundColor={theme.colors.foreground}
+                foregroundMutedColor={theme.colors.foregroundMuted}
+                dangerColor={theme.colors.statusDanger}
                 onRemove={onRemove}
               />
             ) : null}
@@ -312,6 +321,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
+  const removingProviderIdRef = useRef<string | null>(null);
   const [installingProviderId, setInstallingProviderId] = useState<string | null>(null);
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
@@ -343,18 +353,20 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
 
   const handleRemoveProvider = useCallback(
     async (providerId: string, providerLabel: string) => {
-      const confirmed = await confirmDialog({
-        title: t("settings.providers.remove.confirmTitle", { name: providerLabel }),
-        message: t("settings.providers.remove.confirmMessage"),
-        confirmLabel: t("settings.providers.remove.confirm"),
-        destructive: true,
-      });
-      if (!confirmed) {
-        return;
-      }
-
+      if (removingProviderIdRef.current) return;
+      removingProviderIdRef.current = providerId;
       setRemovingProviderId(providerId);
       try {
+        const confirmed = await confirmDialog({
+          title: t("settings.providers.remove.confirmTitle", { name: providerLabel }),
+          message: t("settings.providers.remove.confirmMessage"),
+          confirmLabel: t("settings.providers.remove.confirm"),
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+
         await patchConfig({ removeProviders: [providerId] });
       } catch (error) {
         Alert.alert(
@@ -362,6 +374,9 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           error instanceof Error ? error.message : String(error),
         );
       } finally {
+        if (removingProviderIdRef.current === providerId) {
+          removingProviderIdRef.current = null;
+        }
         setRemovingProviderId((current) => (current === providerId ? null : current));
       }
     },

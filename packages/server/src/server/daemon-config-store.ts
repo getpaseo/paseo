@@ -20,7 +20,11 @@ interface LoggerLike {
   info(...args: unknown[]): void;
 }
 
-type ConfigListener = (config: MutableDaemonConfig) => void;
+export interface DaemonConfigChangeDetails {
+  removedProviders: readonly string[];
+}
+
+type ConfigListener = (config: MutableDaemonConfig, details: DaemonConfigChangeDetails) => void;
 type FieldChangeHandler = (value: unknown) => void;
 
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
@@ -70,6 +74,30 @@ function omitProvidersFromConfig<T extends { providers?: Record<string, unknown>
   }
 
   return changed ? ({ ...config, providers: nextProviders } as T) : config;
+}
+
+function omitMetadataGenerationProvidersFromConfig<
+  T extends { metadataGeneration?: { providers?: Array<{ provider?: unknown }> } },
+>(config: T, providers: readonly string[]): T {
+  if (providers.length === 0 || !config.metadataGeneration?.providers) {
+    return config;
+  }
+
+  const removedProviderIds = new Set(providers);
+  const nextProviders = config.metadataGeneration.providers.filter((entry) => {
+    return typeof entry.provider !== "string" || !removedProviderIds.has(entry.provider);
+  });
+  if (nextProviders.length === config.metadataGeneration.providers.length) {
+    return config;
+  }
+
+  return {
+    ...config,
+    metadataGeneration: {
+      ...config.metadataGeneration,
+      providers: nextProviders,
+    },
+  } as T;
 }
 
 function omitProvidersFromOverrides(
@@ -148,20 +176,31 @@ export class DaemonConfigStore {
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
     const parsedPatch = MutableDaemonConfigPatchSchema.parse(partial);
     const { removeProviders = [], ...configPatch } = parsedPatch;
+    const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
-    const next = MutableDaemonConfigSchema.parse(omitProvidersFromConfig(merged, removeProviders));
+    const next = MutableDaemonConfigSchema.parse(
+      omitMetadataGenerationProvidersFromConfig(
+        omitProvidersFromConfig(merged, removedProviders),
+        removedProviders,
+      ),
+    );
 
     const changedFieldPaths = Array.from(this.fieldChangeHandlers.keys()).filter((path) => {
       return !isEqualValue(getValueAtPath(this.current, path), getValueAtPath(next, path));
     });
+    const configChanged = !isEqualValue(this.current, next);
 
-    if (changedFieldPaths.length === 0 && isEqualValue(this.current, next)) {
+    if (!configChanged && removedProviders.length === 0) {
       return this.current;
     }
 
     // Persist before updating in-memory state so that if persistence fails,
     // runtime and disk stay consistent.
-    this.persistConfig(next, removeProviders);
+    this.persistConfig(next, removedProviders);
+    if (!configChanged) {
+      return this.current;
+    }
+
     this.current = next;
 
     for (const path of changedFieldPaths) {
@@ -175,8 +214,9 @@ export class DaemonConfigStore {
       }
     }
 
+    const changeDetails: DaemonConfigChangeDetails = { removedProviders };
     for (const listener of this.changeListeners) {
-      listener(next);
+      listener(next, changeDetails);
     }
 
     return next;
