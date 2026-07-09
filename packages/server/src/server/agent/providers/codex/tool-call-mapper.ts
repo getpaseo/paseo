@@ -1000,7 +1000,7 @@ function mapSubAgentActivityItem(
     detail: {
       type: "sub_agent",
       subAgentType: "Sub-agent",
-      ...(item.agentPath ? { description: item.agentPath } : {}),
+      description: item.agentPath,
       log: "",
       actions: [],
     },

@@ -3650,6 +3650,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     let currentAssistantMessageId: string | null = null;
+    let currentAssistantMessageHasBoundary = false;
     let hasAssistantMessage = false;
     return runProviderTurn({
       prompt,
@@ -3664,17 +3665,27 @@ export class CodexAppServerAgentSession implements AgentSession {
           const isNewMessage = Boolean(
             item.messageId && item.messageId !== currentAssistantMessageId,
           );
-          currentAssistantMessageId = item.messageId ?? currentAssistantMessageId;
           if (isNewMessage) {
-            return hasPreviousAssistantMessage &&
-              item.text.startsWith(ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN)
-              ? item.text.slice(ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN.length)
-              : item.text;
+            currentAssistantMessageId = item.messageId ?? currentAssistantMessageId;
+            currentAssistantMessageHasBoundary =
+              hasPreviousAssistantMessage &&
+              item.text.startsWith(ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN);
           }
-          return appendOrReplaceGrowingAssistantMessage({ current, item });
+          const finalTextItem = currentAssistantMessageHasBoundary
+            ? {
+                ...item,
+                text: item.text.startsWith(ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN)
+                  ? item.text.slice(ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN.length)
+                  : item.text,
+              }
+            : item;
+          return isNewMessage
+            ? finalTextItem.text
+            : appendOrReplaceGrowingAssistantMessage({ current, item: finalTextItem });
         }
         if (item.type === "tool_call" && item.detail.type === "plan") {
           currentAssistantMessageId = null;
+          currentAssistantMessageHasBoundary = false;
           return item.detail.text;
         }
         return current;

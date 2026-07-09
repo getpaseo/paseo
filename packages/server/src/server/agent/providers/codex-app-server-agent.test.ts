@@ -1595,6 +1595,7 @@ describe("Codex app-server provider", () => {
         threadId: "thread-1",
         itemId: "second-parent-message",
         text: "Second report.",
+        chunks: ["", "Second report."],
       });
       appServer.completeTurn();
 

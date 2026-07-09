@@ -250,6 +250,20 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("preserves an empty subAgentActivity path as an empty description", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "subAgentActivity",
+      id: "activity-empty-path",
+      kind: "started",
+      agentThreadId: "child-thread-empty-path",
+      agentPath: "",
+    });
+
+    expect(item).toMatchObject({
+      detail: { type: "sub_agent", description: "" },
+    });
+  });
+
   it("does not fail a collabAgentToolCall from child error state alone", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",
