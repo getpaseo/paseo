@@ -37,12 +37,11 @@ import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import {
-  getIsElectronRuntime,
-  SETTINGS_DESKTOP_SPLIT_MIN_WIDTH,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
-import { resolveDesktopSidebarWidth } from "@/components/left-sidebar-width";
+  canDesktopAppSidebarShare,
+  resolveDesktopAppContentMinimum,
+} from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
@@ -416,7 +415,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const isDesktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const explorerWidth = usePanelStore((state) => state.explorerWidth);
   const { width: viewportWidth } = useWindowDimensions();
 
   const cycleTheme = useCallback(() => {
@@ -470,16 +471,22 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     />
   );
 
-  const settingsCanShareAppSidebar =
-    !pathname.includes("/settings") ||
-    viewportWidth - resolveDesktopSidebarWidth({ requestedWidth: sidebarWidth, viewportWidth }) >=
-      SETTINGS_DESKTOP_SPLIT_MIN_WIDTH;
+  const appContentMinimumWidth = resolveDesktopAppContentMinimum({
+    isSettingsRoute: pathname.includes("/settings"),
+    isWorkspaceExplorerOpen: pathname.includes("/workspace/") && isDesktopFileExplorerOpen,
+    requestedExplorerWidth: explorerWidth,
+    viewportWidth,
+  });
   const desktopSidebarRendered =
     !isCompactLayout &&
     chromeEnabled &&
     !isFocusModeEnabled &&
     isDesktopAgentListOpen &&
-    settingsCanShareAppSidebar;
+    canDesktopAppSidebarShare({
+      contentMinimumWidth: appContentMinimumWidth,
+      requestedSidebarWidth: sidebarWidth,
+      viewportWidth,
+    });
   const contentWindowChromeCorners = desktopSidebarRendered ? "top-right" : "both";
   const workspaceChrome = (
     <View style={rowStyle}>

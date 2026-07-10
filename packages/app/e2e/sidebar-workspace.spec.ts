@@ -183,4 +183,28 @@ test.describe("Half-screen desktop layout", () => {
     await expect(page.getByTestId("settings-detail-pane")).toBeVisible();
     await expect(page.getByTestId("sidebar-settings")).not.toBeVisible();
   });
+
+  test("yields app navigation to the Explorer", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-half-screen-explorer-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await openWorkspaceFromSidebar(page, workspace.workspaceId);
+
+      await page.getByTestId("workspace-explorer-toggle").first().click();
+      await expect(
+        page.getByTestId("explorer-tab-files").filter({ visible: true }).first(),
+      ).toBeVisible();
+      await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId("workspace-tabs-row").first().boundingBox())?.width ?? 0,
+        )
+        .toBeGreaterThanOrEqual(400);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });

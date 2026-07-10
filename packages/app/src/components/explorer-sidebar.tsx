@@ -22,13 +22,7 @@ import {
 } from "@/git/pull-request-panel";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
-import {
-  usePanelStore,
-  selectIsFileExplorerOpen,
-  MIN_EXPLORER_SIDEBAR_WIDTH,
-  MAX_EXPLORER_SIDEBAR_WIDTH,
-  type ExplorerTab,
-} from "@/stores/panel-store";
+import { usePanelStore, selectIsFileExplorerOpen, type ExplorerTab } from "@/stores/panel-store";
 import { useToast } from "@/contexts/toast-context";
 import { useCloseFileExplorerGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
@@ -41,8 +35,8 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { isWeb } from "@/constants/platform";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
+import { resolveDesktopExplorerWidth } from "@/components/desktop-sidebar-layout";
 
-const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
 interface ExplorerSidebarProps {
@@ -163,18 +157,16 @@ export function ExplorerSidebar({
     isGit,
   });
   const { width: viewportWidth } = useWindowDimensions();
-  const startWidthRef = useRef(explorerWidth);
-  const resizeWidth = useSharedValue(explorerWidth);
+  const visibleExplorerWidth = resolveDesktopExplorerWidth({
+    requestedWidth: explorerWidth,
+    viewportWidth,
+  });
+  const startWidthRef = useRef(visibleExplorerWidth);
+  const resizeWidth = useSharedValue(visibleExplorerWidth);
 
   useEffect(() => {
-    const maxWidth = Math.max(
-      MIN_EXPLORER_SIDEBAR_WIDTH,
-      Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH),
-    );
-    if (explorerWidth > maxWidth) {
-      setExplorerWidth(maxWidth);
-    }
-  }, [explorerWidth, setExplorerWidth, viewportWidth]);
+    resizeWidth.value = visibleExplorerWidth;
+  }, [resizeWidth, visibleExplorerWidth]);
 
   const handleDesktopClose = useCallback(() => {
     logExplorerSidebar("handleClose", {
@@ -190,22 +182,20 @@ export function ExplorerSidebar({
         .enabled(true)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onStart(() => {
-          startWidthRef.current = explorerWidth;
-          resizeWidth.value = explorerWidth;
+          startWidthRef.current = visibleExplorerWidth;
+          resizeWidth.value = visibleExplorerWidth;
         })
         .onUpdate((event) => {
           const newWidth = startWidthRef.current - event.translationX;
-          const maxWidth = Math.max(
-            MIN_EXPLORER_SIDEBAR_WIDTH,
-            Math.min(MAX_EXPLORER_SIDEBAR_WIDTH, viewportWidth - MIN_CHAT_WIDTH),
-          );
-          const clampedWidth = Math.max(MIN_EXPLORER_SIDEBAR_WIDTH, Math.min(maxWidth, newWidth));
-          resizeWidth.value = clampedWidth;
+          resizeWidth.value = resolveDesktopExplorerWidth({
+            requestedWidth: newWidth,
+            viewportWidth,
+          });
         })
         .onEnd(() => {
           runOnJS(setExplorerWidth)(resizeWidth.value);
         }),
-    [explorerWidth, resizeWidth, setExplorerWidth, viewportWidth],
+    [resizeWidth, setExplorerWidth, viewportWidth, visibleExplorerWidth],
   );
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
