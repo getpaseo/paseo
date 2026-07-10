@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   classifyBrowserReservedShortcut,
+  matchesBrowserShortcutPolicy,
   parseBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
 } from "./policy.js";
@@ -105,5 +106,48 @@ describe("browser keyboard policy", () => {
         shift: false,
       }),
     ).toMatchObject({ browserId: " browser-1 " });
+  });
+
+  test("matches digit shortcuts for the top row and numeric keypad", () => {
+    const policy = parseBrowserKeyboardPolicy({
+      prefixes: [
+        { alt: false, code: "Digit", control: true, meta: false, repeat: false, shift: false },
+      ],
+    });
+    expect(policy).not.toBeNull();
+
+    expect(
+      matchesBrowserShortcutPolicy(policy!, {
+        alt: false,
+        code: "Digit3",
+        control: true,
+        key: "3",
+        meta: false,
+        repeat: false,
+        shift: false,
+      }),
+    ).toBe(true);
+    expect(
+      matchesBrowserShortcutPolicy(policy!, {
+        alt: false,
+        code: "Numpad3",
+        control: true,
+        key: "3",
+        meta: false,
+        repeat: false,
+        shift: false,
+      }),
+    ).toBe(true);
+    expect(
+      matchesBrowserShortcutPolicy(policy!, {
+        alt: false,
+        code: "Digit0",
+        control: true,
+        key: "0",
+        meta: false,
+        repeat: false,
+        shift: false,
+      }),
+    ).toBe(false);
   });
 });

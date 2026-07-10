@@ -17,8 +17,9 @@ It validates the compositor behavior that unit tests cannot see:
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
   host composer;
 - the automation group loads the compiled production keyboard boundary and guest
-  preload, then proves a page-handled shortcut stays in the page while an unhandled
-  shortcut crosses once.
+  preload, then proves that a page window handler gets first refusal, an unhandled
+  shortcut crosses once, digit wildcard shortcuts cross, and background automation
+  stays in the guest.
 
 Run it with the repo Electron:
 

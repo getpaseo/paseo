@@ -310,4 +310,39 @@ describe("PaseoBrowserWebviewRegistry", () => {
 
     expect(registry.hasBrowserInOtherHostWindow(101, "browser-a")).toBe(false);
   });
+
+  it("keeps the same-window active selection made before the guest attaches", () => {
+    const registry = new PaseoBrowserWebviewRegistry();
+
+    registry.setWorkspaceActiveBrowser({
+      hostWebContentsId: 101,
+      workspaceId: "workspace-a",
+      browserId: "browser-a",
+    });
+    registry.registerWebContents({
+      webContentsId: 11,
+      browserId: "browser-a",
+      hostWebContentsId: 101,
+    });
+
+    expect(registry.getActiveBrowserIdForHostWindow(101)).toBe("browser-a");
+  });
+
+  it("drops a pre-attach selection when the guest attaches to another host window", () => {
+    const registry = new PaseoBrowserWebviewRegistry();
+
+    registry.setWorkspaceActiveBrowser({
+      hostWebContentsId: 101,
+      workspaceId: "workspace-a",
+      browserId: "browser-a",
+    });
+    registry.registerWebContents({
+      webContentsId: 11,
+      browserId: "browser-a",
+      hostWebContentsId: 202,
+    });
+
+    expect(registry.getActiveBrowserIdForHostWindow(101)).toBeNull();
+    expect(registry.getActiveBrowserIdForHostWindow(202)).toBeNull();
+  });
 });

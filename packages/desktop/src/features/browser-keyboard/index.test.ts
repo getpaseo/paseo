@@ -278,4 +278,21 @@ describe("BrowserKeyboard", () => {
       },
     ]);
   });
+
+  test("keeps policy-owned shortcuts out of the application menu without preempting the page", () => {
+    const keyboard = new BrowserKeyboard();
+    const guest = new FakeBrowserContents(91);
+    const host = new FakeBrowserContents(92);
+    keyboard.publish(host.id, {
+      prefixes: [
+        { alt: false, code: "KeyW", control: true, meta: false, repeat: false, shift: false },
+      ],
+    });
+    keyboard.attach({ browserId: "browser-a", contents: guest, hostContents: host });
+
+    const wasPrevented = guest.input(electronInput({ code: "KeyW", control: true, key: "w" }));
+
+    expect(wasPrevented).toBe(false);
+    expect(guest.ignoredMenuShortcuts).toEqual([true]);
+  });
 });

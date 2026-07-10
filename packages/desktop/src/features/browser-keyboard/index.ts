@@ -2,6 +2,7 @@ import { ipcMain } from "electron";
 import {
   type BrowserKeyboardPolicy,
   classifyBrowserReservedShortcut,
+  matchesBrowserShortcutPolicy,
   parseBrowserKeyboardPolicy,
   parseBrowserShortcutInput,
 } from "./policy.js";
@@ -158,7 +159,21 @@ export class BrowserKeyboard {
     event: BrowserKeyboardInputEvent,
     input: Electron.Input,
   ): void {
-    guest.contents.setIgnoreMenuShortcuts(!input.control && !input.meta);
+    const policy = this.policiesByHostWebContentsId.get(guest.hostWebContentsId);
+    const belongsToBrowserPolicy =
+      policy !== undefined &&
+      matchesBrowserShortcutPolicy(policy, {
+        alt: input.alt,
+        code: input.code,
+        control: input.control,
+        key: input.key,
+        meta: input.meta,
+        repeat: input.isAutoRepeat,
+        shift: input.shift,
+      });
+    guest.contents.setIgnoreMenuShortcuts(
+      (!input.control && !input.meta) || belongsToBrowserPolicy,
+    );
     const reservedShortcut = classifyBrowserReservedShortcut(input, {
       isMac: process.platform === "darwin",
     });

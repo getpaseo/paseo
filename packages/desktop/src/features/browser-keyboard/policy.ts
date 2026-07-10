@@ -25,6 +25,16 @@ export interface BrowserShortcutInput {
   shift: boolean;
 }
 
+export interface BrowserShortcutMatchInput {
+  alt: boolean;
+  code: string;
+  control: boolean;
+  key: string;
+  meta: boolean;
+  repeat: boolean;
+  shift: boolean;
+}
+
 export type BrowserReservedShortcut = "new-tab" | "focus-url" | "reload" | "force-reload";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,6 +113,43 @@ export function parseBrowserShortcutInput(value: unknown): BrowserShortcutInput 
     repeat: value.repeat === true,
     shift: value.shift,
   };
+}
+
+function matchesCode(prefixCode: string, inputCode: string): boolean {
+  if (prefixCode !== "Digit") {
+    return prefixCode === inputCode;
+  }
+  return /^(?:Digit|Numpad)[1-9]$/.test(inputCode);
+}
+
+function matchesPrefix(prefix: BrowserShortcutPrefix, input: BrowserShortcutMatchInput): boolean {
+  if (
+    prefix.alt !== input.alt ||
+    prefix.control !== input.control ||
+    prefix.meta !== input.meta ||
+    prefix.shift !== input.shift ||
+    (prefix.repeat === false && input.repeat)
+  ) {
+    return false;
+  }
+  if (prefix.key === undefined) {
+    return matchesCode(prefix.code, input.code);
+  }
+  const key = input.key.toLowerCase();
+  if (key === prefix.key) {
+    return true;
+  }
+  if (prefix.shift && prefix.shiftedKey !== undefined && key === prefix.shiftedKey) {
+    return true;
+  }
+  return (prefix.alt || prefix.codeFallback === true) && matchesCode(prefix.code, input.code);
+}
+
+export function matchesBrowserShortcutPolicy(
+  policy: BrowserKeyboardPolicy,
+  input: BrowserShortcutMatchInput,
+): boolean {
+  return policy.prefixes.some((prefix) => matchesPrefix(prefix, input));
 }
 
 export function classifyBrowserReservedShortcut(
