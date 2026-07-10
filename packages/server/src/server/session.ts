@@ -2195,61 +2195,42 @@ export class Session {
     }
   }
 
-  private async handleProjectPinSetRequest(
-    projectId: string,
-    pinned: boolean,
-    requestId: string,
-  ): Promise<void> {
-    this.sessionLogger.info({ projectId, pinned, requestId }, "session: project.pin.set.request");
+  private async handlePinSetRequest(config: {
+    pinned: boolean;
+    noun: "project" | "workspace";
+    logLabel: string;
+    logContext: Record<string, unknown>;
+    apply: (
+      nextPinnedAt: string | null,
+    ) => Promise<"not_found" | { affectedWorkspaceIds: string[] }>;
+    emitResponse: (result: {
+      accepted: boolean;
+      pinnedAt: string | null;
+      error: string | null;
+    }) => void;
+  }): Promise<void> {
+    this.sessionLogger.info(config.logContext, `session: ${config.logLabel}`);
 
     try {
-      const existing = await this.projectRegistry.get(projectId);
-      if (!existing) {
-        this.emit({
-          type: "project.pin.set.response",
-          payload: {
-            requestId,
-            projectId,
-            accepted: false,
-            pinnedAt: null,
-            error: "Project not found",
-          },
-        });
+      const nextPinnedAt = config.pinned ? new Date().toISOString() : null;
+      const applied = await config.apply(nextPinnedAt);
+      if (applied === "not_found") {
+        const Noun = `${config.noun[0].toUpperCase()}${config.noun.slice(1)}`;
+        config.emitResponse({ accepted: false, pinnedAt: null, error: `${Noun} not found` });
         return;
       }
 
-      const nextPinnedAt = pinned ? new Date().toISOString() : null;
+      config.emitResponse({ accepted: true, pinnedAt: nextPinnedAt, error: null });
 
-      await this.projectRegistry.upsert({
-        ...existing,
-        pinnedAt: nextPinnedAt,
-        updatedAt: new Date().toISOString(),
-      });
-
-      this.emit({
-        type: "project.pin.set.response",
-        payload: {
-          requestId,
-          projectId,
-          accepted: true,
-          pinnedAt: nextPinnedAt,
-          error: null,
-        },
-      });
-
-      const workspaces = await this.workspaceRegistry.list();
-      const affectedWorkspaceIds = workspaces
-        .filter((workspace) => workspace.projectId === projectId)
-        .map((workspace) => workspace.workspaceId);
-      if (affectedWorkspaceIds.length > 0) {
-        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds, {
+      if (applied.affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(applied.affectedWorkspaceIds, {
           skipReconcile: true,
         });
       }
     } catch (error) {
       this.sessionLogger.error(
-        { err: error, projectId, requestId },
-        "session: project.pin.set.request error",
+        { ...config.logContext, err: error },
+        `session: ${config.logLabel} error`,
       );
       this.emit({
         type: "activity_log",
@@ -2257,20 +2238,51 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to pin project: ${getErrorMessage(error)}`,
+          content: `Failed to pin ${config.noun}: ${getErrorMessage(error)}`,
         },
       });
-      this.emit({
-        type: "project.pin.set.response",
-        payload: {
-          requestId,
-          projectId,
-          accepted: false,
-          pinnedAt: null,
-          error: getErrorMessageOr(error, "Failed to pin project"),
-        },
+      config.emitResponse({
+        accepted: false,
+        pinnedAt: null,
+        error: getErrorMessageOr(error, `Failed to pin ${config.noun}`),
       });
     }
+  }
+
+  private async handleProjectPinSetRequest(
+    projectId: string,
+    pinned: boolean,
+    requestId: string,
+  ): Promise<void> {
+    await this.handlePinSetRequest({
+      pinned,
+      noun: "project",
+      logLabel: "project.pin.set.request",
+      logContext: { projectId, pinned, requestId },
+      apply: async (nextPinnedAt) => {
+        const existing = await this.projectRegistry.get(projectId);
+        if (!existing) {
+          return "not_found";
+        }
+        await this.projectRegistry.upsert({
+          ...existing,
+          pinnedAt: nextPinnedAt,
+          updatedAt: new Date().toISOString(),
+        });
+        const workspaces = await this.workspaceRegistry.list();
+        return {
+          affectedWorkspaceIds: workspaces
+            .filter((workspace) => workspace.projectId === projectId)
+            .map((workspace) => workspace.workspaceId),
+        };
+      },
+      emitResponse: ({ accepted, pinnedAt, error }) => {
+        this.emit({
+          type: "project.pin.set.response",
+          payload: { requestId, projectId, accepted, pinnedAt, error },
+        });
+      },
+    });
   }
 
   private async handleProjectRemoveRequest(
@@ -2445,74 +2457,30 @@ export class Session {
     pinned: boolean,
     requestId: string,
   ): Promise<void> {
-    this.sessionLogger.info(
-      { workspaceId, pinned, requestId },
-      "session: workspace.pin.set.request",
-    );
-
-    try {
-      const existing = await this.workspaceRegistry.get(workspaceId);
-      if (!existing) {
+    await this.handlePinSetRequest({
+      pinned,
+      noun: "workspace",
+      logLabel: "workspace.pin.set.request",
+      logContext: { workspaceId, pinned, requestId },
+      apply: async (nextPinnedAt) => {
+        const existing = await this.workspaceRegistry.get(workspaceId);
+        if (!existing) {
+          return "not_found";
+        }
+        await this.workspaceRegistry.upsert({
+          ...existing,
+          pinnedAt: nextPinnedAt,
+          updatedAt: new Date().toISOString(),
+        });
+        return { affectedWorkspaceIds: [workspaceId] };
+      },
+      emitResponse: ({ accepted, pinnedAt, error }) => {
         this.emit({
           type: "workspace.pin.set.response",
-          payload: {
-            requestId,
-            workspaceId,
-            accepted: false,
-            pinnedAt: null,
-            error: "Workspace not found",
-          },
+          payload: { requestId, workspaceId, accepted, pinnedAt, error },
         });
-        return;
-      }
-
-      const nextPinnedAt = pinned ? new Date().toISOString() : null;
-
-      await this.workspaceRegistry.upsert({
-        ...existing,
-        pinnedAt: nextPinnedAt,
-        updatedAt: new Date().toISOString(),
-      });
-
-      this.emit({
-        type: "workspace.pin.set.response",
-        payload: {
-          requestId,
-          workspaceId,
-          accepted: true,
-          pinnedAt: nextPinnedAt,
-          error: null,
-        },
-      });
-
-      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], {
-        skipReconcile: true,
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, workspaceId, requestId },
-        "session: workspace.pin.set.request error",
-      );
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to pin workspace: ${getErrorMessage(error)}`,
-        },
-      });
-      this.emit({
-        type: "workspace.pin.set.response",
-        payload: {
-          requestId,
-          workspaceId,
-          accepted: false,
-          pinnedAt: null,
-          error: getErrorMessageOr(error, "Failed to pin workspace"),
-        },
-      });
-    }
+      },
+    });
   }
 
   /**
