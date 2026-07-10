@@ -4,28 +4,26 @@ import { dispatchTrustedKey } from "./trusted-input.js";
 
 describe("trusted browser input", () => {
   test.each([
-    ["a", "a"],
-    ["Z", "Z"],
-    ["Space", "Space"],
-    ["ArrowDown", "Down"],
-  ])("sends %s as Electron key code %s with unhandled redispatch disabled", (key, keyCode) => {
-    const events: IsolatedKeyboardInputEvent[] = [];
+    ["a", "a", ["keyDown", "char", "keyUp"]],
+    ["Z", "Z", ["keyDown", "char", "keyUp"]],
+    ["Space", "Space", ["keyDown", "keyUp"]],
+    ["ArrowDown", "Down", ["keyDown", "keyUp"]],
+  ])(
+    "sends %s as Electron key code %s with unhandled redispatch disabled",
+    (key, keyCode, types) => {
+      const events: IsolatedKeyboardInputEvent[] = [];
 
-    dispatchTrustedKey((event) => {
-      events.push(event);
-    }, key);
+      dispatchTrustedKey((event) => {
+        events.push(event);
+      }, key);
 
-    expect(events).toEqual([
-      {
-        type: "keyDown",
-        keyCode,
-        skipIfUnhandled: true,
-      },
-      {
-        type: "keyUp",
-        keyCode,
-        skipIfUnhandled: true,
-      },
-    ]);
-  });
+      expect(events).toEqual(
+        types.map((type) => ({
+          type,
+          keyCode,
+          skipIfUnhandled: true,
+        })),
+      );
+    },
+  );
 });

@@ -1847,8 +1847,25 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
   pass("automation production guest preload forwards one page-unhandled browser shortcut");
   checks.push({ group: "automation", check: "browser-shortcut-page-first-forward", pass: true });
 
-  automationBrowserShortcut(guest, "1");
+  const editableTarget = await guest.executeJavaScript(
+    "document.getElementById('name').focus(); document.activeElement.id",
+    true,
+  );
+  if (editableTarget !== "name") {
+    fail(`automation editable browser shortcut target was not focused: ${editableTarget}`);
+  }
+  automationBrowserShortcut(guest);
   await waitForBrowserShortcutInput(shortcutInputs, 2);
+  if (!isDeepStrictEqual(shortcutInputs[1], expectedBrowserShortcutInput)) {
+    fail(
+      `editable browser shortcut crossed boundary incorrectly: inputs=${JSON.stringify(shortcutInputs)}`,
+    );
+  }
+  pass("automation production guest preload forwards an unhandled editable browser shortcut");
+  checks.push({ group: "automation", check: "browser-shortcut-editable-forward", pass: true });
+
+  automationBrowserShortcut(guest, "1");
+  await waitForBrowserShortcutInput(shortcutInputs, 3);
   const expectedDigitShortcutInput = {
     alt: false,
     browserId,
@@ -1859,7 +1876,7 @@ async function verifyBrowserKeyboardIsolation({ guest, win, browserId, usesMeta,
     repeat: false,
     shift: false,
   };
-  if (!isDeepStrictEqual(shortcutInputs[1], expectedDigitShortcutInput)) {
+  if (!isDeepStrictEqual(shortcutInputs[2], expectedDigitShortcutInput)) {
     fail(
       `digit browser shortcut crossed boundary incorrectly: inputs=${JSON.stringify(shortcutInputs)}`,
     );

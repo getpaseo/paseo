@@ -19,7 +19,7 @@ const MODIFIER_MASKS: Record<InputModifier, number> = {
 };
 
 export interface IsolatedKeyboardInputEvent extends KeyboardInputEvent {
-  type: "keyDown" | "keyUp";
+  type: "char" | "keyDown" | "keyUp";
   // Electron accepts this NativeWebKeyboardEvent flag even though its public
   // TypeScript declarations omit it. It stops an unhandled webview key from
   // being redispatched to the embedder's active DOM element or application menu.
@@ -168,6 +168,13 @@ export function dispatchTrustedKey(send: KeyboardInputSender, key: string): void
     keyCode,
     skipIfUnhandled: true,
   });
+  if (key.length === 1) {
+    send({
+      type: "char",
+      keyCode,
+      skipIfUnhandled: true,
+    });
+  }
   send({
     type: "keyUp",
     keyCode,

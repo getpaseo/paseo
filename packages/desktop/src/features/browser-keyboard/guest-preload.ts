@@ -44,31 +44,13 @@ function matchesCode(prefixCode: string, eventCode: string): boolean {
   return /^(?:Digit|Numpad)[1-9]$/.test(eventCode);
 }
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) {
-    return false;
-  }
-  if (
-    target.closest("[contenteditable=true], [contenteditable=''], [contenteditable=plaintext-only]")
-  ) {
-    return true;
-  }
-  return target.matches("input, textarea, select, [role=textbox]");
-}
-
 function installKeydownListener(): void {
   if (keydownListenerInstalled) {
     return;
   }
   keydownListenerInstalled = true;
   window.addEventListener("keydown", (event) => {
-    if (
-      !event.isTrusted ||
-      event.defaultPrevented ||
-      !browserId ||
-      isEditableTarget(event.target) ||
-      !matchesPolicy(event)
-    ) {
+    if (!event.isTrusted || event.defaultPrevented || !browserId || !matchesPolicy(event)) {
       return;
     }
     event.preventDefault();
