@@ -36,6 +36,7 @@ interface QueryPlan {
   parentPart: string;
   searchTerm: string;
   normalizedQuery: string;
+  browseExactPath?: boolean;
 }
 
 interface ChildEntry {
@@ -75,6 +76,9 @@ const DEFAULT_MAX_DEPTH = 12;
 const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
+// Windows does not reliably update directory mtime/ctime when children change,
+// so metadata cannot safely validate a cross-request listing cache there.
+const CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA = process.platform !== "win32";
 const MAX_CONFIDENT_FUZZY_SKIPS_PER_CHARACTER = 2;
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
@@ -106,11 +110,14 @@ export async function searchDirectoryEntries(
   if (!input) return [];
 
   const exact =
-    input.matchMode === "suffix" && input.plan.isPathQuery ? await findExactEntry(input) : null;
+    input.plan.browseExactPath || (input.matchMode === "suffix" && input.plan.isPathQuery)
+      ? await findExactEntry(input)
+      : null;
   if (exact && input.limit === 1) return [exact];
 
+  const browsesRoot = input.plan.isPathQuery && !input.plan.normalizedQuery;
   const ranked =
-    input.plan.isPathQuery && input.matchMode === "fuzzy"
+    input.plan.isPathQuery && (input.matchMode === "fuzzy" || browsesRoot)
       ? await searchChildren(input)
       : await searchTree(input);
   const results = sortAndFormat(ranked, input.root, input.pathFormat).slice(0, input.limit);
@@ -130,6 +137,7 @@ function buildSearchInput(
   const plan = parseQuery({
     query: options.query,
     root,
+    configuredRoot: path.resolve(options.root),
     policy: options.pathQueryPolicy ?? "slashes",
     aliases: options.rootAliases ?? [],
     blankBehavior: options.blankQueryBehavior ?? "none",
@@ -292,6 +300,7 @@ function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
   if (entry.name.startsWith(".")) return false;
   if (entry.kind === "directory" && !input.includeDirectories) return false;
   if (entry.kind === "file" && !input.includeFiles) return false;
+  if (!input.plan.normalizedQuery) return true;
   if (input.matchMode === "suffix")
     return suffixMatches(entry.visiblePath, input.root, input.plan.normalizedQuery);
   return !input.plan.searchTerm || rank(entry, input).matchTier !== NO_MATCH_TIER;
@@ -384,6 +393,7 @@ function hasConfidentResult(entries: RankedEntry[], query: string): boolean {
 
 function suffixMatches(visiblePath: string, root: string, query: string): boolean {
   const querySegments = query.toLowerCase().split("/").filter(Boolean);
+  if (querySegments.length === 0) return false;
   const pathSegments = normalizeRelativePath(root, visiblePath)
     .toLowerCase()
     .split("/")
@@ -397,6 +407,7 @@ function suffixMatches(visiblePath: string, root: string, query: string): boolea
 function parseQuery(input: {
   query: string;
   root: string;
+  configuredRoot: string;
   policy: PathQueryPolicy;
   aliases: string[];
   blankBehavior: BlankQueryBehavior;
@@ -411,6 +422,15 @@ function parseQuery(input: {
     if (!explicitlyBrowseRoot && input.blankBehavior !== "children") return null;
     return { isPathQuery: true, parentPart: "", searchTerm: "", normalizedQuery: "" };
   }
+  if (normalizedInput.isAbsolute && isFilesystemRoot(input.root) && !normalized.includes("/")) {
+    return {
+      isPathQuery: true,
+      parentPart: normalized,
+      searchTerm: "",
+      normalizedQuery: normalized,
+      browseExactPath: true,
+    };
+  }
   const isPathQuery = rooted || (input.policy === "slashes" && normalized.includes("/"));
   const slash = normalized.lastIndexOf("/");
   return {
@@ -424,11 +444,13 @@ function parseQuery(input: {
 function normalizeQueryInput(input: {
   query: string;
   root: string;
+  configuredRoot: string;
   aliases: string[];
-}): { typed: string; normalized: string; rooted: boolean } | null {
+}): { typed: string; normalized: string; rooted: boolean; isAbsolute: boolean } | null {
   const typed = input.query.trim().replace(/\\/g, "/");
   let normalized = typed;
   let rooted = false;
+  let isAbsolute = false;
   for (const alias of input.aliases) {
     if (normalized === alias || normalized.startsWith(`${alias}/`)) {
       rooted = true;
@@ -437,11 +459,18 @@ function normalizeQueryInput(input: {
     }
   }
   if (path.isAbsolute(normalized)) {
+    isAbsolute = true;
     const browseAbsoluteDirectory = normalized.endsWith("/");
-    const absolute = path.resolve(normalized);
-    if (!isPathInsideRoot(input.root, absolute)) return null;
+    const absolutePath = path.resolve(normalized);
+    let queryRoot: string | null = null;
+    if (isPathInsideRoot(input.root, absolutePath)) {
+      queryRoot = input.root;
+    } else if (isPathInsideRoot(input.configuredRoot, absolutePath)) {
+      queryRoot = input.configuredRoot;
+    }
+    if (!queryRoot) return null;
     rooted = true;
-    normalized = normalizeRelativePath(input.root, absolute);
+    normalized = normalizeRelativePath(queryRoot, absolutePath);
     if (browseAbsoluteDirectory && normalized !== ".") {
       normalized = `${normalized}/`;
     }
@@ -451,7 +480,11 @@ function normalizeQueryInput(input: {
   if (normalized === "." && (rooted || typed === ".")) {
     normalized = "";
   }
-  return { typed, normalized, rooted };
+  return { typed, normalized, rooted, isAbsolute };
+}
+
+function isFilesystemRoot(inputPath: string): boolean {
+  return path.relative(path.parse(inputPath).root, inputPath) === "";
 }
 
 async function resolveDirectory(inputPath: string): Promise<string | null> {
@@ -465,7 +498,9 @@ async function readChildren(directory: string): Promise<ChildEntry[]> {
   const directoryInfo = await stat(directory).catch(() => null);
   if (!directoryInfo?.isDirectory()) return [];
 
-  const cached = directoryListCache.get(directory);
+  const cached = CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA
+    ? directoryListCache.get(directory)
+    : undefined;
   let rawEntries: RawChildEntry[];
   if (
     cached &&
@@ -480,13 +515,15 @@ async function readChildren(directory: string): Promise<ChildEntry[]> {
       .map(toRawChildEntry)
       .filter((entry): entry is RawChildEntry => entry !== null)
       .sort((left, right) => left.name.localeCompare(right.name));
-    directoryListCache.set(directory, {
-      expiresAt: Date.now() + DIRECTORY_LIST_CACHE_TTL_MS,
-      modifiedAtMs: directoryInfo.mtimeMs,
-      changedAtMs: directoryInfo.ctimeMs,
-      entries: rawEntries,
-    });
-    pruneCache();
+    if (CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA) {
+      directoryListCache.set(directory, {
+        expiresAt: Date.now() + DIRECTORY_LIST_CACHE_TTL_MS,
+        modifiedAtMs: directoryInfo.mtimeMs,
+        changedAtMs: directoryInfo.ctimeMs,
+        entries: rawEntries,
+      });
+      pruneCache();
+    }
   }
 
   return (await Promise.all(rawEntries.map((entry) => resolveChild(directory, entry))))

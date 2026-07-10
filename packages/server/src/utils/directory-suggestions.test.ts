@@ -14,6 +14,7 @@ import { isPlatform } from "../test-utils/platform.js";
 import { searchDirectoryEntries } from "./directory-suggestions.js";
 
 const isWindows = isPlatform("win32");
+const filesystemRootDirectoryName = isWindows ? "Windows" : "usr";
 const workspaceHiddenDirectories = [".agents", ".claude", ".codex", ".github", ".paseo", ".vscode"];
 
 async function searchAbsoluteDirectoryPaths(options: {
@@ -67,10 +68,12 @@ async function searchRelativeDirectoryEntries(options: {
 }
 
 describe("searchDirectoryEntries", () => {
+  let configuredSearchRoot: string;
   let searchRoot: string;
 
   beforeEach(() => {
-    searchRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "directory-search-")));
+    configuredSearchRoot = mkdtempSync(path.join(tmpdir(), "directory-search-"));
+    searchRoot = realpathSync.native(configuredSearchRoot);
     mkdirSync(path.join(searchRoot, "projects", "paseo-desktop"), { recursive: true });
     mkdirSync(path.join(searchRoot, "src", "components"), { recursive: true });
     mkdirSync(path.join(searchRoot, ".hidden", "secret"), { recursive: true });
@@ -83,7 +86,7 @@ describe("searchDirectoryEntries", () => {
 
   it("applies result paths and entry kinds as parameters of one search", async () => {
     const directories = await searchDirectoryEntries({
-      root: searchRoot,
+      root: configuredSearchRoot,
       query: "pso",
       pathFormat: "absolute",
       includeFiles: false,
@@ -114,6 +117,10 @@ describe("searchDirectoryEntries", () => {
   });
 
   it("configures raw blank queries independently from explicit root aliases", async () => {
+    const rootEntries = [
+      { path: "projects", kind: "directory" as const },
+      { path: "src", kind: "directory" as const },
+    ];
     const common = {
       root: searchRoot,
       pathFormat: "relative" as const,
@@ -136,10 +143,7 @@ describe("searchDirectoryEntries", () => {
         query: "~",
         blankQueryBehavior: "none",
       }),
-    ).resolves.toEqual([
-      { path: "projects", kind: "directory" },
-      { path: "src", kind: "directory" },
-    ]);
+    ).resolves.toEqual(rootEntries);
 
     await expect(
       searchDirectoryEntries({
@@ -147,19 +151,32 @@ describe("searchDirectoryEntries", () => {
         query: "",
         blankQueryBehavior: "children",
       }),
-    ).resolves.toEqual([
-      { path: "projects", kind: "directory" },
-      { path: "src", kind: "directory" },
+    ).resolves.toEqual(rootEntries);
+
+    const suffixRootBrowses = await Promise.all([
+      searchDirectoryEntries({
+        ...common,
+        query: "",
+        matchMode: "suffix",
+        blankQueryBehavior: "children",
+      }),
+      searchDirectoryEntries({
+        ...common,
+        query: "~",
+        matchMode: "suffix",
+        blankQueryBehavior: "none",
+      }),
     ]);
+    expect(suffixRootBrowses).toEqual([rootEntries, rootEntries]);
   });
 
   it("anchors rooted one-segment queries to their root parent", async () => {
     mkdirSync(path.join(searchRoot, "nested", "pso-global"), { recursive: true });
     mkdirSync(path.join(searchRoot, "pso-root"), { recursive: true });
-    const absoluteQuery = path.join(searchRoot, "pso");
+    const absoluteQuery = path.join(configuredSearchRoot, "pso");
 
     const common = {
-      root: searchRoot,
+      root: configuredSearchRoot,
       pathFormat: "relative" as const,
       includeFiles: false,
       includeDirectories: true,
@@ -177,16 +194,16 @@ describe("searchDirectoryEntries", () => {
 
   it("browses an absolute root and an absolute directory ending in a separator", async () => {
     const common = {
-      root: searchRoot,
+      root: configuredSearchRoot,
       pathFormat: "relative" as const,
       includeFiles: false,
       includeDirectories: true,
       pathQueryPolicy: "rooted" as const,
     };
-    const rootEntries = await searchDirectoryEntries({ ...common, query: searchRoot });
+    const rootEntries = await searchDirectoryEntries({ ...common, query: configuredSearchRoot });
     const projectEntries = await searchDirectoryEntries({
       ...common,
-      query: `${path.join(searchRoot, "projects")}${path.sep}`,
+      query: `${path.join(configuredSearchRoot, "projects")}${path.sep}`,
     });
 
     expect({ rootEntries, projectEntries }).toEqual({
@@ -196,6 +213,30 @@ describe("searchDirectoryEntries", () => {
       ],
       projectEntries: [{ path: "projects/paseo-desktop", kind: "directory" }],
     });
+  });
+
+  it("anchors single-segment absolute queries when the search root is a filesystem root", async () => {
+    const filesystemRoot = path.parse(searchRoot).root;
+    const exactPath = path.join(filesystemRoot, filesystemRootDirectoryName);
+    const incompletePath = exactPath.slice(0, -1);
+    const common = {
+      root: filesystemRoot,
+      pathFormat: "absolute" as const,
+      includeFiles: false,
+      includeDirectories: true,
+      pathQueryPolicy: "rooted" as const,
+      limit: 5,
+    };
+
+    await expect(searchDirectoryEntries({ ...common, query: incompletePath })).resolves.toEqual([]);
+
+    const exactEntries = await searchDirectoryEntries({ ...common, query: exactPath });
+    expect(exactEntries[0]).toEqual({ path: exactPath, kind: "directory" });
+    expect(
+      exactEntries.every(
+        (entry) => entry.path === exactPath || entry.path.startsWith(`${exactPath}${path.sep}`),
+      ),
+    ).toBe(true);
   });
 
   it("does not return entries below the configured traversal depth", async () => {
@@ -372,14 +413,14 @@ describe("absolute directory-path configuration", () => {
   let outsideDir: string;
 
   beforeEach(() => {
-    tempRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "directory-suggestions-")));
+    tempRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-suggestions-")));
     homeDir = path.join(tempRoot, "home");
     outsideDir = path.join(tempRoot, "outside");
 
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(outsideDir, { recursive: true });
-    homeDir = realpathSync(homeDir);
-    outsideDir = realpathSync(outsideDir);
+    homeDir = realpathSync.native(homeDir);
+    outsideDir = realpathSync.native(outsideDir);
 
     mkdirSync(path.join(homeDir, "projects", "paseo"), { recursive: true });
     mkdirSync(path.join(homeDir, "projects", "playground"), { recursive: true });
