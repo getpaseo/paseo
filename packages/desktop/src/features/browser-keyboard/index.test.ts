@@ -193,6 +193,32 @@ describe("BrowserKeyboard", () => {
     ]);
   });
 
+  test("keeps same-browser guests active in separate host windows", () => {
+    const keyboard = new BrowserKeyboard();
+    const firstGuest = new FakeBrowserContents(57);
+    const secondGuest = new FakeBrowserContents(58);
+    const firstHost = new FakeBrowserContents(59);
+    const secondHost = new FakeBrowserContents(60);
+    keyboard.attach({ browserId: "browser-a", contents: firstGuest, hostContents: firstHost });
+    keyboard.attach({ browserId: "browser-a", contents: secondGuest, hostContents: secondHost });
+
+    keyboard.forwardShortcutInput(firstGuest, shortcutInput("browser-a"));
+    keyboard.forwardShortcutInput(secondGuest, shortcutInput("browser-a"));
+
+    expect(firstHost.sent).toEqual([
+      {
+        channel: "paseo:event:browser-shortcut-input",
+        payload: shortcutInput("browser-a"),
+      },
+    ]);
+    expect(secondHost.sent).toEqual([
+      {
+        channel: "paseo:event:browser-shortcut-input",
+        payload: shortcutInput("browser-a"),
+      },
+    ]);
+  });
+
   test("resends the latest shortcut policy after every main-frame load", () => {
     const keyboard = new BrowserKeyboard();
     const guest = new FakeBrowserContents(61);

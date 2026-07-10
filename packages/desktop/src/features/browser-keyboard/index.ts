@@ -53,7 +53,7 @@ interface BrowserKeyboardGuest {
 }
 
 export class BrowserKeyboard {
-  private readonly guestsByBrowserId = new Map<string, BrowserKeyboardGuest>();
+  private readonly guestsByHostAndBrowserId = new Map<string, BrowserKeyboardGuest>();
   private readonly guestsByWebContentsId = new Map<number, BrowserKeyboardGuest>();
   private readonly policiesByHostWebContentsId = new Map<number, BrowserKeyboardPolicy>();
 
@@ -80,11 +80,13 @@ export class BrowserKeyboard {
     if (guestAtWebContentsId) {
       this.detachGuest(guestAtWebContentsId);
     }
-    const guestForBrowser = this.guestsByBrowserId.get(guest.browserId);
+    const guestForBrowser = this.guestsByHostAndBrowserId.get(
+      guestKey(guest.hostWebContentsId, guest.browserId),
+    );
     if (guestForBrowser) {
       this.detachGuest(guestForBrowser);
     }
-    this.guestsByBrowserId.set(guest.browserId, guest);
+    this.guestsByHostAndBrowserId.set(guestKey(guest.hostWebContentsId, guest.browserId), guest);
     this.guestsByWebContentsId.set(guest.webContentsId, guest);
 
     input.contents.once("destroyed", () => {
@@ -149,8 +151,9 @@ export class BrowserKeyboard {
     if (this.guestsByWebContentsId.get(guest.webContentsId) === guest) {
       this.guestsByWebContentsId.delete(guest.webContentsId);
     }
-    if (this.guestsByBrowserId.get(guest.browserId) === guest) {
-      this.guestsByBrowserId.delete(guest.browserId);
+    const key = guestKey(guest.hostWebContentsId, guest.browserId);
+    if (this.guestsByHostAndBrowserId.get(key) === guest) {
+      this.guestsByHostAndBrowserId.delete(key);
     }
   }
 
@@ -211,4 +214,8 @@ export class BrowserKeyboard {
       guest.contents.send(POLICY_OUTPUT_CHANNEL, { ...policy, browserId: guest.browserId });
     }
   }
+}
+
+function guestKey(hostWebContentsId: number, browserId: string): string {
+  return `${hostWebContentsId}:${browserId}`;
 }
