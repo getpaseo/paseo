@@ -792,6 +792,9 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Fixados",
+    },
     host: {
       noHost: "Nenhum host",
       switchTitle: "Trocar host",

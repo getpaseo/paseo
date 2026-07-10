@@ -786,6 +786,9 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "固定済み",
+    },
     host: {
       noHost: "ホストなし",
       switchTitle: "ホストを切り替え",
