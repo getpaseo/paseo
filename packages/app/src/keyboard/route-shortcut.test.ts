@@ -31,6 +31,7 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ["workspace.tab.new", { id: "workspace.tab.new", scope: "workspace" }],
     ["workspace.new", { id: "workspace.new", scope: "sidebar" }],
     ["workspace.archive", { id: "workspace.archive", scope: "sidebar" }],
+    ["workspace.pin", { id: "workspace.pin", scope: "sidebar" }],
     ["worktree.new", { id: "worktree.new", scope: "sidebar" }],
     ["workspace.terminal.new", { id: "workspace.terminal.new", scope: "workspace" }],
     ["workspace.tab.close.current", { id: "workspace.tab.close-current", scope: "workspace" }],

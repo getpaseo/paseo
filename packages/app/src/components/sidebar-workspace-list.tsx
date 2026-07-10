@@ -355,6 +355,12 @@ function projectKebabStyle({
   return [styles.projectKebabButton, hovered && styles.projectKebabButtonHovered];
 }
 
+function workspaceKebabStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.kebabButton, hovered && styles.kebabButtonHovered];
+}
+
 function getProjectWorkspaceRowStyle({
   isDragging,
   selected,
@@ -641,6 +647,101 @@ function ProjectKebabMenu({
   );
 }
 
+function WorkspacePinButton({
+  workspaceKey,
+  isPinned,
+  onTogglePin,
+}: {
+  workspaceKey: string;
+  isPinned?: boolean;
+  onTogglePin: () => void;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      // Keep the tap on the icon; don't let it fall through to row navigation.
+      event.stopPropagation();
+      onTogglePin();
+    },
+    [onTogglePin],
+  );
+  const Icon = isPinned ? ThemedPinOff : ThemedPin;
+  return (
+    <Pressable
+      hitSlop={8}
+      style={workspaceKebabStyle}
+      accessibilityRole="button"
+      accessibilityLabel={
+        isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")
+      }
+      onPress={handlePress}
+      testID={`sidebar-workspace-pin-${workspaceKey}`}
+    >
+      <Icon size={14} uniProps={foregroundMutedColorMapping} />
+    </Pressable>
+  );
+}
+
+function WorkspaceRowTrailingControls({
+  showPin,
+  showKebab,
+  workspaceKey,
+  isPinned,
+  onTogglePin,
+  onCopyPath,
+  onCopyBranchName,
+  onRename,
+  onMarkAsRead,
+  onArchive,
+  archiveLabel,
+  archiveStatus,
+  archivePendingLabel,
+  archiveShortcutKeys,
+}: {
+  showPin: boolean;
+  showKebab: boolean;
+  workspaceKey: string;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
+  onCopyPath?: () => void;
+  onCopyBranchName?: () => void;
+  onRename?: () => void;
+  onMarkAsRead?: () => void;
+  onArchive?: () => void;
+  archiveLabel?: string;
+  archiveStatus?: "idle" | "pending" | "success";
+  archivePendingLabel?: string;
+  archiveShortcutKeys?: ShortcutKey[][] | null;
+}) {
+  return (
+    <View style={styles.trailingControlsRow}>
+      {showPin && onTogglePin ? (
+        <WorkspacePinButton
+          workspaceKey={workspaceKey}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+        />
+      ) : null}
+      {showKebab && onArchive ? (
+        <SidebarWorkspaceMenu
+          workspaceKey={workspaceKey}
+          onCopyPath={onCopyPath}
+          onCopyBranchName={onCopyBranchName}
+          onRename={onRename}
+          onMarkAsRead={onMarkAsRead}
+          onArchive={onArchive}
+          archiveLabel={archiveLabel}
+          archiveStatus={archiveStatus}
+          archivePendingLabel={archivePendingLabel}
+          archiveShortcutKeys={archiveShortcutKeys}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 function WorkspaceRowRightGroup({
   workspace,
   isHovered,
@@ -682,7 +783,11 @@ function WorkspaceRowRightGroup({
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
   const showKebabInSlot = showKebab && !showShortcut;
-  const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
+  const showPin = Boolean(
+    onTogglePin && !isCreating && !showShortcut && (isHovered || isTouchPlatform),
+  );
+  const showTrailingOverlay = showPin || showKebabInSlot;
+  const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat || showPin);
 
   return (
     <>
@@ -692,7 +797,7 @@ function WorkspaceRowRightGroup({
       {shouldRenderActionSlot ? (
         <SidebarWorkspaceTrailingActionSlot>
           <SidebarWorkspaceTrailingActionBase
-            visible={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
+            visible={Boolean(workspace.diffStat && !showTrailingOverlay && !showShortcut)}
           >
             {workspace.diffStat ? (
               <DiffStat
@@ -701,23 +806,23 @@ function WorkspaceRowRightGroup({
               />
             ) : null}
           </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay visible={showKebabInSlot}>
-            {onArchive ? (
-              <SidebarWorkspaceMenu
-                workspaceKey={workspace.workspaceKey}
-                onCopyPath={onCopyPath}
-                onCopyBranchName={onCopyBranchName}
-                onRename={onRename}
-                onMarkAsRead={onMarkAsRead}
-                onArchive={onArchive}
-                archiveLabel={archiveLabel}
-                archiveStatus={archiveStatus}
-                archivePendingLabel={archivePendingLabel}
-                archiveShortcutKeys={archiveShortcutKeys}
-                isPinned={isPinned}
-                onTogglePin={onTogglePin}
-              />
-            ) : null}
+          <SidebarWorkspaceTrailingActionOverlay visible={showTrailingOverlay}>
+            <WorkspaceRowTrailingControls
+              showPin={showPin}
+              showKebab={showKebabInSlot}
+              workspaceKey={workspace.workspaceKey}
+              isPinned={isPinned}
+              onTogglePin={onTogglePin}
+              onCopyPath={onCopyPath}
+              onCopyBranchName={onCopyBranchName}
+              onRename={onRename}
+              onMarkAsRead={onMarkAsRead}
+              onArchive={onArchive}
+              archiveLabel={archiveLabel}
+              archiveStatus={archiveStatus}
+              archivePendingLabel={archivePendingLabel}
+              archiveShortcutKeys={archiveShortcutKeys}
+            />
           </SidebarWorkspaceTrailingActionOverlay>
         </SidebarWorkspaceTrailingActionSlot>
       ) : null}
@@ -1613,6 +1718,17 @@ function WorkspaceRowWithMenu({
     priority: 0,
     handle: () => {
       handleArchive();
+      return true;
+    },
+  });
+
+  useKeyboardActionHandler({
+    handlerId: `workspace-pin-${workspace.workspaceKey}`,
+    actions: ["workspace.pin"],
+    enabled: selected && supportsWorkspacePinning,
+    priority: 0,
+    handle: () => {
+      handleTogglePin();
       return true;
     },
   });
@@ -2668,7 +2784,7 @@ const styles = StyleSheet.create((theme) => ({
     width: "100%",
   },
   pinnedSection: {
-    marginBottom: theme.spacing[2],
+    marginBottom: theme.spacing[1],
   },
   pinnedSectionHeader: {
     flexDirection: "row",
@@ -2679,13 +2795,16 @@ const styles = StyleSheet.create((theme) => ({
     // right beside the name.
     paddingLeft: theme.spacing[2],
     paddingRight: theme.spacing[2],
+    // Symmetric vertical padding matches WorkspacesSectionHeader so the two peer
+    // section labels share the same breathing room above and below.
+    paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
     userSelect: "none",
   },
   pinnedSectionTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.normal,
   },
   projectBlock: {
     marginBottom: theme.spacing[1],
@@ -3001,6 +3120,19 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     flexShrink: 0,
+  },
+  trailingControlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  kebabButton: {
+    padding: 2,
+    borderRadius: 4,
+    marginLeft: 2,
+  },
+  kebabButtonHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   statusDotNeedsInput: {
     backgroundColor: theme.colors.palette.amber[500],
