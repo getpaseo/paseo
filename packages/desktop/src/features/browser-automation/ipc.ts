@@ -6,6 +6,7 @@ import type {
   BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import {
   dialogAcceptValue,
@@ -74,14 +75,16 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   reload(): void;
   capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
   invalidate(): void;
+  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
-  observeConsoleMessages(contents);
-  const cdpQueue = getCdpQueue(contents.id);
-  const dialogMonitor = getDialogMonitor(contents, cdpQueue);
+  const contentsId = contents.id;
+  observeConsoleMessages(contents, contentsId);
+  const cdpQueue = getCdpQueue(contentsId);
+  const dialogMonitor = getDialogMonitor(contents, contentsId, cdpQueue);
   return {
-    id: contents.id,
+    id: contentsId,
     getURL: () => contents.getURL(),
     getTitle: () => contents.getTitle(),
     canGoBack: () => contents.canGoBack(),
@@ -95,7 +98,8 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     reload: () => contents.reload(),
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
-    getConsoleMessages: () => consoleMessagesByContentsId.get(contents.id) ?? [],
+    sendInputEvent: (event) => contents.sendInputEvent(event),
+    getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
       cdpQueue.run(async () => {
@@ -117,35 +121,36 @@ function getCdpQueue(contentsId: number): CdpSessionQueue {
   return queue;
 }
 
-function observeConsoleMessages(contents: BrowserAutomationWebContents): void {
-  if (observedContentsIds.has(contents.id)) {
+function observeConsoleMessages(contents: BrowserAutomationWebContents, contentsId: number): void {
+  if (observedContentsIds.has(contentsId)) {
     return;
   }
-  observedContentsIds.add(contents.id);
+  observedContentsIds.add(contentsId);
   contents.on("console-message", (_event, level, message, line, sourceId) => {
     const entry = normalizeConsoleMessage({ level, message, line, sourceId });
-    const messages = consoleMessagesByContentsId.get(contents.id) ?? [];
+    const messages = consoleMessagesByContentsId.get(contentsId) ?? [];
     messages.push(entry);
-    consoleMessagesByContentsId.set(contents.id, messages.slice(-MAX_CONSOLE_MESSAGES_PER_TAB));
+    consoleMessagesByContentsId.set(contentsId, messages.slice(-MAX_CONSOLE_MESSAGES_PER_TAB));
   });
   contents.once("destroyed", () => {
-    observedContentsIds.delete(contents.id);
-    consoleMessagesByContentsId.delete(contents.id);
-    cdpQueuesByContentsId.delete(contents.id);
-    dialogMonitorsByContentsId.delete(contents.id);
+    observedContentsIds.delete(contentsId);
+    consoleMessagesByContentsId.delete(contentsId);
+    cdpQueuesByContentsId.delete(contentsId);
+    dialogMonitorsByContentsId.delete(contentsId);
   });
 }
 
 function getDialogMonitor(
   contents: BrowserAutomationWebContents,
+  contentsId: number,
   cdpQueue: CdpSessionQueue,
 ): DialogMonitor {
-  const existing = dialogMonitorsByContentsId.get(contents.id);
+  const existing = dialogMonitorsByContentsId.get(contentsId);
   if (existing) {
     return existing;
   }
-  const monitor = new DialogMonitor(contents, cdpQueue);
-  dialogMonitorsByContentsId.set(contents.id, monitor);
+  const monitor = new DialogMonitor(contents, contentsId, cdpQueue);
+  dialogMonitorsByContentsId.set(contentsId, monitor);
   return monitor;
 }
 
@@ -156,6 +161,7 @@ class DialogMonitor {
 
   public constructor(
     private readonly contents: BrowserAutomationWebContents,
+    private readonly contentsId: number,
     private readonly cdpQueue: CdpSessionQueue,
   ) {}
 
@@ -168,7 +174,7 @@ class DialogMonitor {
       await this.installPromptShim();
     } catch (error) {
       console.warn("[browser-automation] Dialog capture unavailable; running command without it", {
-        contentsId: this.contents.id,
+        contentsId: this.contentsId,
         error,
       });
       return { result: await task(), dialogs: [] };

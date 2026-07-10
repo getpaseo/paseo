@@ -1,37 +1,30 @@
 import { describe, expect, test } from "vitest";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 import { dispatchTrustedKey } from "./trusted-input.js";
 
 describe("trusted browser input", () => {
-  test("Space dispatches a real space key event", async () => {
-    const commands: Array<{ command: string; params?: Record<string, unknown> }> = [];
+  test.each([
+    ["a", "a"],
+    ["Z", "Z"],
+    ["Space", "Space"],
+    ["ArrowDown", "Down"],
+  ])("sends %s as Electron key code %s with unhandled redispatch disabled", (key, keyCode) => {
+    const events: IsolatedKeyboardInputEvent[] = [];
 
-    await dispatchTrustedKey(async (command, params) => {
-      commands.push({ command, ...(params ? { params } : {}) });
-      return {};
-    }, "Space");
+    dispatchTrustedKey((event) => {
+      events.push(event);
+    }, key);
 
-    expect(commands).toEqual([
+    expect(events).toEqual([
       {
-        command: "Input.dispatchKeyEvent",
-        params: {
-          type: "keyDown",
-          key: " ",
-          code: "Space",
-          windowsVirtualKeyCode: 32,
-          nativeVirtualKeyCode: 32,
-          text: " ",
-          unmodifiedText: " ",
-        },
+        type: "keyDown",
+        keyCode,
+        skipIfUnhandled: true,
       },
       {
-        command: "Input.dispatchKeyEvent",
-        params: {
-          type: "keyUp",
-          key: " ",
-          code: "Space",
-          windowsVirtualKeyCode: 32,
-          nativeVirtualKeyCode: 32,
-        },
+        type: "keyUp",
+        keyCode,
+        skipIfUnhandled: true,
       },
     ]);
   });

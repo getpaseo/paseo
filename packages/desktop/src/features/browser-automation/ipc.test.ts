@@ -2,6 +2,7 @@ import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
 import { adaptWebContents } from "./ipc.js";
+import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
   public toPNG(): Uint8Array {
@@ -90,6 +91,7 @@ type ConsoleMessageListener = (
 
 class FakeWebContents {
   public readonly debugger = new FakeDebugger();
+  public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   public readonly captures: Array<{
     rect: Rectangle | undefined;
     options: { stayHidden?: boolean } | undefined;
@@ -99,7 +101,14 @@ class FakeWebContents {
   private destroyedListener: (() => void) | null = null;
   public destroyed = false;
 
-  public constructor(public readonly id: number) {}
+  public constructor(private readonly webContentsId: number) {}
+
+  public get id(): number {
+    if (this.destroyed) {
+      throw new TypeError("Object has been destroyed");
+    }
+    return this.webContentsId;
+  }
 
   public getURL(): string {
     return "https://example.com";
@@ -149,6 +158,10 @@ class FakeWebContents {
     this.invalidations.push("invalidate");
   }
 
+  public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
+    this.inputEvents.push(event);
+  }
+
   public on(event: "console-message", listener: ConsoleMessageListener): void {
     expect(event).toBe("console-message");
     this.consoleMessageListener = listener;
@@ -178,6 +191,17 @@ class FakeWebContents {
 }
 
 describe("browser automation IPC adapter", () => {
+  test("sends contained keyboard input directly to the guest", () => {
+    const contents = new FakeWebContents(19);
+    const tab = adaptWebContents(contents);
+
+    tab.sendInputEvent({ type: "keyDown", keyCode: "Enter", skipIfUnhandled: true });
+
+    expect(contents.inputEvents).toEqual([
+      { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
+    ]);
+  });
+
   test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
@@ -211,7 +235,7 @@ describe("browser automation IPC adapter", () => {
       },
     ]);
 
-    contents.destroy();
+    expect(() => contents.destroy()).not.toThrow();
 
     expect(tab.getConsoleMessages?.()).toEqual([]);
   });

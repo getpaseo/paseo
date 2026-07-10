@@ -1,5 +1,5 @@
 import { app, Menu, BrowserWindow, ipcMain } from "electron";
-import { getMostRecentWorkspaceActivePaseoBrowserWebContents } from "./browser-webviews/index.js";
+import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
 
 interface ShowContextMenuInput {
   kind?: "terminal";
@@ -19,14 +19,33 @@ function withBrowserWindow(
   };
 }
 
-function getReloadTargetBrowserWebContents(): Electron.WebContents | null {
-  return getMostRecentWorkspaceActivePaseoBrowserWebContents();
+interface ReloadableWebContents {
+  isLoadingMainFrame(): boolean;
+  stop(): void;
+  reload(): void;
+  reloadIgnoringCache(): void;
 }
 
-function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCache?: boolean }) {
-  const browserContents = getReloadTargetBrowserWebContents();
+interface ReloadableWindow {
+  webContents: ReloadableWebContents & { id: number };
+}
+
+interface ReloadActiveBrowserOrWindowInput {
+  win: ReloadableWindow;
+  getActiveBrowserContentsForHostWindow: (
+    hostWebContentsId: number,
+  ) => ReloadableWebContents | null;
+  ignoreCache?: boolean;
+}
+
+export function reloadActiveBrowserOrWindow({
+  win,
+  getActiveBrowserContentsForHostWindow,
+  ignoreCache = false,
+}: ReloadActiveBrowserOrWindowInput): void {
+  const browserContents = getActiveBrowserContentsForHostWindow(win.webContents.id);
   if (browserContents) {
-    if (options?.ignoreCache) {
+    if (ignoreCache) {
       browserContents.reloadIgnoringCache();
       return;
     }
@@ -38,7 +57,7 @@ function reloadFocusedContentsOrWindow(win: BrowserWindow, options?: { ignoreCac
     return;
   }
 
-  if (options?.ignoreCache) {
+  if (ignoreCache) {
     win.webContents.reloadIgnoringCache();
     return;
   }
@@ -127,14 +146,21 @@ function buildApplicationMenuTemplate(
           label: "Reload",
           accelerator: "CmdOrCtrl+R",
           click: withBrowserWindow((win) => {
-            reloadFocusedContentsOrWindow(win);
+            reloadActiveBrowserOrWindow({
+              win,
+              getActiveBrowserContentsForHostWindow: getActivePaseoBrowserWebContentsForHostWindow,
+            });
           }),
         },
         {
           label: "Force Reload",
           accelerator: "CmdOrCtrl+Shift+R",
           click: withBrowserWindow((win) => {
-            reloadFocusedContentsOrWindow(win, { ignoreCache: true });
+            reloadActiveBrowserOrWindow({
+              win,
+              getActiveBrowserContentsForHostWindow: getActivePaseoBrowserWebContentsForHostWindow,
+              ignoreCache: true,
+            });
           }),
         },
         { role: "toggleDevTools" },

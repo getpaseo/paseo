@@ -13,7 +13,12 @@ It validates the compositor behavior that unit tests cannot see:
 - both viewport `capturePage` and full-page CDP screenshots return real pixels from
   the permanent production parking state;
 - guest background throttling can be disabled once at attach without per-capture
-  renderer coordination.
+  renderer coordination;
+- the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
+  host composer;
+- the automation group loads the compiled production keyboard boundary and guest
+  preload, then proves a page-handled shortcut stays in the page while an unhandled
+  shortcut crosses once.
 
 Run it with the repo Electron:
 
@@ -21,9 +26,11 @@ Run it with the repo Electron:
 npm run capture-harness --workspace=@getpaseo/desktop
 ```
 
-Run the browser automation fixture with:
+Build the desktop main process before the automation group so its production guest
+preload is available:
 
 ```bash
+npm run build:main --workspace=@getpaseo/desktop
 PASEO_CAPTURE_HARNESS_GROUP=automation npm run capture-harness --workspace=@getpaseo/desktop
 ```
 
@@ -43,6 +50,9 @@ ARIA-like snapshot text includes headings, static text, and controls; refs survi
 `pushState` when the element still matches; same-URL rerenders stale old refs; and a
 file-input ref can be resolved to a CDP backend node id for upload. It also verifies
 page-context evaluation, including passing a resolved ref element as the function argument.
+Keyboard containment runs last because the host-composer sentinel intentionally leaves
+native focus in the host. It reuses an existing fixture button: adding a test-only control
+changes the inline fixture geometry exercised by the earlier actionability checks.
 
 On macOS the harness process must set `app.setActivationPolicy("accessory")` and
 hide the Dock icon before creating any window. `showInactive()` only prevents window

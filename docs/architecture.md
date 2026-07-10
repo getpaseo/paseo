@@ -141,8 +141,22 @@ Electron wrapper for macOS, Linux, and Windows.
 > **In-app browser profile.** Every browser guest uses one stable persistent Electron session, so cookies, authentication, cache, and site storage are shared across tabs, workspaces, and desktop windows and survive tab or app closure. Browser identity is independent of that storage partition: after `did-attach`, the renderer explicitly registers its browser id, workspace id, and guest `WebContents` id, and main accepts the registration only when that guest belongs to the calling renderer and the shared profile. Settings > General > Clear browser data is the sole profile-deletion path; it clears the shared session and reloads live guests without deleting saved tabs or URLs.
 >
 > **In-app browser window opens.** Ordinary link opens, including Shift-clicked links, become Paseo workspace tabs. Script-created opens with popup features or a named window target and POST-backed opens remain secured Electron child windows in the shared browser profile, preserving `window.opener`, `postMessage`, named-window reuse, request bodies, and `window.close()` for OAuth, payment, and similar popup protocols. Unsupported URL schemes are denied before either path.
+>
+> **In-app browser ownership.** Each registered guest records its owning host window. The active browser is keyed by `(host window, workspace)`, and application-menu Reload / Force Reload resolve only within the window Electron supplies to the menu callback. A non-null active update must name a browser owned by that host; a null update clears only that host/workspace. Browser automation continues to target explicit browser ids returned by `browser_new_tab` or `browser_list_tabs`.
+>
+> **Browser keyboard boundary.** Guest pages receive renderer-published shortcuts first. `Cmd/Ctrl+L` and `Cmd/Ctrl+R` are explicit guest-shell reservations; ordinary Paseo shortcuts run only after the page declines them. The sandboxed guest preload runs in every frame so focused iframes use the same boundary, while Node integration remains disabled. Human guest input disables Electron's menu fallback for plain keys. Agent-generated keys use guest `sendInputEvent` with `skipIfUnhandled`, so an unhandled Enter stops at the guest instead of reaching the host composer. Main selects the preload; it exposes no APIs to guest pages.
 
-> **In-app browser targets are not yet per-window.** Browser webviews are still tracked by one process-global registry that keeps a single current `WebContents` per browser id. Human focus records the workspace-active browser for UI state and `list_tabs` reporting, while agent automation targets explicit browser ids returned by `browser_new_tab` or `browser_list_tabs`. Explicit attached-guest registration prevents concurrent windows from swapping different browser ids, but rendering the same saved browser tab in multiple windows can still make menu actions target the most recently registered guest. Making the registry window-scoped remains a follow-up.
+```text
+Human key -> guest WebContents
+  |-- Cmd/Ctrl+T/L/R ----------> reserved browser-shell action
+  `-- page keydown
+        |-- page prevents ------> page owns it
+        `-- published shortcut -> guest preload -> IPC(browserId) -> Paseo resolver
+
+Agent browser_keypress -> guest sendInputEvent(skipIfUnhandled)
+  |-- guest handles ------------> page owns it
+  `-- guest does not handle ----> stop; never redispatch to the host window
+```
 
 ### `packages/website` — Marketing site
 

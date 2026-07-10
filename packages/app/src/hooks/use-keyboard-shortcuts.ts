@@ -7,11 +7,17 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
   type ChordState,
+  type KeyboardShortcutInput,
   resolveKeyboardShortcut,
   buildEffectiveBindings,
   getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
+import {
+  buildBrowserShortcutPolicy,
+  parseBrowserShortcutInput,
+} from "@/keyboard/browser-shortcuts";
+import type { KeyboardFocusScope, KeyboardShortcutPayload } from "@/keyboard/actions";
 import {
   routeKeyboardShortcut,
   type ShortcutAction,
@@ -47,6 +53,8 @@ export function useKeyboardShortcuts({
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const isDesktopApp = getIsElectronRuntime();
+  const isMac = getShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
     candidateIndices: [],
     step: 0,
@@ -63,12 +71,25 @@ export function useKeyboardShortcuts({
   }, [activeWorkspaceSelection]);
 
   useEffect(() => {
+    if (!isDesktopApp) {
+      return;
+    }
+
+    const prefixes =
+      enabled && !isMobile
+        ? buildBrowserShortcutPolicy({
+            bindings,
+            isMac,
+            isDesktop: isDesktopApp,
+          })
+        : [];
+    void getDesktopHost()?.browser?.setShortcutPolicy?.({ prefixes });
+  }, [bindings, enabled, isDesktopApp, isMac, isMobile]);
+
+  useEffect(() => {
     if (!enabled) return;
     if (isNative) return;
     if (isMobile) return;
-
-    const isDesktopApp = getIsElectronRuntime();
-    const isMac = getShortcutOs() === "mac";
 
     // Only the modifier that actually performs the workspace-index jump on this
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
@@ -106,7 +127,10 @@ export function useKeyboardShortcuts({
       "cycle-theme": cycleTheme,
     };
 
-    const performShortcutAction = (action: ShortcutAction, event: KeyboardEvent): boolean => {
+    const performShortcutAction = (
+      action: ShortcutAction,
+      event: KeyboardEvent | null,
+    ): boolean => {
       switch (action.kind) {
         case "none":
           return false;
@@ -137,7 +161,7 @@ export function useKeyboardShortcuts({
           callbacksByName[action.name]?.();
           return true;
         case "command-center-toggle": {
-          if (action.nextOpen) {
+          if (action.nextOpen && event) {
             captureCommandCenterFocusRestore(event);
           }
           useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen);
@@ -146,6 +170,80 @@ export function useKeyboardShortcuts({
         case "shortcuts-dialog-toggle":
           useKeyboardShortcutsStore.getState().setShortcutsDialogOpen(action.nextOpen);
           return true;
+      }
+    };
+
+    const routeAndPerformShortcut = (input: {
+      action: string;
+      payload: KeyboardShortcutPayload;
+      domEvent: KeyboardEvent | null;
+    }): boolean => {
+      const store = useKeyboardShortcutsStore.getState();
+      const shortcutAction = routeKeyboardShortcut(
+        { action: input.action, payload: input.payload },
+        {
+          pathname,
+          isMobile,
+          sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
+          navigationActiveWorkspace:
+            keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
+          commandCenterOpen: store.commandCenterOpen,
+          shortcutsDialogOpen: store.shortcutsDialogOpen,
+        },
+      );
+      return performShortcutAction(shortcutAction, input.domEvent);
+    };
+
+    const resolveAndPerformShortcut = (input: {
+      event: KeyboardShortcutInput;
+      focusScope: KeyboardFocusScope;
+      domEvent: KeyboardEvent | null;
+    }) => {
+      const store = useKeyboardShortcutsStore.getState();
+      const result = resolveKeyboardShortcut({
+        event: input.event,
+        context: {
+          isMac,
+          isDesktop: isDesktopApp,
+          focusScope: input.focusScope,
+          commandCenterOpen: store.commandCenterOpen,
+        },
+        chordState: chordStateRef.current,
+        onChordReset: () => {
+          chordStateRef.current = {
+            candidateIndices: [],
+            step: 0,
+            timeoutId: null,
+          };
+        },
+        bindings,
+      });
+
+      chordStateRef.current = result.nextChordState;
+
+      if (result.preventDefault && input.domEvent) {
+        input.domEvent.preventDefault();
+        input.domEvent.stopPropagation();
+      }
+
+      if (!result.match) {
+        return;
+      }
+
+      const handled = routeAndPerformShortcut({
+        action: result.match.action,
+        payload: result.match.payload,
+        domEvent: input.domEvent,
+      });
+      if (!handled || !input.domEvent) {
+        return;
+      }
+
+      if (result.match.preventDefault) {
+        input.domEvent.preventDefault();
+      }
+      if (result.match.stopPropagation) {
+        input.domEvent.stopPropagation();
       }
     };
 
@@ -180,60 +278,11 @@ export function useKeyboardShortcuts({
         target: event.target,
         commandCenterOpen: store.commandCenterOpen,
       });
-      const result = resolveKeyboardShortcut({
+      resolveAndPerformShortcut({
         event,
-        context: {
-          isMac,
-          isDesktop: isDesktopApp,
-          focusScope,
-          commandCenterOpen: store.commandCenterOpen,
-        },
-        chordState: chordStateRef.current,
-        onChordReset: () => {
-          chordStateRef.current = {
-            candidateIndices: [],
-            step: 0,
-            timeoutId: null,
-          };
-        },
-        bindings,
+        focusScope,
+        domEvent: event,
       });
-
-      chordStateRef.current = result.nextChordState;
-
-      if (result.preventDefault) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-
-      if (!result.match) {
-        return;
-      }
-
-      const shortcutAction = routeKeyboardShortcut(
-        { action: result.match.action, payload: result.match.payload },
-        {
-          pathname,
-          isMobile,
-          sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
-          navigationActiveWorkspace:
-            keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
-          commandCenterOpen: store.commandCenterOpen,
-          shortcutsDialogOpen: store.shortcutsDialogOpen,
-        },
-      );
-
-      const handled = performShortcutAction(shortcutAction, event);
-      if (!handled) {
-        return;
-      }
-
-      if (result.match.preventDefault) {
-        event.preventDefault();
-      }
-      if (result.match.stopPropagation) {
-        event.stopPropagation();
-      }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -252,22 +301,39 @@ export function useKeyboardShortcuts({
     window.addEventListener("blur", handleBlurOrHide);
     document.addEventListener("visibilitychange", handleBlurOrHide);
 
-    const forwardedKeySubscription = isElectronRuntime()
-      ? getDesktopHost()?.events?.on?.("browser-forwarded-key", (payload) => {
-          if (!payload || typeof payload !== "object") return;
-          const p = payload as Record<string, unknown>;
-          if (typeof p.key !== "string") return;
-          window.dispatchEvent(
-            new KeyboardEvent("keydown", {
-              key: p.key,
-              code: typeof p.code === "string" ? p.code : "",
-              metaKey: p.meta === true,
-              ctrlKey: p.control === true,
-              shiftKey: p.shift === true,
-              altKey: p.alt === true,
-              bubbles: true,
-            }),
-          );
+    const browserShortcutSubscription = isElectronRuntime()
+      ? getDesktopHost()?.events?.on?.("browser-shortcut-input", (payload) => {
+          const input = parseBrowserShortcutInput(payload);
+          if (!input) {
+            return;
+          }
+          resolveAndPerformShortcut({
+            event: input,
+            focusScope: "browser",
+            domEvent: null,
+          });
+        })
+      : null;
+    const browserReservedShortcutSubscription = isElectronRuntime()
+      ? getDesktopHost()?.events?.on?.("browser-shortcut", (payload) => {
+          if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+            return;
+          }
+          if (!("action" in payload) || payload.action !== "new-tab") {
+            return;
+          }
+          if (
+            !("browserId" in payload) ||
+            typeof payload.browserId !== "string" ||
+            payload.browserId.length === 0
+          ) {
+            return;
+          }
+          routeAndPerformShortcut({
+            action: "workspace.tab.new",
+            payload: null,
+            domEvent: null,
+          });
         })
       : null;
 
@@ -284,10 +350,15 @@ export function useKeyboardShortcuts({
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("blur", handleBlurOrHide);
       document.removeEventListener("visibilitychange", handleBlurOrHide);
-      if (typeof forwardedKeySubscription === "function") {
-        forwardedKeySubscription();
+      if (typeof browserShortcutSubscription === "function") {
+        browserShortcutSubscription();
       } else {
-        void forwardedKeySubscription?.then((dispose) => dispose());
+        void browserShortcutSubscription?.then((dispose) => dispose());
+      }
+      if (typeof browserReservedShortcutSubscription === "function") {
+        browserReservedShortcutSubscription();
+      } else {
+        void browserReservedShortcutSubscription?.then((dispose) => dispose());
       }
     };
   }, [
@@ -295,6 +366,8 @@ export function useKeyboardShortcuts({
     cycleTheme,
     enabled,
     activeWorkspaceSelection,
+    isDesktopApp,
+    isMac,
     isMobile,
     openProjectPickerAction,
     pathname,
