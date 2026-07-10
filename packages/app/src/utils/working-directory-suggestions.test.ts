@@ -63,6 +63,21 @@ describe("buildWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/Users/me/projects/paseo-desktop"]);
   });
 
+  it.each(["~/pso", "./pso"])(
+    "anchors rooted-relative basename query %s to the declared root",
+    (query) => {
+      const matchingPath = "/Users/me/dev/paseo";
+      const results = buildWorkingDirectorySuggestions({
+        recommendedPaths: ["/tmp/paseo", matchingPath],
+        serverPaths: [],
+        query,
+        rootPath: "/Users/me",
+      });
+
+      expect(results).toEqual([matchingPath]);
+    },
+  );
+
   it.each([
     {
       query: "~/./projects/pso",

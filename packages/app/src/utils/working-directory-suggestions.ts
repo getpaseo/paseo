@@ -210,15 +210,18 @@ function parentMatchesQuery(input: {
   if (input.mode.absoluteRootKind !== null) {
     return relativeParentPath === input.parentQuery;
   }
-  if (input.mode.rootedRelative && input.parentQuery) {
+  if (input.mode.rootedRelative) {
     const anchor = input.mode.relativeRootAnchor;
     if (!anchor) {
       return input.trustRootedRelative;
     }
-    return (
-      getAbsoluteRootKind(input.candidatePath) === anchor.rootKind &&
-      input.parentPath === joinNormalizedPath(anchor.path, input.parentQuery)
-    );
+    if (getAbsoluteRootKind(input.candidatePath) !== anchor.rootKind) {
+      return false;
+    }
+    if (input.parentQuery) {
+      return input.parentPath === joinNormalizedPath(anchor.path, input.parentQuery);
+    }
+    return input.parentPath === anchor.path || input.parentPath.startsWith(`${anchor.path}/`);
   }
   if (!input.parentQuery) {
     return true;
