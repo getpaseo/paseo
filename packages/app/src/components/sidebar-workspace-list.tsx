@@ -2252,6 +2252,44 @@ function SidebarStatusModeWrapper({
   );
 }
 
+// Chevron hides until hover (web) and stays visible on touch, matching the sidebar's
+// hover-to-reveal controls. The whole label toggles collapse on press.
+function PinnedSectionHeader({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handleHoverIn = useCallback(() => setIsHovered(true), []);
+  const handleHoverOut = useCallback(() => setIsHovered(false), []);
+  const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
+  const showChevron = isHovered || platformIsNative || isCompact;
+  const chevron = collapsed ? (
+    <ChevronRight size={12} color="#9ca3af" />
+  ) : (
+    <ChevronDown size={12} color="#9ca3af" />
+  );
+
+  return (
+    <View onPointerEnter={handleHoverIn} onPointerLeave={handleHoverOut}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        onPress={onToggle}
+        style={styles.pinnedSectionHeader}
+        testID="sidebar-pinned-section-header"
+      >
+        <Text style={styles.pinnedSectionTitle}>{t("sidebar.pinned.title")}</Text>
+        {showChevron ? chevron : null}
+      </Pressable>
+    </View>
+  );
+}
+
 function ProjectModeList({
   projects,
   workspaceEntriesByKey,
@@ -2285,10 +2323,6 @@ function ProjectModeList({
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.togglePinnedCollapsed,
-  );
-  const pinnedAccessibilityState = useMemo(
-    () => ({ expanded: !pinnedCollapsed }),
-    [pinnedCollapsed],
   );
 
   const getProjectOrder = useSidebarOrderStore((state) => state.getProjectOrder);
@@ -2551,20 +2585,7 @@ function ProjectModeList({
     <>
       {hasPinned ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={pinnedAccessibilityState}
-            onPress={togglePinnedCollapsed}
-            style={styles.pinnedSectionHeader}
-            testID="sidebar-pinned-section-header"
-          >
-            <Text style={styles.pinnedSectionTitle}>{t("sidebar.pinned.title")}</Text>
-            {pinnedCollapsed ? (
-              <ChevronRight size={12} color="#9ca3af" />
-            ) : (
-              <ChevronDown size={12} color="#9ca3af" />
-            )}
-          </Pressable>
+          <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
           {pinnedCollapsed ? null : (
             <>
               {pinnedChats.map(renderPinnedChat)}
