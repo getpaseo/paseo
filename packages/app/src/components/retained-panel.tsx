@@ -20,7 +20,12 @@ interface RetainedPanelActivityProps {
 }
 
 export function RetainedPanelActivity({ active, children }: RetainedPanelActivityProps) {
-  return <RetainedPanelActiveContext value={active}>{children}</RetainedPanelActiveContext>;
+  const parentActive = useRetainedPanelActive();
+  return (
+    <RetainedPanelActiveContext value={parentActive && active}>
+      {children}
+    </RetainedPanelActiveContext>
+  );
 }
 
 /**

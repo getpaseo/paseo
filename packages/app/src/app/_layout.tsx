@@ -84,7 +84,7 @@ import {
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
-import { usePanelStore } from "@/stores/panel-store";
+import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
@@ -506,8 +506,12 @@ function SidebarChrome({
   showSidebar: boolean;
   keyboardShortcutsEnabled: boolean;
 }) {
+  const isCompactLayout = useIsCompactFormFactor();
+  const isOpen = usePanelStore((state) =>
+    selectIsAgentListOpen(state, { isCompact: isCompactLayout }),
+  );
   return (
-    <SidebarModelProvider>
+    <SidebarModelProvider active={showSidebar && isOpen}>
       {showSidebar ? <LeftSidebar /> : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>

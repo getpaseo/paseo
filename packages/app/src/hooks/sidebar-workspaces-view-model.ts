@@ -296,6 +296,7 @@ export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
 }): Map<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
     return new Map();
@@ -314,18 +315,46 @@ export function buildSidebarWorkspaceEntries(input: {
     const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
     if (!workspace) continue;
 
+    const entry = createSidebarWorkspaceEntry({
+      serverId: placement.serverId,
+      workspace,
+      pendingCreateAttempts: input.pendingCreateAttempts,
+      workspaceAgentActivity: session.workspaceAgentActivity,
+    });
+    const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(
       placement.workspaceKey,
-      createSidebarWorkspaceEntry({
-        serverId: placement.serverId,
-        workspace,
-        pendingCreateAttempts: input.pendingCreateAttempts,
-        workspaceAgentActivity: session.workspaceAgentActivity,
-      }),
+      previousEntry && areSidebarWorkspaceEntriesEqual(previousEntry, entry)
+        ? previousEntry
+        : entry,
     );
   }
 
   return entries;
+}
+
+function areSidebarWorkspaceEntriesEqual(
+  left: SidebarWorkspaceEntry,
+  right: SidebarWorkspaceEntry,
+): boolean {
+  const keys = Object.keys(left) as Array<keyof SidebarWorkspaceEntry>;
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every((key) => {
+    if (key !== "prHint") return Object.is(left[key], right[key]);
+    const leftHint = left.prHint;
+    const rightHint = right.prHint;
+    return (
+      leftHint === rightHint ||
+      (leftHint !== null &&
+        rightHint !== null &&
+        leftHint.url === rightHint.url &&
+        leftHint.number === rightHint.number &&
+        leftHint.state === rightHint.state &&
+        leftHint.checks === rightHint.checks &&
+        leftHint.checksStatus === rightHint.checksStatus &&
+        leftHint.reviewDecision === rightHint.reviewDecision)
+    );
+  });
 }
 
 export function buildSidebarProjectsFromStructure(input: {

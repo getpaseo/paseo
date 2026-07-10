@@ -43,7 +43,7 @@ export function pruneMountedWorkspaceSelections({
   maxMountedWorkspaces = WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
 }: PruneMountedWorkspaceSelectionsInput): ActiveWorkspaceSelection[] {
   if (!activeSelection) {
-    return [];
+    return currentSelections;
   }
 
   const maxSelections = Math.max(1, maxMountedWorkspaces);

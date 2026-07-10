@@ -15,6 +15,17 @@ function mountedWorkspaceIds(selections: ActiveWorkspaceSelection[]): string[] {
 }
 
 describe("pruneMountedWorkspaceSelections", () => {
+  it("retains the deck while an app-wide route temporarily clears the active workspace", () => {
+    const mountedSelections = [workspace("A"), workspace("B")];
+
+    expect(
+      pruneMountedWorkspaceSelections({
+        currentSelections: mountedSelections,
+        activeSelection: null,
+      }),
+    ).toBe(mountedSelections);
+  });
+
   it("keeps the active workspace and the two most recent inactive workspaces", () => {
     const mountedAfterA = pruneMountedWorkspaceSelections({
       currentSelections: [],

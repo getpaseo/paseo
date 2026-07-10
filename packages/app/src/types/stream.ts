@@ -1218,7 +1218,13 @@ export function applyStreamEvent(params: {
   if (incomingKind !== null && isStreamableKind(incomingKind)) {
     const reservedItemIds =
       incomingKind === "assistant_message" && getActiveAssistantHeadIndex(nextHead) < 0
-        ? new Set(nextTail.map((item) => item.id))
+        ? new Set(
+            nextTail.flatMap((item) =>
+              item.kind === "assistant_message" && item.blockGroupId
+                ? [item.id, item.blockGroupId]
+                : [item.id],
+            ),
+          )
         : undefined;
     const reduced = reduceStreamUpdate(nextHead, event, timestamp, { source, reservedItemIds });
     if (reduced !== nextHead) {

@@ -25,7 +25,13 @@ interface SidebarModel extends SidebarWorkspacesListResult {
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
 
-export function SidebarModelProvider({ children }: { children: ReactNode }) {
+export function SidebarModelProvider({
+  active,
+  children,
+}: {
+  active?: boolean;
+  children: ReactNode;
+}) {
   const list = useSidebarWorkspacesList();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
@@ -38,7 +44,10 @@ export function SidebarModelProvider({ children }: { children: ReactNode }) {
     (state) => state.toggleProjectCollapsed,
   );
   const isStatusMode = groupMode === "status";
-  const workspaceEntriesByKey = useSidebarWorkspaceEntries(list.workspacePlacements);
+  const workspaceEntriesByKey = useSidebarWorkspaceEntries(
+    list.workspacePlacements,
+    active !== false || isStatusMode,
+  );
   const statusGroups = useMemo(
     () =>
       isStatusMode
