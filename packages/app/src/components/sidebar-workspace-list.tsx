@@ -2712,7 +2712,7 @@ function ProjectModeList({
           )}
         </View>
       ) : null}
-      {listHeaderComponent}
+      {unpinnedProjects.length > 0 ? listHeaderComponent : null}
       {projects.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
