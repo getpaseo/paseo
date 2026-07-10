@@ -230,7 +230,7 @@ describe("searchHomeDirectories", () => {
       limit: 10,
     });
 
-    expect(result.rootPath).toBe(homeDir);
+    expect(realpathSync.native(result.rootPath!)).toBe(realpathSync.native(homeDir));
     expect(result.paths.map((entry) => realpathSync.native(entry))).toEqual([
       realpathSync.native(path.join(homeDir, "projects", "paseo")),
       realpathSync.native(path.join(homeDir, "projects", "playground")),
