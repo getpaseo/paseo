@@ -2,7 +2,6 @@ import React, {
   forwardRef,
   memo,
   useCallback,
-  useContext,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -88,7 +87,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
-import { MountedTabActiveContext } from "@/components/split-container";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
   buildDraftWorkspaceAttachmentScopeKey,
@@ -509,7 +508,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // cell-window renders on every 48ms flush from background agents.
     // When isActive flips back to true, the context change triggers a re-render and
     // the component reads the current (fresh) streamItems/streamHead from props.
-    const isActive = useContext(MountedTabActiveContext);
+    const isActive = useRetainedPanelActive();
     const frozenStreamItemsRef = useRef(streamItems);
     const frozenStreamHeadRef = useRef(streamHead);
     if (isActive) {
@@ -773,6 +772,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         showRunningTurnFooter || bottomTurnFooterHost ? (
           <TurnFooter
             isRunning={showRunningTurnFooter}
+            isActive={isActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
@@ -781,6 +781,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         ) : null,
       [
         handleForkAssistantTurn,
+        isActive,
         showRunningTurnFooter,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,

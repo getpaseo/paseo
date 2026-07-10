@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import {
+  orderWorkspaceSelectionsForStableRender,
   pruneMountedWorkspaceSelections,
   shouldKeepWorkspaceDeckEntryMounted,
 } from "@/screens/workspace/workspace-deck-retention";
@@ -61,6 +62,22 @@ describe("pruneMountedWorkspaceSelections", () => {
     });
 
     expect(mountedWorkspaceIds(mountedSelections)).toEqual(["C"]);
+  });
+});
+
+describe("orderWorkspaceSelectionsForStableRender", () => {
+  it("does not move retained native roots when the active LRU order changes", () => {
+    const activeA = [workspace("A"), workspace("B")];
+    const activeB = [workspace("B"), workspace("A")];
+
+    expect(mountedWorkspaceIds(orderWorkspaceSelectionsForStableRender(activeA))).toEqual([
+      "A",
+      "B",
+    ]);
+    expect(mountedWorkspaceIds(orderWorkspaceSelectionsForStableRender(activeB))).toEqual([
+      "A",
+      "B",
+    ]);
   });
 });
 

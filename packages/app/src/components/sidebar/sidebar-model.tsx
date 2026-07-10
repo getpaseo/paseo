@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
+  type SidebarWorkspaceEntry,
   type SidebarWorkspacesListResult,
 } from "@/hooks/use-sidebar-workspaces-list";
-import { useStatusModeWorkspacePlacements } from "@/hooks/use-status-mode-workspaces";
+import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
 import { buildStatusGroups, type StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
@@ -14,6 +15,7 @@ import {
 } from "@/utils/sidebar-shortcuts";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   groupMode: SidebarGroupMode;
   statusGroups: StatusGroup[];
   collapsedProjectKeys: ReadonlySet<string>;
@@ -36,14 +38,13 @@ export function SidebarModelProvider({ children }: { children: ReactNode }) {
     (state) => state.toggleProjectCollapsed,
   );
   const isStatusMode = groupMode === "status";
-  const statusWorkspacePlacements = useStatusModeWorkspacePlacements({
-    placements: list.workspacePlacements,
-    enabled: isStatusMode,
-  });
+  const workspaceEntriesByKey = useSidebarWorkspaceEntries(list.workspacePlacements);
   const statusGroups = useMemo(
     () =>
-      isStatusMode ? buildStatusGroups(statusWorkspacePlacements, list.projectNamesByKey) : [],
-    [isStatusMode, list.projectNamesByKey, statusWorkspacePlacements],
+      isStatusMode
+        ? buildStatusGroups(Array.from(workspaceEntriesByKey.values()), list.projectNamesByKey)
+        : [],
+    [isStatusMode, list.projectNamesByKey, workspaceEntriesByKey],
   );
   const shortcutModel = useMemo(() => {
     if (isStatusMode) {
@@ -57,13 +58,22 @@ export function SidebarModelProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       ...list,
+      workspaceEntriesByKey,
       groupMode,
       statusGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
       shortcutModel,
     }),
-    [collapsedProjectKeys, groupMode, list, shortcutModel, statusGroups, toggleProjectCollapsed],
+    [
+      collapsedProjectKeys,
+      groupMode,
+      list,
+      shortcutModel,
+      statusGroups,
+      toggleProjectCollapsed,
+      workspaceEntriesByKey,
+    ],
   );
 
   return <SidebarModelContext.Provider value={value}>{children}</SidebarModelContext.Provider>;

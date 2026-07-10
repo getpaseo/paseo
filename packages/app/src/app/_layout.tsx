@@ -451,9 +451,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   useActiveWorktreeNewAction();
   useGlobalNewWorkspaceAction();
 
+  const sidebarChrome = (
+    <SidebarChrome
+      showSidebar={chromeEnabled && (isCompactLayout || !isFocusModeEnabled)}
+      keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+    />
+  );
+
   const workspaceChrome = (
     <View style={rowStyle}>
-      {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && <LeftSidebar />}
+      {!isCompactLayout ? sidebarChrome : null}
       {isCompactLayout && chromeEnabled ? (
         <CompactExplorerSidebarHost enabled={chromeEnabled}>
           <View style={flexStyle}>{children}</View>
@@ -468,7 +475,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     <View style={layoutStyles.surfaceFill}>
       {workspaceChrome}
       <FloatingPanelPortalHost />
-      {isCompactLayout && chromeEnabled && <LeftSidebar />}
+      {isCompactLayout ? sidebarChrome : null}
       <DownloadToast />
       <RosettaCalloutSource />
       <UpdateCalloutSource />
@@ -477,7 +484,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       <HostChooserModal />
       <ProjectPickerModal />
       <ProviderSettingsHost />
-      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
       <QuittingOverlay />
@@ -490,7 +496,22 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     surface
   );
 
-  return <SidebarModelProvider>{content}</SidebarModelProvider>;
+  return content;
+}
+
+function SidebarChrome({
+  showSidebar,
+  keyboardShortcutsEnabled,
+}: {
+  showSidebar: boolean;
+  keyboardShortcutsEnabled: boolean;
+}) {
+  return (
+    <SidebarModelProvider>
+      {showSidebar ? <LeftSidebar /> : null}
+      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
+    </SidebarModelProvider>
+  );
 }
 
 function MobileGestureWrapper({

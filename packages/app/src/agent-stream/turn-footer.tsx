@@ -35,18 +35,23 @@ export type AssistantTurnForkHandler = (input: {
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
+  isActive,
   inFlightTurnStartedAt,
   host,
   strategy,
   onForkAssistantTurn,
 }: {
   isRunning: boolean;
+  isActive: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   if (isRunning) {
+    if (!isActive) {
+      return null;
+    }
     return (
       <TurnFooterRow>
         <RunningTurnFooter inFlightTurnStartedAt={inFlightTurnStartedAt} />

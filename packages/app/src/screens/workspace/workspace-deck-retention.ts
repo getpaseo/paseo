@@ -74,6 +74,14 @@ export function pruneMountedWorkspaceSelections({
   return nextSelections;
 }
 
+export function orderWorkspaceSelectionsForStableRender(
+  selections: ActiveWorkspaceSelection[],
+): ActiveWorkspaceSelection[] {
+  return [...selections].sort((left, right) =>
+    getWorkspaceSelectionKey(left).localeCompare(getWorkspaceSelectionKey(right)),
+  );
+}
+
 export function shouldKeepWorkspaceDeckEntryMounted({
   isActive,
   hasHydratedWorkspaces,

@@ -63,10 +63,57 @@ export interface SidebarWorkspacePlacementModel {
   projectNamesByKey: Map<string, string>;
 }
 
-export interface SidebarStatusWorkspaceSession {
+export interface SidebarWorkspaceSession {
   serverId: string;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+}
+
+interface SidebarWorkspaceSessionSource {
+  workspaces: Map<string, WorkspaceDescriptor>;
+  workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+}
+
+export function selectSidebarWorkspaceSessions(
+  sessions: Record<string, SidebarWorkspaceSessionSource | undefined>,
+  serverIds: readonly string[],
+): SidebarWorkspaceSession[] {
+  const selected: SidebarWorkspaceSession[] = [];
+  for (const serverId of serverIds) {
+    const session = sessions[serverId];
+    if (!session) {
+      continue;
+    }
+    selected.push({
+      serverId,
+      workspaces: session.workspaces,
+      workspaceAgentActivity: session.workspaceAgentActivity,
+    });
+  }
+  return selected;
+}
+
+export function areSidebarWorkspaceSessionsEqual(
+  left: readonly SidebarWorkspaceSession[],
+  right: readonly SidebarWorkspaceSession[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const leftSession = left[index];
+    const rightSession = right[index];
+    if (
+      !leftSession ||
+      !rightSession ||
+      leftSession.serverId !== rightSession.serverId ||
+      leftSession.workspaces !== rightSession.workspaces ||
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 interface EffectiveWorkspaceStatus {
@@ -245,17 +292,17 @@ function resolveStructuralWorkspaceIdentity(input: {
   };
 }
 
-export function buildSidebarStatusWorkspacePlacements(input: {
+export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
-  sessions: SidebarStatusWorkspaceSession[];
+  sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
-}): SidebarStatusWorkspacePlacement[] {
+}): Map<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
-    return [];
+    return new Map();
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
-  const rows: SidebarStatusWorkspacePlacement[] = [];
+  const entries = new Map<string, SidebarWorkspaceEntry>();
 
   for (const placement of input.placements) {
     const session = sessionByServerId.get(placement.serverId);
@@ -267,24 +314,18 @@ export function buildSidebarStatusWorkspacePlacements(input: {
     const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
     if (!workspace) continue;
 
-    const effectiveStatus = deriveEffectiveWorkspaceStatus({
-      serverId: placement.serverId,
-      workspace,
-      pendingCreateAttempts: input.pendingCreateAttempts,
-      workspaceAgentActivity: session.workspaceAgentActivity,
-    });
-
-    rows.push({
-      ...placement,
-      name: workspace.name,
-      workspaceDirectory: workspace.workspaceDirectory,
-      workspaceKind: workspace.workspaceKind,
-      statusBucket: effectiveStatus.status,
-      statusEnteredAt: effectiveStatus.enteredAt,
-    });
+    entries.set(
+      placement.workspaceKey,
+      createSidebarWorkspaceEntry({
+        serverId: placement.serverId,
+        workspace,
+        pendingCreateAttempts: input.pendingCreateAttempts,
+        workspaceAgentActivity: session.workspaceAgentActivity,
+      }),
+    );
   }
 
-  return rows;
+  return entries;
 }
 
 export function buildSidebarProjectsFromStructure(input: {

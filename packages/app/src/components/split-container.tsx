@@ -1,6 +1,5 @@
 import {
   Fragment,
-  createContext,
   memo,
   useCallback,
   useEffect,
@@ -32,6 +31,7 @@ import { View, Text } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
+import { RetainedPanel } from "@/components/retained-panel";
 import { shouldFocusPaneFromEventTarget } from "@/components/split-container-pane-focus";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -73,10 +73,6 @@ import type { WorkspaceTab } from "@/stores/workspace-tabs-store";
 import { RenderProfile } from "@/utils/render-profiler";
 import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { isNative } from "@/constants/platform";
-
-// true = this tab slot is the active (visible) tab; false = mounted but hidden.
-// Defaults to true so consumers outside a slot (e.g. web preview) are unaffected.
-export const MountedTabActiveContext = createContext<boolean>(true);
 
 interface SplitContainerProps {
   layout: WorkspaceLayout;
@@ -214,26 +210,20 @@ const MountedTabSlot = memo(function MountedTabSlot({
     [buildPaneContentModel, paneId, tabDescriptor],
   );
 
-  const wrapperStyle = useMemo(() => {
-    const display: "flex" | "none" = isVisible ? "flex" : "none";
-    return { display, flex: 1 };
-  }, [isVisible]);
   const handleFocusPane = useCallback(() => {
     onFocusPane(paneId);
   }, [onFocusPane, paneId]);
 
   return (
     <RenderProfile id={`DesktopMountedTabSlot:${tabDescriptor.kind}:${tabDescriptor.tabId}`}>
-      <MountedTabActiveContext value={isVisible}>
-        <View style={wrapperStyle}>
-          <WorkspacePaneContent
-            content={content}
-            isWorkspaceFocused={isWorkspaceFocused}
-            isPaneFocused={isPaneFocused}
-            onFocusPane={handleFocusPane}
-          />
-        </View>
-      </MountedTabActiveContext>
+      <RetainedPanel active={isVisible}>
+        <WorkspacePaneContent
+          content={content}
+          isWorkspaceFocused={isWorkspaceFocused}
+          isPaneFocused={isPaneFocused}
+          onFocusPane={handleFocusPane}
+        />
+      </RetainedPanel>
     </RenderProfile>
   );
 });

@@ -4,11 +4,7 @@ import { View, Text, Pressable, ScrollView, type PressableStateCallbackType } fr
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import {
-  useSidebarWorkspaceEntry,
-  type SidebarStatusWorkspacePlacement,
-  type SidebarWorkspaceEntry,
-} from "@/hooks/use-sidebar-workspaces-list";
+import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { StyleSheet } from "react-native-unistyles";
@@ -286,13 +282,12 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   showShortcutBadge,
   onWorkspacePress,
 }: {
-  workspace: SidebarStatusWorkspacePlacement;
+  workspace: SidebarWorkspaceEntry;
   subtitle: string;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   onWorkspacePress?: () => void;
 }) {
-  const workspaceEntry = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const selected =
     activeWorkspaceSelection?.serverId === workspace.serverId &&
@@ -304,11 +299,9 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
     navigateToWorkspace(workspace.serverId, workspace.workspaceId);
   }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
 
-  if (!workspaceEntry) return null;
-
   return (
     <StatusWorkspaceRowWithMenu
-      workspace={workspaceEntry}
+      workspace={workspace}
       subtitle={subtitle}
       selected={selected}
       shortcutNumber={shortcutNumber}

@@ -697,7 +697,7 @@ interface LiveElapsedProps {
 }
 
 /**
- * Ticks every 100ms to render an elapsed duration. Isolated from parents so
+ * Ticks every second to render an elapsed duration. Isolated from parents so
  * only this component re-renders on each tick.
  */
 export const LiveElapsed = memo(function LiveElapsed({
@@ -712,7 +712,7 @@ export const LiveElapsed = memo(function LiveElapsed({
     setElapsedMs(Math.max(0, Date.now() - startedAtMs));
     const handle = setInterval(() => {
       setElapsedMs(Math.max(0, Date.now() - startedAtMs));
-    }, 100);
+    }, 1000);
     return () => clearInterval(handle);
   }, [startedAtMs]);
 

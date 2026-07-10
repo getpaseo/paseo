@@ -4,7 +4,7 @@ import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
-  buildSidebarStatusWorkspacePlacements,
+  buildSidebarWorkspaceEntries,
   buildSidebarWorkspacePlacementModel,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
@@ -226,7 +226,7 @@ describe("shared sidebar workspace model", () => {
         }),
       ],
     });
-    const statusRows = buildSidebarStatusWorkspacePlacements({
+    const workspaceEntries = buildSidebarWorkspaceEntries({
       placements: model.workspaces,
       sessions: [
         {
@@ -290,12 +290,16 @@ describe("shared sidebar workspace model", () => {
         ],
       }),
     ]);
-    expect(statusRows.map((entry) => [entry.workspaceKey, entry.statusBucket, entry.name])).toEqual(
-      [
-        ["host-a:main", "done", "main"],
-        ["host-b:feature", "running", "feature/status-flow"],
-      ],
-    );
+    expect(
+      Array.from(workspaceEntries.values()).map((entry) => [
+        entry.workspaceKey,
+        entry.statusBucket,
+        entry.name,
+      ]),
+    ).toEqual([
+      ["host-a:main", "done", "main"],
+      ["host-b:feature", "running", "feature/status-flow"],
+    ]);
     expect(model.projectNamesByKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
   });
 });
