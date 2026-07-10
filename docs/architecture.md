@@ -121,6 +121,7 @@ Commander.js CLI with Docker-style commands. Common agent operations are also ex
 - `paseo daemon start/stop/restart/status/pair/set-password`
 - `paseo chat ls/create/inspect/post/read/wait/delete`
 - `paseo terminal ls/create/capture/send-keys/kill`
+- `paseo script ls/start/stop`
 - `paseo loop run/ls/inspect/logs/stop`
 - `paseo schedule create/ls/inspect/update/pause/resume/run-once/logs/delete`
 - `paseo heartbeat create/update/delete`

@@ -26,6 +26,18 @@ dev--feature-auth--miniweb.localhost
 
 Local and public routes use one combined leftmost label (`script--branch--project`). This keeps the hostname compatible with normal single-level wildcard DNS and TLS. If the combined label would exceed DNS's 63-character label limit, Paseo truncates it with a deterministic hash suffix to avoid collisions.
 
+## Managing workspace scripts
+
+Configured `paseo.json` scripts can be managed without addressing their backing terminal directly:
+
+```bash
+paseo script ls [--cwd <path> | --workspace <workspace-id>]
+paseo script start <name> [--cwd <path> | --workspace <workspace-id>]
+paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
+```
+
+The commands return the same script metadata shown by the workspace: lifecycle, service port, proxy URLs, health, exit code, and supervised terminal ID. `stop` terminates the managed terminal rather than only removing the proxy route, so normal script lifecycle cleanup remains authoritative. MCP exposes matching `list_workspace_scripts`, `start_workspace_script`, and `stop_workspace_script` tools; those require an explicit workspace ID.
+
 ## Configuration
 
 Add a `serviceProxy` block under `daemon` in `~/.paseo/config.json`:
