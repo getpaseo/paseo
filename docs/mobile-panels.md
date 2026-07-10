@@ -70,6 +70,9 @@ definition, no longer eligible to begin.
 
 - Callers request semantic targets through `panel-store`; they never write shared values.
 - Gesture behavior comes from the four explicit hooks in `mobile-panels/gestures.ts`.
+- Keep `SidebarModelProvider` outside `MobileGestureWrapper`. The provider shares sidebar derivation
+  across consumers, while Gesture Handler requires the wrapper's direct child to be a native `View`
+  so its injected `collapsable={false}` reaches Android/Fabric.
 - Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
   styles in sidebar components.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach

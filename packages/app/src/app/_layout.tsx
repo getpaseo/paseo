@@ -464,33 +464,33 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     </View>
   );
 
-  const content = (
-    <SidebarModelProvider>
-      <View style={layoutStyles.surfaceFill}>
-        {workspaceChrome}
-        <FloatingPanelPortalHost />
-        {isCompactLayout && chromeEnabled && <LeftSidebar />}
-        <DownloadToast />
-        <RosettaCalloutSource />
-        <UpdateCalloutSource />
-        <WorktreeSetupCalloutSource />
-        <CommandCenter />
-        <HostChooserModal />
-        <ProjectPickerModal />
-        <ProviderSettingsHost />
-        <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
-        <WorkspaceSetupDialog />
-        <KeyboardShortcutsDialog />
-        <QuittingOverlay />
-      </View>
-    </SidebarModelProvider>
+  const surface = (
+    <View style={layoutStyles.surfaceFill}>
+      {workspaceChrome}
+      <FloatingPanelPortalHost />
+      {isCompactLayout && chromeEnabled && <LeftSidebar />}
+      <DownloadToast />
+      <RosettaCalloutSource />
+      <UpdateCalloutSource />
+      <WorktreeSetupCalloutSource />
+      <CommandCenter />
+      <HostChooserModal />
+      <ProjectPickerModal />
+      <ProviderSettingsHost />
+      <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
+      <WorkspaceSetupDialog />
+      <KeyboardShortcutsDialog />
+      <QuittingOverlay />
+    </View>
   );
 
-  if (!isCompactLayout) {
-    return content;
-  }
+  const content = isCompactLayout ? (
+    <MobileGestureWrapper chromeEnabled={chromeEnabled}>{surface}</MobileGestureWrapper>
+  ) : (
+    surface
+  );
 
-  return <MobileGestureWrapper chromeEnabled={chromeEnabled}>{content}</MobileGestureWrapper>;
+  return <SidebarModelProvider>{content}</SidebarModelProvider>;
 }
 
 function MobileGestureWrapper({
