@@ -26,6 +26,7 @@ export function resolveDesktopSidebarWidth(input: {
   requestedWidth: number;
   viewportWidth: number;
 }): number {
+  "worklet";
   return resolveDesktopPanelWidth({
     ...input,
     minimumWidth: MIN_SIDEBAR_WIDTH,
@@ -37,6 +38,7 @@ export function resolveDesktopExplorerWidth(input: {
   requestedWidth: number;
   viewportWidth: number;
 }): number {
+  "worklet";
   return resolveDesktopPanelWidth({
     ...input,
     minimumWidth: MIN_EXPLORER_SIDEBAR_WIDTH,
