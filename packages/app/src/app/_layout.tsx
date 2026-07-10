@@ -16,7 +16,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { View } from "react-native";
+import { useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -37,7 +37,12 @@ import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
-import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  getIsElectronRuntime,
+  SETTINGS_DESKTOP_SPLIT_MIN_WIDTH,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
+import { resolveDesktopSidebarWidth } from "@/components/left-sidebar-width";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
@@ -411,6 +416,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const { width: viewportWidth } = useWindowDimensions();
 
   const cycleTheme = useCallback(() => {
     const currentIndex = THEME_CYCLE_ORDER.indexOf(settings.theme as ThemeName);
@@ -463,8 +470,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     />
   );
 
+  const settingsCanShareAppSidebar =
+    !pathname.includes("/settings") ||
+    viewportWidth - resolveDesktopSidebarWidth({ requestedWidth: sidebarWidth, viewportWidth }) >=
+      SETTINGS_DESKTOP_SPLIT_MIN_WIDTH;
   const desktopSidebarRendered =
-    !isCompactLayout && chromeEnabled && !isFocusModeEnabled && isDesktopAgentListOpen;
+    !isCompactLayout &&
+    chromeEnabled &&
+    !isFocusModeEnabled &&
+    isDesktopAgentListOpen &&
+    settingsCanShareAppSidebar;
   const contentWindowChromeCorners = desktopSidebarRendered ? "top-right" : "both";
   const workspaceChrome = (
     <View style={rowStyle}>

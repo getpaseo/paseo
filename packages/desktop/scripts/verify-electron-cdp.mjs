@@ -90,6 +90,7 @@ async function inspectSettingsGeometry(page) {
       devicePixelRatio: window.devicePixelRatio,
       sidebarRect: rect('[data-testid="settings-sidebar"]'),
       detailPaneRect: rect('[data-testid="settings-detail-pane"]'),
+      outerAppSidebarSettingsRect: rect('[data-testid="sidebar-settings"]'),
       backButtonRect: rect('[data-testid="settings-back-to-workspace"]'),
       detailTitleRect: rect('[data-testid="settings-detail-header-title"]'),
       detailHeaderLeftRect: headerLeftBounds
@@ -423,8 +424,10 @@ async function inspectHalfScreenSettingsLayout(page, platform) {
 
     const sidebar = page.getByTestId("settings-sidebar");
     const detail = page.getByTestId("settings-detail-pane");
+    const outerAppSidebarSettings = page.getByTestId("sidebar-settings");
     await sidebar.waitFor({ state: "visible", timeout: 10_000 });
     await detail.waitFor({ state: "visible", timeout: 10_000 });
+    await outerAppSidebarSettings.waitFor({ state: "hidden", timeout: 10_000 });
 
     const details = await inspectSettingsGeometry(page);
     const obstruction = getWindowChromeObstruction(platform, details.innerWidth);
@@ -450,6 +453,7 @@ async function inspectHalfScreenSettingsLayout(page, platform) {
         details.sidebarRect.width >= 300 &&
         details.detailPaneRect !== null &&
         details.detailPaneRect.width >= 400 &&
+        details.outerAppSidebarSettingsRect === null &&
         Math.abs(details.sidebarRect.left) <= 1 &&
         sidebarRight !== null &&
         Math.abs(sidebarRight - details.detailPaneRect.left) <= 1 &&
@@ -731,6 +735,11 @@ async function main() {
     });
 
     await collectSettingsSplitResult(page, serverId, desktopStatus, results);
+
+    if (outerSidebarDismissed) {
+      await restoreOuterAppSidebar(page, outerSidebarDismissed);
+      outerSidebarDismissed = false;
+    }
 
     const halfScreenDetails = await inspectHalfScreenSettingsLayout(
       page,

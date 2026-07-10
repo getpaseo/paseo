@@ -97,7 +97,7 @@ import {
 } from "@/screens/settings/host-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   type EnableBuiltInDaemonOption,
@@ -1650,7 +1650,7 @@ const desktopStyles = StyleSheet.create((theme) => ({
 
 const sidebarStyles = StyleSheet.create((theme) => ({
   desktopContainer: {
-    width: 320,
+    width: SETTINGS_DESKTOP_SIDEBAR_WIDTH,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,

@@ -174,4 +174,13 @@ test.describe("Half-screen desktop layout", () => {
     await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
     await expect(page.getByTestId("agent-list-backdrop")).not.toBeVisible();
   });
+
+  test("yields app navigation to the settings split", async ({ page }) => {
+    await gotoAppShell(page);
+    await page.getByTestId("sidebar-settings").click();
+
+    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+    await expect(page.getByTestId("settings-detail-pane")).toBeVisible();
+    await expect(page.getByTestId("sidebar-settings")).not.toBeVisible();
+  });
 });
