@@ -75,6 +75,13 @@ export interface WorkspaceDirectoryDeps {
     projectRecord?: PersistedProjectRecord | null;
     includeGitData: boolean;
   }): Promise<WorkspaceDescriptorPayload>;
+  listStoredAgentRecords(): Promise<
+    Array<{
+      workspaceId?: string;
+      lastActivityAt?: string;
+      updatedAt: string;
+    }>
+  >;
 }
 
 export function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspacesResponseEntry>): {
@@ -138,6 +145,7 @@ export class WorkspaceDirectory {
    * Server-internal; never crosses the wire.
    */
   private readonly bucketHistoryByWorkspaceId = new Map<string, WorkspaceBucketHistoryEntry>();
+  private readonly clientActivityAtByWorkspaceId = new Map<string, string>();
 
   private readonly pager = new SortablePager<
     WorkspaceDescriptorPayload,
@@ -177,6 +185,64 @@ export class WorkspaceDirectory {
     }
   }
 
+  recordClientActivity(workspaceId: string, atIso: string): void {
+    const existing = this.clientActivityAtByWorkspaceId.get(workspaceId);
+    if (!existing || atIso > existing) {
+      this.clientActivityAtByWorkspaceId.set(workspaceId, atIso);
+    }
+  }
+
+  clearClientActivity(workspaceId: string): void {
+    this.clientActivityAtByWorkspaceId.delete(workspaceId);
+  }
+
+  private async loadStoredActivityAt(): Promise<Map<string, string>> {
+    const storedAgentRecords = await this.deps.listStoredAgentRecords();
+    const map = new Map<string, string>();
+    for (const record of storedAgentRecords) {
+      if (!record.workspaceId) continue;
+      const timestamp = record.lastActivityAt?.trim() || record.updatedAt;
+      const existing = map.get(record.workspaceId);
+      if (!existing || timestamp > existing) {
+        map.set(record.workspaceId, timestamp);
+      }
+    }
+    return map;
+  }
+
+  async resolveWorkspaceActivityAt(workspaceId: string): Promise<string | null> {
+    return this.resolveWorkspaceActivityAtWithStored(workspaceId, null);
+  }
+
+  private async resolveWorkspaceActivityAtWithStored(
+    workspaceId: string,
+    storedMap: Map<string, string> | null,
+  ): Promise<string | null> {
+    const storedActivityAt = storedMap
+      ? (storedMap.get(workspaceId) ?? null)
+      : ((await this.loadStoredActivityAt()).get(workspaceId) ?? null);
+    const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
+    const candidates = [clientActivityAt, storedActivityAt].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return candidates.sort().at(-1) ?? null;
+  }
+
+  private async resolveActivityAt(
+    descriptor: WorkspaceDescriptorPayload,
+    workspaceId: string,
+    storedActivityAtByWorkspaceId: Map<string, string> | null,
+  ): Promise<string | null> {
+    const storedActivityAt = storedActivityAtByWorkspaceId
+      ? (storedActivityAtByWorkspaceId.get(workspaceId) ?? null)
+      : ((await this.loadStoredActivityAt()).get(workspaceId) ?? null);
+    const clientActivityAt = this.clientActivityAtByWorkspaceId.get(workspaceId) ?? null;
+    const candidates = [descriptor.activityAt, clientActivityAt, storedActivityAt].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return candidates.sort().at(-1) ?? null;
+  }
+
   async buildDescriptorMap(options: {
     includeGitData: boolean;
     workspaceIds?: Iterable<string>;
@@ -188,6 +254,8 @@ export class WorkspaceDirectory {
         this.deps.projectRegistry.list(),
         this.deps.listTerminalActivityContributions(),
       ]);
+
+    const activityAtByWorkspaceId = await this.loadStoredActivityAt();
 
     const activeProjects = new Map(
       persistedProjects
@@ -220,8 +288,10 @@ export class WorkspaceDirectory {
     );
     for (let i = 0; i < includedWorkspaces.length; i += 1) {
       const workspaceId = includedWorkspaces[i].workspaceId;
+      const descriptor = workspaceDescriptors[i];
       descriptorsByWorkspaceId.set(workspaceId, {
-        ...workspaceDescriptors[i],
+        ...descriptor,
+        activityAt: await this.resolveActivityAt(descriptor, workspaceId, activityAtByWorkspaceId),
         archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
       });
     }

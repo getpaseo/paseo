@@ -813,6 +813,27 @@ export const ru: TranslationResources = {
       sessions: "История",
       schedules: "Расписания",
     },
+    grouping: {
+      title: "Группировать по",
+      project: "Проект",
+      status: "Статус",
+      flat: "Плоский",
+    },
+    sort: {
+      title: "Сортировать по",
+      custom: "Пользовательский",
+      activity: "Последнее использование",
+      alphabetical: "По алфавиту",
+    },
+    filter: {
+      title: "Фильтр",
+      allHosts: "Все хосты",
+    },
+    workspaceTitle: {
+      title: "Название рабочей области",
+      titleOption: "Название",
+      branchOption: "Название ветки",
+    },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",
       description:

@@ -92,6 +92,7 @@ function workspace(input: {
     status: input.status ?? "done",
     statusEnteredAt: null,
     archivingAt: null,
+    activityAt: null,
     diffStat: null,
     scripts: input.scripts ?? [],
   };
@@ -348,6 +349,7 @@ describe("sidebar workspace render isolation", () => {
       useSidebarOrderStore.setState({
         projectOrder: [],
         workspaceOrderByProject: {},
+        flatWorkspaceOrder: [],
       });
     });
   });

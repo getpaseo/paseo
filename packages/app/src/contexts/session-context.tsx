@@ -4,6 +4,7 @@ import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useClientActivity } from "@/hooks/use-client-activity";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { refreshAgentInitializationTimeout } from "@/hooks/use-agent-initialization";
@@ -554,6 +555,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const focusedTerminalId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedTerminalId ?? null,
   );
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const focusedWorkspaceId =
+    activeWorkspaceSelection?.serverId === serverId ? activeWorkspaceSelection.workspaceId : null;
+
+  // Optimistically mark the opened workspace as recently used so the sidebar
+  // "Last used" sort updates immediately; the heartbeat also reports this to
+  // the daemon for cross-session persistence.
+  const touchWorkspaceActivity = useSessionStore((state) => state.touchWorkspaceActivity);
+  useEffect(() => {
+    if (!focusedWorkspaceId || !serverId) return;
+    touchWorkspaceActivity(serverId, focusedWorkspaceId, new Date());
+  }, [focusedWorkspaceId, serverId, touchWorkspaceActivity]);
+
   const sessionAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
 
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
@@ -868,7 +882,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   // Client activity tracking (heartbeat, push token registration)
-  useClientActivity({ client, focusedAgentId, focusedTerminalId, onAppResumed: handleAppResumed });
+  useClientActivity({
+    client,
+    focusedAgentId,
+    focusedTerminalId,
+    focusedWorkspaceId,
+    onAppResumed: handleAppResumed,
+  });
   usePushTokenRegistration({ client, serverId });
 
   const notifyAgentAttention = useCallback(

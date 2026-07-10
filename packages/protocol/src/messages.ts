@@ -1899,6 +1899,8 @@ export const ClientHeartbeatMessageSchema = z.object({
   focusedAgentId: z.string().nullable(),
   // COMPAT(terminalFocusHeartbeat): added in v0.1.97, remove optional default after 2026-12-13 once old clients no longer send heartbeats without terminal focus.
   focusedTerminalId: z.string().nullable().optional().default(null),
+  // COMPAT(workspaceFocusHeartbeat): added in v0.1.102, remove optional default after 2026-12-28 once old clients no longer send heartbeats without workspace focus.
+  focusedWorkspaceId: z.string().nullable().optional().default(null),
   lastActivityAt: z.string(),
   appVisible: z.boolean(),
   appVisibilityChangedAt: z.string().optional(),
@@ -2655,7 +2657,10 @@ export const WorkspaceDescriptorPayloadSchema = z
       .string()
       .nullish()
       .transform((value) => value ?? null),
-    activityAt: z.string().nullable(),
+    // Best-effort workspace last-activity timestamp. Old daemons omit the
+    // field; old clients treat missing and null equivalently.
+    // COMPAT(workspaceActivityAt): added in v0.1.102, drop optional default once floor >= v0.1.102.
+    activityAt: z.string().nullable().optional().default(null),
     diffStat: z
       .object({
         additions: z.number(),

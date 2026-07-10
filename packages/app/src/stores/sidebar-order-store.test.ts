@@ -15,6 +15,7 @@ describe("migrateSidebarOrderState", () => {
     });
 
     expect(migrated).toEqual({
+      flatWorkspaceOrder: [],
       projectOrder: ["project-a"],
       workspaceOrderByProject: {
         "project-a": ["host-a:main", "host-a:feature", "host-b:main"],

@@ -14,30 +14,40 @@ import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useAppSettings, type WorkspaceTitleSource } from "@/hooks/use-settings";
 import { useHosts } from "@/runtime/host-runtime";
-import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import {
+  useSidebarViewStore,
+  type SidebarGroupMode,
+  type SidebarSortMode,
+} from "@/stores/sidebar-view-store";
+import { useTranslation } from "react-i18next";
 
 const ThemedSettings2 = withUnistyles(Settings2);
 const filterColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-const GROUP_MODE_ITEMS: Array<{ value: SidebarGroupMode; label: string }> = [
-  { value: "project", label: "Project" },
-  { value: "status", label: "Status" },
+const GROUP_MODE_ITEMS: Array<{ value: SidebarGroupMode; labelKey: string }> = [
+  { value: "project", labelKey: "sidebar.grouping.project" },
+  { value: "status", labelKey: "sidebar.grouping.status" },
+  { value: "flat", labelKey: "sidebar.grouping.flat" },
 ];
 
-const WORKSPACE_TITLE_SOURCE_ITEMS: Array<{ value: WorkspaceTitleSource; label: string }> = [
-  { value: "title", label: "Title" },
-  { value: "branch", label: "Branch name" },
+const SORT_MODE_ITEMS: Array<{ value: SidebarSortMode; labelKey: string }> = [
+  { value: "custom", labelKey: "sidebar.sort.custom" },
+  { value: "activity", labelKey: "sidebar.sort.activity" },
+  { value: "alphabetical", labelKey: "sidebar.sort.alphabetical" },
 ];
 
-interface DisplayPreferenceOption<Value extends string> {
-  value: Value;
-  label: string;
-}
+const WORKSPACE_TITLE_SOURCE_ITEMS: Array<{ value: WorkspaceTitleSource; labelKey: string }> = [
+  { value: "title", labelKey: "sidebar.workspaceTitle.titleOption" },
+  { value: "branch", labelKey: "sidebar.workspaceTitle.branchOption" },
+];
 
 export function SidebarDisplayPreferencesMenu() {
+  const { t } = useTranslation();
   const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const sortMode = useSidebarViewStore((state) => state.sortMode);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
+  const setSortMode = useSidebarViewStore((state) => state.setSortMode);
   const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
   const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
   const hosts = useHosts();
@@ -51,6 +61,13 @@ export function SidebarDisplayPreferencesMenu() {
       setGroupMode(mode);
     },
     [setGroupMode],
+  );
+
+  const handleSelectSort = useCallback(
+    (mode: SidebarSortMode) => {
+      setSortMode(mode);
+    },
+    [setSortMode],
   );
 
   const handleWorkspaceTitleSourceSelect = useCallback(
@@ -83,7 +100,7 @@ export function SidebarDisplayPreferencesMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220} testID="sidebar-display-preferences-content">
         <View style={styles.menuHeader}>
-          <Text style={styles.menuHeaderLabel}>Group by</Text>
+          <Text style={styles.menuHeaderLabel}>{t("sidebar.grouping.title")}</Text>
         </View>
         {GROUP_MODE_ITEMS.map((item) => (
           <DisplayPreferenceMenuItem
@@ -92,13 +109,28 @@ export function SidebarDisplayPreferencesMenu() {
             isSelected={groupMode === item.value}
             testIDPrefix="sidebar-grouping"
             onSelect={handleSelectMode}
+            t={t}
+          />
+        ))}
+        <DropdownMenuSeparator />
+        <View style={styles.menuHeader}>
+          <Text style={styles.menuHeaderLabel}>{t("sidebar.sort.title")}</Text>
+        </View>
+        {SORT_MODE_ITEMS.map((item) => (
+          <DisplayPreferenceMenuItem
+            key={item.value}
+            item={item}
+            isSelected={sortMode === item.value}
+            testIDPrefix="sidebar-sort"
+            onSelect={handleSelectSort}
+            t={t}
           />
         ))}
         {showHostFilter ? (
           <>
             <DropdownMenuSeparator />
             <View style={styles.menuHeader}>
-              <Text style={styles.menuHeaderLabel}>Filter</Text>
+              <Text style={styles.menuHeaderLabel}>{t("sidebar.filter.title")}</Text>
             </View>
             <DropdownMenuItem
               testID="sidebar-host-filter-all"
@@ -106,7 +138,7 @@ export function SidebarDisplayPreferencesMenu() {
               closeOnSelect={false}
               onSelect={clearHostFilters}
             >
-              All hosts
+              {t("sidebar.filter.allHosts")}
             </DropdownMenuItem>
             {hosts.map((host) => (
               <HostFilterItem
@@ -121,7 +153,7 @@ export function SidebarDisplayPreferencesMenu() {
         ) : null}
         <DropdownMenuSeparator />
         <View style={styles.menuHeader}>
-          <Text style={styles.menuHeaderLabel}>Workspace title</Text>
+          <Text style={styles.menuHeaderLabel}>{t("sidebar.workspaceTitle.title")}</Text>
         </View>
         {WORKSPACE_TITLE_SOURCE_ITEMS.map((item) => (
           <DisplayPreferenceMenuItem
@@ -130,6 +162,7 @@ export function SidebarDisplayPreferencesMenu() {
             isSelected={workspaceTitleSource === item.value}
             testIDPrefix="sidebar-workspace-title-source"
             onSelect={handleWorkspaceTitleSourceSelect}
+            t={t}
           />
         ))}
       </DropdownMenuContent>
@@ -137,25 +170,30 @@ export function SidebarDisplayPreferencesMenu() {
   );
 }
 
+interface DisplayPreferenceMenuItemProps<Value extends string> {
+  item: { value: Value; labelKey?: string; label?: string };
+  isSelected: boolean;
+  testIDPrefix: string;
+  onSelect: (value: Value) => void;
+  t?: (key: string) => string;
+}
+
 function DisplayPreferenceMenuItem<Value extends string>({
   item,
   isSelected,
   testIDPrefix,
   onSelect,
-}: {
-  item: DisplayPreferenceOption<Value>;
-  isSelected: boolean;
-  testIDPrefix: string;
-  onSelect: (value: Value) => void;
-}) {
+  t,
+}: DisplayPreferenceMenuItemProps<Value>) {
   const handleSelect = useCallback(() => onSelect(item.value), [item.value, onSelect]);
+  const label = item.labelKey && t ? t(item.labelKey) : (item.label ?? item.value);
   return (
     <DropdownMenuItem
       testID={`${testIDPrefix}-${item.value}`}
       selected={isSelected}
       onSelect={handleSelect}
     >
-      <Text style={styles.optionLabel}>{item.label}</Text>
+      <Text style={styles.optionLabel}>{label}</Text>
     </DropdownMenuItem>
   );
 }

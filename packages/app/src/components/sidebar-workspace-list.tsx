@@ -67,6 +67,7 @@ import {
   type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
 import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
@@ -227,7 +228,7 @@ interface SidebarWorkspaceListProps {
   collapsedProjectKeys: ReadonlySet<string>;
   onToggleProjectCollapsed: (projectKey: string) => void;
   shortcutIndexByWorkspaceKey: Map<string, number>;
-  groupMode: "project" | "status";
+  groupMode: SidebarGroupMode;
   isRefreshing?: boolean;
   onRefresh?: () => void;
   onWorkspacePress?: () => void;
@@ -2083,8 +2084,9 @@ export function SidebarWorkspaceList({
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
   const showHostLabels = useMemo(() => shouldShowSidebarHostLabels(projects), [projects]);
 
-  const content =
-    groupMode === "status" ? (
+  let content: ReactElement;
+  if (groupMode === "status") {
+    content = (
       <SidebarStatusModeWrapper
         statusGroups={statusGroups}
         projectNamesByKey={projectNamesByKey}
@@ -2093,7 +2095,20 @@ export function SidebarWorkspaceList({
         hostLabelByServerId={hostLabelByServerId}
         showHostLabels={showHostLabels}
       />
-    ) : (
+    );
+  } else if (groupMode === "flat") {
+    content = (
+      <FlatModeList
+        workspacePlacements={statusWorkspacePlacements}
+        shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+        onWorkspacePress={onWorkspacePress}
+        listFooterComponent={listFooterComponent}
+        parentGestureRef={parentGestureRef}
+        hostLabelByServerId={hostLabelByServerId}
+      />
+    );
+  } else {
+    content = (
       <ProjectModeList
         projects={projects}
         collapsedProjectKeys={collapsedProjectKeys}
@@ -2109,6 +2124,7 @@ export function SidebarWorkspaceList({
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
       />
     );
+  }
 
   return content;
 }
@@ -2140,6 +2156,143 @@ function SidebarStatusModeWrapper({
       hostLabelByServerId={hostLabelByServerId}
       showHostLabels={showHostLabels}
     />
+  );
+}
+
+function FlatModeList({
+  workspacePlacements,
+  shortcutIndexByWorkspaceKey,
+  onWorkspacePress,
+  listFooterComponent,
+  parentGestureRef,
+  hostLabelByServerId,
+}: {
+  workspacePlacements: SidebarStatusWorkspacePlacement[];
+  shortcutIndexByWorkspaceKey: Map<string, number>;
+  onWorkspacePress?: () => void;
+  listFooterComponent?: ReactElement | null;
+  parentGestureRef?: MutableRefObject<GestureType | undefined>;
+  hostLabelByServerId: ReadonlyMap<string, string>;
+}) {
+  const pathname = usePathname();
+  const showShortcutBadges = useShowShortcutBadges();
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const isWorkspaceRoute = useMemo(
+    () => Boolean(pathname && parseHostWorkspaceRouteFromPathname(pathname)),
+    [pathname],
+  );
+  const selectionEnabled = isWorkspaceRoute;
+  const setSortMode = useSidebarViewStore((state) => state.setSortMode);
+  const setFlatWorkspaceOrder = useSidebarOrderStore((state) => state.setFlatWorkspaceOrder);
+
+  const renderWorkspaceRow = useCallback(
+    (
+      item: SidebarWorkspacePlacement,
+      input?: {
+        drag?: () => void;
+        isDragging?: boolean;
+        dragHandleProps?: DraggableListDragHandleProps;
+      },
+    ) => {
+      return (
+        <MemoWorkspaceRowItem
+          workspace={item}
+          subtitle={hostLabelByServerId.get(item.serverId) ?? item.serverId}
+          shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
+          showShortcutBadge={showShortcutBadges}
+          canCopyBranchName={item.projectKind === "git"}
+          isCreating={false}
+          selectionEnabled={selectionEnabled}
+          activeWorkspaceSelection={activeWorkspaceSelection}
+          onWorkspacePress={onWorkspacePress}
+          drag={input?.drag}
+          isDragging={input?.isDragging}
+          dragHandleProps={input?.dragHandleProps}
+        />
+      );
+    },
+    [
+      activeWorkspaceSelection,
+      hostLabelByServerId,
+      onWorkspacePress,
+      selectionEnabled,
+      shortcutIndexByWorkspaceKey,
+      showShortcutBadges,
+    ],
+  );
+
+  const renderWorkspace = useCallback(
+    ({
+      item,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return renderWorkspaceRow(item, { drag, isDragging: isActive, dragHandleProps });
+    },
+    [renderWorkspaceRow],
+  );
+
+  const handleDragEnd = useCallback(
+    (reorderedWorkspaces: SidebarWorkspacePlacement[]) => {
+      setSortMode("custom");
+      setFlatWorkspaceOrder(reorderedWorkspaces.map((workspace) => workspace.workspaceKey));
+    },
+    [setFlatWorkspaceOrder, setSortMode],
+  );
+
+  const nativeScrollGestureProps = useMemo(
+    () =>
+      parentGestureRef
+        ? ({
+            simultaneousHandlers: parentGestureRef,
+          } as object)
+        : undefined,
+    [parentGestureRef],
+  );
+
+  const content =
+    workspacePlacements.length === 0 ? null : (
+      <DraggableList
+        testID="sidebar-flat-workspace-list"
+        data={workspacePlacements}
+        keyExtractor={workspaceKeyExtractor}
+        renderItem={renderWorkspace}
+        onDragEnd={handleDragEnd}
+        extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+        scrollEnabled={false}
+        useDragHandle
+        nestable={platformIsNative}
+        simultaneousGestureRef={parentGestureRef}
+        containerStyle={styles.projectListContainer}
+      />
+    );
+
+  return (
+    <View style={styles.container}>
+      {platformIsNative ? (
+        <NestableScrollContainer
+          {...nativeScrollGestureProps}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          testID="sidebar-flat-workspace-list-scroll"
+        >
+          {content}
+          {listFooterComponent}
+        </NestableScrollContainer>
+      ) : (
+        <ScrollView
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          testID="sidebar-flat-workspace-list-scroll"
+        >
+          {content}
+          {listFooterComponent}
+        </ScrollView>
+      )}
+    </View>
   );
 }
 
@@ -2176,6 +2329,7 @@ function ProjectModeList({
   const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
   const getWorkspaceOrder = useSidebarOrderStore((state) => state.getWorkspaceOrder);
   const setWorkspaceOrder = useSidebarOrderStore((state) => state.setWorkspaceOrder);
+  const setSortMode = useSidebarViewStore((state) => state.setSortMode);
 
   const isWorkspaceRoute = useMemo(
     () => Boolean(pathname && parseHostWorkspaceRouteFromPathname(pathname)),
@@ -2268,6 +2422,7 @@ function ProjectModeList({
         return;
       }
 
+      setSortMode("custom");
       setProjectOrder(
         mergeWithRemainder({
           currentOrder: currentProjectOrder,
@@ -2275,7 +2430,7 @@ function ProjectModeList({
         }),
       );
     },
-    [getProjectOrder, setProjectOrder],
+    [getProjectOrder, setProjectOrder, setSortMode],
   );
 
   const handleWorkspaceReorder = useCallback(
@@ -2291,6 +2446,7 @@ function ProjectModeList({
         return;
       }
 
+      setSortMode("custom");
       setWorkspaceOrder(
         projectKey,
         mergeWithRemainder({
@@ -2299,7 +2455,7 @@ function ProjectModeList({
         }),
       );
     },
-    [getWorkspaceOrder, setWorkspaceOrder],
+    [getWorkspaceOrder, setWorkspaceOrder, setSortMode],
   );
 
   const handleWorktreeCreated = useCallback((workspaceId: string) => {

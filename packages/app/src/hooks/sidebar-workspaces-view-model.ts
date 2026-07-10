@@ -7,6 +7,7 @@ import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
+import type { SidebarSortMode } from "@/stores/sidebar-view-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
@@ -178,6 +179,144 @@ export function buildSidebarWorkspacePlacementModel(input: {
     projectNamesByKey: new Map(
       projects.map((project) => [project.projectKey, project.projectName]),
     ),
+  };
+}
+
+function getWorkspaceDescriptor(
+  workspace: SidebarWorkspacePlacement,
+  workspaceByKey: Map<string, WorkspaceDescriptor>,
+): WorkspaceDescriptor | undefined {
+  return workspaceByKey.get(workspace.workspaceKey);
+}
+
+function getWorkspaceActivityAt(
+  workspace: SidebarWorkspacePlacement,
+  workspaceByKey: Map<string, WorkspaceDescriptor>,
+): Date | null {
+  const descriptor = getWorkspaceDescriptor(workspace, workspaceByKey);
+  return descriptor?.activityAt ?? descriptor?.statusEnteredAt ?? null;
+}
+
+function getWorkspaceSortName(workspace: SidebarWorkspacePlacement): string {
+  return `${workspace.projectName}\n${workspace.name}`.toLowerCase();
+}
+
+function compareDatesDesc(left: Date | null, right: Date | null): number {
+  const leftTime = left?.getTime() ?? 0;
+  const rightTime = right?.getTime() ?? 0;
+  return rightTime - leftTime;
+}
+
+function sortWorkspaces(
+  workspaces: SidebarWorkspacePlacement[],
+  workspaceByKey: Map<string, WorkspaceDescriptor>,
+  sortMode: Exclude<SidebarSortMode, "custom">,
+): SidebarWorkspacePlacement[] {
+  if (workspaces.length <= 1) return workspaces;
+  const copy = [...workspaces];
+  if (sortMode === "activity") {
+    copy.sort((left, right) => {
+      const leftActivity = getWorkspaceActivityAt(left, workspaceByKey);
+      const rightActivity = getWorkspaceActivityAt(right, workspaceByKey);
+      const dateDelta = compareDatesDesc(leftActivity, rightActivity);
+      if (dateDelta !== 0) {
+        return dateDelta;
+      }
+      return getWorkspaceSortName(left).localeCompare(getWorkspaceSortName(right));
+    });
+  } else if (sortMode === "alphabetical") {
+    copy.sort((left, right) =>
+      getWorkspaceSortName(left).localeCompare(getWorkspaceSortName(right)),
+    );
+  }
+  return copy;
+}
+
+function projectMaxActivityAt(
+  project: SidebarProjectEntry,
+  workspaceByKey: Map<string, WorkspaceDescriptor>,
+): Date | null {
+  let max: Date | null = null;
+  for (const workspace of project.workspaces) {
+    const activityAt = getWorkspaceActivityAt(workspace, workspaceByKey);
+    if (activityAt && (!max || activityAt > max)) {
+      max = activityAt;
+    }
+  }
+  return max;
+}
+
+function sortProjects(
+  projects: SidebarProjectEntry[],
+  workspaceByKey: Map<string, WorkspaceDescriptor>,
+  sortMode: Exclude<SidebarSortMode, "custom">,
+): SidebarProjectEntry[] {
+  if (projects.length <= 1) return projects;
+  const copy = [...projects];
+  if (sortMode === "activity") {
+    copy.sort((left, right) => {
+      const leftActivity = projectMaxActivityAt(left, workspaceByKey);
+      const rightActivity = projectMaxActivityAt(right, workspaceByKey);
+      const dateDelta = compareDatesDesc(leftActivity, rightActivity);
+      if (dateDelta !== 0) {
+        return dateDelta;
+      }
+      return left.projectName.toLowerCase().localeCompare(right.projectName.toLowerCase());
+    });
+  } else if (sortMode === "alphabetical") {
+    copy.sort((left, right) =>
+      left.projectName.toLowerCase().localeCompare(right.projectName.toLowerCase()),
+    );
+  }
+  return copy;
+}
+
+export function sortSidebarWorkspacePlacementModel(input: {
+  model: SidebarWorkspacePlacementModel;
+  workspaceByKey: Map<string, WorkspaceDescriptor>;
+  sortMode: Exclude<SidebarSortMode, "custom">;
+}): SidebarWorkspacePlacementModel {
+  const sortedProjects = sortProjects(input.model.projects, input.workspaceByKey, input.sortMode);
+  const nextProjects: SidebarProjectEntry[] = [];
+  for (const project of sortedProjects) {
+    nextProjects.push({
+      ...project,
+      workspaces: sortWorkspaces(project.workspaces, input.workspaceByKey, input.sortMode),
+    });
+  }
+  return {
+    projects: nextProjects,
+    workspaces: nextProjects.flatMap((project) => project.workspaces),
+    projectNamesByKey: input.model.projectNamesByKey,
+  };
+}
+
+export function applyFlatWorkspaceOrder(
+  model: SidebarWorkspacePlacementModel,
+  flatWorkspaceOrder: readonly string[],
+): SidebarWorkspacePlacementModel {
+  if (model.workspaces.length <= 1 || flatWorkspaceOrder.length === 0) {
+    return model;
+  }
+  const workspaceByKey = new Map(
+    model.workspaces.map((workspace) => [workspace.workspaceKey, workspace]),
+  );
+  const prunedOrder: string[] = [];
+  const seen = new Set<string>();
+  for (const key of flatWorkspaceOrder) {
+    if (!workspaceByKey.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    prunedOrder.push(key);
+  }
+  if (prunedOrder.length === 0) return model;
+  const orderedSet = new Set(prunedOrder);
+  const ordered: SidebarWorkspacePlacement[] = [
+    ...prunedOrder.map((key) => workspaceByKey.get(key)!),
+    ...model.workspaces.filter((workspace) => !orderedSet.has(workspace.workspaceKey)),
+  ];
+  return {
+    ...model,
+    workspaces: ordered,
   };
 }
 

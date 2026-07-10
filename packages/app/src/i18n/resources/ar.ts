@@ -794,6 +794,27 @@ export const ar: TranslationResources = {
       sessions: "السجل",
       schedules: "الجداول",
     },
+    grouping: {
+      title: "التجميع حسب",
+      project: "المشروع",
+      status: "الحالة",
+      flat: "مسطح",
+    },
+    sort: {
+      title: "الترتيب حسب",
+      custom: "مخصص",
+      activity: "آخر استخدام",
+      alphabetical: "أبجدي",
+    },
+    filter: {
+      title: "تصفية",
+      allHosts: "جميع المضيفين",
+    },
+    workspaceTitle: {
+      title: "عنوان مساحة العمل",
+      titleOption: "العنوان",
+      branchOption: "اسم الفرع",
+    },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
       description:

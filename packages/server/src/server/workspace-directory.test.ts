@@ -88,6 +88,7 @@ class WorkspaceStatus {
       gitRuntime: null,
       githubRuntime: null,
     }),
+    listStoredAgentRecords: async () => [],
   });
 
   hasRootAgent(input: AgentState): void {
@@ -511,6 +512,7 @@ describe("WorkspaceDirectory empty projects", () => {
         gitRuntime: null,
         githubRuntime: null,
       }),
+      listStoredAgentRecords: async () => [],
     });
   }
 

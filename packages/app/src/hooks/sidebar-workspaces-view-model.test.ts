@@ -3,13 +3,15 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import {
   appendMissingOrderKeys,
+  applyFlatWorkspaceOrder,
   applyStoredOrdering,
+  buildSidebarProjectsFromStructure,
   buildSidebarStatusWorkspacePlacements,
   buildSidebarWorkspacePlacementModel,
-  buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  sortSidebarWorkspacePlacementModel,
   type SidebarProjectEntry,
 } from "./sidebar-workspaces-view-model";
 
@@ -66,6 +68,7 @@ function workspace(input: {
   projectDisplayName: string;
   status?: WorkspaceDescriptor["status"];
   statusEnteredAt?: Date | null;
+  activityAt?: Date | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -79,10 +82,72 @@ function workspace(input: {
     status: input.status ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: null,
+    activityAt: null,
     diffStat: null,
     scripts: [],
   };
 }
+
+describe("sortSidebarWorkspacePlacementModel", () => {
+  it("sorts projects and workspaces by activity descending", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [
+        project({
+          projectKey: "project-a",
+          projectName: "Project A",
+          workspaceKeys: ["srv:old-a", "srv:new-a"],
+        }),
+        project({
+          projectKey: "project-b",
+          projectName: "Project B",
+          workspaceKeys: ["srv:old-b"],
+        }),
+      ],
+    });
+
+    const workspaceByKey = new Map<string, WorkspaceDescriptor>([
+      [
+        "srv:old-a",
+        workspace({
+          id: "old-a",
+          name: "old-a",
+          projectId: "project-a",
+          projectDisplayName: "Project A",
+          activityAt: new Date("2026-06-01T00:00:00.000Z"),
+        }),
+      ],
+      [
+        "srv:new-a",
+        workspace({
+          id: "new-a",
+          name: "new-a",
+          projectId: "project-a",
+          projectDisplayName: "Project A",
+          activityAt: new Date("2026-06-03T00:00:00.000Z"),
+        }),
+      ],
+      [
+        "srv:old-b",
+        workspace({
+          id: "old-b",
+          name: "old-b",
+          projectId: "project-b",
+          projectDisplayName: "Project B",
+          activityAt: new Date("2026-06-02T00:00:00.000Z"),
+        }),
+      ],
+    ]);
+
+    const sorted = sortSidebarWorkspacePlacementModel({
+      model,
+      workspaceByKey,
+      sortMode: "activity",
+    });
+
+    expect(sorted.projects.map((p) => p.projectKey)).toEqual(["project-a", "project-b"]);
+    expect(sorted.projects[0]?.workspaces.map((w) => w.workspaceId)).toEqual(["new-a", "old-a"]);
+  });
+});
 
 describe("applyStoredOrdering", () => {
   it("keeps unknown items on the baseline while applying stored order", () => {
@@ -447,5 +512,47 @@ describe("deriveSidebarLoadingState", () => {
         hasProjects: false,
       }),
     ).toEqual({ isLoading: false, isInitialLoad: false, isRevalidating: false });
+  });
+});
+
+describe("applyFlatWorkspaceOrder", () => {
+  it("returns the model unchanged when there is one or fewer workspaces", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project-a", workspaceKeys: ["srv:a"] })],
+    });
+    expect(applyFlatWorkspaceOrder(model, ["srv:a"])).toBe(model);
+  });
+
+  it("returns the model unchanged when the stored order is empty", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project-a", workspaceKeys: ["srv:a", "srv:b"] })],
+    });
+    expect(applyFlatWorkspaceOrder(model, [])).toBe(model);
+  });
+
+  it("applies the stored order at the front and appends unknown workspaces", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [
+        project({ projectKey: "project-a", workspaceKeys: ["srv:a", "srv:b", "srv:c", "srv:d"] }),
+      ],
+    });
+    const result = applyFlatWorkspaceOrder(model, ["srv:d", "srv:a"]);
+    expect(result.workspaces.map((w) => w.workspaceId)).toEqual(["d", "a", "b", "c"]);
+  });
+
+  it("ignores stored keys for workspaces that no longer exist", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project-a", workspaceKeys: ["srv:a", "srv:b"] })],
+    });
+    const result = applyFlatWorkspaceOrder(model, ["srv:missing", "srv:b", "srv:a"]);
+    expect(result.workspaces.map((w) => w.workspaceId)).toEqual(["b", "a"]);
+  });
+
+  it("deduplicates stored keys, keeping the first occurrence", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project-a", workspaceKeys: ["srv:a", "srv:b", "srv:c"] })],
+    });
+    const result = applyFlatWorkspaceOrder(model, ["srv:c", "srv:c", "srv:a"]);
+    expect(result.workspaces.map((w) => w.workspaceId)).toEqual(["c", "a", "b"]);
   });
 });

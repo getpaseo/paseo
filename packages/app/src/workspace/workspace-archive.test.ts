@@ -44,6 +44,7 @@ function workspace(input?: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
     diffStat: null,
     scripts: [],
     ...input,
+    activityAt: input?.activityAt ?? null,
   };
 }
 

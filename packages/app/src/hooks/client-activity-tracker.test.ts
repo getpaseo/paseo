@@ -66,6 +66,7 @@ function buildTracker(
     deviceType: overrides.deviceType ?? "web",
     initialFocusedAgentId: overrides.initialFocusedAgentId ?? "agent-1",
     initialFocusedTerminalId: overrides.initialFocusedTerminalId ?? null,
+    initialFocusedWorkspaceId: overrides.initialFocusedWorkspaceId ?? null,
     initialAppVisible: overrides.initialAppVisible ?? true,
     now: clock.now,
     onAppResumed: overrides.onAppResumed,

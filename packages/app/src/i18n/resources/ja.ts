@@ -806,6 +806,27 @@ export const ja: TranslationResources = {
       sessions: "履歴",
       schedules: "スケジュール",
     },
+    grouping: {
+      title: "グループ分け",
+      project: "プロジェクト",
+      status: "ステータス",
+      flat: "フラット",
+    },
+    sort: {
+      title: "並び替え",
+      custom: "カスタム",
+      activity: "最終使用",
+      alphabetical: "アルファベット順",
+    },
+    filter: {
+      title: "フィルター",
+      allHosts: "すべてのホスト",
+    },
+    workspaceTitle: {
+      title: "ワークスペース名",
+      titleOption: "タイトル",
+      branchOption: "ブランチ名",
+    },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",
       description:

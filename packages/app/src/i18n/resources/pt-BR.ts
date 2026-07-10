@@ -812,6 +812,27 @@ export const ptBR: TranslationResources = {
       sessions: "Histórico",
       schedules: "Agendamentos",
     },
+    grouping: {
+      title: "Agrupar por",
+      project: "Projeto",
+      status: "Status",
+      flat: "Plano",
+    },
+    sort: {
+      title: "Ordenar por",
+      custom: "Personalizado",
+      activity: "Último uso",
+      alphabetical: "Alfabético",
+    },
+    filter: {
+      title: "Filtrar",
+      allHosts: "Todos os hosts",
+    },
+    workspaceTitle: {
+      title: "Título do workspace",
+      titleOption: "Título",
+      branchOption: "Nome da branch",
+    },
     worktreeSetup: {
       title: "Configurar scripts de worktree",
       description:

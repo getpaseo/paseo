@@ -20,6 +20,7 @@ function workspace(input: {
     status: "running",
     archivingAt: null,
     statusEnteredAt: null,
+    activityAt: null,
     diffStat: null,
     scripts: input.scripts ?? [],
   };

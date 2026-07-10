@@ -62,6 +62,7 @@ function workspace(input: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
     status: input.status ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: input.archivingAt ?? null,
+    activityAt: null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   };
