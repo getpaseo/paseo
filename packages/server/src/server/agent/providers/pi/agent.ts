@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentFeature,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -55,6 +56,7 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
+import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
@@ -88,7 +90,7 @@ const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
-const PASEO_PI_EXTENSION_RESULT_TIMEOUT_MS = 10_000;
+const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -97,6 +99,7 @@ const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
 export const PiProviderParamsSchema = z
   .object({
     sessionDir: z.string().min(1).optional(),
+    extensionTimeoutMs: z.number().int().positive().default(DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS),
   })
   .strict();
 
@@ -186,6 +189,7 @@ interface PiRpcAgentSessionOptions {
   initialState: PiSessionState;
   capabilities: AgentCapabilityFlags;
   cleanup?: () => void;
+  extensionTimeoutMs?: number;
 }
 
 interface PiResumeConfig {
@@ -359,13 +363,33 @@ function toAgentUsage(stats: PiSessionStats): AgentUsage | undefined {
   };
 }
 
-function convertPromptInput(prompt: AgentPromptInput): PiPromptPayload {
+function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
+  return model?.input?.includes("image") === true;
+}
+
+function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+  try {
+    const materialized = materializeProviderImage({
+      data: image.data,
+      mimeType: image.mimeType,
+    });
+    return `[Image available at: ${materialized.path}]`;
+  } catch (error) {
+    return `[Image attachment omitted: failed to write local file (${toDiagnosticErrorMessage(error)})]`;
+  }
+}
+
+function convertPromptInput(
+  prompt: AgentPromptInput,
+  options: { model: PiModel | null | undefined },
+): PiPromptPayload {
   if (typeof prompt === "string") {
     return { text: prompt };
   }
 
   const textParts: string[] = [];
   const images: PiImageContent[] = [];
+  const forwardImages = piModelSupportsImageInput(options.model);
 
   for (const block of prompt) {
     if (block.type === "text") {
@@ -374,11 +398,15 @@ function convertPromptInput(prompt: AgentPromptInput): PiPromptPayload {
     }
 
     if (block.type === "image") {
-      images.push({
-        type: "image",
-        data: block.data,
-        mimeType: block.mimeType,
-      });
+      if (forwardImages) {
+        images.push({
+          type: "image",
+          data: block.data,
+          mimeType: block.mimeType,
+        });
+      } else {
+        textParts.push(renderTextOnlyImageHint(block));
+      }
       continue;
     }
 
@@ -1010,6 +1038,7 @@ export class PiRpcAgentSession implements AgentSession {
       normalizePiThinkingOption(options.config.thinkingOptionId) ??
       this.state.thinkingLevel ??
       null;
+    this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
 
     this.runtimeSession.onEvent((event) => {
       this.handleRuntimeEvent(event);
@@ -1019,6 +1048,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly runtimeSession: PiRuntimeSession;
   private readonly config: AgentSessionConfig;
   private readonly cleanup?: () => void;
+  private readonly extensionTimeoutMs: number;
 
   get id(): string | null {
     return this.state.sessionId;
@@ -1041,7 +1071,7 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi turn is already active");
     }
 
-    const payload = convertPromptInput(prompt);
+    const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
 
@@ -1418,7 +1448,7 @@ export class PiRpcAgentSession implements AgentSession {
       const timer = setTimeout(() => {
         this.pendingExtensionResults.delete(requestId);
         reject(new Error(`Pi extension result timed out for request ${requestId}`));
-      }, PASEO_PI_EXTENSION_RESULT_TIMEOUT_MS);
+      }, this.extensionTimeoutMs);
       this.pendingExtensionResults.set(requestId, { resolve, reject, timer });
     });
   }
@@ -1910,6 +1940,7 @@ export class PiRpcAgentClient implements AgentClient {
         initialState: await runtimeSession.getState(),
         capabilities: withPiMcpCapability(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
+        extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -1960,6 +1991,7 @@ export class PiRpcAgentClient implements AgentClient {
         initialState: await runtimeSession.getState(),
         capabilities: withPiMcpCapability(mcpConfig !== null),
         cleanup: combineCleanup([mcpConfig?.cleanup, paseoExtension.cleanup]),
+        extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -1970,7 +2002,9 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const runtimeSession = await this.runtime.startSession({ cwd: options.cwd });
+    const runtimeSession = await this.runtime.startSession({
+      cwd: options.scope === "global" ? homedir() : options.cwd,
+    });
     try {
       const models = transformPiModels(
         (await runtimeSession.getAvailableModels(PI_CATALOG_REQUEST_TIMEOUT_MS)).map(mapPiModel),
@@ -1979,6 +2013,10 @@ export class PiRpcAgentClient implements AgentClient {
     } finally {
       await runtimeSession.close();
     }
+  }
+
+  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+    return [];
   }
 
   async listImportableSessions(

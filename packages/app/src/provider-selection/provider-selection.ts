@@ -177,6 +177,10 @@ export function resolveSelectedModelLabel(input: {
   }
 
   const model = provider.modelSelection.rows.find((entry) => entry.modelId === input.selectedModel);
+  const selectedModel = input.selectedModel.trim();
+  if (!model && selectedModel) {
+    return selectedModel;
+  }
   const defaultModel = provider.modelSelection.rows.find((row) => row.isDefault);
   return (
     model?.modelLabel ??

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IMAGE_HOME="/home/paseo"
+
+: "${HOME:=$IMAGE_HOME}"
+: "${PASEO_HOME:=${HOME}/.paseo}"
+: "${PASEO_LISTEN:=0.0.0.0:6767}"
+: "${PASEO_WEB_UI_ENABLED:=true}"
+: "${PASEO_LOG_LEVEL:=info}"
+: "${PASEO_LOG_FORMAT:=json}"
+: "${CLAUDE_CONFIG_DIR:=${HOME}/.claude}"
+: "${CODEX_HOME:=${HOME}/.codex}"
+: "${XDG_CONFIG_HOME:=${HOME}/.config}"
+: "${XDG_DATA_HOME:=${HOME}/.local/share}"
+: "${XDG_STATE_HOME:=${HOME}/.local/state}"
+: "${XDG_CACHE_HOME:=${HOME}/.cache}"
+
+export HOME
+export PASEO_HOME
+export PASEO_LISTEN
+export PASEO_WEB_UI_ENABLED
+export PASEO_LOG_LEVEL
+export PASEO_LOG_FORMAT
+export CLAUDE_CONFIG_DIR
+export CODEX_HOME
+export XDG_CONFIG_HOME
+export XDG_DATA_HOME
+export XDG_STATE_HOME
+export XDG_CACHE_HOME
+
+ensure_dir() {
+  local dir="$1"
+  mkdir -p "$dir"
+  if [[ "$(id -u)" == "0" ]]; then
+    local owner
+    owner="$(stat -c "%u" "$dir")"
+    if [[ "$owner" == "0" ]]; then
+      chown paseo:paseo "$dir"
+    fi
+  fi
+}
+
+ensure_dir "$HOME"
+ensure_dir "$PASEO_HOME"
+ensure_dir "$CLAUDE_CONFIG_DIR"
+ensure_dir "$CODEX_HOME"
+ensure_dir "$XDG_CONFIG_HOME"
+ensure_dir "$XDG_DATA_HOME"
+ensure_dir "$XDG_STATE_HOME"
+ensure_dir "$XDG_CACHE_HOME"
+
+if [[ "$#" -gt 0 ]]; then
+  if [[ "$(id -u)" == "0" ]]; then
+    exec gosu paseo "$@"
+  fi
+  exec "$@"
+fi
+
+if [[ -z "${PASEO_PASSWORD:-}" ]]; then
+  {
+    echo "[paseo] WARNING: PASEO_PASSWORD is not set."
+    echo "[paseo] The daemon accepts unauthenticated control connections from any client that can reach it."
+    echo "[paseo] Set PASEO_PASSWORD for any published port or network-reachable deployment."
+  } >&2
+fi
+
+if [[ ! -f /etc/paseo-server-entry ]]; then
+  echo "[paseo] FATAL: /etc/paseo-server-entry is missing." >&2
+  exit 1
+fi
+
+entry="$(cat /etc/paseo-server-entry)"
+echo "[paseo] starting daemon on ${PASEO_LISTEN} with web UI ${PASEO_WEB_UI_ENABLED}"
+if [[ "$(id -u)" == "0" ]]; then
+  exec gosu paseo node "$entry"
+fi
+exec node "$entry"

@@ -43,6 +43,8 @@ export function createDaemonCommand(): Command {
     .option("--no-relay", "Disable relay on restarted daemon")
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
     .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
+    .option("--web-ui", "Enable the bundled daemon web UI on restarted daemon")
+    .option("--no-web-ui", "Disable the bundled daemon web UI on restarted daemon")
     .option(
       "--hostnames <hosts>",
       'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',

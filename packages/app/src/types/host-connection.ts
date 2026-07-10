@@ -56,6 +56,25 @@ export function normalizeHostLabel(value: string | null | undefined, serverId: s
   return trimmed.length > 0 ? trimmed : serverId;
 }
 
+export function orderHostsLocalFirst<T extends { serverId: string }>(
+  hosts: T[],
+  localServerId: string | null,
+): T[] {
+  if (!localServerId) {
+    return hosts;
+  }
+  const localIndex = hosts.findIndex((host) => host.serverId === localServerId);
+  if (localIndex <= 0) {
+    return hosts;
+  }
+  const ordered = hosts.slice();
+  const [local] = ordered.splice(localIndex, 1);
+  if (local) {
+    ordered.unshift(local);
+  }
+  return ordered;
+}
+
 function hostConnectionEquals(left: HostConnection, right: HostConnection): boolean {
   if (left.type !== right.type || left.id !== right.id) {
     return false;
@@ -146,7 +165,7 @@ export function upsertHostConnectionInProfiles(input: {
     input.connection,
   ]);
   const nextLifecycle = prev.lifecycle;
-  const nextLabel = labelTrimmed || (prev.label === prev.serverId ? derivedLabel : prev.label);
+  const nextLabel = prev.label === prev.serverId ? derivedLabel : prev.label;
   const nextPreferredConnectionId =
     prev.preferredConnectionId &&
     nextConnections.some((connection) => connection.id === prev.preferredConnectionId)

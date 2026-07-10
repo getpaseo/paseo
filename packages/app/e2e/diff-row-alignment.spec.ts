@@ -218,6 +218,38 @@ test("changes diff keeps code rows aligned with the gutter", async ({ page }) =>
   });
 });
 
+test("changes diff switches between flat and tree file lists", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  await expectFlatFileList(page);
+  await expect(page.getByTestId("changes-toggle-layout")).toBeVisible();
+  await expect(page.getByTestId("changes-layout-unified")).toHaveCount(0);
+  await expect(page.getByTestId("changes-layout-split")).toHaveCount(0);
+
+  await page.getByTestId("changes-options-menu").click();
+  await expect(page.getByTestId("changes-options-menu-content")).toBeVisible();
+  await expect(page.getByTestId("changes-toggle-whitespace")).toContainText("Hide whitespace");
+  await expect(page.getByTestId("changes-toggle-wrap-lines")).toContainText("Wrap long lines");
+  await expect(page.getByTestId("changes-refresh")).toContainText("Refresh");
+  await page.getByTestId("changes-toggle-whitespace").click();
+  await page.getByTestId("changes-options-menu").click();
+  await expect(page.getByTestId("changes-toggle-whitespace")).toContainText("Show whitespace");
+  await page.keyboard.press("Escape");
+
+  await scrollToLowerUnwrappedDiffRows(page);
+  await page.getByTestId("changes-toggle-view-mode").click();
+  await expect(page.getByTestId("diff-folder-src")).toBeVisible();
+  await expect(page.getByTestId("diff-file-0")).toBeVisible();
+
+  await page.getByTestId("diff-folder-src-toggle").click();
+  await expect(page.getByTestId("diff-file-0")).toHaveCount(0);
+
+  await page.getByTestId("changes-toggle-view-mode").click();
+  await expectFlatFileList(page);
+});
+
 test("changes diff keeps unwrapped gutter and code rows aligned after code size changes", async ({
   page,
 }) => {
@@ -266,11 +298,22 @@ async function useUnwrappedDiffLines(page: Page): Promise<void> {
     ({ preferencesKey }) => {
       localStorage.setItem(
         preferencesKey,
-        JSON.stringify({ layout: "unified", wrapLines: false, hideWhitespace: false }),
+        JSON.stringify({
+          layout: "unified",
+          viewMode: "flat",
+          wrapLines: false,
+          hideWhitespace: false,
+        }),
       );
     },
     { preferencesKey: CHANGES_PREFERENCES_KEY },
   );
+}
+
+async function expectFlatFileList(page: Page): Promise<void> {
+  await expect(page.locator('[data-testid^="diff-folder-"]')).toHaveCount(0);
+  await expect(page.getByTestId("diff-file-0")).toContainText("use-mounted-tab-set.ts");
+  await expect(page.getByTestId("diff-file-0")).toContainText("src");
 }
 
 async function expectDiffCodeFontSize(page: Page, fontSize: number): Promise<void> {

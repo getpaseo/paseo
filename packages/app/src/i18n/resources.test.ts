@@ -6,6 +6,7 @@ import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
 import { ja } from "./resources/ja";
+import { ptBR } from "./resources/pt-BR";
 import { ru } from "./resources/ru";
 import { zhCN } from "./resources/zh-CN";
 
@@ -108,6 +109,7 @@ describe("translation resources", () => {
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
     expect(flattenKeys(ja).sort()).toEqual(englishKeys);
+    expect(flattenKeys(ptBR).sort()).toEqual(englishKeys);
     expect(flattenKeys(ru).sort()).toEqual(englishKeys);
     expect(flattenKeys(zhCN).sort()).toEqual(englishKeys);
   });
@@ -119,7 +121,9 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ru)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
   it("preserves interpolation placeholders in every language", () => {
@@ -127,6 +131,7 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
     expect(findInterpolationMismatches(ja)).toEqual([]);
+    expect(findInterpolationMismatches(ptBR)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
   });
@@ -142,12 +147,14 @@ describe("translation resources", () => {
     expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(fr.modelSelector.modelCountPlural).toBe("{{count}} modèles");
     expect(ja.modelSelector.modelCountPlural).toBe("{{count}}つのモデル");
+    expect(ptBR.modelSelector.modelCountPlural).toBe("{{count}} modelos");
     expect(ru.modelSelector.modelCountPlural).toBe("{{count}} моделей");
     expect(zhCN.modelSelector.modelCountPlural).toBe("{{count}} 个模型");
     expect(ar.settings.providers.models.many).toBe("{{count}} نماذج");
     expect(es.settings.providers.models.many).toBe("{{count}} modelos");
     expect(fr.settings.providers.models.many).toBe("{{count}} modèles");
     expect(ja.settings.providers.models.many).toBe("{{count}}つのモデル");
+    expect(ptBR.settings.providers.models.many).toBe("{{count}} modelos");
     expect(ru.settings.providers.models.many).toBe("{{count}} моделей");
     expect(zhCN.settings.providers.models.many).toBe("{{count}} 个 Model");
   });
@@ -381,6 +388,7 @@ describe("translation resources", () => {
   it("includes picker, file pane, and tool detail keys for the Batch 4L migration", () => {
     expect(en.projectPicker.placeholder).toBe("Type a directory path...");
     expect(en.projectPicker.opening).toBe("Opening project...");
+    expect(en.projectPicker.searching).toBe("Searching...");
     expect(en.projectPicker.empty).toBe("Start typing a path");
     expect(en.branchSwitcher.currentBranch).toBe(
       "Current branch: {{branchName}}. Press to switch branch.",
@@ -513,8 +521,23 @@ describe("translation resources", () => {
     expect(en.desktop.updates.status.installing).toBe("Installing app update...");
     expect(en.desktop.updates.status.upToDate).toBe("App is up to date.");
     expect(en.desktop.updates.status.pending).toBe("We'll let you know when the update is ready.");
+    expect(en.desktop.updates.status.pendingWithLastChecked).toBe(
+      "We'll let you know when the update is ready. Last checked at {{time}}.",
+    );
+    expect(en.desktop.updates.status.pendingWithVersion).toBe(
+      "Update found: {{version}}. Downloading...",
+    );
+    expect(en.desktop.updates.status.pendingWithVersionAndLastChecked).toBe(
+      "Update found: {{version}}. Downloading... Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.availableWithVersion).toBe("Update ready: {{version}}");
+    expect(en.desktop.updates.status.availableWithVersionAndLastChecked).toBe(
+      "Update ready: {{version}}. Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.available).toBe("An app update is ready to install.");
+    expect(en.desktop.updates.status.availableWithLastChecked).toBe(
+      "An app update is ready to install. Last checked at {{time}}.",
+    );
     expect(en.desktop.updates.status.installed).toBe("App update installed. Restart required.");
     expect(en.desktop.updates.status.failed).toBe("Failed to update app.");
     expect(en.desktop.updates.status.idle).toBe("Update status has not been checked yet.");

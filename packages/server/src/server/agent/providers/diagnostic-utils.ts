@@ -44,7 +44,7 @@ export function formatDiagnosticStatus(
 
 const DIAGNOSTIC_OUTPUT_CAP = 4096;
 
-function truncateForDiagnostic(value: string): string {
+export function truncateForDiagnostic(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= DIAGNOSTIC_OUTPUT_CAP) {
     return trimmed;

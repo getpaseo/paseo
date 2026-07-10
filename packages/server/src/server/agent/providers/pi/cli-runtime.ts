@@ -180,7 +180,35 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
-    return (await this.request({ type: "get_session_stats" })) as PiSessionStats;
+    // COMPAT(piGetStateFallback): added in v0.1.X — older Oh My Pi binaries
+    // lack the `get_session_stats` RPC command; fall back to extracting
+    // context window usage from `get_state`. Drop this gate when the floor
+    // daemon supports get_session_stats (added ~v0.1.97).
+    let stats: PiSessionStats | undefined;
+    try {
+      stats = (await this.request({ type: "get_session_stats" })) as PiSessionStats;
+    } catch {
+      // get_session_stats not supported by this binary — will try get_state below
+    }
+    if (stats?.tokens == null && stats?.cost == null && stats?.contextUsage == null) {
+      try {
+        const state = (await this.request({ type: "get_state" })) as Record<string, unknown>;
+        const ctx = state.contextUsage as
+          | { tokens?: number | null; contextWindow?: number | null }
+          | undefined;
+        if (ctx) {
+          return {
+            contextUsage: {
+              tokens: typeof ctx.tokens === "number" ? ctx.tokens : undefined,
+              contextWindow: typeof ctx.contextWindow === "number" ? ctx.contextWindow : undefined,
+            },
+          };
+        }
+      } catch {
+        // get_state also failed — nothing we can do
+      }
+    }
+    return stats ?? {};
   }
 
   async getCommands(): Promise<PiRpcSlashCommand[]> {

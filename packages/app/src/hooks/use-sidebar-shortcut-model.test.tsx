@@ -18,6 +18,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     serverId: "srv",
     workspaceId,
     projectKey,
+    projectName: projectKey,
     projectRootPath: `/repo/${projectKey}`,
     workspaceDirectory: `/repo/${projectKey}/${workspaceId}`,
     projectKind: "git",
@@ -43,7 +44,7 @@ function project(projectKey: string): SidebarProjectEntry {
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: `/repo/${projectKey}`,
-    canCreateWorktree: true,
+    hosts: [],
     workspaces: [workspace(projectKey, `${projectKey}-main`)],
   };
 }

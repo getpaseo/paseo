@@ -37,9 +37,14 @@ export interface UserModifiedFields {
   workingDir: boolean;
 }
 
+export type ProviderModelsByProvider = Map<AgentProvider, AgentModelDefinition[] | null>;
+
+export type AgentFormResolutionState = { status: "pending" } | { status: "completed" };
+
 export interface AgentFormReducerState {
   form: FormState;
   userModified: UserModifiedFields;
+  resolution: AgentFormResolutionState;
 }
 
 export const INITIAL_USER_MODIFIED: UserModifiedFields = {
@@ -51,6 +56,9 @@ export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   workingDir: false,
 };
 
+export const INITIAL_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "completed" };
+export const PENDING_AGENT_FORM_RESOLUTION: AgentFormResolutionState = { status: "pending" };
+
 type ProviderPrefs = NonNullable<FormPreferences["providerPreferences"]>[AgentProvider];
 
 export const RESOLVABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["status"]>([
@@ -60,11 +68,12 @@ export const RESOLVABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["statu
 export const SELECTABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["status"]>(["ready"]);
 
 export type AgentFormAction =
+  | { type: "REQUEST_RESOLUTION" }
   | {
-      type: "RESOLVE";
+      type: "COMPLETE_RESOLUTION";
       initialValues: FormInitialValues | undefined;
       preferences: FormPreferences | null;
-      availableModels: AgentModelDefinition[] | null;
+      providerModelsByProvider: ProviderModelsByProvider;
       allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
     }
   | { type: "SET_SERVER_ID"; value: string | null }
@@ -90,11 +99,14 @@ export type AgentFormAction =
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
     }
+  | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
   | { type: "SET_WORKING_DIR"; value: string }
   | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
   | { type: "AUTO_SELECT_SERVER"; candidateServerId: string }
   | { type: "RESET" };
+
+type CompleteResolutionAction = Extract<AgentFormAction, { type: "COMPLETE_RESOLUTION" }>;
 
 export function normalizeSelectedModelId(modelId: string | null | undefined): string {
   return typeof modelId === "string" ? modelId.trim() : "";
@@ -403,6 +415,36 @@ export function resolveFormState(
   return result;
 }
 
+export function resolveFormStateFromProviderModels(
+  initialValues: FormInitialValues | undefined,
+  preferences: FormPreferences | null,
+  providerModelsByProvider: ProviderModelsByProvider,
+  userModified: UserModifiedFields,
+  currentState: FormState,
+  allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
+): FormState {
+  const providerResolved = resolveFormState(
+    initialValues,
+    preferences,
+    null,
+    userModified,
+    currentState,
+    allowedProviderMap,
+  );
+  const availableModels = providerResolved.provider
+    ? (providerModelsByProvider.get(providerResolved.provider) ?? null)
+    : null;
+
+  return resolveFormState(
+    initialValues,
+    preferences,
+    availableModels,
+    userModified,
+    currentState,
+    allowedProviderMap,
+  );
+}
+
 function pickNextModelForProvider(input: {
   providerModels: AgentModelDefinition[] | null;
   providerPrefs: ProviderPrefs | undefined;
@@ -459,29 +501,47 @@ function pickNextThinkingOptionForProvider(input: {
   });
 }
 
+function completeResolution(
+  state: AgentFormReducerState,
+  action: CompleteResolutionAction,
+): AgentFormReducerState {
+  if (state.resolution.status === "completed") {
+    return state;
+  }
+  const resolved = resolveFormStateFromProviderModels(
+    action.initialValues,
+    action.preferences,
+    action.providerModelsByProvider,
+    state.userModified,
+    state.form,
+    action.allowedProviderMap,
+  );
+  const nextState = { ...state, resolution: { status: "completed" } as const };
+  if (!hasFormStateChanged(state.form, resolved)) return nextState;
+  return { ...nextState, form: resolved };
+}
+
 export function resolveAgentForm(
   state: AgentFormReducerState,
   action: AgentFormAction,
 ): AgentFormReducerState {
   switch (action.type) {
-    case "RESOLVE": {
-      const resolved = resolveFormState(
-        action.initialValues,
-        action.preferences,
-        action.availableModels,
-        state.userModified,
-        state.form,
-        action.allowedProviderMap,
-      );
-      if (!hasFormStateChanged(state.form, resolved)) return state;
-      return { ...state, form: resolved };
-    }
+    case "REQUEST_RESOLUTION":
+      return {
+        ...state,
+        userModified: INITIAL_USER_MODIFIED,
+        resolution: PENDING_AGENT_FORM_RESOLUTION,
+      };
+
+    case "COMPLETE_RESOLUTION":
+      return completeResolution(state, action);
 
     case "SET_SERVER_ID":
       return { ...state, form: { ...state.form, serverId: action.value } };
 
     case "SET_SERVER_ID_FROM_USER":
       return {
+        ...state,
         form: { ...state.form, serverId: action.value },
         userModified: { ...state.userModified, serverId: true },
       };
@@ -501,6 +561,7 @@ export function resolveAgentForm(
         modelId: nextModelId,
       });
       return {
+        ...state,
         form: {
           ...state.form,
           provider: action.provider,
@@ -528,6 +589,7 @@ export function resolveAgentForm(
         providerPrefs: action.providerPrefs,
       });
       return {
+        ...state,
         form: {
           ...state.form,
           provider: action.provider,
@@ -541,6 +603,7 @@ export function resolveAgentForm(
 
     case "SET_MODE_FROM_USER":
       return {
+        ...state,
         form: { ...state.form, modeId: action.modeId },
         userModified: { ...state.userModified, modeId: true },
       };
@@ -556,6 +619,7 @@ export function resolveAgentForm(
           : "",
       });
       return {
+        ...state,
         form: {
           ...state.form,
           model: nextModelId,
@@ -565,8 +629,28 @@ export function resolveAgentForm(
       };
     }
 
+    case "CLEAR_PROVIDER_SELECTION_FROM_USER":
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          provider: null,
+          model: "",
+          modeId: "",
+          thinkingOptionId: "",
+        },
+        userModified: {
+          ...state.userModified,
+          provider: true,
+          model: true,
+          modeId: true,
+          thinkingOptionId: true,
+        },
+      };
+
     case "SET_THINKING_OPTION_FROM_USER":
       return {
+        ...state,
         form: { ...state.form, thinkingOptionId: action.thinkingOptionId },
         userModified: { ...state.userModified, thinkingOptionId: true },
       };
@@ -576,6 +660,7 @@ export function resolveAgentForm(
 
     case "SET_WORKING_DIR_FROM_USER":
       return {
+        ...state,
         form: { ...state.form, workingDir: action.value },
         userModified: { ...state.userModified, workingDir: true },
       };
@@ -585,7 +670,11 @@ export function resolveAgentForm(
       return { ...state, form: { ...state.form, serverId: action.candidateServerId } };
 
     case "RESET":
-      return { ...state, userModified: INITIAL_USER_MODIFIED };
+      return {
+        ...state,
+        userModified: INITIAL_USER_MODIFIED,
+        resolution: INITIAL_AGENT_FORM_RESOLUTION,
+      };
     default:
       throw new Error("unreachable");
   }

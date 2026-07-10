@@ -95,6 +95,33 @@ export async function expectAttachmentPill(page: Page, testID: string): Promise<
   await expect(page.getByTestId(testID).first()).toBeVisible({ timeout: 10_000 });
 }
 
+export async function dropFileOnComposer(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  const dataTransfer = await page.evaluateHandle(
+    ({ name, mimeType, base64 }) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const droppedFile = new File([bytes], name, { type: mimeType });
+      const transfer = new DataTransfer();
+      transfer.items.add(droppedFile);
+      return transfer;
+    },
+    {
+      name: file.name,
+      mimeType: file.mimeType,
+      base64: file.buffer.toString("base64"),
+    },
+  );
+
+  const composerRoot = page.getByTestId("message-input-root").filter({ visible: true }).first();
+  await expect(composerRoot).toBeVisible({ timeout: 10_000 });
+  await composerRoot.dispatchEvent("dragenter", { dataTransfer });
+  await composerRoot.dispatchEvent("dragover", { dataTransfer });
+  await composerRoot.dispatchEvent("drop", { dataTransfer });
+  await dataTransfer.dispose();
+}
+
 /** Hover to reveal the X button (hidden until hover on desktop web), then click by accessible label. */
 export async function removeAttachmentPill(
   page: Page,

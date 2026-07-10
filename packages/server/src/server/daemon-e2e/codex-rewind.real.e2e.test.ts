@@ -34,7 +34,7 @@ interface CodexRewindSession {
 const TURN_TIMEOUT_MS = 180_000;
 
 async function fetchThreadId(client: DaemonClient, agentId: string): Promise<string> {
-  const result = await client.fetchAgent(agentId);
+  const result = await client.fetchAgent({ agentId });
   const threadId = result?.agent.persistence?.sessionId ?? result?.agent.runtimeInfo?.sessionId;
   if (!threadId) {
     throw new Error(`Agent ${agentId} does not have a visible Codex thread id`);

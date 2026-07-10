@@ -2,6 +2,14 @@ import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
+export type DesktopDaemonStopReason =
+  | "manual_ipc"
+  | "settings"
+  | "host_remove"
+  | "quit"
+  | "app_update"
+  | "version_mismatch"
+  | "restart";
 
 export interface DesktopDaemonStatus {
   serverId: string;
@@ -16,6 +24,11 @@ export interface DesktopDaemonStatus {
 }
 
 export interface DesktopDaemonLogs {
+  logPath: string;
+  contents: string;
+}
+
+export interface DesktopAppLogs {
   logPath: string;
   contents: string;
 }
@@ -122,8 +135,10 @@ export async function startDesktopDaemon(): Promise<DesktopDaemonStatus> {
   return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
 }
 
-export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {
-  return parseDesktopDaemonStatus(await invokeDesktopCommand("stop_desktop_daemon"));
+export async function stopDesktopDaemon(
+  reason: DesktopDaemonStopReason = "manual_ipc",
+): Promise<DesktopDaemonStatus> {
+  return parseDesktopDaemonStatus(await invokeDesktopCommand("stop_desktop_daemon", { reason }));
 }
 
 export async function restartDesktopDaemon(): Promise<DesktopDaemonStatus> {
@@ -132,6 +147,17 @@ export async function restartDesktopDaemon(): Promise<DesktopDaemonStatus> {
 
 export async function getDesktopDaemonLogs(): Promise<DesktopDaemonLogs> {
   return parseDesktopDaemonLogs(await invokeDesktopCommand("desktop_daemon_logs"));
+}
+
+export async function getDesktopAppLogs(): Promise<DesktopAppLogs> {
+  const raw = await invokeDesktopCommand("desktop_app_logs");
+  if (!isRecord(raw)) {
+    throw new Error("Unexpected desktop app logs response.");
+  }
+  return {
+    logPath: toStringOrNull(raw.logPath) ?? "",
+    contents: typeof raw.contents === "string" ? raw.contents : "",
+  };
 }
 
 export async function getDesktopDaemonPairing(): Promise<DesktopPairingOffer> {

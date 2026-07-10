@@ -73,6 +73,23 @@ async function waitForSidebarProjectListReady(page: Page): Promise<void> {
     .waitFor({ state: "visible", timeout: 60_000 });
 }
 
+test.describe("Project picker search", () => {
+  test("shows a loading state after typing while directory suggestions are pending", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await waitForSidebarProjectListReady(page);
+    await page.getByTestId("sidebar-add-project").click();
+
+    const input = page.getByPlaceholder("Type a directory path...");
+    await expect(input).toBeVisible({ timeout: 30_000 });
+    await input.fill("paseo-loading-state-no-match");
+
+    await expect(page.getByText("Start typing a path", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Searching...", { exact: true })).toBeVisible();
+  });
+});
+
 // Projects are parents in the sidebar. Archiving the last workspace leaves the
 // project row in place with a ghost "+ New workspace" child row.
 test.describe("Project with no workspaces persists", () => {

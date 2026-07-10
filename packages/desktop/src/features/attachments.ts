@@ -40,10 +40,11 @@ function normalizeExtension(value: unknown): string {
     throw new Error("Attachment extension must be a string.");
   }
   const normalized = value.trim().toLowerCase();
-  if (!EXTENSION_PATTERN.test(normalized)) {
+  const extension = normalized.startsWith(".") ? normalized : `.${normalized}`;
+  if (!EXTENSION_PATTERN.test(extension)) {
     throw new Error(`Invalid attachment extension: ${value}`);
   }
-  return normalized;
+  return extension;
 }
 
 async function buildManagedAttachmentPath(input: {

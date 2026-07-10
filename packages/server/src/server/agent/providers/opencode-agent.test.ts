@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -305,12 +305,14 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       ],
     };
     runtime.enqueueClient(openCodeClient);
+    const paseoHome = tmpCwd();
+    const opencodeHome = path.join(paseoHome, "opencode-home");
     const client = new OpenCodeAgentClient(logger, undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
+      resolveHomeDir: () => opencodeHome,
     });
-    const cwd = os.homedir();
-    const catalog = await client.fetchCatalog({ cwd, force: false });
+    const catalog = await client.fetchCatalog({ scope: "global", force: false });
 
     expect(Array.isArray(catalog.models)).toBe(true);
     expect(catalog.models).toHaveLength(1);
@@ -339,8 +341,45 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
         contextWindowMaxTokens: 200_000,
       },
     });
-    expect(openCodeClient.calls.providerList).toEqual([{ directory: cwd }]);
+    expect(openCodeClient.calls.providerList).toEqual([{ directory: opencodeHome }]);
+    rmSync(paseoHome, { recursive: true, force: true });
   }, 60_000);
+
+  test("fetchCatalog releases the acquired server when opencode-home cannot be created", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const paseoHome = tmpCwd();
+    const opencodeHome = path.join(paseoHome, "opencode-home");
+    writeFileSync(opencodeHome, "not a directory");
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      resolveHomeDir: () => opencodeHome,
+    });
+
+    await expect(client.fetchCatalog({ scope: "global", force: false })).rejects.toThrow();
+
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    expect(runtime.clientCreations).toEqual([]);
+    rmSync(paseoHome, { recursive: true, force: true });
+  });
+
+  test("fetchCatalog releases the acquired server when opencode-home cannot be resolved", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      resolveHomeDir: () => {
+        throw new Error("cannot resolve opencode-home");
+      },
+    });
+
+    await expect(client.fetchCatalog({ scope: "global", force: false })).rejects.toThrow(
+      "cannot resolve opencode-home",
+    );
+
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    expect(runtime.clientCreations).toEqual([]);
+  });
 
   test("limits concurrent OpenCode metadata requests across clients", async () => {
     const runtime = new TestOpenCodeHarness();
@@ -382,7 +421,11 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     });
     await Promise.all(
       Array.from({ length: 12 }, (_, index) =>
-        client.fetchCatalog({ cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`), force: false }),
+        client.fetchCatalog({
+          scope: "workspace",
+          cwd: path.join(os.tmpdir(), `opencode-cwd-${index}`),
+          force: false,
+        }),
       ),
     );
 

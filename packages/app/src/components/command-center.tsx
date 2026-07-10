@@ -13,6 +13,7 @@ import { Home, Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import { useHosts } from "@/runtime/host-runtime";
 import { formatTimeAgo } from "@/utils/time";
 import { shortenPath } from "@/utils/shorten-path";
 import { AgentStatusDot } from "@/components/agent-status-dot";
@@ -199,9 +200,10 @@ function CommandCenterAgentRow({
 
 interface CommandCenterAgentRowContentProps {
   agent: AggregatedAgent;
+  showHost: boolean;
 }
 
-function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentProps) {
+function CommandCenterAgentRowContent({ agent, showHost }: CommandCenterAgentRowContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const titleStyle = useMemo(
@@ -213,7 +215,7 @@ function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentPro
     [theme.colors.foregroundMuted],
   );
   return (
-    <View style={styles.rowContent}>
+    <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
       <View style={styles.rowMain}>
         <View style={styles.iconSlot}>
           <AgentStatusDot
@@ -226,7 +228,8 @@ function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentPro
           <Text style={titleStyle} numberOfLines={1}>
             {agent.title || t("shell.commandCenter.newAgent")}
           </Text>
-          <Text style={subtitleStyle} numberOfLines={1}>
+          <Text style={subtitleStyle} numberOfLines={1} testID="command-center-agent-subtitle">
+            {showHost ? `${agent.serverLabel} · ` : ""}
             {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
           </Text>
         </View>
@@ -246,6 +249,7 @@ interface AgentItemsSectionProps {
   onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
   sectionDividerStyle: React.ComponentProps<typeof View>["style"];
   sectionLabelStyle: React.ComponentProps<typeof Text>["style"];
+  showHost: boolean;
 }
 
 function AgentItemsSection({
@@ -257,6 +261,7 @@ function AgentItemsSection({
   onSelect,
   sectionDividerStyle,
   sectionLabelStyle,
+  showHost,
 }: AgentItemsSectionProps) {
   const { t } = useTranslation();
 
@@ -277,7 +282,7 @@ function AgentItemsSection({
             onLayout={onRowLayout(rowIndex)}
             onSelect={onSelect}
           >
-            <CommandCenterAgentRowContent agent={agent} />
+            <CommandCenterAgentRowContent agent={agent} showHost={showHost} />
           </CommandCenterAgentRow>
         );
       })}
@@ -302,6 +307,8 @@ export function CommandCenter() {
 
   const isCompact = useIsCompactFormFactor();
   const showBottomSheet = isCompact && isNative;
+  // Host names only earn their space once results can span more than one host.
+  const showHost = useHosts().length > 1;
 
   const rowRefs = useRef<Map<number, View>>(new Map());
   const rowLayouts = useRef<Map<number, { y: number; height: number }>>(new Map());
@@ -477,6 +484,7 @@ export function CommandCenter() {
             onSelect={handleSelectItem}
             sectionDividerStyle={sectionDividerStyle}
             sectionLabelStyle={sectionLabelStyle}
+            showHost={showHost}
           />
         ) : null}
       </>

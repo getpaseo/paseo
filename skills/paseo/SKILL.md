@@ -106,7 +106,7 @@ If the file is missing, use sensible defaults and tell the user once.
 
 Agents take time — 10–30+ minutes is routine. Favor asynchronous workflows.
 
-For agent-scoped `create_agent` and background `send_agent_prompt`, leave `notifyOnFinish` omitted or set it to `true` unless the work is truly fire-and-forget. You will get notified when the target agent finishes, errors, or needs permission. **You must not call `wait_for_agent` on a notify-on-finish agent.** Move on to other work. The notification arrives on its own.
+For agent-scoped `create_agent` and background `send_agent_prompt`, leave `notifyOnFinish` omitted or set it to `true` unless the work is truly fire-and-forget. You will get notified when the target agent finishes, errors, or needs permission. Move on to other work. The notification arrives on its own.
 
 Don't poll `list_agents` or `get_agent_status` to "check on" a running agent. The notification will tell you.
 

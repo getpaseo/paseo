@@ -244,7 +244,7 @@ describe("daemon E2E (real claude) - send message during tool call", () => {
       const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
 
       if (finish.status !== "idle") {
-        const snapshot = await client.fetchAgent(agent.id);
+        const snapshot = await client.fetchAgent({ agentId: agent.id });
         throw new Error(
           `Expected idle after replacement, got ${finish.status}. postSendStatuses=${JSON.stringify(postSendStatuses)} statusesBeforeFirstAssistant=${JSON.stringify(statusesBeforeFirstAssistant)} postSendAssistantTexts=${JSON.stringify(postSendAssistantTexts)} turnStarted=${countTurnStarted(postSendMessages, agent.id)} agentStatus=${snapshot?.agent.status ?? null} recentTimeline=${JSON.stringify(summarizeTimelineItems(timeline))}`,
         );

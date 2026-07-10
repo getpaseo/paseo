@@ -39,6 +39,7 @@ export interface AppSettings {
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
+  autoExpandReasoning: boolean;
 }
 
 export interface Settings extends AppSettings {
@@ -58,6 +59,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
+  autoExpandReasoning: false,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -203,6 +205,9 @@ function pickAppSettings(stored: Partial<AppSettings>): Partial<AppSettings> {
     VALID_WORKSPACE_TITLE_SOURCES.has(stored.workspaceTitleSource)
   ) {
     result.workspaceTitleSource = stored.workspaceTitleSource;
+  }
+  if (typeof stored.autoExpandReasoning === "boolean") {
+    result.autoExpandReasoning = stored.autoExpandReasoning;
   }
   return result;
 }

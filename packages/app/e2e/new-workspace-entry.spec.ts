@@ -6,16 +6,19 @@ import {
   openGlobalNewWorkspaceComposer,
   openNewWorkspaceComposer,
 } from "./helpers/new-workspace";
+import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
+import { seedSavedSettingsHosts } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
+import { clickArchiveWorkspaceMenuItem, expectWorkspaceAbsentFromSidebar } from "./helpers/sidebar";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
-// Model B entry points into the New Workspace screen. The per-project
-// "+ New workspace" sidebar row is gone; the surviving entries are the global
-// button (universal) and each git project's own new-worktree icon (preselects
-// that project). These specs prove the global entry opens the screen, the
-// project icon preselects the right project across the reused 'new' screen, and
-// non-git projects never offer the worktree Isolation control.
+// Model B entry points into the New Workspace screen. The surviving entries are
+// the global button (universal) and each project's per-row New workspace icon
+// (preselects that project) — shown for git projects and for non-git projects on
+// a multiplicity-capable host. These specs prove the global entry opens the
+// screen, the project icon preselects the right project across the reused 'new'
+// screen, and non-git projects never offer the worktree Isolation control.
 
 function projectRow(page: import("@playwright/test").Page, projectKey: string) {
   return page.getByTestId(`sidebar-project-row-${projectKey}`);
@@ -38,6 +41,19 @@ test.describe("New workspace entry points", () => {
     const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-global-button-" });
 
     try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId: getServerId(),
+          label: "localhost",
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+        {
+          serverId: "secondary-new-workspace-host",
+          label: "Secondary host",
+          endpoint: "127.0.0.1:9",
+        },
+      ]);
+
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await expect(
@@ -48,13 +64,93 @@ test.describe("New workspace entry points", () => {
       await expect(globalButton).toBeVisible({ timeout: 30_000 });
 
       await openGlobalNewWorkspaceComposer(page);
+      await expect(page.getByTestId("host-chooser")).toHaveCount(0);
 
-      // The screen is up: its project picker trigger is the canonical landmark.
       await expect(page.getByTestId("new-workspace-project-picker-trigger")).toBeVisible({
         timeout: 30_000,
       });
+      await expect(page.getByTestId("host-picker-trigger")).toBeVisible({ timeout: 30_000 });
     } finally {
       await seeded.cleanup();
+    }
+  });
+
+  test("the New Workspace screen hides the host selector when there is only one host", async ({
+    page,
+  }) => {
+    const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-single-host-" });
+
+    try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId: getServerId(),
+          label: "localhost",
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+      ]);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await expect(
+        page.getByTestId(`sidebar-workspace-row-${getServerId()}:${seeded.workspaceId}`),
+      ).toBeVisible({ timeout: 30_000 });
+
+      await openGlobalNewWorkspaceComposer(page);
+
+      await expect(page.getByTestId("new-workspace-project-picker-trigger")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByTestId("host-picker-trigger")).toHaveCount(0);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  test("keeps the in-progress form when the remembered workspace is archived elsewhere", async ({
+    page,
+  }) => {
+    const otherProject: SeededWorkspace = await seedWorkspace({
+      repoPrefix: "aa-new-workspace-archive-other-",
+    });
+    const rememberedProject: SeededWorkspace = await seedWorkspace({
+      repoPrefix: "zz-new-workspace-archive-remembered-",
+    });
+    const serverId = getServerId();
+    const draftText = "keep this new workspace draft";
+
+    try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId,
+          label: "localhost",
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+      ]);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await page
+        .getByTestId(`sidebar-workspace-row-${serverId}:${rememberedProject.workspaceId}`)
+        .click();
+      await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
+
+      await page.goto(`/new?serverId=${encodeURIComponent(serverId)}`);
+      await expectNewWorkspaceProjectSelected(page, rememberedProject.projectDisplayName);
+
+      const composer = page.getByRole("textbox", { name: "Message agent..." });
+      await expect(composer).toBeEditable({ timeout: 30_000 });
+      await composer.fill(draftText);
+      await expect(composer).toHaveValue(draftText);
+
+      await clickArchiveWorkspaceMenuItem(page, rememberedProject.workspaceId);
+      await expectWorkspaceAbsentFromSidebar(page, rememberedProject.workspaceId);
+
+      await expect(page).toHaveURL(/\/new(?:\?.*)?$/, { timeout: 30_000 });
+      await expect(composer).toHaveValue(draftText);
+      await expectNewWorkspaceProjectSelected(page, rememberedProject.projectDisplayName);
+    } finally {
+      await otherProject.cleanup();
+      await rememberedProject.cleanup();
     }
   });
 
@@ -119,7 +215,7 @@ test.describe("New workspace entry points", () => {
       await expect(projectRow(page, nonGitProject.projectId)).toBeVisible({ timeout: 30_000 });
 
       // Open New Workspace for the non-git project via the global button, then
-      // select it in the picker (its row has no new-worktree icon).
+      // select it in the picker (the per-row icon would preselect it too).
       await openGlobalNewWorkspaceComposer(page);
       const trigger = page.getByTestId("new-workspace-project-picker-trigger");
       await expect(trigger).toBeVisible({ timeout: 30_000 });

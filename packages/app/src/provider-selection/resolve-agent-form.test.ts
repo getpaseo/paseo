@@ -9,7 +9,10 @@ import {
   buildProviderDefinitionMapForStatuses,
   resolveDefaultModel,
   INITIAL_USER_MODIFIED,
+  PENDING_AGENT_FORM_RESOLUTION,
   type AgentFormReducerState,
+  type AgentFormResolutionState,
+  type ProviderModelsByProvider,
   type UserModifiedFields,
 } from "./resolve-agent-form";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
@@ -71,6 +74,7 @@ const bothProviderMap = makeProviderMap(TEST_CODEX_DEFINITION, TEST_CLAUDE_DEFIN
 function makeState(
   overrides: Partial<AgentFormReducerState["form"]> = {},
   modified: Partial<UserModifiedFields> = {},
+  resolution: AgentFormResolutionState = PENDING_AGENT_FORM_RESOLUTION,
 ): AgentFormReducerState {
   return {
     form: {
@@ -83,7 +87,14 @@ function makeState(
       ...overrides,
     },
     userModified: { ...INITIAL_USER_MODIFIED, ...modified },
+    resolution,
   };
+}
+
+function makeProviderModelsByProvider(
+  entries: Array<[AgentProvider, AgentModelDefinition[] | null]>,
+): ProviderModelsByProvider {
+  return new Map(entries);
 }
 
 describe("resolveDefaultModel", () => {
@@ -705,44 +716,138 @@ describe("resolveFormState", () => {
 });
 
 describe("resolveAgentForm", () => {
-  describe("RESOLVE", () => {
-    it("applies resolved provider and mode when no user modifications", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, {
-        type: "RESOLVE",
-        initialValues: undefined,
-        preferences: { provider: "codex" },
-        availableModels: null,
+  describe("resolution state", () => {
+    it("requests resolution without changing the current form values", () => {
+      const state = makeState(
+        { provider: "codex", modeId: "auto", model: "gpt-5.3-codex" },
+        { provider: true, model: true },
+        { status: "completed" },
+      );
+      const next = resolveAgentForm(state, { type: "REQUEST_RESOLUTION" });
 
+      expect(next.form).toEqual(state.form);
+      expect(next.userModified).toEqual(INITIAL_USER_MODIFIED);
+      expect(next.resolution.status).toBe("pending");
+    });
+
+    it("completes a pending open resolution when snapshot models arrive late", () => {
+      const state = resolveAgentForm(makeState({ serverId: "host-1" }), {
+        type: "REQUEST_RESOLUTION",
+      });
+      const next = resolveAgentForm(state, {
+        type: "COMPLETE_RESOLUTION",
+        initialValues: undefined,
+        preferences: {
+          provider: "codex",
+          providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+        },
+        providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
         allowedProviderMap: codexProviderMap,
       });
 
       expect(next.form.provider).toBe("codex");
       expect(next.form.modeId).toBe("auto");
+      expect(next.form.model).toBe("gpt-5.3-codex");
+      expect(next.form.thinkingOptionId).toBe("xhigh");
+      expect(next.resolution.status).toBe("completed");
     });
 
-    it("returns the same state reference when nothing changed", () => {
-      const state = makeState({ provider: "codex", modeId: "auto" });
-      const next = resolveAgentForm(state, {
-        type: "RESOLVE",
+    it("does not change settled selection when a background snapshot has different defaults", () => {
+      const settled = resolveAgentForm(makeState({ serverId: "host-1" }), {
+        type: "COMPLETE_RESOLUTION",
         initialValues: undefined,
-        preferences: { provider: "codex" },
-        availableModels: null,
-
+        preferences: {
+          provider: "codex",
+          providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+        },
+        providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+        allowedProviderMap: codexProviderMap,
+      });
+      const backgroundModels: AgentModelDefinition[] = [
+        { provider: "codex", id: "gpt-5.4-codex", label: "gpt-5.4-codex", isDefault: true },
+      ];
+      const next = resolveAgentForm(settled, {
+        type: "COMPLETE_RESOLUTION",
+        initialValues: undefined,
+        preferences: {
+          provider: "codex",
+          providerPreferences: { codex: { model: "gpt-5.4-codex" } },
+        },
+        providerModelsByProvider: makeProviderModelsByProvider([["codex", backgroundModels]]),
         allowedProviderMap: codexProviderMap,
       });
 
-      expect(next).toBe(state);
+      expect(next).toBe(settled);
+      expect(next.form.provider).toBe("codex");
+      expect(next.form.model).toBe("gpt-5.3-codex");
     });
 
-    it("does not override user-modified provider", () => {
+    it("prefills edit hydration from initial values", () => {
+      const state = makeState({ serverId: "host-1" });
+      const next = resolveAgentForm(state, {
+        type: "COMPLETE_RESOLUTION",
+        initialValues: {
+          provider: "codex",
+          modeId: "full-access",
+          model: "gpt-5.3-codex",
+          thinkingOptionId: "low",
+          workingDir: "/repo",
+        },
+        preferences: { provider: "claude" },
+        providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+        allowedProviderMap: bothProviderMap,
+      });
+
+      expect(next.form.provider).toBe("codex");
+      expect(next.form.modeId).toBe("full-access");
+      expect(next.form.model).toBe("gpt-5.3-codex");
+      expect(next.form.thinkingOptionId).toBe("low");
+      expect(next.form.workingDir).toBe("/repo");
+    });
+
+    it("keeps a user model change after resolution has completed", () => {
+      const alternateModels: AgentModelDefinition[] = [
+        ...CODEX_MODELS,
+        { provider: "codex", id: "gpt-5.4-codex", label: "gpt-5.4-codex" },
+      ];
+      const settled = resolveAgentForm(makeState({ serverId: "host-1" }), {
+        type: "COMPLETE_RESOLUTION",
+        initialValues: undefined,
+        preferences: {
+          provider: "codex",
+          providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+        },
+        providerModelsByProvider: makeProviderModelsByProvider([["codex", alternateModels]]),
+        allowedProviderMap: codexProviderMap,
+      });
+      const userChanged = resolveAgentForm(settled, {
+        type: "SET_MODEL_FROM_USER",
+        modelId: "gpt-5.4-codex",
+        availableModels: alternateModels,
+      });
+      const next = resolveAgentForm(userChanged, {
+        type: "COMPLETE_RESOLUTION",
+        initialValues: undefined,
+        preferences: {
+          provider: "codex",
+          providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+        },
+        providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+        allowedProviderMap: codexProviderMap,
+      });
+
+      expect(next).toBe(userChanged);
+      expect(next.form.model).toBe("gpt-5.4-codex");
+      expect(next.userModified.model).toBe(true);
+    });
+
+    it("does not override user-modified provider while completing", () => {
       const state = makeState({ provider: "codex", modeId: "auto" }, { provider: true });
       const next = resolveAgentForm(state, {
-        type: "RESOLVE",
+        type: "COMPLETE_RESOLUTION",
         initialValues: undefined,
         preferences: { provider: "claude" },
-        availableModels: null,
-
+        providerModelsByProvider: makeProviderModelsByProvider([]),
         allowedProviderMap: bothProviderMap,
       });
 
@@ -976,11 +1081,13 @@ describe("resolveAgentForm", () => {
       const state = makeState(
         { provider: "codex", modeId: "full-access", model: "gpt-5.3-codex" },
         { provider: true, modeId: true, model: true },
+        { status: "completed" },
       );
       const next = resolveAgentForm(state, { type: "RESET" });
 
       expect(next.userModified).toEqual(INITIAL_USER_MODIFIED);
       expect(next.form).toEqual(state.form);
+      expect(next.resolution.status).toBe("completed");
     });
   });
 

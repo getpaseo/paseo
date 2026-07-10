@@ -4,99 +4,10 @@ import * as path from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
-
-const CLAUDE_THINKING_OPTIONS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "max", label: "Max" },
-] as const;
-
-const CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra High" },
-  { id: "max", label: "Max" },
-] as const;
-
-const CLAUDE_ULTRACODE_THINKING_OPTIONS = [
-  ...CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS,
-  { id: "ultracode", label: "Ultracode" },
-] as const;
-
-const CLAUDE_MODELS: AgentModelDefinition[] = [
-  {
-    provider: "claude",
-    id: "claude-fable-5",
-    label: "Fable 5",
-    description: "Fable 5 · Most powerful model",
-    thinkingOptions: [...CLAUDE_ULTRACODE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-8[1m]",
-    label: "Opus 4.8 1M",
-    description: "Opus 4.8 with 1M context window",
-    thinkingOptions: [...CLAUDE_ULTRACODE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-8",
-    label: "Opus 4.8",
-    description: "Opus 4.8 · Latest release",
-    isDefault: true,
-    thinkingOptions: [...CLAUDE_ULTRACODE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-7[1m]",
-    label: "Opus 4.7 1M",
-    description: "Opus 4.7 with 1M context window",
-    thinkingOptions: [...CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-7",
-    label: "Opus 4.7",
-    description: "Opus 4.7 · Previous release",
-    thinkingOptions: [...CLAUDE_OPUS_EXTENDED_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-6[1m]",
-    label: "Opus 4.6 1M",
-    description: "Opus 4.6 with 1M context window",
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-4-6",
-    label: "Opus 4.6",
-    description: "Opus 4.6 · Most capable for complex work",
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-4-6[1m]",
-    label: "Sonnet 4.6 1M",
-    description: "Sonnet 4.6 with 1M context window",
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-4-6",
-    label: "Sonnet 4.6",
-    description: "Sonnet 4.6 · Best for everyday tasks",
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
-  },
-  {
-    provider: "claude",
-    id: "claude-haiku-4-5",
-    label: "Haiku 4.5",
-    description: "Haiku 4.5 · Fastest for quick answers",
-  },
-];
+import {
+  getClaudeManifestModels,
+  normalizeClaudeRuntimeModelId as normalizeClaudeManifestRuntimeModelId,
+} from "./model-manifest.js";
 
 const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
@@ -107,7 +18,17 @@ const CLAUDE_SETTINGS_MODEL_ENV_KEYS = [
 ] as const;
 
 export function getClaudeModels(): AgentModelDefinition[] {
-  return CLAUDE_MODELS.map((model) => ({ ...model }));
+  return getClaudeManifestModels();
+}
+
+export function findClaudeModel(
+  modelId: string | null | undefined,
+): AgentModelDefinition | undefined {
+  const normalizedModelId = normalizeClaudeRuntimeModelId(modelId);
+  if (!normalizedModelId) {
+    return undefined;
+  }
+  return getClaudeModels().find((model) => model.id === normalizedModelId);
 }
 
 export async function getClaudeModelsWithSettings(
@@ -208,36 +129,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Handles the `[1m]` suffix that the SDK appends for 1M context sessions.
  */
 export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (!trimmed) {
-    return null;
-  }
-
-  // Check for exact match first (handles claude-opus-4-6[1m] directly)
-  if (CLAUDE_MODELS.some((model) => model.id === trimmed)) {
-    return trimmed;
-  }
-
-  // Fable uses a single-segment version (claude-fable-5), not the {major}-{minor}
-  // scheme of opus/sonnet/haiku, so match it separately. This maps dated runtime
-  // strings (e.g. claude-fable-5-20260301) back to the catalog ID. No [1m] variant:
-  // Fable 5 is natively 1M, so there is no 200K-default model to opt into 1M.
-  const fableMatch = trimmed.match(/(?:claude-)?fable[-_ ]+(\d+)/i);
-  if (fableMatch) {
-    return `claude-fable-${fableMatch[1]}`;
-  }
-
-  // Match: claude-{family}-{major}-{minor}[1m]? possibly followed by a date suffix
-  const runtimeMatch = trimmed.match(
-    /(?:claude-)?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
-  );
-  if (!runtimeMatch) {
-    return null;
-  }
-
-  const family = runtimeMatch[1].toLowerCase();
-  const major = runtimeMatch[2];
-  const minor = runtimeMatch[3];
-  const suffix = runtimeMatch[4] ?? "";
-  return `claude-${family}-${major}-${minor}${suffix}`;
+  return normalizeClaudeManifestRuntimeModelId(value);
 }

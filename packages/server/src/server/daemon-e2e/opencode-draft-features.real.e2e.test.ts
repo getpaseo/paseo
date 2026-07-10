@@ -109,7 +109,8 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
       expect(await provider.listImportableSessions?.({ cwd })).toEqual([]);
 
       await withConnectedOpenCodeDaemon(provider, async ({ client }) => {
-        const response = await client.listCommands("draft-opencode-agent", {
+        const response = await client.listCommands({
+          agentId: "draft-opencode-agent",
           draftConfig: {
             provider: "opencode",
             cwd,

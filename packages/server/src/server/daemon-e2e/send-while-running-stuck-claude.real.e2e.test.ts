@@ -114,7 +114,7 @@ describe("daemon E2E (real claude) - send while running recovery", () => {
         }
 
         await secondary.waitForFinish(agent.id, 180_000);
-        const finalResult = await secondary.fetchAgent(agent.id);
+        const finalResult = await secondary.fetchAgent({ agentId: agent.id });
         if (finalResult) {
           applySnapshot(finalResult.agent);
         }

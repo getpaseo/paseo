@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import {
   app,
   BrowserWindow,
+  clipboard,
   Menu,
   ipcMain,
   nativeImage,
@@ -53,6 +54,8 @@ import {
   listRegisteredPaseoBrowserIds,
   readBrowserIdFromWebviewAttach,
   registerBrowserWebviewNavigationGuards,
+  unregisterPaseoBrowser,
+  registerPaseoBrowserWorkspace,
   registerPaseoBrowserWebContents,
   setWorkspaceActivePaseoBrowserId,
 } from "./features/browser-webviews/index.js";
@@ -70,6 +73,7 @@ import {
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
 import { autoUpdateInstalledSkills } from "./integrations/skills/index.js";
+import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -86,6 +90,7 @@ const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
   "w",
   "t",
   "k",
+  "o",
   "/",
   "\\",
   ",",
@@ -108,6 +113,36 @@ const FORWARDED_PASEO_SHORTCUT_KEYS = new Set([
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName(APP_NAME);
+
+function readBrowserWorkspaceInput(
+  input: unknown,
+): { browserId: string; workspaceId: string } | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
+    return null;
+  }
+  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
+    return null;
+  }
+  return { browserId: record.browserId.trim(), workspaceId: record.workspaceId.trim() };
+}
+
+function readActiveBrowserInput(
+  input: unknown,
+): { workspaceId: string; browserId: string | null } | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
+    return null;
+  }
+  const browserId = typeof record.browserId === "string" ? record.browserId.trim() : null;
+  return { workspaceId: record.workspaceId.trim(), browserId: browserId || null };
+}
 
 const pendingBrowserWebviewIds: string[] = [];
 
@@ -254,8 +289,57 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
   return result;
 });
 
-ipcMain.handle("paseo:browser:set-workspace-active-browser", (_event, browserId: unknown) => {
-  setWorkspaceActivePaseoBrowserId(typeof browserId === "string" ? browserId : null);
+function normalizeBrowserCaptureRect(
+  rect: unknown,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!rect || typeof rect !== "object") {
+    return null;
+  }
+  const candidate = rect as Record<string, unknown>;
+  const x = candidate.x;
+  const y = candidate.y;
+  const width = candidate.width;
+  const height = candidate.height;
+  if (
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof width !== "number" ||
+    typeof height !== "number" ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return null;
+  }
+  return {
+    x: Math.max(0, Math.round(x)),
+    y: Math.max(0, Math.round(y)),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+ipcMain.handle("paseo:browser:register-workspace-browser", (_event, rawInput: unknown) => {
+  const input = readBrowserWorkspaceInput(rawInput);
+  if (input) {
+    registerPaseoBrowserWorkspace(input);
+  }
+});
+
+ipcMain.handle("paseo:browser:unregister-workspace-browser", (_event, browserId: unknown) => {
+  if (typeof browserId === "string" && browserId.trim().length > 0) {
+    unregisterPaseoBrowser(browserId.trim());
+  }
+});
+
+ipcMain.handle("paseo:browser:set-workspace-active-browser", (_event, rawInput: unknown) => {
+  const input = readActiveBrowserInput(rawInput);
+  if (input) {
+    setWorkspaceActivePaseoBrowserId(input);
+  }
 });
 
 ipcMain.handle("paseo:browser:open-devtools", (_event, browserId: unknown) => {
@@ -305,6 +389,78 @@ ipcMain.handle("paseo:browser:clear-partition", async (_event, browserId: unknow
   }
   const partition = `persist:paseo-browser-${browserId}`;
   await session.fromPartition(partition).clearStorageData();
+});
+
+ipcMain.handle(
+  "paseo:browser:capture-element",
+  async (_event, browserId: unknown, rect: unknown) => {
+    if (typeof browserId !== "string" || browserId.trim().length === 0) {
+      return null;
+    }
+    const contents = getPaseoBrowserWebContents(browserId);
+    if (!contents || contents.isDestroyed()) {
+      return null;
+    }
+    const captureRect = normalizeBrowserCaptureRect(rect);
+    if (!captureRect) {
+      return null;
+    }
+    try {
+      // capturePage expects an integer rect in CSS pixels relative to the
+      // guest viewport, which matches getBoundingClientRect() on the page.
+      const image = await contents.capturePage(captureRect);
+      if (image.isEmpty()) {
+        return null;
+      }
+      return image.toDataURL();
+    } catch (error) {
+      log.warn("[browser-capture] capture-element.failed", {
+        browserId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  },
+);
+
+ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown): boolean => {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const { text, imageDataUrl } = payload as { text?: unknown; imageDataUrl?: unknown };
+  const copyText = typeof text === "string" && text.length > 0 ? text : null;
+
+  // Resolve the image first so we can write the clipboard exactly once and
+  // avoid flashing an intermediate text-only state.
+  let image: Electron.NativeImage | null = null;
+  if (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:image")) {
+    try {
+      const candidate = nativeImage.createFromDataURL(imageDataUrl);
+      if (!candidate.isEmpty()) {
+        image = candidate;
+      }
+    } catch (error) {
+      log.warn("[browser-capture] copy-element.image-failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Writing from the main process avoids the renderer's navigator.clipboard
+  // NotAllowedError, which fires when focus is inside the guest <webview>.
+  if (copyText && image) {
+    clipboard.write({ text: copyText, image });
+    return true;
+  }
+  if (image) {
+    clipboard.writeImage(image);
+    return true;
+  }
+  if (copyText) {
+    clipboard.writeText(copyText);
+    return true;
+  }
+  return false;
 });
 
 protocol.registerSchemesAsPrivileged([
@@ -696,6 +852,7 @@ async function bootstrap(): Promise<void> {
   registerNotificationHandlers();
   registerOpenerHandlers();
   registerEditorTargetHandlers();
+  registerBrowserAutomationIpc();
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).
@@ -755,7 +912,7 @@ app.on(
       stopDesktopManagedDaemonOnQuitIfNeeded({
         settingsStore: getDesktopSettingsStore(),
         isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
-        stopDaemon: stopDesktopDaemonViaCli,
+        stopDaemon: () => stopDesktopDaemonViaCli("quit"),
         showShutdownFeedback: showDaemonShutdownDialog,
       }),
     onStopError: (error) => {

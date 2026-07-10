@@ -1,18 +1,20 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Settings2 } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
 import {
   DropdownMenu,
-  DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useAppSettings, type WorkspaceTitleSource } from "@/hooks/use-settings";
+import { useHosts } from "@/runtime/host-runtime";
+import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 
 const ThemedSettings2 = withUnistyles(Settings2);
 const filterColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -32,22 +34,23 @@ interface DisplayPreferenceOption<Value extends string> {
   label: string;
 }
 
-export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string | null }) {
-  const groupMode = useSidebarViewStore((state) =>
-    serverId ? state.getGroupMode(serverId) : "project",
-  );
+export function SidebarDisplayPreferencesMenu() {
+  const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const hostFilters = useSidebarViewStore((state) => state.hostFilters);
   const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
+  const toggleHostFilter = useSidebarViewStore((state) => state.toggleHostFilter);
+  const clearHostFilters = useSidebarViewStore((state) => state.clearHostFilters);
+  const hosts = useHosts();
   const {
     settings: { workspaceTitleSource },
     updateSettings,
   } = useAppSettings();
 
-  const handleSelect = useCallback(
+  const handleSelectMode = useCallback(
     (mode: SidebarGroupMode) => {
-      if (!serverId) return;
-      setGroupMode(serverId, mode);
+      setGroupMode(mode);
     },
-    [serverId, setGroupMode],
+    [setGroupMode],
   );
 
   const handleWorkspaceTitleSourceSelect = useCallback(
@@ -65,6 +68,9 @@ export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string |
     [],
   );
 
+  const showHostFilter = hosts.length > 1;
+  const allHostsSelected = hostFilters.length === 0;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -75,7 +81,7 @@ export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string |
       >
         <ThemedSettings2 size={14} uniProps={filterColorMapping} />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={180} testID="sidebar-display-preferences-content">
+      <DropdownMenuContent align="end" width={220} testID="sidebar-display-preferences-content">
         <View style={styles.menuHeader}>
           <Text style={styles.menuHeaderLabel}>Group by</Text>
         </View>
@@ -85,9 +91,34 @@ export function SidebarDisplayPreferencesMenu({ serverId }: { serverId: string |
             item={item}
             isSelected={groupMode === item.value}
             testIDPrefix="sidebar-grouping"
-            onSelect={handleSelect}
+            onSelect={handleSelectMode}
           />
         ))}
+        {showHostFilter ? (
+          <>
+            <DropdownMenuSeparator />
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuHeaderLabel}>Filter</Text>
+            </View>
+            <DropdownMenuItem
+              testID="sidebar-host-filter-all"
+              selected={allHostsSelected}
+              closeOnSelect={false}
+              onSelect={clearHostFilters}
+            >
+              All hosts
+            </DropdownMenuItem>
+            {hosts.map((host) => (
+              <HostFilterItem
+                key={host.serverId}
+                label={host.label?.trim() || host.serverId}
+                serverId={host.serverId}
+                selected={hostFilters.includes(host.serverId)}
+                onToggle={toggleHostFilter}
+              />
+            ))}
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <View style={styles.menuHeader}>
           <Text style={styles.menuHeaderLabel}>Workspace title</Text>
@@ -125,6 +156,40 @@ function DisplayPreferenceMenuItem<Value extends string>({
       onSelect={handleSelect}
     >
       <Text style={styles.optionLabel}>{item.label}</Text>
+    </DropdownMenuItem>
+  );
+}
+
+function HostFilterItem({
+  label,
+  serverId,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  serverId: string;
+  selected: boolean;
+  onToggle: (serverId: string) => void;
+}) {
+  const handleSelect = useCallback(() => onToggle(serverId), [serverId, onToggle]);
+  const leading = useMemo(
+    () => (
+      <View testID={`sidebar-host-filter-status-${serverId}`}>
+        <HostStatusDot serverId={serverId} />
+      </View>
+    ),
+    [serverId],
+  );
+
+  return (
+    <DropdownMenuItem
+      testID={`sidebar-host-filter-${serverId}`}
+      selected={selected}
+      closeOnSelect={false}
+      leading={leading}
+      onSelect={handleSelect}
+    >
+      {label}
     </DropdownMenuItem>
   );
 }

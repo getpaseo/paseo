@@ -3,7 +3,8 @@ import { appendFile } from "node:fs/promises";
 import { expect, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { getE2EDaemonPort } from "./daemon-port";
-import { openSettingsHost, openSettingsHostSection } from "./settings";
+import { escapeRegex } from "./regex";
+import { openSettingsHost, openSettingsHostSection, openSettingsSection } from "./settings";
 
 interface DaemonApiStatus {
   version: string;
@@ -52,6 +53,7 @@ export interface DesktopBridgeConfig {
   serverId: string;
   updateAvailable?: boolean;
   latestVersion?: string;
+  updateReadyToInstall?: boolean;
   slowInstall?: boolean;
   /** Initial PID reported by desktop_daemon_status. Defaults to null. */
   daemonPid?: number | null;
@@ -169,7 +171,7 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
           return cfg.updateAvailable
             ? {
                 hasUpdate: true,
-                readyToInstall: true,
+                readyToInstall: cfg.updateReadyToInstall ?? true,
                 currentVersion: "1.0.0",
                 latestVersion: cfg.latestVersion ?? "1.2.3",
                 body: null,
@@ -276,10 +278,31 @@ export async function openDesktopSettings(page: Page, serverId: string): Promise
   });
 }
 
+export async function openDesktopAboutSettings(page: Page): Promise<void> {
+  await openSettings(page);
+  await openSettingsSection(page, "about");
+  await expect(page.getByText("App updates", { exact: true })).toBeVisible();
+}
+
 export async function expectUpdateBanner(page: Page, version: string): Promise<void> {
   const callout = page.getByTestId("update-callout");
   await expect(callout).toBeVisible({ timeout: 15_000 });
   await expect(callout).toContainText(`v${version.replace(/^v/i, "")}`);
+}
+
+export async function clickCheckForUpdates(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Check" }).click();
+}
+
+export async function expectPendingUpdateCheckResult(page: Page, version: string): Promise<void> {
+  const normalizedVersion = `v${version.replace(/^v/i, "")}`;
+  await expect(
+    page.getByText(
+      new RegExp(`Update found: ${escapeRegex(normalizedVersion)}\\. Downloading\\.\\.\\.`),
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(`Ready to install: ${normalizedVersion}`)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Update" })).toBeDisabled();
 }
 
 export async function clickInstallUpdate(page: Page): Promise<void> {

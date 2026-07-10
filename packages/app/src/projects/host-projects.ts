@@ -4,21 +4,25 @@ import { buildHostProjectList, type HostProjectListItem } from "@/projects/host-
 
 export {
   buildHostProjectList,
+  canCreateWorkspaceForHostProject,
   canCreateWorktreeForProjectKind,
+  filterWorkspaceProjectsForHost,
+  getHostProjectSourceDirectory,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveInitialWorkspaceProject,
   resolveInitialWorktreeProject,
   resolveSelectedHostProject,
   type HostProjectListItem,
   type HostProjectRouteContext,
 } from "@/projects/host-project-model";
 
-export function useHostProjects(serverId: string | null): HostProjectListItem[] {
-  const workspaceStructure = useWorkspaceStructure(serverId);
+export function useHostProjects(serverIds: string[]): HostProjectListItem[] {
+  const workspaceStructure = useWorkspaceStructure(serverIds);
   return useMemo(() => {
-    if (!serverId || workspaceStructure.projects.length === 0) {
+    if (workspaceStructure.projects.length === 0) {
       return [];
     }
-    return buildHostProjectList({ serverId, projects: workspaceStructure.projects });
-  }, [serverId, workspaceStructure.projects]);
+    return buildHostProjectList({ projects: workspaceStructure.projects });
+  }, [workspaceStructure.projects]);
 }

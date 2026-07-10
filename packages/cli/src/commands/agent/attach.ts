@@ -6,7 +6,10 @@ export function addAttachOptions(cmd: Command): Command {
     .argument("<id>", "Agent ID (or prefix)");
 }
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
-import { fetchProjectedTimelineItems } from "../../utils/timeline.js";
+import {
+  fetchProjectedTimelineItems,
+  LIVE_HISTORY_FETCH_TIMEOUT_MS,
+} from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload, AgentStreamMessage } from "@getpaseo/protocol/messages";
@@ -121,7 +124,7 @@ export async function runAttachCommand(
   }
 
   try {
-    const fetchResult = await client.fetchAgent(id);
+    const fetchResult = await client.fetchAgent({ agentId: id });
     if (!fetchResult) {
       console.error(`Error: No agent found matching: ${id}`);
       console.error("Use `paseo ls` to list available agents");
@@ -139,6 +142,7 @@ export async function runAttachCommand(
       const timelineItems = await fetchProjectedTimelineItems({
         client,
         agentId: resolvedId,
+        timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
       });
       for (const item of timelineItems) {
         printTimelineItem(item);

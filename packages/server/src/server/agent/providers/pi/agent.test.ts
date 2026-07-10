@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   openSync,
   readSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,9 @@ import { describe, expect, test } from "vitest";
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
+
+const ONE_BY_ONE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 function createClient(pi = new FakePi()): PiRpcAgentClient {
   return new PiRpcAgentClient({
@@ -658,6 +662,91 @@ describe("PiRpcAgentSession", () => {
     expect(fakeSession.setThinkingLevelRequests).toEqual(["high"]);
   });
 
+  test("materializes image prompts as text hints for text-only Pi models", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.setModelResult = {
+      provider: "openrouter",
+      id: "openai/gpt-oss-20b:free",
+      name: "OpenAI: gpt-oss-20b (free)",
+      input: ["text"],
+    };
+
+    await session.setModel("openrouter/openai/gpt-oss-20b:free");
+    await session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+    ]);
+
+    let imagePath: string | undefined;
+    try {
+      expect(fakeSession.prompts).toHaveLength(1);
+      const prompt = fakeSession.prompts[0]!;
+      expect(prompt.imageCount).toBe(0);
+      expect(prompt.message).toContain("Describe this image.");
+      expect(prompt.message).not.toContain(ONE_BY_ONE_PNG_BASE64);
+      imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
+      expect(imagePath).toBeTypeOf("string");
+      expect(imagePath).toMatch(
+        /paseo-attachments(?:-[^\\/]+)?[\\/](?:[^\\/]+[\\/])?[0-9a-f]{64}\.png$/,
+      );
+      expect(existsSync(imagePath!)).toBe(true);
+    } finally {
+      if (imagePath) {
+        rmSync(imagePath, { force: true });
+      }
+    }
+  });
+
+  test("materializes image prompts when Pi model capabilities are unknown", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+    ]);
+
+    let imagePath: string | undefined;
+    try {
+      expect(fakeSession.prompts).toHaveLength(1);
+      const prompt = fakeSession.prompts[0]!;
+      expect(prompt.imageCount).toBe(0);
+      expect(prompt.message).toContain("Describe this image.");
+      imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
+      expect(imagePath).toBeTypeOf("string");
+      expect(existsSync(imagePath!)).toBe(true);
+    } finally {
+      if (imagePath) {
+        rmSync(imagePath, { force: true });
+      }
+    }
+  });
+
+  test("forwards raw image prompts for vision-capable Pi models", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.setModelResult = {
+      provider: "openai",
+      id: "gpt-4o",
+      name: "GPT-4o",
+      input: ["text", "image"],
+    };
+
+    await session.setModel("openai/gpt-4o");
+    await session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+    ]);
+
+    expect(fakeSession.prompts).toEqual([
+      {
+        message: "Describe this image.",
+        imageCount: 1,
+      },
+    ]);
+  });
+
   test("fails the active turn when the Pi process exits mid-turn", async () => {
     const { pi, session, events } = await createSession();
 
@@ -861,7 +950,11 @@ describe("PiRpcAgentClient", () => {
   test("discovers models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
-    const catalogPromise = client.fetchCatalog({ cwd: "/workspace/with-extension", force: false });
+    const catalogPromise = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+    });
     pi.latestSession().models = [
       {
         provider: "openrouter",
@@ -883,6 +976,17 @@ describe("PiRpcAgentClient", () => {
       modes: [],
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
+  });
+
+  test("lists no draft features without starting a Pi session", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await expect(
+      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
+    ).resolves.toEqual([]);
+
+    expect(pi.recordedLaunches).toHaveLength(0);
   });
 
   test("maps extension, prompt, and skill commands to Paseo slash commands", async () => {

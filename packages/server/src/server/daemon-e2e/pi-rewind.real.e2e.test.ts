@@ -50,7 +50,7 @@ async function runtimeSessionId(
   harness: PiRewindHarness,
   session: PiRewindSession,
 ): Promise<string> {
-  const snapshot = await harness.client.fetchAgent(session.agentId);
+  const snapshot = await harness.client.fetchAgent({ agentId: session.agentId });
   const sessionId =
     snapshot?.agent.runtimeInfo?.sessionId ?? snapshot?.agent.persistence?.sessionId;
   if (!sessionId) {

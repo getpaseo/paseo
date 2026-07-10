@@ -5,6 +5,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { getE2EDaemonPort } from "./daemon-port";
+import { withDisabledE2ESpeechEnv } from "./speech-env";
 
 /**
  * Restarts the isolated E2E daemon against the SAME PASEO_HOME and SAME port so
@@ -93,20 +94,21 @@ function spawnSupervisor(args: {
   // inside the Playwright worker (the shim is a .mjs symlink, not an executable),
   // so resolve the CLI module and load it with node.
   const tsxCli = createRequire(path.join(serverDir, "package.json")).resolve("tsx/cli");
+  const env = withDisabledE2ESpeechEnv({
+    ...process.env,
+    PASEO_HOME: args.paseoHome,
+    PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
+    PASEO_SERVER_ID: "srv_e2e_test_daemon",
+    PASEO_LISTEN: `0.0.0.0:${args.port}`,
+    PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
+    PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
+    PASEO_NODE_ENV: "development",
+    NODE_ENV: "development",
+  });
 
   const child = spawn(process.execPath, [tsxCli, "scripts/supervisor-entrypoint.ts", "--dev"], {
     cwd: serverDir,
-    env: {
-      ...process.env,
-      PASEO_HOME: args.paseoHome,
-      PASEO_E2E_EDITOR_RECORD_PATH: args.editorRecordPath,
-      PASEO_SERVER_ID: "srv_e2e_test_daemon",
-      PASEO_LISTEN: `0.0.0.0:${args.port}`,
-      PASEO_RELAY_ENDPOINT: `127.0.0.1:${args.relayPort}`,
-      PASEO_CORS_ORIGINS: `http://localhost:${args.metroPort}`,
-      PASEO_NODE_ENV: "development",
-      NODE_ENV: "development",
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });

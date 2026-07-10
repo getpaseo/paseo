@@ -4,7 +4,7 @@ import { GestureDetector } from "react-native-gesture-handler";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { CompactExplorerSidebar } from "@/components/explorer-sidebar";
-import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
+import { useOpenFileExplorerGesture } from "@/mobile-panels/gestures";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
@@ -29,7 +29,7 @@ function CompactExplorerOpenGestureSurface({
   enabled,
   onOpenExplorer,
 }: CompactExplorerOpenGestureSurfaceProps) {
-  const explorerOpenGesture = useExplorerOpenGesture({
+  const explorerOpenGesture = useOpenFileExplorerGesture({
     enabled,
     onOpen: onOpenExplorer,
   });

@@ -410,7 +410,7 @@ test("local workspace auto-title does not broadcast provider snapshot warm-up to
   }
 }, 20_000);
 
-test("create_agent_request with initialPrompt generates a daemon-visible workspace title", async () => {
+test("create_agent_request with workspaceId does not retitle an existing workspace", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-agent-submit-title-"));
   const daemon = await createTestPaseoDaemon({
     agentClients: { mock: new MockLoadTestAgentClient() },
@@ -433,6 +433,8 @@ test("create_agent_request with initialPrompt generates a daemon-visible workspa
     if (!workspaceId) {
       throw new Error(created.error ?? "Expected workspace to be created");
     }
+    const originalName = await workspaceName(client, workspaceId);
+    expect(originalName).toBe(path.basename(cwd));
 
     const agent = await client.createAgent({
       provider: "mock",
@@ -443,9 +445,7 @@ test("create_agent_request with initialPrompt generates a daemon-visible workspa
     });
     expect(agent.workspaceId).toBe(workspaceId);
 
-    await expect
-      .poll(() => workspaceName(client, workspaceId), { timeout: 10_000 })
-      .toBe("Fix login bug");
+    expect(await workspaceName(client, workspaceId)).toBe(originalName);
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
@@ -513,7 +513,7 @@ test("creating another same-cwd local workspace keeps running status on the owni
       throw new Error(third.error ?? "Expected third workspace to be created");
     }
 
-    expect((await client.fetchAgent(agent.id))?.agent.status).toBe("running");
+    expect((await client.fetchAgent({ agentId: agent.id }))?.agent.status).toBe("running");
     expect(await statusByWorkspaceId(client)).toEqual(
       new Map([
         [firstWorkspaceId, "running"],
@@ -565,7 +565,7 @@ test("two workspaces sharing one cwd compute agent status per workspaceId", asyn
     );
     await waitForPermission(client, agentA.id);
 
-    const fetchedA = await client.fetchAgent(agentA.id);
+    const fetchedA = await client.fetchAgent({ agentId: agentA.id });
     expect(fetchedA?.agent.workspaceId).toBe(WORKSPACE_A);
 
     expect(await statusByWorkspaceId(client)).toEqual(
@@ -609,7 +609,7 @@ test("two workspaces sharing one cwd compute agent status per workspaceId", asyn
     );
     await waitForPermission(client, agentB.id);
 
-    const fetchedB = await client.fetchAgent(agentB.id);
+    const fetchedB = await client.fetchAgent({ agentId: agentB.id });
     expect(fetchedB?.agent.workspaceId).toBe(WORKSPACE_B);
 
     expect(await statusByWorkspaceId(client)).toEqual(

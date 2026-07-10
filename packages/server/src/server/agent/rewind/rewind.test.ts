@@ -56,10 +56,14 @@ async function createRewindHarness(options: { historyGate?: RewindHistoryGate } 
     logger: createTestLogger(),
     idFactory: () => "00000000-0000-4000-8000-000000000901",
   });
-  const agent = await manager.createAgent({
-    provider: "claude",
-    cwd: process.cwd(),
-  });
+  const agent = await manager.createAgent(
+    {
+      provider: "claude",
+      cwd: process.cwd(),
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
   return { manager, session, agentId: agent.id };
 }
 

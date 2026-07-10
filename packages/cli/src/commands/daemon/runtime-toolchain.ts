@@ -28,12 +28,13 @@ async function resolveNodePathFromPidUnix(pid: number): Promise<NodePathFromPidR
 async function runProcessProbe(
   command: string,
   args: string[],
+  options?: { shell?: boolean },
 ): Promise<{
   resolved: string | null;
   error?: string;
 }> {
   try {
-    const { stdout } = await execCommand(command, args);
+    const { stdout } = await execCommand(command, args, { shell: options?.shell });
     const resolved = stdout.trim();
     return resolved
       ? { resolved }
@@ -52,7 +53,7 @@ async function resolveNodePathFromPidWindows(pid: number): Promise<NodePathFromP
   }> = [
     {
       label: "powershell-cim",
-      command: "powershell",
+      command: "powershell.exe",
       args: [
         "-NoProfile",
         "-Command",
@@ -61,7 +62,7 @@ async function resolveNodePathFromPidWindows(pid: number): Promise<NodePathFromP
     },
     {
       label: "powershell-process",
-      command: "powershell",
+      command: "powershell.exe",
       args: ["-NoProfile", "-Command", `(Get-Process -Id ${pid}).Path`],
     },
     {
@@ -85,7 +86,7 @@ async function resolveNodePathFromPidWindows(pid: number): Promise<NodePathFromP
       };
     }
     const probe = probes[index];
-    const result = await runProcessProbe(probe.command, probe.args);
+    const result = await runProcessProbe(probe.command, probe.args, { shell: false });
     if (result.resolved) {
       const resolved = probe.parseValue ? probe.parseValue(result.resolved) : result.resolved;
       if (resolved) return { nodePath: resolved };

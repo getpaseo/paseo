@@ -115,6 +115,18 @@ describe("workspace navigation", () => {
     });
   });
 
+  it("ignores stale workspace route params while an app-wide route is active", () => {
+    const selection = parseActiveWorkspaceSelection({
+      pathname: "/settings/general",
+      params: {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+      },
+    });
+
+    expect(selection).toBeNull();
+  });
+
   it("navigates to the last workspace once a route observation has been remembered", () => {
     const { deps, navigations } = createLastSelectionDeps(null);
 

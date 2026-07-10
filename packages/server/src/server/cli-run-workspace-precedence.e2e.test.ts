@@ -53,7 +53,7 @@ test("daemon mints a distinct local workspace per run and stamps agents by id", 
     expect(firstAgent.workspaceId).toBe(firstWorkspaceId);
     expect(await workspaceIds(client)).toContain(firstWorkspaceId);
 
-    const fetchedFirst = await client.fetchAgent(firstAgent.id);
+    const fetchedFirst = await client.fetchAgent({ agentId: firstAgent.id });
     expect(fetchedFirst?.agent.workspaceId).toBe(firstWorkspaceId);
 
     // A second bare run in the SAME cwd mints a DISTINCT workspace; each run

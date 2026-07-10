@@ -33,7 +33,11 @@ describe("MockLoadTestAgentClient", () => {
   test("default model is a five minute foreground stream with token-rate intervals", async () => {
     const client = new MockLoadTestAgentClient();
 
-    const { models } = await client.fetchCatalog({ cwd: "/tmp/mock-models", force: false });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/tmp/mock-models",
+      force: false,
+    });
 
     expect(models[0]).toMatchObject({
       id: MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
@@ -246,6 +250,7 @@ describe("MockLoadTestAgentClient", () => {
           model: "ten-second-stream",
         },
         "00000000-0000-4000-8000-000000000001",
+        { workspaceId: undefined },
       );
 
       const resultPromise = manager.runAgent(

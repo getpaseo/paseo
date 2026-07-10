@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, "__DEV__", { value: false, configurable: true });
+});
 import type {
   DaemonClient,
   ConnectionState,
@@ -11,8 +15,14 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import {
   HostRuntimeController,
   HostRuntimeStore,
+  readInitialDaemonConnectionHint,
   type HostRuntimeControllerDeps,
+  type HostRuntimeStorage,
 } from "./host-runtime";
+
+vi.mock("@/browser-automation/handler", () => ({
+  mountBrowserAutomationDaemonClientHandler: vi.fn(() => () => undefined),
+}));
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -122,6 +132,8 @@ class FakeDaemonClient {
 
 afterEach(() => {
   vi.useRealTimers();
+  delete (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__;
+  delete (globalThis as { window?: unknown }).window;
 });
 
 function useHostRuntimeClock(): void {
@@ -312,6 +324,44 @@ function makeConnectedProbeClient(latencyMs: number): FakeDaemonClient {
   return client;
 }
 
+function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): HostRuntimeStorage {
+  const values = new Map(Object.entries(entries));
+  return {
+    getItem: async (key) => values.get(key) ?? null,
+    setItem: async (key, value) => {
+      values.set(key, value);
+    },
+  };
+}
+
+function onceHostListMatches(store: HostRuntimeStore, predicate: () => boolean): Promise<void> {
+  if (predicate()) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let unsubscribe = (): void => {};
+    unsubscribe = store.subscribeHostList(() => {
+      if (!predicate()) {
+        return;
+      }
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
+class BrowserClientLifecycle {
+  public active: Array<{ serverId: string; connectionId: string }> = [];
+
+  mount(input: { host: HostProfile; connection: HostConnection }): () => void {
+    const entry = { serverId: input.host.serverId, connectionId: input.connection.id };
+    this.active.push(entry);
+    return () => {
+      this.active = this.active.filter((current) => current !== entry);
+    };
+  }
+}
+
 describe("HostRuntimeController", () => {
   it("replaces the active relay client when re-pairing changes the daemon public key", async () => {
     const oldRelay: HostConnection = {
@@ -426,6 +476,39 @@ describe("HostRuntimeController", () => {
 
     expect(seenClientIds).toEqual(["cid_runtime_stable"]);
     expect(controller.getSnapshot().connectionStatus).toBe("online");
+  });
+
+  it("keeps browser client lifecycle tied to the active host runtime client", async () => {
+    const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
+    const fakeClient = makeConnectedProbeClient(12);
+    const lifecycle = new BrowserClientLifecycle();
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile, connection }) => ({
+          client: makeConnectedProbeClient(10) as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: connection.id,
+        }),
+        getClientId: async () => "cid_runtime_stable",
+        mountClientHandlers: (input) => lifecycle.mount(input),
+      },
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: "direct:lan:6767",
+        existingClient: fakeClient as unknown as DaemonClient,
+      },
+    });
+
+    expect(lifecycle.active).toEqual([{ serverId: "srv_test", connectionId: "direct:lan:6767" }]);
+
+    await controller.stop();
+
+    expect(lifecycle.active).toEqual([]);
   });
 
   it("adopts the first successful probe on startup", async () => {
@@ -1171,6 +1254,48 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("marks the host registry loaded after boot reads storage", async () => {
+    const previousOverride = process.env.EXPO_PUBLIC_LOCAL_DAEMON;
+    process.env.EXPO_PUBLIC_LOCAL_DAEMON = "not-an-endpoint";
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => {
+          throw new Error("createClient should not be called");
+        },
+        connectToDaemon: async () => {
+          throw new Error("connectToDaemon should not be called");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    try {
+      let hostListNotifications = 0;
+      let unsubscribeHostList = () => {};
+      const registryLoaded = new Promise<void>((resolve) => {
+        unsubscribeHostList = store.subscribeHostList(() => {
+          hostListNotifications += 1;
+          if (store.isHostRegistryLoaded()) {
+            unsubscribeHostList();
+            resolve();
+          }
+        });
+      });
+
+      store.boot();
+      await registryLoaded;
+
+      expect(store.isHostRegistryLoaded()).toBe(true);
+      expect(hostListNotifications).toBe(2);
+    } finally {
+      if (previousOverride === undefined) {
+        delete process.env.EXPO_PUBLIC_LOCAL_DAEMON;
+      } else {
+        process.env.EXPO_PUBLIC_LOCAL_DAEMON = previousOverride;
+      }
+    }
+  });
+
   it("bootstraps agent directory subscription when host transitions online", async () => {
     const host = makeHost({
       connections: [
@@ -1359,7 +1484,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-recent",
-            cwd: "/Users/moboudra/dev/paseo",
+            cwd: "/workspaces/paseo",
             updatedAt: "2026-03-04T12:00:00.000Z",
             title: "Recent agent",
           }),
@@ -1372,7 +1497,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-stale-attention",
-            cwd: "/Users/moboudra/dev/paseo-pr67-review",
+            cwd: "/workspaces/paseo-pr67-review",
             updatedAt: "2026-02-20T08:00:00.000Z",
             title: "Needs triage",
             requiresAttention: true,
@@ -1540,7 +1665,7 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().setAgents(host.serverId, () => {
       const stale = makeFetchAgentsEntry({
         id: "agent-archived",
-        cwd: "/Users/moboudra/dev/paseo",
+        cwd: "/workspaces/paseo",
         updatedAt: "2026-03-30T15:29:00.000Z",
         archivedAt: null,
         title: "Stale active copy",
@@ -1648,6 +1773,41 @@ describe("HostRuntimeStore", () => {
     expect(renamed?.label).toBe("new name");
 
     store.syncHosts([]);
+  });
+
+  it("preserves a manual host rename when desktop status re-advertises the daemon hostname", async () => {
+    const advertisedHostname = "macbook-pro.local";
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: advertisedHostname,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    try {
+      await store.upsertConnectionFromListen({
+        listenAddress: "127.0.0.1:6767",
+        serverId: "srv_desktop",
+        hostname: advertisedHostname,
+      });
+      await store.renameHost("srv_desktop", "mac-dev");
+
+      await store.upsertConnectionFromListen({
+        listenAddress: "127.0.0.1:6767",
+        serverId: "srv_desktop",
+        hostname: advertisedHostname,
+      });
+
+      expect(store.getHosts().find((h) => h.serverId === "srv_desktop")?.label).toBe("mac-dev");
+    } finally {
+      store.syncHosts([]);
+    }
   });
 
   it("upsertDirectConnection stores SSL and password settings", async () => {
@@ -1857,7 +2017,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("uses the latest advertised hostname when re-pairing an existing relay host", async () => {
+  it("preserves the existing host label when re-pairing an existing relay host", async () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
@@ -1868,6 +2028,7 @@ describe("HostRuntimeStore", () => {
         }),
         getClientId: async () => "cid_test_runtime",
       },
+      storage: createMemoryHostRuntimeStorage(),
     });
 
     await store.upsertRelayConnection({
@@ -1880,8 +2041,116 @@ describe("HostRuntimeStore", () => {
     await store.upsertConnectionFromOffer(makeOffer(), "mbp");
 
     const pairedHost = store.getHosts().find((host) => host.serverId === "srv_offer");
-    expect(pairedHost?.label).toBe("mbp");
+    expect(pairedHost?.label).toBe("Custom name");
 
     store.syncHosts([]);
+  });
+});
+
+describe("readInitialDaemonConnectionHint", () => {
+  it("returns null when no hint is present", () => {
+    expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toBeNull();
+  });
+
+  it("parses a valid listen-only hint", () => {
+    (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__ = {
+      listen: "localhost:6767",
+    };
+    expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toEqual({
+      listen: "localhost:6767",
+      useTls: false,
+    });
+  });
+
+  it("preserves useTls when explicitly true", () => {
+    (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__ = {
+      listen: "paseo.example.com:443",
+      useTls: true,
+    };
+    expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toEqual({
+      listen: "paseo.example.com:443",
+      useTls: true,
+    });
+  });
+
+  it("ignores invalid shapes", () => {
+    (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__ = "localhost:6767";
+    expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toBeNull();
+
+    (globalThis as Record<string, unknown>).__PASEO_INITIAL_DAEMON_CONNECTION__ = {
+      useTls: true,
+    };
+    expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toBeNull();
+  });
+});
+
+describe("HostRuntimeStore initial connection hint bootstrap", () => {
+  it("attempts the explicit initial connection hint before default localhost bootstrap", async () => {
+    const seenProbes: { endpoint: string; useTls?: boolean }[] = [];
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type === "directTcp") {
+            seenProbes.push({ endpoint: connection.endpoint, useTls: connection.useTls });
+          }
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: "srv_hint",
+            hostname: "hint host",
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+        readInitialConnectionHint: () => ({
+          listen: "daemon-origin:6767",
+          useTls: true,
+        }),
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    const hostAdded = onceHostListMatches(store, () => store.getHosts().length > 0);
+    store.boot();
+    await hostAdded;
+
+    expect(seenProbes).toContainEqual({ endpoint: "daemon-origin:6767", useTls: true });
+    const host = store.getHosts()[0];
+    expect(host?.serverId).toBe("srv_hint");
+    expect(host?.connections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ endpoint: "daemon-origin:6767", useTls: true }),
+      ]),
+    );
+
+    store.syncHosts([]);
+  });
+
+  it("does not infer window.location.host when no explicit hint is present", async () => {
+    const seenProbes: { endpoint: string; useTls?: boolean }[] = [];
+    const firstProbe = createDeferred<void>();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type === "directTcp") {
+            seenProbes.push({ endpoint: connection.endpoint, useTls: connection.useTls });
+          }
+          firstProbe.resolve();
+          throw new Error("probe unavailable");
+        },
+        getClientId: async () => "cid_test_runtime",
+        readInitialConnectionHint: () => null,
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    (globalThis as { window?: unknown }).window = {
+      location: { host: "metro-host:8081", protocol: "http:" },
+    };
+    store.boot();
+    await firstProbe.promise;
+
+    expect(seenProbes).not.toContainEqual(expect.objectContaining({ endpoint: "metro-host:8081" }));
+    expect(store.getHosts()).toHaveLength(0);
   });
 });

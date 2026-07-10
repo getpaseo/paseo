@@ -113,6 +113,55 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([{ cwd: repoRoot, number: 42 }]);
   });
 
+  test("does not configure a synthetic push remote for same-repo PR targets", async () => {
+    const deps = createResolverHarness();
+    deps.github.getPullRequestCheckoutTarget = async () => ({
+      number: 1790,
+      baseRefName: "main",
+      headRefName: "daemon-shutdown-diagnostics",
+      headOwnerLogin: "getpaseo",
+      headRepositorySshUrl: "git@github.com:getpaseo/paseo.git",
+      headRepositoryUrl: "https://github.com/getpaseo/paseo",
+      isCrossRepository: false,
+    });
+
+    await expect(
+      resolveWorktreeCreationIntent({ action: "checkout", githubPrNumber: 1790 }, repoRoot, deps),
+    ).resolves.toEqual({
+      kind: "checkout-github-pr",
+      githubPrNumber: 1790,
+      headRef: "daemon-shutdown-diagnostics",
+      baseRefName: "main",
+      trackOriginHead: true,
+    });
+    expect(deps.headRefLookups).toEqual([]);
+  });
+
+  test("configures the contributor remote for fork PR targets", async () => {
+    const deps = createResolverHarness();
+    deps.github.getPullRequestCheckoutTarget = async () => ({
+      number: 526,
+      baseRefName: "main",
+      headRefName: "main",
+      headOwnerLogin: "therainisme",
+      headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
+      headRepositoryUrl: "https://github.com/therainisme/paseo",
+      isCrossRepository: true,
+    });
+
+    await expect(
+      resolveWorktreeCreationIntent({ action: "checkout", githubPrNumber: 526 }, repoRoot, deps),
+    ).resolves.toEqual({
+      kind: "checkout-github-pr",
+      githubPrNumber: 526,
+      headRef: "main",
+      baseRefName: "main",
+      localBranchName: "therainisme/main",
+      pushRemoteUrl: "git@github.com:therainisme/paseo.git",
+    });
+    expect(deps.headRefLookups).toEqual([]);
+  });
+
   test("uses an explicit PR head ref without calling GitHub", async () => {
     const deps = createResolverHarness();
 

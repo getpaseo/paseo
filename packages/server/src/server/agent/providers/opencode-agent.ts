@@ -11,6 +11,7 @@ import {
   type Session as OpenCodeSession,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
+import fs from "node:fs/promises";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import pLimit from "p-limit";
 import type { Logger } from "pino";
@@ -70,6 +71,7 @@ import {
   OpenCodeServerManager,
   type OpenCodeServerManagerLike,
 } from "./opencode/server-manager.js";
+import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
 import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
@@ -1206,6 +1208,7 @@ export const __openCodeInternals = {
   resolveOpenCodeSelectedModelContextWindow,
   isSelectableOpenCodeAgent,
   mapOpenCodeAgentToMode,
+  resolveOpenCodeHomeDir,
   get OpenCodeAgentSession() {
     return OpenCodeAgentSession;
   },
@@ -1214,6 +1217,7 @@ export const __openCodeInternals = {
 interface OpenCodeAgentClientDeps {
   serverManager?: OpenCodeServerManagerLike;
   createClient?: OpenCodeClientFactory;
+  resolveHomeDir?: () => string;
   managedProcesses?: ManagedProcessRegistry;
 }
 
@@ -1231,6 +1235,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
   private readonly serverManager: OpenCodeServerManagerLike;
   private readonly createOpenCodeClient: OpenCodeClientFactory;
+  private readonly resolveHomeDir: () => string;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
@@ -1246,8 +1251,10 @@ export class OpenCodeAgentClient implements AgentClient {
       deps.serverManager ??
       OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
         managedProcesses: deps.managedProcesses,
+        resolveHomeDir: deps.resolveHomeDir,
       });
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
+    this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
 
   async createSession(
@@ -1348,10 +1355,22 @@ export class OpenCodeAgentClient implements AgentClient {
       ? await this.serverManager.acquireNew()
       : await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
-    const directory = options.cwd;
-    const client = this.createOpenCodeClient({ baseUrl: url, directory });
+    const isGlobalCatalog = options.scope === "global";
 
     try {
+      // OpenCode treats the catalog directory as a workspace. The global catalog
+      // is not a project, so use the neutral OpenCode home instead of user home.
+      const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
+
+      if (isGlobalCatalog) {
+        await fs.mkdir(directory, { recursive: true });
+        this.logger.debug(
+          { directory },
+          "opencode catalog refresh: using opencode-home for global provider catalog",
+        );
+      }
+
+      const client = this.createOpenCodeClient({ baseUrl: url, directory });
       const [models, modes] = await Promise.all([
         this.fetchModelsFromClient(client, directory),
         this.fetchModesFromClient(client, directory),

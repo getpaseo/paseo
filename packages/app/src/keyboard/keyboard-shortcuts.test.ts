@@ -124,8 +124,8 @@ interface HelpSectionCase {
 describe("keyboard-shortcuts", () => {
   const matchingCases: MatchingShortcutCase[] = [
     {
-      name: "matches Mod+Shift+O to create new agent",
-      event: { key: "O", code: "KeyO", metaKey: true, shiftKey: true },
+      name: "matches Cmd+O to open project",
+      event: { key: "o", code: "KeyO", metaKey: true },
       context: { isMac: true },
       action: "agent.new",
     },
@@ -227,8 +227,8 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.tab.close.current",
     },
     {
-      name: "matches Ctrl+Shift+O to create new agent on non-mac",
-      event: { key: "O", code: "KeyO", ctrlKey: true, shiftKey: true },
+      name: "matches Ctrl+O to open project on non-mac",
+      event: { key: "o", code: "KeyO", ctrlKey: true },
       context: { isMac: false },
       action: "agent.new",
     },
@@ -393,6 +393,16 @@ describe("keyboard-shortcuts", () => {
     {
       name: "does not keep old Alt+Shift+T binding",
       event: { key: "T", code: "KeyT", altKey: true, shiftKey: true },
+    },
+    {
+      name: "does not keep old Cmd+Shift+O open-project binding after rebind to Cmd+O",
+      event: { key: "O", code: "KeyO", metaKey: true, shiftKey: true },
+      context: { isMac: true },
+    },
+    {
+      name: "does not keep old Ctrl+Shift+O open-project binding after rebind to Ctrl+O",
+      event: { key: "O", code: "KeyO", ctrlKey: true, shiftKey: true },
+      context: { isMac: false },
     },
     {
       name: "does not match question-mark shortcut inside editable scopes",
@@ -580,7 +590,7 @@ describe("keyboard-shortcut help sections", () => {
       name: "uses web defaults for workspace and tab jump",
       context: { isMac: true, isDesktop: false },
       expectedKeys: {
-        "new-agent": ["mod", "shift", "O"],
+        "new-agent": ["mod", "O"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["alt", "1-9"],
         "workspace-tab-jump-index": ["alt", "shift", "1-9"],
@@ -594,7 +604,7 @@ describe("keyboard-shortcut help sections", () => {
       name: "uses desktop defaults for workspace and tab jump",
       context: { isMac: true, isDesktop: true },
       expectedKeys: {
-        "new-agent": ["mod", "shift", "O"],
+        "new-agent": ["mod", "O"],
         "new-workspace": ["mod", "N"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],

@@ -64,7 +64,7 @@ test.describe("Settings host page", () => {
     await openSettingsHost(page, serverId);
 
     await openHostSection(page, serverId, "host");
-    await expectSettingsHeader(page, "Host");
+    await expectSettingsHeader(page, "Overview");
     await expectHostLabelDisplayed(page);
     await expectHostActionCards(page, serverId);
   });
@@ -118,7 +118,7 @@ test.describe("Settings host page", () => {
     await expectHostActionCards(page, serverId);
   });
 
-  test("sidebar pins the local daemon host first with a Local marker", async ({ page }) => {
+  test("sidebar pins the local daemon host first", async ({ page }) => {
     const serverId = getServerId();
 
     // Simulate the Electron desktop bridge so `useIsLocalDaemon` resolves the

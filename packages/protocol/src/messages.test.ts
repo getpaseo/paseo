@@ -220,6 +220,36 @@ describe("provider usage list message contract", () => {
   });
 });
 
+describe("diagnostics message contract", () => {
+  test("accepts the diagnostics request as a simple namespaced RPC", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "diagnostics.request",
+      requestId: "diag-1",
+    });
+
+    expect(parsed).toEqual({
+      type: "diagnostics.request",
+      requestId: "diag-1",
+    });
+  });
+
+  test("accepts a copyable diagnostics response", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "diagnostics.response",
+      payload: {
+        requestId: "diag-2",
+        diagnostic: "Paseo diagnostics\n  Status: ok",
+      },
+    });
+
+    expect(parsed.type).toBe("diagnostics.response");
+    if (parsed.type !== "diagnostics.response") {
+      throw new Error("Expected diagnostics.response");
+    }
+    expect(parsed.payload.diagnostic).toContain("Status: ok");
+  });
+});
+
 describe("agent detach RPC", () => {
   test("parses the namespaced detach request", () => {
     const parsed = SessionInboundMessageSchema.parse({
@@ -370,5 +400,25 @@ describe("paseo worktree archive request compatibility", () => {
     });
     expect(parsed).not.toHaveProperty("extraField");
     expect(parsed.scope).toBe("workspace");
+  });
+});
+
+describe("daemon update messages", () => {
+  test("daemon update progress is a scoped outbound message", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "daemon.update.progress",
+      payload: {
+        requestId: "update-1",
+        phase: "installing",
+      },
+    });
+
+    expect(parsed).toEqual({
+      type: "daemon.update.progress",
+      payload: {
+        requestId: "update-1",
+        phase: "installing",
+      },
+    });
   });
 });

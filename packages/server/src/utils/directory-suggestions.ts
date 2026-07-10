@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { isPathInsideRoot } from "./path.js";
 
 export interface SearchHomeDirectoriesOptions {
   homeDir: string;
@@ -784,11 +785,6 @@ function normalizeRelativePath(homeRoot: string, absolutePath: string): string {
     return ".";
   }
   return relative.split(path.sep).join("/");
-}
-
-function isPathInsideRoot(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function normalizeQueryParts(query: string, homeRoot: string): QueryParts | null {

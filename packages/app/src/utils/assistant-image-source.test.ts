@@ -79,6 +79,19 @@ describe("resolveAssistantImageSource", () => {
     });
   });
 
+  it("normalizes markdown-encoded Windows paths into file RPC requests", () => {
+    expect(
+      resolveAssistantImageSource({
+        source: "C:%5CUsers%5Chanse%5CAppData%5CLocal%5CTemp%5Cpaseo-attachments%5Cimage.png",
+        workspaceRoot: "C:/Users/hanse/eatingkat",
+      }),
+    ).toEqual({
+      kind: "file_rpc",
+      cwd: "C:/",
+      path: "C:/Users/hanse/AppData/Local/Temp/paseo-attachments/image.png",
+    });
+  });
+
   it("falls back to the drive root for Windows absolute paths", () => {
     expect(
       resolveAssistantImageSource({

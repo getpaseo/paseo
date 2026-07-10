@@ -1,7 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type {
   ManagedProcessRecord,
@@ -208,15 +213,91 @@ describe("OpenCodeServerManager managed process ledger", () => {
     expect(runtime.terminatedPorts).toEqual([4602]);
     expect(await runtime.managedProcesses.list()).toEqual([]);
   });
+
+  test("starts helper server from opencode-home", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-server-home-"));
+    const opencodeHomeDir = path.join(tempDir, "opencode-home");
+    try {
+      const { manager, runtime } = createTestManager([4603], { opencodeHomeDir });
+
+      const acquisition = await manager.acquireCurrent();
+
+      expect(runtime.spawnCalls).toEqual([
+        expect.objectContaining({
+          command: "opencode",
+          args: ["serve", "--port", "4603"],
+          options: expect.objectContaining({ cwd: opencodeHomeDir }),
+        }),
+      ]);
+
+      acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
+
+describe.runIf(process.platform === "win32")(
+  "OpenCodeServerManager Windows OpenCode npm install",
+  () => {
+    test("starts the helper server from opencode.exe instead of the npm opencode.cmd shim", async () => {
+      const detectedOpenCode = await findExecutable("opencode");
+      expect(detectedOpenCode, "Windows CI must install opencode-ai before server tests").not.toBe(
+        null,
+      );
+      expect(path.extname(detectedOpenCode!).toLowerCase()).toBe(".cmd");
+
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-real-windows-"));
+      const opencodeHomeDir = path.join(tempDir, "opencode-home");
+      const managedProcesses = new FakeManagedProcesses();
+      const manager = new OpenCodeServerManager({
+        logger: createTestLogger(),
+        managedProcesses,
+        resolveHomeDir: () => opencodeHomeDir,
+      });
+      let acquiredPort: number | null = null;
+
+      try {
+        const acquisition = await manager.acquireDedicated({
+          OPENCODE_AUTH_CONTENT: "{}",
+          OPENCODE_DISABLE_AUTOUPDATE: "1",
+          OPENCODE_DISABLE_AUTOCOMPACT: "1",
+          OPENCODE_DISABLE_MODELS_FETCH: "1",
+          OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+          OPENCODE_PURE: "1",
+          OPENCODE_TEST_HOME: path.join(tempDir, "test-home"),
+        });
+        acquiredPort = acquisition.server.port;
+
+        const records = await managedProcesses.list();
+        expect(records).toHaveLength(1);
+        const record = records[0]!;
+        expect(path.extname(record.command).toLowerCase()).toBe(".exe");
+        expect(path.normalize(record.command).toLowerCase()).toContain(
+          path.normalize("node_modules/opencode-ai/bin/opencode.exe").toLowerCase(),
+        );
+        expect(record.command.toLowerCase()).not.toBe(detectedOpenCode!.toLowerCase());
+        expect(record.args).toEqual(["serve", "--port", String(acquiredPort)]);
+      } finally {
+        await manager.shutdown().catch(() => undefined);
+        if (acquiredPort !== null) {
+          await waitForClosedPort(acquiredPort, 5_000);
+        }
+        rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    }, 60_000);
+  },
+);
 
 function createTestManager(
   ports: number[],
-  options: { autoAnnounce?: boolean } = {},
+  options: { autoAnnounce?: boolean; opencodeHomeDir?: string } = {},
 ): {
   manager: OpenCodeServerManager;
   runtime: FakeOpenCodeServerRuntime;
 } {
+  const { opencodeHomeDir } = options;
   const runtime = new FakeOpenCodeServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
   });
@@ -226,6 +307,7 @@ function createTestManager(
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,
+      ...(opencodeHomeDir ? { resolveHomeDir: () => opencodeHomeDir } : {}),
       spawnServerProcess: runtime.spawnServerProcess,
       terminateProcess: runtime.terminateProcess,
     }),
@@ -236,6 +318,11 @@ function createTestManager(
 class FakeOpenCodeServerRuntime {
   readonly managedProcesses = new FakeManagedProcesses();
   readonly terminatedPorts: number[] = [];
+  readonly spawnCalls: Array<{
+    command: string;
+    args: string[];
+    options: Parameters<OpenCodeServerProcessSpawner>[2];
+  }> = [];
   private readonly ports: number[];
   private readonly autoAnnounce: boolean;
   private readonly processesByChild = new Map<ChildProcess, FakeOpenCodeProcess>();
@@ -263,7 +350,8 @@ class FakeOpenCodeServerRuntime {
     args: [],
   });
 
-  readonly spawnServerProcess: OpenCodeServerProcessSpawner = (command, args) => {
+  readonly spawnServerProcess: OpenCodeServerProcessSpawner = (command, args, options) => {
+    this.spawnCalls.push({ command, args, options });
     const port = Number(args.at(-1));
     const process = new FakeOpenCodeProcess({ port, pid: 10_000 + port });
     this.processesByChild.set(process.child, process);
@@ -378,4 +466,38 @@ class FakeManagedProcesses implements ManagedProcessRegistry {
       errors: [],
     };
   }
+}
+
+async function waitForClosedPort(port: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await canConnectToPort(port))) {
+      return;
+    }
+    await sleep(100);
+  }
+  throw new Error(`OpenCode helper server still accepts connections on port ${port}`);
+}
+
+function canConnectToPort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    let settled = false;
+    const settle = (connected: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      resolve(connected);
+    };
+
+    socket.once("connect", () => settle(true));
+    socket.once("error", () => settle(false));
+    socket.setTimeout(500, () => settle(false));
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

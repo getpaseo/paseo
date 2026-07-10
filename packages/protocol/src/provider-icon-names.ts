@@ -3,6 +3,7 @@ export const BUILTIN_PROVIDER_ICON_NAMES = [
   "codex",
   "copilot",
   "kiro",
+  "minimax",
   "omp",
   "opencode",
   "pi",
@@ -40,6 +41,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "qwen-code",
   "sigit",
   "stakpak",
+  "traecli",
   "vtcode",
 ];
 

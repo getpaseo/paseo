@@ -61,16 +61,29 @@ function replyToCommands(
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
       const command = JSON.parse(line) as Record<string, unknown>;
-      const result = handler(command);
-      child.stdout.write(
-        `${JSON.stringify({
-          id: command.id,
-          type: "response",
-          command: command.type,
-          success: true,
-          data: result,
-        })}\n`,
-      );
+      try {
+        const result = handler(command);
+        child.stdout.write(
+          `${JSON.stringify({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: true,
+            data: result,
+          })}\n`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        child.stdout.write(
+          `${JSON.stringify({
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: false,
+            error: message,
+          })}\n`,
+        );
+      }
     }
   });
 }
@@ -256,5 +269,103 @@ describe("PiCliRuntime", () => {
     await session.close();
 
     expect(child.killedSignals).toContain("SIGTERM");
+  });
+
+  test("falls back to get_state when get_session_stats is unsupported", async () => {
+    const child = createPiChild();
+    let commandSequence: string[] = [];
+    replyToCommands(child, (command) => {
+      commandSequence.push(String(command.type));
+      if (command.type === "get_session_stats") {
+        // Simulate older OMP binary that doesn't support this RPC
+        throw new Error(`Unknown command: ${command.type}`);
+      }
+      // get_state returns contextUsage for fallback
+      return {
+        sessionId: "pi-session-1",
+        thinkingLevel: "medium" as const,
+        isStreaming: false,
+        isCompacting: false,
+        steeringMode: "one-at-a-time" as const,
+        followUpMode: "one-at-a-time" as const,
+        interruptMode: "immediate" as const,
+        messageCount: 0,
+        queuedMessageCount: 0,
+        todoPhases: [],
+        contextUsage: { tokens: 1_100, contextWindow: 200_000 },
+      };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const stats = await session.getSessionStats();
+
+    expect(stats.contextUsage).toEqual({
+      tokens: 1_100,
+      contextWindow: 200_000,
+    });
+    expect(commandSequence).toEqual(["get_session_stats", "get_state"]);
+  });
+
+  test("returns full stats from get_session_stats without falling back", async () => {
+    const child = createPiChild();
+    let fallbackCalled = false;
+    replyToCommands(child, (command) => {
+      if (command.type === "get_state") {
+        fallbackCalled = true;
+      }
+      return {
+        tokens: { input: 500, output: 300, cacheRead: 100 },
+        cost: 0.02,
+        contextUsage: { tokens: 800, contextWindow: 200_000 },
+      };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const stats = await session.getSessionStats();
+
+    expect(stats).toMatchObject({
+      tokens: { input: 500, output: 300, cacheRead: 100 },
+      cost: 0.02,
+      contextUsage: { tokens: 800, contextWindow: 200_000 },
+    });
+    // Should NOT have called get_state as a fallback
+    expect(fallbackCalled).toBe(false);
+  });
+
+  test("does not fall back when get_session_stats returns cost:0", async () => {
+    const child = createPiChild();
+    let fallbackCalled = false;
+    replyToCommands(child, (command) => {
+      if (command.type === "get_state") {
+        fallbackCalled = true;
+      }
+      return {
+        tokens: { input: 200, output: 100 },
+        cost: 0,
+        contextUsage: { tokens: 500, contextWindow: 200_000 },
+      };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const stats = await session.getSessionStats();
+
+    expect(stats.tokens).toEqual({ input: 200, output: 100 });
+    expect(stats.cost).toBe(0);
+    expect(stats.contextUsage).toEqual({ tokens: 500, contextWindow: 200_000 });
+    // Should NOT have called get_state as a fallback
+    expect(fallbackCalled).toBe(false);
+  });
+
+  test("returns empty object when both get_session_stats and get_state fail", async () => {
+    const child = createPiChild();
+    replyToCommands(child, (command) => {
+      throw new Error(`Unknown command: ${command.type}`);
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const stats = await session.getSessionStats();
+
+    // Neither RPC returned usable data — should resolve with empty object
+    expect(stats).toEqual({});
   });
 });

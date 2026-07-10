@@ -248,6 +248,12 @@ export const ja: TranslationResources = {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",
+      forkMenu: "メッセージをフォーク",
+      forkInNewTab: "新しいタブにフォーク",
+      forkInNewWorkspace: "新しいワークスペースにフォーク",
+      forkUnavailable: "これを使用するにはホストを更新してください。",
+      forkMissingWorkspace: "このエージェントはワークスペース内にありません。",
+      forkFailed: "チャットのフォークに失敗しました",
       openFile: "ファイルを開く",
       copied: "コピーしました",
     },
@@ -420,7 +426,21 @@ export const ja: TranslationResources = {
         enterUrl: "URLを入力",
         openDevTools: "ブラウザ開発ツールを開く",
         cancelSelector: "要素セレクターをキャンセル",
-        selectElement: "要素を選択",
+        annotateElement: "要素に注釈を付ける",
+        screenshotElement: "要素のスクリーンショット",
+        screenshotCopied: "スクリーンショットをクリップボードにコピーしました",
+        elementCopied: "要素をクリップボードにコピーしました",
+        screenshotFailed: "スクリーンショットをコピーできませんでした",
+      },
+      annotate: {
+        title: "要素に注釈を付ける",
+        placeholder: "この要素についてエージェントへのメッセージ…",
+        submit: "添付",
+        cancel: "キャンセル",
+      },
+      devices: {
+        label: "デバイスサイズ",
+        responsive: "レスポンシブ",
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
@@ -699,11 +719,19 @@ export const ja: TranslationResources = {
         tooLarge: "差分が大きすぎて表示できません",
         unified: "ユニファイド差分",
         split: "左右比較",
+        switchToUnified: "ユニファイド差分に切り替え",
+        switchToSplit: "左右比較差分に切り替え",
+        showTreeView: "フォルダツリーを表示",
+        showFlatView: "フラットなファイル一覧を表示",
+        options: "差分オプション",
         hideWhitespace: "空白を非表示",
+        showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
         wrapLongLines: "長い行を折り返す",
         collapseAll: "すべて折りたたむ",
         expandAll: "すべて展開",
+        collapseAllFolders: "すべてのフォルダを折りたたむ",
+        expandAllFolders: "すべてのフォルダを展開",
         refreshing: "更新中",
         refresh: "更新",
         refreshState: "gitとGitHubの状態を更新",
@@ -776,6 +804,7 @@ export const ja: TranslationResources = {
     },
     sections: {
       sessions: "履歴",
+      schedules: "スケジュール",
     },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",
@@ -944,8 +973,15 @@ export const ja: TranslationResources = {
         upToDate: "アプリは最新です。",
         upToDateWithLastChecked: "最新の状態です。最終確認: {{time}}。",
         pending: "更新の準備ができたらお知らせします。",
+        pendingWithLastChecked: "更新の準備ができたらお知らせします。最終確認: {{time}}。",
+        pendingWithVersion: "更新が見つかりました: {{version}}。ダウンロード中...",
+        pendingWithVersionAndLastChecked:
+          "更新が見つかりました: {{version}}。ダウンロード中... 最終確認: {{time}}。",
         availableWithVersion: "更新の準備ができました: {{version}}",
+        availableWithVersionAndLastChecked:
+          "更新の準備ができました: {{version}}。最終確認: {{time}}。",
         available: "アプリの更新をインストールできます。",
+        availableWithLastChecked: "アプリの更新をインストールできます。最終確認: {{time}}。",
         installed: "アプリの更新がインストールされました。再起動が必要です。",
         failed: "アプリの更新に失敗しました。",
         idle: "更新ステータスはまだ確認されていません。",
@@ -1034,6 +1070,12 @@ export const ja: TranslationResources = {
       },
     },
   },
+  rootError: {
+    kicker: "問題が発生しました",
+    title: "Paseo で問題が発生しました。",
+    body: "アプリを再読み込みするにはもう一度お試しください。繰り返し発生する場合は、以下の詳細を添えて報告してください。",
+    details: "詳細",
+  },
   startup: {
     errorTitle: "問題が発生しました",
     errorDescription:
@@ -1067,6 +1109,7 @@ export const ja: TranslationResources = {
   projectPicker: {
     placeholder: "ディレクトリパスを入力...",
     opening: "プロジェクトを開いています...",
+    searching: "検索中...",
     empty: "パスを入力してください",
     errors: {
       directory_not_found: "ディレクトリが見つかりません。",
@@ -1392,6 +1435,7 @@ export const ja: TranslationResources = {
     },
     backToWorkspace: "戻る",
     addHost: "ホストを追加",
+    enableBuiltInDaemon: "組み込みデーモンを有効にする",
     projects: "プロジェクト",
     projectList: {
       hostLoadFailed: "ホスト{{hostName}}からプロジェクトを読み込めませんでした: {{message}}",
@@ -1400,7 +1444,6 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
-      daemon: "デーモン",
       appearance: "外観",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -1415,7 +1458,7 @@ export const ja: TranslationResources = {
       providers: "プロバイダー",
       usage: "使用状況",
       terminals: "ターミナル",
-      host: "ホスト",
+      host: "概要",
     },
     general: {
       title: "一般",
@@ -1444,6 +1487,10 @@ export const ja: TranslationResources = {
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
       },
+      autoExpandReasoning: {
+        label: "常に思考プロセスを展開",
+        description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
+      },
       language: {
         label: "言語",
         description: "アプリの言語",
@@ -1454,6 +1501,7 @@ export const ja: TranslationResources = {
           es: "スペイン語",
           fr: "フランス語",
           ja: "日本語",
+          ptBR: "ブラジルポルトガル語",
           ru: "ロシア語",
           zhCN: "簡体字中国語",
         },
@@ -1465,6 +1513,22 @@ export const ja: TranslationResources = {
       playTest: "テスト再生",
       playing: "再生中...",
       playbackFailed: "再生に失敗しました: {{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "アプリ情報",
@@ -1507,6 +1571,9 @@ export const ja: TranslationResources = {
           ghostty: "Ghostty",
           auto: "システム",
         },
+      },
+      detailLevel: {
+        title: "詳細レベル",
       },
       fonts: {
         title: "フォント",
@@ -1747,6 +1814,31 @@ export const ja: TranslationResources = {
           requestFailedMessage:
             "再起動リクエストの送信に失敗しました。Paseoは自動的に再接続します。ホストがオンラインになったら再試行してください。",
           dialogFailedMessage: "再起動確認ダイアログを開けませんでした。",
+        },
+        update: {
+          title: "デーモンを更新",
+          hint: "デーモンを最新バージョンに更新して再起動します",
+          confirm: "更新",
+          confirmTitle: "{{name}}を更新",
+          confirmMessage:
+            "これによりデーモンが最新バージョンに更新され、再起動されます。実行中のエージェントは一時的に中断されます。",
+          updating: "更新中...",
+          phaseStarting: "更新を準備中...",
+          phaseDownloading: "パッケージをダウンロード中...",
+          phaseInstalling: "インストール中...",
+          phaseComplete: "更新が完了しました。再起動中...",
+          unableToReconnectTitle: "再接続できません",
+          unableToReconnectMessage:
+            "{{name}}が更新後にオンラインに戻りませんでした。デーモンが再起動されたことを確認してください。",
+          unavailableTitle: "ホストが利用できません",
+          unavailableMessage:
+            "このホストは接続されていません。更新する前にオンラインになるまでお待ちください。",
+          offlineTitle: "ホストオフライン",
+          offlineMessage:
+            "このホストはオフラインです。オンラインに戻るまで待ってから更新してください。",
+          requestFailedTitle: "更新に失敗しました",
+          requestFailedMessage: "デーモンの更新に失敗しました: {{error}}",
+          dialogFailedMessage: "更新確認ダイアログを開けませんでした。",
         },
         dangerZone: "危険ゾーン",
         remove: {

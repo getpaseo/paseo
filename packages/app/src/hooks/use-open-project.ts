@@ -19,7 +19,7 @@ export function useOpenProject(
 
   return useCallback(
     async (path: string) => {
-      return openProjectDirectly({
+      const result = await openProjectDirectly({
         serverId: normalizedServerId,
         projectPath: path,
         isConnected,
@@ -28,6 +28,7 @@ export function useOpenProject(
         addEmptyProject,
         setHasHydratedWorkspaces,
       });
+      return result;
     },
     [
       addEmptyProject,

@@ -514,4 +514,36 @@ describe("buildProjects", () => {
     expect(summary?.hosts[0]?.repoRoot).toBe("/repo/legacy");
     expect(summary?.hosts[0]?.workspaceCount).toBe(1);
   });
+
+  it("surfaces a project with no workspaces yet and gives its host an editable repoRoot", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          isOnline: true,
+          workspaces: [],
+          emptyProjects: [
+            {
+              projectId: "/repo/fresh",
+              projectDisplayName: "fresh",
+              projectCustomName: null,
+              projectRootPath: "/repo/fresh",
+              projectKind: "git",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects).toHaveLength(1);
+    const summary = result.projects[0];
+    expect(summary?.projectKey).toBe("/repo/fresh");
+    expect(summary?.totalWorkspaceCount).toBe(0);
+    expect(summary?.hosts).toHaveLength(1);
+    // repoRoot must be non-empty or the project settings screen treats the host
+    // as non-editable and shows its empty state.
+    expect(summary?.hosts[0]?.repoRoot).toBe("/repo/fresh");
+    expect(summary?.hosts[0]?.workspaceCount).toBe(0);
+  });
 });

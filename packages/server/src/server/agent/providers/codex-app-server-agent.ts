@@ -39,7 +39,6 @@ import type { Logger } from "pino";
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
-import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -50,6 +49,7 @@ import { curateAgentActivity } from "../activity-curator.js";
 import {
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
+  splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
 import {
   checkProviderLaunchAvailable,
@@ -79,6 +79,7 @@ import {
 } from "./codex/app-server-transport.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
+  materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
 } from "./provider-image-output.js";
@@ -114,7 +115,6 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
-const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -1626,25 +1626,6 @@ function codexImageOutputFromResult(result: unknown): ProviderImageOutput | null
   };
 }
 
-function writeImageAttachmentSync(mimeType: string, data: string): string {
-  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
-  fsSync.mkdirSync(attachmentsDir, { recursive: true });
-  const normalized = normalizeImageData(mimeType, data);
-  const extension = getImageExtension(normalized.mimeType);
-  const filename = `${randomUUID()}.${extension}`;
-  const filePath = path.join(attachmentsDir, filename);
-  fsSync.writeFileSync(filePath, Buffer.from(normalized.data, "base64"));
-  return filePath;
-}
-
-function materializeCodexImageOutput(image: { data: string; mimeType: string | null }): {
-  path: string;
-} {
-  return {
-    path: writeImageAttachmentSync(image.mimeType ?? "image/png", image.data),
-  };
-}
-
 function mapCodexThreadImageItem(
   normalizedType: string,
   normalizedItem: Record<string, unknown>,
@@ -1664,7 +1645,7 @@ function mapCodexThreadImageItem(
       data: result?.data ?? null,
       mimeType: result?.mimeType ?? null,
     },
-    { materialize: materializeCodexImageOutput },
+    { materialize: materializeProviderImage },
   );
 }
 
@@ -1716,6 +1697,39 @@ export function threadItemToTimeline(
   }
 }
 
+function mcpToolResultImagesToTimeline(item: unknown): AgentTimelineItem[] {
+  const itemRecord = toObjectRecord(item);
+  if (!itemRecord) {
+    return [];
+  }
+  const normalizedType = normalizeCodexThreadItemType(
+    typeof itemRecord.type === "string" ? itemRecord.type : undefined,
+  );
+  if (normalizedType !== "mcpToolCall") {
+    return [];
+  }
+
+  const { images } = splitCodexMcpToolResultImages(itemRecord.result);
+  return images
+    .map((image) =>
+      renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      }),
+    )
+    .filter((timelineItem): timelineItem is AgentTimelineItem => timelineItem !== null);
+}
+
+function threadItemToTimelineEntries(
+  item: unknown,
+  options?: { includeUserMessage?: boolean; cwd?: string | null },
+): AgentTimelineItem[] {
+  const timelineItem = threadItemToTimeline(item, options);
+  if (!timelineItem) {
+    return [];
+  }
+  return [timelineItem, ...mcpToolResultImagesToTimeline(item)];
+}
+
 const CodexThreadReadResponseSchema = z
   .object({
     thread: z
@@ -1755,8 +1769,7 @@ async function loadCodexThreadHistoryTimeline(params: {
   const timeline: PersistedTimelineEntry[] = [];
   for (const turn of response.thread.turns) {
     for (const item of turn.items) {
-      const timelineItem = threadItemToTimeline(item, { cwd: params.cwd });
-      if (timelineItem) {
+      for (const timelineItem of threadItemToTimelineEntries(item, { cwd: params.cwd })) {
         const timestamp =
           readCodexHistoryTimestamp(item) ?? readCodexTurnHistoryTimestamp(turn, timelineItem);
         timeline.push({
@@ -1807,40 +1820,6 @@ function toSandboxPolicy(type: string, networkAccess?: boolean): Record<string, 
     default:
       return { type: "workspaceWrite", networkAccess: networkAccess ?? false };
   }
-}
-
-function getImageExtension(mimeType: string): string {
-  switch (mimeType) {
-    case "image/jpeg":
-      return "jpg";
-    case "image/png":
-      return "png";
-    case "image/webp":
-      return "webp";
-    case "image/gif":
-      return "gif";
-    case "image/bmp":
-      return "bmp";
-    case "image/tiff":
-      return "tiff";
-    default:
-      return "bin";
-  }
-}
-
-interface ImageDataPayload {
-  mimeType: string;
-  data: string;
-}
-
-function normalizeImageData(mimeType: string, data: string): ImageDataPayload {
-  if (data.startsWith("data:")) {
-    const match = data.match(/^data:([^;]+);base64,(.*)$/);
-    if (match) {
-      return { mimeType: match[1], data: match[2] };
-    }
-  }
-  return { mimeType, data };
 }
 
 const ThreadStartedNotificationSchema = z
@@ -2691,17 +2670,6 @@ const CodexNotificationSchema = z.union([
     ),
 ]);
 
-async function writeImageAttachment(mimeType: string, data: string): Promise<string> {
-  const attachmentsDir = path.join(os.tmpdir(), CODEX_IMAGE_ATTACHMENT_DIR);
-  await fs.mkdir(attachmentsDir, { recursive: true });
-  const normalized = normalizeImageData(mimeType, data);
-  const extension = getImageExtension(normalized.mimeType);
-  const filename = `${randomUUID()}.${extension}`;
-  const filePath = path.join(attachmentsDir, filename);
-  await fs.writeFile(filePath, Buffer.from(normalized.data, "base64"));
-  return filePath;
-}
-
 async function readCodexConfiguredDefaults(
   client: CodexAppServerClient,
   logger: Logger,
@@ -2794,7 +2762,10 @@ export async function codexAppServerTurnInputFromPrompt(
     }
     if (block.type === "image") {
       try {
-        const filePath = await writeImageAttachment(block.mimeType, block.data);
+        const filePath = materializeProviderImage({
+          data: block.data,
+          mimeType: block.mimeType,
+        }).path;
         output.push({ type: "localImage", path: filePath });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -4910,8 +4881,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
+    const imageItems = mcpToolResultImagesToTimeline(parsed.item);
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
     if (timelineItem.type === "assistant_message") {
+      this.pendingAssistantMessageBoundary = true;
+    }
+    for (const imageItem of imageItems) {
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: imageItem });
       this.pendingAssistantMessageBoundary = true;
     }
     if (itemId) {

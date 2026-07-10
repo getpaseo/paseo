@@ -3,6 +3,7 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
+import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 
 import {
   buildSidebarShortcutModel,
@@ -24,6 +25,7 @@ function workspace(input: {
     serverId: input.serverId,
     workspaceId: input.workspaceId,
     projectKey: input.projectKey ?? "project-default",
+    projectName: input.projectKey ?? "Project",
     workspaceDirectory: input.workspaceDirectory,
     projectKind: "git",
     workspaceKind: "checkout",
@@ -48,7 +50,13 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
-    canCreateWorktree: true,
+    hosts: [
+      {
+        serverId: workspaces[0]?.serverId ?? "s1",
+        iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
+        canCreateWorktree: true,
+      },
+    ],
     workspaces,
   };
 }
@@ -139,7 +147,10 @@ describe("buildSidebarShortcutModel", () => {
       }),
     ]);
     directoryProject.projectKind = "directory";
-    directoryProject.canCreateWorktree = false;
+    directoryProject.hosts = directoryProject.hosts.map((host) => ({
+      ...host,
+      canCreateWorktree: false,
+    }));
 
     const model = buildSidebarShortcutModel({
       projects: [gitProject, directoryProject],
@@ -192,11 +203,13 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      workspaces,
-      projectNamesByKey: new Map([
-        ["p1", "Project 1"],
-        ["p2", "Project 2"],
-      ]),
+      groups: buildStatusGroups(
+        workspaces,
+        new Map([
+          ["p1", "Project 1"],
+          ["p2", "Project 2"],
+        ]),
+      ),
     });
 
     expect(model.shortcutTargets).toEqual([
@@ -232,8 +245,7 @@ describe("buildStatusSidebarShortcutModel", () => {
     ];
 
     const model = buildStatusSidebarShortcutModel({
-      workspaces,
-      projectNamesByKey: new Map([["p1", "Project 1"]]),
+      groups: buildStatusGroups(workspaces, new Map([["p1", "Project 1"]])),
       collapsedStatusGroupKeys: new Set(["needs_input"]),
     });
 

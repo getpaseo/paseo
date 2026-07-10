@@ -5,7 +5,6 @@ const SHORTCUT_BADGE_DELAY_MS = 150;
 
 interface KeyboardShortcutsState {
   commandCenterOpen: boolean;
-  projectPickerOpen: boolean;
   shortcutsDialogOpen: boolean;
   capturingShortcut: boolean;
   altDown: boolean;
@@ -15,7 +14,6 @@ interface KeyboardShortcutsState {
   sidebarShortcutWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
 
   setCommandCenterOpen: (open: boolean) => void;
-  setProjectPickerOpen: (open: boolean) => void;
   setShortcutsDialogOpen: (open: boolean) => void;
   setCapturingShortcut: (capturing: boolean) => void;
   setAltDown: (down: boolean) => void;
@@ -49,7 +47,6 @@ function updateBadgeTimer(
 
 export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, get) => ({
   commandCenterOpen: false,
-  projectPickerOpen: false,
   shortcutsDialogOpen: false,
   capturingShortcut: false,
   altDown: false,
@@ -58,7 +55,6 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   sidebarShortcutWorkspaceTargets: [],
 
   setCommandCenterOpen: (open) => set({ commandCenterOpen: open }),
-  setProjectPickerOpen: (open) => set({ projectPickerOpen: open }),
   setShortcutsDialogOpen: (open) => set({ shortcutsDialogOpen: open }),
   setCapturingShortcut: (capturing) => set({ capturingShortcut: capturing }),
   setAltDown: (down) => {

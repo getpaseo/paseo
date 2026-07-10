@@ -10,8 +10,8 @@ import {
   openProjectViaDaemon,
   openStartingRefPicker,
   selectBranchInPicker,
-  selectWorkspaceIsolation,
 } from "./helpers/new-workspace";
+import { expectNoTruncation } from "./helpers/no-truncation";
 import { createTempGitRepo } from "./helpers/workspace";
 import { getServerId } from "./helpers/server-id";
 import { waitForSidebarHydration } from "./helpers/workspace-ui";
@@ -63,7 +63,11 @@ test.describe("New workspace isolation memory", () => {
         projectDisplayName: openedProject.projectDisplayName,
       });
       await expectWorkspaceIsolationSelected(page, "local");
-      await selectWorkspaceIsolation(page, "worktree");
+      await page.getByTestId("workspace-create-isolation-trigger").click();
+      const isolationPopup = page.getByTestId("combobox-desktop-container").last();
+      await expect(isolationPopup).toBeVisible({ timeout: 30_000 });
+      await expectNoTruncation(isolationPopup);
+      await page.getByTestId("workspace-create-isolation-worktree").click();
       await expectWorkspaceIsolationSelected(page, "worktree");
 
       await openStartingRefPicker(page);

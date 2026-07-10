@@ -8,7 +8,6 @@ export interface NavigateToAgentInput {
   // Used as the workspace target when the agent is not yet in the session store
   // (cold deep-links). Otherwise the workspace is read from the store.
   workspaceId?: string | null;
-  currentPathname?: string | null;
   pin?: boolean;
 }
 
@@ -54,7 +53,6 @@ export function resolveNavigateToAgent(
     serverId: input.serverId,
     workspaceId,
     target: { kind: "agent", agentId: input.agentId },
-    currentPathname: input.currentPathname,
     pin: input.pin,
   });
 }

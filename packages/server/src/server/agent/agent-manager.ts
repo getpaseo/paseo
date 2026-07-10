@@ -64,6 +64,7 @@ import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
+import type { PaseoToolCatalogFactory } from "./tools/types.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -84,6 +85,10 @@ type TimeoutResult = "completed" | "timed_out";
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
+}
+
+interface NormalizeConfigOptions {
+  resolveDefaultModel?: boolean;
 }
 
 interface TimeoutOptions {
@@ -191,6 +196,16 @@ interface ProviderEnabledFlag {
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
+export interface CreateAgentOptions {
+  labels?: Record<string, string>;
+  initialPrompt?: string;
+  env?: Record<string, string>;
+  persistSession?: boolean;
+  initialTitle?: string | null;
+  // undefined is an explicit decision: the agent never appears in the sidebar.
+  workspaceId: string | undefined;
+}
+
 export interface AgentManagerOptions {
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
@@ -202,6 +217,8 @@ export interface AgentManagerOptions {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
+  paseoToolsEnabled?: boolean;
+  paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -521,6 +538,8 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
+  private paseoToolsEnabled = true;
+  private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -536,6 +555,7 @@ export class AgentManager {
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
+    this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -556,6 +576,11 @@ export class AgentManager {
       providerDefinitions: options.providerDefinitions ?? {},
       clients: options.clients ?? {},
     });
+  }
+
+  private configurePaseoTools(options: AgentManagerOptions): void {
+    this.paseoToolsEnabled = options.paseoToolsEnabled ?? true;
+    this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
@@ -592,6 +617,14 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  setPaseoToolsEnabled(enabled: boolean): void {
+    this.paseoToolsEnabled = enabled;
+  }
+
+  setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
+    this.paseoToolCatalogFactory = factory;
   }
 
   /**
@@ -798,8 +831,11 @@ export class AgentManager {
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-    const normalizedConfig = await this.normalizeConfig(config);
+    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
+    if (!normalizedConfig.model) {
+      return [];
+    }
     const available = await client.isAvailable();
     if (!available) {
       throw new Error(
@@ -832,8 +868,11 @@ export class AgentManager {
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const normalizedConfig = await this.normalizeConfig(config);
+    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
+    if (!normalizedConfig.model) {
+      return [];
+    }
     const available = await client.isAvailable();
     if (!available) {
       throw new Error(
@@ -885,29 +924,23 @@ export class AgentManager {
 
   async createAgent(
     config: AgentSessionConfig,
-    agentId?: string,
-    options?: {
-      labels?: Record<string, string>;
-      initialPrompt?: string;
-      env?: Record<string, string>;
-      persistSession?: boolean;
-      initialTitle?: string | null;
-      workspaceId?: string;
-    },
+    agentId: string | undefined,
+    options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(config, resolvedAgentId);
     this.requireEnabledProvider(storedConfig.provider);
-    const launchContext = this.buildLaunchContext(resolvedAgentId, options?.env);
     const client = await this.requireAvailableClient({
       provider: storedConfig.provider,
     });
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, options?.env);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(launchConfig, launchContext, createOptions);
+    const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
-      labels: options?.labels,
-      initialTitle: options?.initialTitle,
-      workspaceId: options?.workspaceId,
+      labels: options.labels,
+      initialTitle: options.initialTitle,
+      workspaceId: options.workspaceId,
     });
   }
 
@@ -948,7 +981,6 @@ export class AgentManager {
       resolvedAgentId,
     );
 
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -956,7 +988,9 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const session = await client.resumeSession(handle, launchConfig, launchContext);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
     return this.registerSession(session, storedConfig, resolvedAgentId, options);
   }
 
@@ -982,13 +1016,14 @@ export class AgentManager {
       },
       resolvedAgentId,
     );
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const launchContext = await this.buildLaunchContext(resolvedAgentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
       },
-      { config: launchConfig, storedConfig, launchContext },
+      { config: providerLaunchConfig, storedConfig, launchContext },
     );
     const importedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(imported.config));
     const timelineRows = buildImportedTimelineRows(imported.timeline);
@@ -1036,11 +1071,12 @@ export class AgentManager {
       provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = this.buildLaunchContext(agentId);
+    const launchContext = await this.buildLaunchContext(agentId, client);
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
-      ? await client.resumeSession(handle, launchConfig, launchContext)
-      : await client.createSession(launchConfig, launchContext);
+      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+      : await client.createSession(providerLaunchConfig, launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -3609,7 +3645,10 @@ export class AgentManager {
     }
   }
 
-  private async normalizeConfig(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+  private async normalizeConfig(
+    config: AgentSessionConfig,
+    options: NormalizeConfigOptions = {},
+  ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
@@ -3640,18 +3679,11 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    if (!normalized.model) {
-      const client = this.clients.get(normalized.provider);
-      if (client) {
-        try {
-          const catalog = await client.fetchCatalog({ cwd: normalized.cwd, force: false });
-          const defaultModel = catalog.models.find((model) => model.isDefault) ?? catalog.models[0];
-          if (defaultModel) {
-            normalized.model = defaultModel.id;
-          }
-        } catch {
-          // Provider may not support model listing — leave model undefined
-        }
+    const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
+    if (shouldResolveDefaultModel && !normalized.model) {
+      const defaultModelId = await this.resolveDefaultModelId(normalized);
+      if (defaultModelId) {
+        normalized.model = defaultModelId;
       }
     }
 
@@ -3665,6 +3697,24 @@ export class AgentManager {
     }
 
     return normalized;
+  }
+
+  private async resolveDefaultModelId(config: AgentSessionConfig): Promise<string | undefined> {
+    const client = this.clients.get(config.provider);
+    if (!client) {
+      return undefined;
+    }
+    try {
+      const catalog = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: config.cwd,
+        force: false,
+      });
+      return (catalog.models.find((model) => model.isDefault) ?? catalog.models[0])?.id;
+    } catch {
+      // Provider may not support model listing — leave model undefined.
+      return undefined;
+    }
   }
 
   private async prepareSessionConfig(
@@ -3696,14 +3746,33 @@ export class AgentManager {
       : next;
   }
 
-  private buildLaunchContext(agentId: string, env?: Record<string, string>): AgentLaunchContext {
-    return {
+  private async buildLaunchContext(
+    agentId: string,
+    client: AgentClient,
+    env?: Record<string, string>,
+  ): Promise<AgentLaunchContext> {
+    const context: AgentLaunchContext = {
       agentId,
       env: {
         ...env,
         PASEO_AGENT_ID: agentId,
       },
     };
+    if (
+      this.paseoToolsEnabled &&
+      client.capabilities.supportsNativePaseoTools &&
+      this.paseoToolCatalogFactory
+    ) {
+      context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
+    }
+    return context;
+  }
+
+  private resolveProviderLaunchConfig(
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+  ): AgentSessionConfig {
+    return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {

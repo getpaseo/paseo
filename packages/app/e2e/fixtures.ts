@@ -3,6 +3,8 @@ import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import { createWithWorkspace, type WithWorkspace } from "./helpers/with-workspace";
 
+const EXTRA_HOSTS_KEY = "@paseo:e2e-extra-hosts";
+
 // Test setup is wired through an `auto: true` fixture rather than `test.beforeEach`.
 // `test.beforeEach` declared at the top level of a non-test fixture file is unreliable
 // across spec-file boundaries — Playwright sometimes skips it for the first test of a
@@ -57,7 +59,7 @@ const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>(
       const createAgentPreferences = buildCreateAgentPreferences(testDaemon.serverId);
 
       await page.addInitScript(
-        ({ daemon, preferences, seedNonce: nonce }) => {
+        ({ daemon, preferences, seedNonce: nonce, extraHostsKey }) => {
           // `addInitScript` runs on every navigation (including reloads). Some tests intentionally
           // override storage and reload; they can opt out of seeding for the *next* navigation by
           // setting this flag before the reload.
@@ -73,12 +75,20 @@ const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>(
           localStorage.setItem("@paseo:e2e", "1");
           localStorage.setItem("@paseo:e2e-seed-nonce", nonce);
 
+          const rawExtraHosts = localStorage.getItem(extraHostsKey);
+          const extraHosts = rawExtraHosts ? JSON.parse(rawExtraHosts) : [];
+
           // Hard-reset anything that could point to a developer's real daemon.
-          localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
+          localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon, ...extraHosts]));
           localStorage.removeItem("@paseo:settings");
           localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
         },
-        { daemon: testDaemon, preferences: createAgentPreferences, seedNonce },
+        {
+          daemon: testDaemon,
+          preferences: createAgentPreferences,
+          seedNonce,
+          extraHostsKey: EXTRA_HOSTS_KEY,
+        },
       );
 
       await provide();

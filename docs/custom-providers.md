@@ -171,7 +171,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 | `qwen3-coder-next` | Optimized for coding        |
 | `kimi-k2.5`        | Vision capable              |
 | `glm-5`            | Zhipu GLM                   |
-| `MiniMax-M2.5`     | MiniMax                     |
+| `MiniMax-M3`       | MiniMax                     |
 
 **Additional models (pay-as-you-go):**
 `qwen3-max`, `qwen3.5-flash`, `qwen3-coder-plus`, `qwen3-coder-flash`, `qwen3-vl-plus`, `qwen3-vl-flash`
@@ -438,7 +438,7 @@ Required fields for ACP providers:
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
 
-By default, Paseo injects its internal MCP server into ACP providers so agents can use Paseo tools such as subagent creation. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
+Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
 
 ```json
 {
