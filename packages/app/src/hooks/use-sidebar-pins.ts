@@ -123,8 +123,16 @@ export function splitPinnedSidebarGroups(input: {
 
 // Flattens the pinned groups into a project list matching the sidebar's visual order
 // (pinned chats, then pinned projects, then the rest) so keyboard shortcut numbers line
-// up with what the user sees.
-export function buildPinAwareShortcutProjects(groups: PinnedSidebarGroups): SidebarProjectEntry[] {
+// up with what the user sees. When the Pinned section is collapsed its chats and
+// projects are hidden, so they must not consume shortcut numbers — only the unpinned
+// list below is visible.
+export function buildPinAwareShortcutProjects(
+  groups: PinnedSidebarGroups,
+  options?: { pinnedCollapsed?: boolean },
+): SidebarProjectEntry[] {
+  if (options?.pinnedCollapsed) {
+    return groups.unpinnedProjects;
+  }
   const ordered: SidebarProjectEntry[] = [];
   if (groups.pinnedChats.length > 0) {
     const first = groups.pinnedChats[0];

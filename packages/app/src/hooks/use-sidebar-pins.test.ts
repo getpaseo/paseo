@@ -3,7 +3,11 @@ import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/sidebar-workspaces-view-model";
-import { splitPinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
+import {
+  buildPinAwareShortcutProjects,
+  PINNED_CHATS_PSEUDO_PROJECT_KEY,
+  splitPinnedSidebarGroups,
+} from "@/hooks/use-sidebar-pins";
 
 function placement(workspaceKey: string): SidebarWorkspacePlacement {
   return {
@@ -66,5 +70,27 @@ describe("splitPinnedSidebarGroups", () => {
     });
     expect(result.pinnedChats.map((w) => w.workspaceKey)).toEqual(["w1"]);
     expect(result.unpinnedProjects[0]?.workspaces.map((w) => w.workspaceKey)).toEqual(["w2"]);
+  });
+});
+
+describe("buildPinAwareShortcutProjects", () => {
+  const groups = {
+    pinnedChats: [placement("pinned-chat")],
+    pinnedProjects: [project("pinned-proj", [placement("pc")])],
+    unpinnedProjects: [project("unpinned-proj", [placement("uc")])],
+  };
+
+  it("floats pinned chats and projects to the front when Pinned is expanded", () => {
+    const ordered = buildPinAwareShortcutProjects(groups);
+    expect(ordered.map((p) => p.projectKey)).toEqual([
+      PINNED_CHATS_PSEUDO_PROJECT_KEY,
+      "pinned-proj",
+      "unpinned-proj",
+    ]);
+  });
+
+  it("excludes hidden pinned rows from numbering when Pinned is collapsed", () => {
+    const ordered = buildPinAwareShortcutProjects(groups, { pinnedCollapsed: true });
+    expect(ordered.map((p) => p.projectKey)).toEqual(["unpinned-proj"]);
   });
 });

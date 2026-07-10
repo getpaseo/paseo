@@ -15,13 +15,15 @@ export function useSidebarShortcutModel(input: { projects: SidebarProjectEntry[]
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
+  const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
 
   // Number shortcuts in the same order the sidebar shows them: pinned chats and
-  // pinned projects float to the top, so their badges must too.
+  // pinned projects float to the top, so their badges must too. When Pinned is
+  // collapsed those rows are hidden, so they drop out of the numbering.
   const pinnedGroups = usePinnedSidebarGroups(projects);
   const orderedProjects = useMemo(
-    () => buildPinAwareShortcutProjects(pinnedGroups),
-    [pinnedGroups],
+    () => buildPinAwareShortcutProjects(pinnedGroups, { pinnedCollapsed }),
+    [pinnedGroups, pinnedCollapsed],
   );
 
   const shortcutModel = useMemo(
