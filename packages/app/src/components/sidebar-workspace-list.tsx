@@ -1581,6 +1581,7 @@ function WorkspaceRowWithMenu({
   dragHandleProps,
   canCopyBranchName,
   isCreating = false,
+  suppressPin = false,
 }: {
   workspace: SidebarWorkspaceEntry;
   subtitle?: string | null;
@@ -1593,6 +1594,9 @@ function WorkspaceRowWithMenu({
   dragHandleProps?: DraggableListDragHandleProps;
   canCopyBranchName: boolean;
   isCreating?: boolean;
+  // The parent project is pinned, so its chats are already hoisted to the top; a
+  // per-chat pin would be a redundant, no-op control. Hide it on these rows.
+  suppressPin?: boolean;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -1699,6 +1703,7 @@ function WorkspaceRowWithMenu({
   }, [pinMutation, workspace.pinnedAt]);
 
   const supportsWorkspacePinning = useHostFeature(workspace.serverId, "workspacePinning");
+  const canPin = supportsWorkspacePinning && !suppressPin;
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, clearAttention } = useClearWorkspaceAttention({
@@ -1725,7 +1730,7 @@ function WorkspaceRowWithMenu({
   useKeyboardActionHandler({
     handlerId: `workspace-pin-${workspace.workspaceKey}`,
     actions: ["workspace.pin"],
-    enabled: selected && supportsWorkspacePinning,
+    enabled: selected && canPin,
     priority: 0,
     handle: () => {
       handleTogglePin();
@@ -1758,7 +1763,7 @@ function WorkspaceRowWithMenu({
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
         isPinned={workspace.pinnedAt != null}
-        onTogglePin={supportsWorkspacePinning ? handleTogglePin : undefined}
+        onTogglePin={canPin ? handleTogglePin : undefined}
       />
       <AdaptiveRenameModal
         visible={isRenameOpen}
@@ -1788,6 +1793,7 @@ interface WorkspaceRowItemProps {
   drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
+  suppressPin?: boolean;
 }
 
 function WorkspaceRowItem({
@@ -1804,6 +1810,7 @@ function WorkspaceRowItem({
   drag,
   isDragging = false,
   dragHandleProps,
+  suppressPin = false,
 }: WorkspaceRowItemProps) {
   const handlePress = useCallback(() => {
     if (!workspace.serverId) {
@@ -1831,6 +1838,7 @@ function WorkspaceRowItem({
       drag={drag ?? noop}
       isDragging={isDragging}
       dragHandleProps={dragHandleProps}
+      suppressPin={suppressPin}
     />
   );
 }
@@ -1863,6 +1871,7 @@ function areWorkspaceRowItemPropsEqual(
     previous.drag === next.drag &&
     previous.isDragging === next.isDragging &&
     previous.dragHandleProps === next.dragHandleProps &&
+    previous.suppressPin === next.suppressPin &&
     previousSelected === nextSelected
   );
 }
@@ -1881,6 +1890,7 @@ function WorkspaceRow({
   canCopyBranchName,
   isCreating = false,
   selected,
+  suppressPin = false,
 }: {
   workspaceEntry: SidebarWorkspaceEntry | null;
   subtitle?: string | null;
@@ -1893,6 +1903,7 @@ function WorkspaceRow({
   canCopyBranchName: boolean;
   isCreating?: boolean;
   selected: boolean;
+  suppressPin?: boolean;
 }) {
   if (!workspaceEntry) {
     return null;
@@ -1911,6 +1922,7 @@ function WorkspaceRow({
       dragHandleProps={dragHandleProps}
       canCopyBranchName={canCopyBranchName}
       isCreating={isCreating}
+      suppressPin={suppressPin}
     />
   );
 }
@@ -1978,6 +1990,14 @@ function ProjectBlock({
     enabled: selectionEnabled,
   });
 
+  const isProjectPinned = useSessionStore((state) =>
+    project.workspaces.some((workspace) =>
+      Boolean(
+        state.sessions[workspace.serverId]?.workspaces.get(workspace.workspaceId)?.projectPinnedAt,
+      ),
+    ),
+  );
+
   const renderWorkspaceRow = useCallback(
     (
       item: SidebarWorkspacePlacement,
@@ -2004,6 +2024,7 @@ function ProjectBlock({
           drag={input?.drag}
           isDragging={input?.isDragging}
           dragHandleProps={input?.dragHandleProps}
+          suppressPin={isProjectPinned}
         />
       );
     },
@@ -2018,6 +2039,7 @@ function ProjectBlock({
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
       workspaceEntriesByKey,
+      isProjectPinned,
     ],
   );
 
@@ -2102,13 +2124,6 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, displayName, t, toast, project.projectKey, project.hosts]);
 
-  const isProjectPinned = useSessionStore((state) =>
-    project.workspaces.some((workspace) =>
-      Boolean(
-        state.sessions[workspace.serverId]?.workspaces.get(workspace.workspaceId)?.projectPinnedAt,
-      ),
-    ),
-  );
   const [isTogglingPin, setIsTogglingPin] = useState(false);
 
   const handleTogglePinProject = useCallback(() => {
