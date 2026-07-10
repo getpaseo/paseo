@@ -194,6 +194,11 @@ export function registerWindowManager(): void {
     return win?.isFullScreen() ?? false;
   });
 
+  ipcMain.handle("paseo:window:setFullscreen", (event, fullscreen: unknown) => {
+    if (typeof fullscreen !== "boolean") return;
+    BrowserWindow.fromWebContents(event.sender)?.setFullScreen(fullscreen);
+  });
+
   ipcMain.handle("paseo:window:setBadgeCount", (_event, count?: unknown) => {
     if (process.platform === "darwin" || process.platform === "linux") {
       const badgeCount = readBadgeCount(count);

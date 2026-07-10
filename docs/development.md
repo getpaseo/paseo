@@ -72,6 +72,17 @@ Starting the service must not create, focus, reveal, or leave behind macOS Simul
 It launches its own Electron-flavored Expo server and passes that URL to Electron.
 Override the CDP port with `PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when `9223` is busy.
 
+With desktop dev running, verify the real BrowserWindow, titlebar clearance, fullscreen
+transition, and 751-pixel settings split with:
+
+```bash
+npm run verify:electron-cdp --workspace=@getpaseo/desktop
+```
+
+The verifier reads the same `EXPO_PORT` and
+`PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` environment names as desktop dev. Set both when
+testing an isolated instance on non-default ports.
+
 When running a dedicated Electron QA instance against a non-default Expo port, set
 `EXPO_DEV_URL` explicitly. Desktop main defaults to `http://localhost:8081`, so
 `PASEO_PORT=57928` alone starts Metro on 57928 but Electron still loads 8081.
