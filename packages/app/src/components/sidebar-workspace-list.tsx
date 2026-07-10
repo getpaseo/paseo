@@ -2220,7 +2220,10 @@ function ProjectBlock({
         onRemoveProject={handleRemoveProject}
         removeProjectStatus={isRemovingProject ? "pending" : "idle"}
         isProjectPinned={isProjectPinned}
-        onTogglePinProject={handleTogglePinProject}
+        // Project pin state is derived from workspace descriptors, and an empty project
+        // has none — the server would set pinnedAt but emit no descriptor update, so the
+        // pin would silently never surface. Offer it only once the project has a chat.
+        onTogglePinProject={project.workspaces.length > 0 ? handleTogglePinProject : undefined}
         dragHandleProps={dragHandleProps}
       />
 
