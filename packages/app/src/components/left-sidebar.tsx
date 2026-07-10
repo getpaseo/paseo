@@ -620,7 +620,6 @@ function MobileSidebar({
             variant="compact"
           />
         </View>
-        <WorkspacesSectionHeader />
         <Pressable
           style={styles.mobileCloseButton}
           onPress={closeSidebar}
@@ -656,6 +655,7 @@ function MobileSidebar({
             onWorkspacePress={handleWorkspacePress}
             onAddProject={handleOpenProject}
             parentGestureRef={closeGestureRef}
+            listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
@@ -791,7 +791,6 @@ function DesktopSidebar({
             />
           </View>
         </View>
-        <WorkspacesSectionHeader />
 
         {isInitialLoad ? (
           <SidebarAgentListSkeleton />
@@ -808,6 +807,7 @@ function DesktopSidebar({
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
             onAddProject={handleOpenProject}
+            listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
@@ -887,6 +887,10 @@ function WorkspacesSectionHeader() {
   );
 }
 
+// Stable element so the sidebar list's listHeaderComponent prop keeps identity across
+// renders (WorkspacesSectionHeader takes no props).
+const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
+
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
@@ -912,15 +916,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
-    // Align the title with the compact rows' icons and the project icons below
-    // (listContent + projectRow inner padding both spacing[2]).
-    paddingLeft: theme.spacing[2] + theme.spacing[2],
-    // Align the trailing action pill's right edge with the New workspace and
-    // project row pills (both 8px from the sidebar edge).
-    paddingRight: theme.spacing[2],
-    // Less than sidebarHeaderGroup's paddingBottom: the 28px-tall action buttons
-    // center the title and add their own offset above it, so equal padding reads
-    // as a larger gap than History's. Trim paddingTop to balance it visually.
+    // Rendered inside the scroll's listContent (paddingHorizontal spacing[2]), so the
+    // title lands at spacing[2] left to align with project icons, and the trailing
+    // pill sits flush with the list edge on the right.
+    paddingLeft: theme.spacing[2],
+    paddingRight: 0,
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[1],
   },

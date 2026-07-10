@@ -240,6 +240,9 @@ interface SidebarWorkspaceListProps {
   onWorkspacePress?: () => void;
   onAddProject?: () => void;
   listFooterComponent?: ReactElement | null;
+  // Rendered inside the scroll area, below the Pinned section and above the workspace
+  // list. Holds the "Workspaces" section header so pinned items sit above it.
+  listHeaderComponent?: ReactElement | null;
   /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
 }
@@ -2167,6 +2170,7 @@ export function SidebarWorkspaceList({
   onWorkspacePress,
   onAddProject,
   listFooterComponent,
+  listHeaderComponent,
   parentGestureRef,
 }: SidebarWorkspaceListProps) {
   const pathname = usePathname();
@@ -2191,6 +2195,7 @@ export function SidebarWorkspaceList({
         onWorkspacePress={onWorkspacePress}
         hostLabelByServerId={hostLabelByServerId}
         showHostLabels={showHostLabels}
+        listHeaderComponent={listHeaderComponent}
       />
     ) : (
       <ProjectModeList
@@ -2202,6 +2207,7 @@ export function SidebarWorkspaceList({
         onWorkspacePress={onWorkspacePress}
         onAddProject={onAddProject}
         listFooterComponent={listFooterComponent}
+        listHeaderComponent={listHeaderComponent}
         parentGestureRef={parentGestureRef}
         pathname={pathname}
         hostLabelByServerId={hostLabelByServerId}
@@ -2220,6 +2226,7 @@ function SidebarStatusModeWrapper({
   onWorkspacePress,
   hostLabelByServerId,
   showHostLabels,
+  listHeaderComponent,
 }: {
   statusGroups: StatusGroup[];
   projectNamesByKey: Map<string, string>;
@@ -2227,6 +2234,7 @@ function SidebarStatusModeWrapper({
   onWorkspacePress?: () => void;
   hostLabelByServerId: ReadonlyMap<string, string>;
   showHostLabels: boolean;
+  listHeaderComponent?: ReactElement | null;
 }) {
   const showShortcutBadges = useShowShortcutBadges();
 
@@ -2239,6 +2247,7 @@ function SidebarStatusModeWrapper({
       onWorkspacePress={onWorkspacePress}
       hostLabelByServerId={hostLabelByServerId}
       showHostLabels={showHostLabels}
+      listHeaderComponent={listHeaderComponent}
     />
   );
 }
@@ -2252,6 +2261,7 @@ function ProjectModeList({
   onWorkspacePress,
   onAddProject,
   listFooterComponent,
+  listHeaderComponent,
   parentGestureRef,
   pathname,
   hostLabelByServerId,
@@ -2548,12 +2558,12 @@ function ProjectModeList({
             style={styles.pinnedSectionHeader}
             testID="sidebar-pinned-section-header"
           >
+            <Text style={styles.pinnedSectionTitle}>{t("sidebar.pinned.title")}</Text>
             {pinnedCollapsed ? (
               <ChevronRight size={12} color="#9ca3af" />
             ) : (
               <ChevronDown size={12} color="#9ca3af" />
             )}
-            <Text style={styles.pinnedSectionTitle}>{t("sidebar.pinned.title")}</Text>
           </Pressable>
           {pinnedCollapsed ? null : (
             <>
@@ -2565,6 +2575,7 @@ function ProjectModeList({
           )}
         </View>
       ) : null}
+      {listHeaderComponent}
       {projects.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle} testID="sidebar-project-empty-state">
@@ -2641,8 +2652,12 @@ const styles = StyleSheet.create((theme) => ({
   pinnedSectionHeader: {
     flexDirection: "row",
     alignItems: "center",
+    alignSelf: "flex-start",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
+    // Title inset spacing[2] to align with WorkspacesSectionHeader; chevron sits
+    // right beside the name.
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2],
     paddingBottom: theme.spacing[1],
     userSelect: "none",
   },
