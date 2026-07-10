@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import type { PersistedConfig } from "../persisted-config.js";
-import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import type { PaseoElevenLabsConfig, PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import { resolveElevenLabsSpeechConfig } from "./providers/elevenlabs/config.js";
 import { resolveLocalSpeechConfig } from "./providers/local/config.js";
 import { resolveOpenAiSpeechConfig } from "./providers/openai/config.js";
 import {
@@ -149,6 +150,7 @@ export function resolveSpeechConfig(params: {
   persisted: PersistedConfig;
 }): {
   openai: PaseoOpenAIConfig | undefined;
+  elevenlabs: PaseoElevenLabsConfig | undefined;
   speech: PaseoSpeechConfig;
 } {
   const providers = resolveRequestedSpeechProviders({
@@ -169,8 +171,14 @@ export function resolveSpeechConfig(params: {
     providers,
   });
 
+  const elevenlabs = resolveElevenLabsSpeechConfig({
+    env: params.env,
+    persisted: params.persisted,
+  });
+
   return {
     openai,
+    elevenlabs,
     speech: {
       providers,
       sttLanguages: local.sttLanguages,
