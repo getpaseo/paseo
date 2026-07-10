@@ -376,6 +376,91 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(first.messageId, "msg-same");
   });
 
+  it("keeps row identities unique when an assistant message resumes after a tool", () => {
+    const messageId = "msg-resumed";
+    const state = hydrateStreamState([
+      {
+        event: assistantTimeline("Before the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId: "tool-between-assistant-segments",
+          name: "shell",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T10:02:01Z"),
+      },
+      {
+        event: assistantTimeline("After the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:02Z"),
+      },
+    ]);
+
+    const messages = state.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(messages.map((message) => message.text)).toEqual([
+      "Before the tool.",
+      "After the tool.",
+    ]);
+    expect(messages.map((message) => message.messageId)).toEqual([messageId, messageId]);
+    expect(new Set(messages.map((message) => message.id)).size).toBe(2);
+  });
+
+  it("keeps resumed live assistant rows when the turn completes", () => {
+    const messageId = "msg-live-resumed";
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+
+    for (const update of [
+      {
+        event: assistantTimeline("Before the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId: "live-tool-between-assistant-segments",
+          name: "shell",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T10:02:01Z"),
+      },
+      {
+        event: assistantTimeline("After the tool.", "codex", messageId),
+        timestamp: new Date("2025-01-01T10:02:02Z"),
+      },
+      {
+        event: { type: "turn_completed" as const, provider: "codex" as const },
+        timestamp: new Date("2025-01-01T10:02:03Z"),
+      },
+    ]) {
+      const result = applyStreamEvent({
+        tail,
+        head,
+        event: update.event,
+        timestamp: update.timestamp,
+      });
+      tail = result.tail;
+      head = result.head;
+    }
+
+    const messages = tail.filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+    expect(head).toEqual([]);
+    expect(messages.map((message) => message.text)).toEqual([
+      "Before the tool.",
+      "After the tool.",
+    ]);
+    expect(messages.map((message) => message.messageId)).toEqual([messageId, messageId]);
+    expect(new Set(messages.map((message) => message.id)).size).toBe(2);
+  });
+
   it("preserves old assistant merge behavior when message ids are absent", () => {
     const state = hydrateStreamState([
       {
